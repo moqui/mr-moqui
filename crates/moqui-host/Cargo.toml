@@ -14,7 +14,7 @@ default = ["embedded-postgres", "postgres", "mysql", "axum", "pdf"]
 embedded-postgres = ["dep:postgresql_embedded"]
 postgres = ["dep:postgres", "dep:tokio-postgres-rustls"]
 mysql = ["dep:mysql"]
-axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util", "dep:futures-util"]
+axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util"]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
 # MPL-2.0. Not in the default binary. `cargo tree -p moqui-host -F pdf-servo`.
 pdf-servo = ["dep:servo"]
@@ -63,8 +63,6 @@ ipp = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-# Paused clock for the completion stream heartbeat tests.
-tokio = { workspace = true, features = ["test-util"] }
 indexmap = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }

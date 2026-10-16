@@ -83,12 +83,11 @@ impl WebRequest {
     }
 }
 
-/// A completion source the HTTP host awaits outside the request EC and its transaction. Ready with one complete SSE
-/// frame, which ends the stream. While pending it keeps `cx.waker()` and wakes it when the result exists or the source
-/// stops; the host sends heartbeats meanwhile. Dropping the source must release its capacity and waker.
+/// A completion source polled by the HTTP host, outside the request EC and its transaction.
+/// `None` keeps the connection alive; one complete SSE frame terminates it. Dropping the source must release capacity.
 /// Implementations must not block, retain an EC, or perform network/database I/O.
 pub trait CompletionStream: std::fmt::Debug + Send + Sync {
-    fn poll_completion(&self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<String, Error>>;
+    fn completion(&self) -> Result<Option<String>, Error>;
 }
 
 /// One HTTP response. Repeated names are separate headers, so `Set-Cookie` can appear twice.

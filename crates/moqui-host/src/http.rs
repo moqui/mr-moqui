@@ -636,33 +636,31 @@ fn status_allowed(ip: &str) -> bool {
     allowed.iter().any(|item| item == ip)
 }
 
-/// Idle time before a completion stream sends `: ping`; below common proxy read timeouts.
-const COMPLETION_HEARTBEAT: Duration = Duration::from_secs(15);
-
 fn from_web(response: WebResponse) -> Response {
     let mut builder = Response::builder().status(response.status);
     for (name, value) in response.headers {
         builder = builder.header(name, value);
     }
     let body = if let Some(source) = response.completion_stream {
-        // Await the in-memory source's wake-up; never hold a request worker, EC, or DB connection. A heartbeat is sent
-        // only after an idle interval, so proxies keep the connection open.
-        let stream = futures_util::stream::unfold((source, false), |(source, done)| async move {
+        // Poll only the bounded, in-memory completion source. Never hold a request worker, EC, or DB connection.
+        let stream = futures_util::stream::unfold((source, false, true), |(source, done, first)| async move {
             if done {
                 return None;
             }
-            let completion = std::future::poll_fn(|cx| source.poll_completion(cx));
-            let (frame, terminal) = match tokio::time::timeout(COMPLETION_HEARTBEAT, completion).await {
-                Ok(Ok(frame)) => (frame, true),
-                Err(_) => (": ping\n\n".to_owned(), false),
-                Ok(Err(_)) => (
+            if !first {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let (frame, terminal) = match source.completion() {
+                Ok(Some(frame)) => (frame, true),
+                Ok(None) => (": ping\n\n".to_owned(), false),
+                Err(_) => (
                     "event: failed\ndata: {\"message\":\"Completion is no longer available\"}\n\n".to_owned(),
                     true,
                 ),
             };
             Some((
                 Ok::<_, std::convert::Infallible>(bytes::Bytes::from(frame)),
-                (source, terminal),
+                (source, terminal, false),
             ))
         });
         axum::body::Body::from_stream(stream)
@@ -873,83 +871,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
-    /// Pending until `finish`, which wakes the stored waker like a real completion source.
-    #[derive(Debug, Default)]
-    struct TestCompletion {
-        ready: std::sync::atomic::AtomicBool,
-        waker: std::sync::Mutex<Option<std::task::Waker>>,
-    }
-    impl TestCompletion {
-        fn finish(&self) {
-            self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
-            if let Some(waker) = self.waker.lock().unwrap().take() {
-                waker.wake();
-            }
-        }
-    }
+    #[derive(Debug)]
+    struct TestCompletion(bool);
     impl moqui_core::web::CompletionStream for TestCompletion {
-        fn poll_completion(
-            &self,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<String, moqui_core::context::Error>> {
-            *self.waker.lock().unwrap() = Some(cx.waker().clone());
-            if self.ready.load(std::sync::atomic::Ordering::SeqCst) {
-                return std::task::Poll::Ready(Ok("event: completed\ndata: {\"text\":\"done\"}\n\n".to_owned()));
-            }
-            std::task::Poll::Pending
+        fn completion(&self) -> Result<Option<String>, moqui_core::context::Error> {
+            Ok(self
+                .0
+                .then(|| "event: completed\ndata: {\"text\":\"done\"}\n\n".to_owned()))
         }
-    }
-
-    fn completion_body(source: Arc<TestCompletion>) -> axum::body::BodyDataStream {
-        let mut response = WebResponse::new(200, Vec::new());
-        response.completion_stream = Some(source);
-        from_web(response).into_body().into_data_stream()
     }
 
     #[tokio::test]
     async fn completion_stream_sends_one_terminal_frame_and_releases_its_source() {
-        let source = Arc::new(TestCompletion::default());
-        source.finish();
+        let source = Arc::new(TestCompletion(true));
         let weak = Arc::downgrade(&source);
-        let body = axum::body::to_bytes(axum::body::Body::from_stream(completion_body(source)), 4096)
-            .await
-            .unwrap();
+        let mut response = WebResponse::new(200, Vec::new());
+        response.completion_stream = Some(source);
+        let response = from_web(response);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
         assert_eq!(body, "event: completed\ndata: {\"text\":\"done\"}\n\n");
         assert!(weak.upgrade().is_none());
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn completion_stream_delivers_on_wake_without_waiting_for_a_heartbeat() {
+    #[tokio::test]
+    async fn completion_stream_heartbeats_and_releases_capacity_on_disconnect() {
         use futures_util::StreamExt;
-        let source = Arc::new(TestCompletion::default());
-        let started = tokio::time::Instant::now();
-        let mut body = completion_body(source.clone());
-        let finisher = source.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            finisher.finish();
-        });
-        assert_eq!(
-            body.next().await.unwrap().unwrap(),
-            "event: completed\ndata: {\"text\":\"done\"}\n\n"
-        );
-        assert!(
-            started.elapsed() < super::COMPLETION_HEARTBEAT,
-            "{:?}",
-            started.elapsed()
-        );
-        assert!(body.next().await.is_none());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn completion_stream_heartbeats_only_when_idle_and_releases_capacity_on_disconnect() {
-        use futures_util::StreamExt;
-        let source = Arc::new(TestCompletion::default());
+        let source = Arc::new(TestCompletion(false));
         let weak = Arc::downgrade(&source);
-        let started = tokio::time::Instant::now();
-        let mut body = completion_body(source);
+        let mut response = WebResponse::new(200, Vec::new());
+        response.completion_stream = Some(source);
+        let mut body = from_web(response).into_body().into_data_stream();
         assert_eq!(body.next().await.unwrap().unwrap(), ": ping\n\n");
-        assert!(started.elapsed() >= super::COMPLETION_HEARTBEAT);
         drop(body);
         assert!(weak.upgrade().is_none());
     }
