@@ -641,34 +641,8 @@ fn from_web(response: WebResponse) -> Response {
     for (name, value) in response.headers {
         builder = builder.header(name, value);
     }
-    let body = if let Some(source) = response.completion_stream {
-        // Poll only the bounded, in-memory completion source. Never hold a request worker, EC, or DB connection.
-        let stream = futures_util::stream::unfold((source, false, true), |(source, done, first)| async move {
-            if done {
-                return None;
-            }
-            if !first {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            let (frame, terminal) = match source.completion() {
-                Ok(Some(frame)) => (frame, true),
-                Ok(None) => (": ping\n\n".to_owned(), false),
-                Err(_) => (
-                    "event: failed\ndata: {\"message\":\"Completion is no longer available\"}\n\n".to_owned(),
-                    true,
-                ),
-            };
-            Some((
-                Ok::<_, std::convert::Infallible>(bytes::Bytes::from(frame)),
-                (source, terminal, false),
-            ))
-        });
-        axum::body::Body::from_stream(stream)
-    } else {
-        axum::body::Body::from(response.body)
-    };
     builder
-        .body(body)
+        .body(axum::body::Body::from(response.body))
         .unwrap_or_else(|_| plain(500, "could not build the response"))
 }
 
@@ -700,7 +674,7 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::Semaphore;
 
-    use super::{from_web, http_port, serve, status_allowed, ListenLimits, TlsConnection, WebResponse};
+    use super::{http_port, serve, status_allowed, ListenLimits, TlsConnection};
     use crate::tls;
 
     async fn read_all(stream: &mut TcpStream) -> String {
@@ -869,41 +843,6 @@ mod tests {
             .expect("the listeners did not stop")
             .unwrap();
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
-    }
-
-    #[derive(Debug)]
-    struct TestCompletion(bool);
-    impl moqui_core::web::CompletionStream for TestCompletion {
-        fn completion(&self) -> Result<Option<String>, moqui_core::context::Error> {
-            Ok(self
-                .0
-                .then(|| "event: completed\ndata: {\"text\":\"done\"}\n\n".to_owned()))
-        }
-    }
-
-    #[tokio::test]
-    async fn completion_stream_sends_one_terminal_frame_and_releases_its_source() {
-        let source = Arc::new(TestCompletion(true));
-        let weak = Arc::downgrade(&source);
-        let mut response = WebResponse::new(200, Vec::new());
-        response.completion_stream = Some(source);
-        let response = from_web(response);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
-        assert_eq!(body, "event: completed\ndata: {\"text\":\"done\"}\n\n");
-        assert!(weak.upgrade().is_none());
-    }
-
-    #[tokio::test]
-    async fn completion_stream_heartbeats_and_releases_capacity_on_disconnect() {
-        use futures_util::StreamExt;
-        let source = Arc::new(TestCompletion(false));
-        let weak = Arc::downgrade(&source);
-        let mut response = WebResponse::new(200, Vec::new());
-        response.completion_stream = Some(source);
-        let mut body = from_web(response).into_body().into_data_stream();
-        assert_eq!(body.next().await.unwrap().unwrap(), ": ping\n\n");
-        drop(body);
-        assert!(weak.upgrade().is_none());
     }
 
     #[test]

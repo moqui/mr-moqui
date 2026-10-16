@@ -236,7 +236,6 @@ fn dispatch_request(
         status: if sent { status } else { 200 },
         headers,
         body,
-        completion_stream: web::take_completion_stream(),
     })
 }
 
@@ -326,12 +325,7 @@ fn error_page(
         return None;
     }
     let (_, headers, body, sent) = web::take_output();
-    sent.then_some(WebResponse {
-        status,
-        headers,
-        body,
-        completion_stream: None,
-    })
+    sent.then_some(WebResponse { status, headers, body })
 }
 
 fn attach_session(

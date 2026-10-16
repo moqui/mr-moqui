@@ -19,7 +19,6 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -83,20 +82,12 @@ impl WebRequest {
     }
 }
 
-/// A completion source polled by the HTTP host, outside the request EC and its transaction.
-/// `None` keeps the connection alive; one complete SSE frame terminates it. Dropping the source must release capacity.
-/// Implementations must not block, retain an EC, or perform network/database I/O.
-pub trait CompletionStream: std::fmt::Debug + Send + Sync {
-    fn completion(&self) -> Result<Option<String>, Error>;
-}
-
 /// One HTTP response. Repeated names are separate headers, so `Set-Cookie` can appear twice.
 #[derive(Clone, Debug)]
 pub struct WebResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    pub completion_stream: Option<Arc<dyn CompletionStream>>,
 }
 
 impl WebResponse {
@@ -105,7 +96,6 @@ impl WebResponse {
             status,
             headers: Vec::new(),
             body: body.into(),
-            completion_stream: None,
         }
     }
 
@@ -134,8 +124,6 @@ struct WebSlot {
     referrer: String,
     /// `getRequestDetails`: the request line, scheme, remote address, and headers, for the System dashboard.
     request_details: String,
-    request_method: Option<String>,
-    request_path: Option<String>,
     /// The names in the URL query string, which `getSecureRequestParameters` leaves out.
     query_names: Vec<String>,
     /// [`client_ip`] of the request, for the login `ipAllowed` check.
@@ -148,7 +136,6 @@ struct WebSlot {
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
-    completion_stream: Option<Arc<dyn CompletionStream>>,
 }
 
 /// Puts back the thread-local web slot that was there before the install, or clears it when there was
@@ -183,8 +170,6 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             request_url: String::new(),
             referrer: String::new(),
             request_details: String::new(),
-            request_method: None,
-            request_path: None,
             query_names: Vec::new(),
             client_ip: String::new(),
             locale: None,
@@ -193,7 +178,6 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             status: 200,
             headers: Vec::new(),
             body: Vec::new(),
-            completion_stream: None,
         })
     });
     WebGuard { previous }
@@ -292,8 +276,6 @@ pub(crate) fn set_request_info(request: &WebRequest) {
             web.request_url = url;
             web.referrer = referrer;
             web.request_details = details;
-            web.request_method = Some(request.method.clone());
-            web.request_path = Some(request.path.clone());
             web.query_names = request.query.iter().map(|(name, _)| name.clone()).collect();
             web.client_ip = client_ip(request);
         }
@@ -694,7 +676,7 @@ pub(crate) fn send_reset_content(location: &str) {
 }
 
 /// A response with its own headers and bytes, such as a static file. One already sent is left alone.
-pub fn send_bytes_with_headers(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) {
+pub(crate) fn send_bytes_with_headers(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) {
     WEB.with(|slot| {
         let mut web = slot.borrow_mut();
         let Some(web) = web.as_mut() else {
@@ -726,41 +708,6 @@ fn send_bytes(status: u16, content_type: &str, body: Vec<u8>) {
     });
 }
 
-/// The real HTTP method, not a caller-supplied service parameter. None for non-request renders.
-pub fn request_method() -> Option<String> {
-    WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request_method.clone()))
-}
-
-/// The HTTP path before screen parameter binding; native transports can reject extra path segments.
-pub fn request_path() -> Option<String> {
-    WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request_path.clone()))
-}
-
-/// Send an authenticated, application-owned completion stream. The native caller performs owner/limit checks first.
-/// Session/authentication/CORS handling remains on the normal screen request path.
-pub fn send_completion_stream(stream: Arc<dyn CompletionStream>) -> Result<(), Error> {
-    WEB.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let web = slot.as_mut().ok_or_else(|| Error::new("No active web request"))?;
-        if web.sent {
-            return Err(Error::new("Response already sent"));
-        }
-        web.sent = true;
-        web.status = 200;
-        web.headers.extend([
-            ("Content-Type".into(), "text/event-stream; charset=UTF-8".into()),
-            ("Cache-Control".into(), "no-cache, no-store".into()),
-            ("X-Accel-Buffering".into(), "no".into()),
-        ]);
-        web.completion_stream = Some(stream);
-        Ok(())
-    })
-}
-
-pub(crate) fn take_completion_stream() -> Option<Arc<dyn CompletionStream>> {
-    WEB.with(|slot| slot.borrow_mut().as_mut().and_then(|web| web.completion_stream.take()))
-}
-
 /// The status the response has so far.
 pub(crate) fn output_status() -> u16 {
     WEB.with(|slot| slot.borrow().as_ref().map_or(200, |web| web.status))
@@ -784,38 +731,29 @@ pub(crate) fn clear_output() {
             web.status = 200;
             web.headers.clear();
             web.body.clear();
-            web.completion_stream = None;
         }
     });
 }
 
 /// What a request had written, set aside while something else uses the slot's output.
-pub(crate) struct OutputStash {
-    output: (u16, Vec<(String, String)>, Vec<u8>, bool),
-    completion_stream: Option<Arc<dyn CompletionStream>>,
-}
+pub(crate) struct OutputStash((u16, Vec<(String, String)>, Vec<u8>, bool));
 
 /// Take what was written so far and leave the slot empty, for output that is not the response.
 pub(crate) fn stash_output() -> OutputStash {
-    let output = take_output();
-    let completion_stream = take_completion_stream();
+    let taken = take_output();
     clear_output();
-    OutputStash {
-        output,
-        completion_stream,
-    }
+    OutputStash(taken)
 }
 
 /// Put back what [`stash_output`] took, dropping anything written since.
 pub(crate) fn restore_output(stash: OutputStash) {
-    let (status, headers, body, sent) = stash.output;
+    let (status, headers, body, sent) = stash.0;
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.status = status;
             web.headers = headers;
             web.body = body;
             web.sent = sent;
-            web.completion_stream = stash.completion_stream;
         }
     });
 }
