@@ -364,10 +364,39 @@ fn every_base_component_screen_generates_in_all_three_modes() {
             }
         }
     }
-    // A factory that knows the components, so component:// locations resolve.
+    // A factory that knows the base components, so component:// locations resolve. Installed components in
+    // runtime/component are left out: their native crates are not linked into this test binary.
     let _env = super::Env::new();
-    let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-    let factory = ExecutionContextFactory::boot(runtime).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    struct TempRuntime(std::path::PathBuf);
+    impl Drop for TempRuntime {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let runtime = TempRuntime(std::env::temp_dir().join(format!("moqui-base-runtime-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&runtime.0);
+    std::fs::create_dir_all(runtime.0.join("component")).unwrap();
+    #[cfg(unix)]
+    let link = |from: &std::path::Path, to: &std::path::Path| std::os::unix::fs::symlink(from, to);
+    #[cfg(windows)]
+    let link = |from: &std::path::Path, to: &std::path::Path| {
+        if from.is_dir() {
+            std::os::windows::fs::symlink_dir(from, to)
+        } else {
+            std::os::windows::fs::symlink_file(from, to)
+        }
+    };
+    for entry in std::fs::read_dir(&source).unwrap().flatten() {
+        if entry.file_name() != "component" {
+            link(
+                &entry.path().canonicalize().unwrap(),
+                &runtime.0.join(entry.file_name()),
+            )
+            .unwrap();
+        }
+    }
+    let factory = ExecutionContextFactory::boot(&runtime.0).unwrap();
     factory.set_entity(crate::testing::open());
     let context = factory.new_context();
     let _entered = context.enter();
