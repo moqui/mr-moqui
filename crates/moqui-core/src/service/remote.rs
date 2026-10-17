@@ -33,9 +33,10 @@ pub fn shared_http_client() -> &'static moqui_lib::http::RestClient {
 /// Call a `remote-rest` location. `sim` denies before anything is sent.
 ///
 /// `method` overrides `verb`. The method is the one named when it is an HTTP method this client
-/// sends (GET, POST, PUT, PATCH, DELETE) and POST otherwise. `allow_in_sim` stays false. Only GET
-/// puts the parameters in the query; the other methods send them as a JSON body. The response is
-/// the JSON object, or `{response: ...}` for any other body.
+/// sends (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) and POST otherwise. `allow_in_sim` stays false.
+/// Only GET puts the parameters in the query; the other methods send them as a JSON body, which
+/// HEAD and OPTIONS cannot carry. The response is the JSON object, or `{response: [...]}` for an
+/// array; any other body fails the call, as Java's `jsonObject()`.
 pub fn run_remote_rest(
     service_name: &str,
     location: &str,
@@ -68,6 +69,10 @@ pub fn run_remote_rest(
         timeout: None,
     };
     if http_method != Method::Get && !parameters.is_empty() {
+        // Java's `RestClient.text` refuses a body for these.
+        if matches!(http_method, Method::Head | Method::Options) {
+            return Err(Error::new(format!("Cannot use body text with method {http_method}")));
+        }
         let body = to_json(&Value::Map(
             parameters
                 .iter()
@@ -84,7 +89,7 @@ pub fn run_remote_rest(
     if !(200..300).contains(&status) {
         // The remote's body can hold anything, so it goes to the log and not into the message.
         tracing::warn!(service = service_name, status, url = %shown, body = %clip(&response.body), "remote REST error");
-        let message = format!("Remote service error {status}");
+        let message = format!("Remote service error {status}: {}", outbound::reason_phrase(status));
         // As Java's `RemoteRestServiceRunner`, the error is a message and the call returns no results; with no context
         // to hold the message, it is the error.
         if ExecutionContext::with_current(|ctx| ctx.message().add_error(message.clone())).is_some() {
@@ -92,7 +97,8 @@ pub fn run_remote_rest(
         }
         return Err(Error::new(message));
     }
-    Ok(response_map(&response.body))
+    response_map(&response.body)
+        .map_err(|()| Error::new(format!("Error parsing JSON response from request to {shown}")))
 }
 
 fn clip(text: &str) -> String {
@@ -140,16 +146,15 @@ fn with_query(url: &str, parameters: &BTreeMap<String, Value>) -> String {
     format!("{url}{joiner}{query}")
 }
 
+/// Java's `RestClient.parametersMapToString`: every parameter that is not null, as its plain string, a list's items
+/// joined with commas.
 fn encode_query(parameters: &BTreeMap<String, Value>) -> String {
     let mut parts = Vec::new();
     for (key, value) in parameters {
-        if matches!(value, Value::Map(_) | Value::List(_)) {
+        if value.is_null() {
             continue;
         }
         let text = to_plain_string(value);
-        if text.is_empty() {
-            continue;
-        }
         parts.push(format!("{}={}", percent_encode(key), percent_encode(&text)));
     }
     parts.join("&")
@@ -166,16 +171,14 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
-fn response_map(body: &str) -> BTreeMap<String, Value> {
-    let trimmed = body.trim();
-    if trimmed.is_empty() {
-        return BTreeMap::new();
-    }
-    let parsed = serde_json::from_str::<serde_json::Value>(trimmed).map(|json| from_json(&json));
+/// A JSON object is the result and a JSON array is `response`. Anything else, an empty body too, is no JSON
+/// payload to Java's `JsonSlurperClassic`, which takes only an object or an array.
+fn response_map(body: &str) -> Result<BTreeMap<String, Value>, ()> {
+    let parsed = serde_json::from_str::<serde_json::Value>(body.trim()).map(|json| from_json(&json));
     match parsed {
-        Ok(Value::Map(map)) => map.into_iter().collect(),
-        Ok(other) => BTreeMap::from([("response".to_string(), other)]),
-        Err(_) => BTreeMap::from([("response".to_string(), Value::string(trimmed))]),
+        Ok(Value::Map(map)) => Ok(map.into_iter().collect()),
+        Ok(list @ Value::List(_)) => Ok(BTreeMap::from([("response".to_string(), list)])),
+        _ => Err(()),
     }
 }
 
@@ -205,17 +208,33 @@ mod tests {
 
     #[test]
     fn json_responses_keep_non_ascii_text_and_exact_decimals() {
-        let map = super::response_map(r#"{"name":"Zoë 🐘","price":12.50,"count":3}"#);
+        let map = super::response_map(r#"{"name":"Zoë 🐘","price":12.50,"count":3}"#).unwrap();
         assert_eq!(map.get("name").and_then(Value::as_str), Some("Zoë 🐘"));
         assert_eq!(
             map.get("price").map(moqui_lib::object::to_plain_string).as_deref(),
             Some("12.50")
         );
         assert_eq!(map.get("count"), Some(&Value::I64(3)));
-        let other = super::response_map("[1,2]");
+        let other = super::response_map("[1,2]").unwrap();
         assert!(matches!(other.get("response"), Some(Value::List(items)) if items.len() == 2));
-        let text = super::response_map("plain text");
-        assert_eq!(text.get("response").and_then(Value::as_str), Some("plain text"));
+        // As Java's `jsonObject()`, a body that is not a JSON object or array fails the call.
+        for body in ["plain text", "", "  ", "\"text\"", "3"] {
+            assert!(super::response_map(body).is_err(), "{body:?}");
+        }
+    }
+
+    /// As Java's `parametersMapToString`: only null parameters are left out of a GET query.
+    #[test]
+    fn a_get_query_has_every_parameter_that_is_not_null() {
+        let mut parameters = BTreeMap::new();
+        parameters.insert("blank".to_string(), Value::string(""));
+        parameters.insert(
+            "ids".to_string(),
+            Value::List(vec![Value::string("a"), Value::Null, Value::string("b")]),
+        );
+        parameters.insert("none".to_string(), Value::Null);
+        parameters.insert("note".to_string(), Value::string("a b"));
+        assert_eq!(super::encode_query(&parameters), "blank=&ids=a%2Cb&note=a%20b");
     }
 
     #[test]
@@ -225,6 +244,31 @@ mod tests {
         assert_eq!(super::choose_method(None, "delete"), Method::Delete);
         assert_eq!(super::choose_method(Some("PUT"), "send"), Method::Put);
         assert_eq!(super::choose_method(None, "send"), Method::Post);
+        assert_eq!(super::choose_method(Some("head"), "get"), Method::Head);
+        assert_eq!(super::choose_method(None, "options"), Method::Options);
+    }
+
+    /// As Java's `RestClient`, HEAD and OPTIONS carry no body, so parameters for one fail before anything is sent.
+    #[test]
+    fn head_and_options_take_no_body() {
+        let mut parameters = BTreeMap::new();
+        parameters.insert("note".to_string(), Value::string("kept"));
+        for method in ["HEAD", "OPTIONS"] {
+            let err = run_remote_rest(
+                "example.check#Item",
+                "http://127.0.0.1:1/items",
+                Some(method),
+                "check",
+                &parameters,
+                false,
+            )
+            .expect_err("no body");
+            assert!(
+                err.to_string()
+                    .contains(&format!("Cannot use body text with method {method}")),
+                "{err}"
+            );
+        }
     }
 
     #[test]
@@ -318,8 +362,42 @@ mod tests {
         assert_eq!(result.get("ok").and_then(Value::as_str), Some("yes"));
     }
 
+    /// A 2xx body that is not a JSON object or array fails the call, as Java's `jsonObject()`.
+    #[test]
+    #[cfg(feature = "http")]
+    fn a_success_that_is_not_json_fails_the_call() {
+        for payload in ["plain text", ""] {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let port = listener.local_addr().expect("addr").port();
+            let server = thread::spawn(move || serve_body(listener, payload));
+            let err = run_remote_rest(
+                "example.get#Item",
+                &format!("http://127.0.0.1:{port}/items"),
+                None,
+                "get",
+                &BTreeMap::from([("key".to_string(), Value::string("secret"))]),
+                false,
+            )
+            .expect_err("not JSON");
+            server.join().expect("server thread");
+            let shown = err.to_string();
+            assert!(
+                shown.contains(&format!(
+                    "Error parsing JSON response from request to http://127.0.0.1:{port}/items"
+                )),
+                "{shown}"
+            );
+            assert!(!shown.contains("secret"), "{shown}");
+        }
+    }
+
     #[cfg(feature = "http")]
     fn serve_one(listener: TcpListener) -> String {
+        serve_body(listener, r#"{"ok":"yes","enumTypeId":"DayOfWeek"}"#)
+    }
+
+    #[cfg(feature = "http")]
+    fn serve_body(listener: TcpListener, payload: &str) -> String {
         listener.set_nonblocking(true).expect("nonblocking");
         let started = Instant::now();
         let mut stream = loop {
@@ -336,7 +414,6 @@ mod tests {
         };
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
         let request = read_headers(&mut stream);
-        let payload = r#"{"ok":"yes","enumTypeId":"DayOfWeek"}"#;
         let header = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             payload.len()
@@ -491,7 +568,12 @@ mod tests {
                 false,
             )
             .expect_err("error status");
-            assert!(refused.to_string().contains("Remote service error 503"), "{refused}");
+            assert!(
+                refused
+                    .to_string()
+                    .contains("Remote service error 503: Service Unavailable"),
+                "{refused}"
+            );
             assert_eq!(status.seen.lock().unwrap().len(), 1);
             // In a context the error status is a message, and the call returns no results.
             let ctx = crate::context::ExecutionContextFactory::test_context();

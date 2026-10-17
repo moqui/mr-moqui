@@ -234,10 +234,137 @@ check "reload-save" 0 'Restored t1' -- "$M" reload-save t1
 check "reload-save restored db" 0 'dump of' -- cat "$R/runtime/db/embedded/data/restored"
 check "reload-save restored opensearch" 0 'index' -- cat "$R/runtime/opensearch/data/nodes/x"
 check "reload-save missing" 1 'no save named nope' -- "$M" reload-save nope
+# ========== tidy-cargo ==========
+# Two generations of one unit, an older unit with the same features and a different profile, an
+# unreadable fingerprint, an incremental crate with no deps file, and build-script runs whose
+# fingerprints carry no profile. Stamps are the mtimes tidy compares.
+
+tidy_json() {
+    # $1 file, $2 profile number. features and path match; only the profile distinguishes the unit.
+    printf '%s\n' '{"rustc":1,"features":"[\"http\"]","declared_features":"[\"http\"]","target":2,"profile":'"$2"',"path":3,"deps":[[1,"libc",false,4]],"local":[],"rustflags":[],"config":5,"compile_kind":0}' >"$1"
+}
+
+tidy_unit() {
+    # $1 hash, $2 profile, $3 stamp, $4 crate name
+    local hash=$1 profile=$2 stamp=$3 crate=$4
+    local fp=$R/target/debug/.fingerprint/$crate-$hash
+    mkdir -p "$fp" "$R/target/debug/deps" "$R/target/debug/build/$crate-$hash" "$R/target/debug/incremental/$crate-id$hash"
+    tidy_json "$fp/lib-$crate.json" "$profile"
+    echo stamp >"$fp/invoked.timestamp"
+    echo rlib >"$R/target/debug/deps/lib$crate-$hash.rlib"
+    echo built >"$R/target/debug/build/$crate-$hash/out"
+    echo session >"$R/target/debug/incremental/$crate-id$hash/session"
+    touch -d "$stamp" "$fp/invoked.timestamp" "$fp/lib-$crate.json" \
+        "$R/target/debug/deps/lib$crate-$hash.rlib" \
+        "$R/target/debug/build/$crate-$hash" \
+        "$R/target/debug/incremental/$crate-id$hash"
+}
+
+# $1 hash, $2 profile, $3 stamp, $4 dep fingerprint (decimal). A library cargo kept.
+tidy_bs_lib() {
+    local hash=$1 profile=$2 stamp=$3 dep3=$4
+    local fp=$R/target/debug/.fingerprint/bs-$hash
+    mkdir -p "$fp" "$R/target/debug/deps"
+    printf '%s\n' '{"rustc":1,"features":"[\"http\"]","declared_features":"[\"http\"]","target":2,"profile":'"$profile"',"path":3,"deps":[[1,"build_script_build",false,'"$dep3"']],"local":[],"rustflags":[],"config":5,"compile_kind":0}' >"$fp/lib-bs.json"
+    echo stamp >"$fp/invoked.timestamp"
+    echo rlib >"$R/target/debug/deps/libbs-$hash.rlib"
+    touch -d "$stamp" "$fp/invoked.timestamp" "$fp/lib-bs.json" "$R/target/debug/deps/libbs-$hash.rlib"
+}
+
+# $1 hash, $2 stamp, $3 16 hex digits. Cargo's run-build-script fingerprint: profile and features are 0.
+# The hex is the little-endian fingerprint file a library's build_script dep names.
+tidy_bs_run() {
+    local hash=$1 stamp=$2 hex=$3
+    local fp=$R/target/debug/.fingerprint/bs-$hash
+    mkdir -p "$fp" "$R/target/debug/build/bs-$hash"
+    printf '%s\n' '{"rustc":1,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[],"local":[],"rustflags":[],"config":0,"compile_kind":0}' >"$fp/run-build-script-build-script-build.json"
+    printf '%s' "$hex" >"$fp/run-build-script-build-script-build"
+    echo out >"$R/target/debug/build/bs-$hash/output"
+    touch -d "$stamp" "$fp/run-build-script-build-script-build.json" "$R/target/debug/build/bs-$hash"
+}
+
+OLD=aaaaaaaaaaaaaaaa
+NEW=bbbbbbbbbbbbbbbb
+OTHER=cccccccccccccccc
+BAD=dddddddddddddddd
+# Two live libraries, different profiles, each naming its own build-script run. The unreferenced
+# run is newer than both, which is the one newest-wins would have kept.
+BS1=1111111111111111
+BS2=2222222222222222
+RUN1=eeeeeeeeeeeeeeee
+RUN1B=4444444444444444
+RUN2=ffffffffffffffff
+RUNX=3333333333333333
+tidy_unit "$OLD" 9 '2020-01-01 00:00:00' demo
+tidy_unit "$NEW" 9 '2020-06-01 00:00:00' demo
+tidy_unit "$OTHER" 8 '2020-03-01 00:00:00' demo
+mkdir -p "$R/target/debug/.fingerprint/weird-$BAD" "$R/target/debug/deps"
+echo 'not json' >"$R/target/debug/.fingerprint/weird-$BAD/lib-weird.json"
+echo bad >"$R/target/debug/deps/libweird-$BAD.rlib"
+echo notes >"$R/target/debug/deps/notes.txt"
+echo debug-bin >"$R/target/debug/moqui"
+mkdir -p "$R/target/moqui-app/src" "$R/target/debug/incremental/orphan-older" "$R/target/debug/incremental/orphan-newer"
+echo app >"$R/target/moqui-app/src/main.rs"
+echo old >"$R/target/debug/incremental/orphan-older/x"
+echo new >"$R/target/debug/incremental/orphan-newer/x"
+touch -d '2020-07-01 00:00:00' "$R/target/debug/incremental/orphan-older"
+touch -d '2020-08-01 00:00:00' "$R/target/debug/incremental/orphan-newer"
+tidy_bs_lib "$BS1" 9 '2020-06-01 00:00:00' 1
+tidy_bs_lib "$BS2" 8 '2020-03-01 00:00:00' 2
+tidy_bs_run "$RUN1" '2020-01-01 00:00:00' 0100000000000000
+# Same fingerprint value as RUN1, different metadata hash. Both outputs belong to that library.
+tidy_bs_run "$RUN1B" '2020-02-01 00:00:00' 0100000000000000
+tidy_bs_run "$RUN2" '2020-06-01 00:00:00' 0200000000000000
+tidy_bs_run "$RUNX" '2020-09-01 00:00:00' 0300000000000000
+
+check "help tidy-cargo" 0 'keeps the current build' -- "$M" help tidy-cargo
+check "tidy-cargo args" 1 'takes no arguments' -- "$M" tidy-cargo extra
+
+if have flock; then
+    touch "$R/target/debug/.cargo-lock"
+    flock "$R/target/debug/.cargo-lock" sleep 60 &
+    lockpid=$!
+    sleep 1
+    check "tidy-cargo refuses a running build" 1 'a cargo build is using' -- "$M" tidy-cargo
+    kill "$lockpid" 2>/dev/null
+    wait "$lockpid" 2>/dev/null
+    rm -f "$R/target/debug/.cargo-lock"
+    check "tidy-cargo deleted nothing while locked" 0 '' -- test -f "$R/target/debug/deps/libdemo-$OLD.rlib"
+fi
+
+check "tidy-cargo dry run" 0 'would remove .* of old artifacts under target/' -- dry "$M" tidy-cargo
+check "tidy-cargo dry run kept the old rlib" 0 '' -- test -f "$R/target/debug/deps/libdemo-$OLD.rlib"
+check "tidy-cargo" 0 'removed .* of old artifacts under target/' -- "$M" tidy-cargo
+check "tidy-cargo warned on a bad fingerprint" 0 'not cargo fingerprint json' -- "$M" tidy-cargo
+check "tidy-cargo removed the old rlib" 1 '' -- test -e "$R/target/debug/deps/libdemo-$OLD.rlib"
+check "tidy-cargo removed the old fingerprint" 1 '' -- test -e "$R/target/debug/.fingerprint/demo-$OLD"
+check "tidy-cargo removed the old build dir" 1 '' -- test -e "$R/target/debug/build/demo-$OLD"
+check "tidy-cargo removed the old incremental dir" 1 '' -- test -e "$R/target/debug/incremental/demo-id$OLD"
+check "tidy-cargo kept the new rlib" 0 '' -- test -f "$R/target/debug/deps/libdemo-$NEW.rlib"
+check "tidy-cargo kept the new fingerprint" 0 '' -- test -d "$R/target/debug/.fingerprint/demo-$NEW"
+check "tidy-cargo kept the new incremental dir" 0 '' -- test -d "$R/target/debug/incremental/demo-id$NEW"
+check "tidy-cargo kept the other profile" 0 '' -- test -f "$R/target/debug/deps/libdemo-$OTHER.rlib"
+check "tidy-cargo kept the bad fingerprint" 0 '' -- test -f "$R/target/debug/deps/libweird-$BAD.rlib"
+check "tidy-cargo kept a deps file with no hash" 0 '' -- test -f "$R/target/debug/deps/notes.txt"
+check "tidy-cargo kept the newest orphan incremental dir" 0 '' -- test -d "$R/target/debug/incremental/orphan-newer"
+check "tidy-cargo removed the older orphan incremental dir" 1 '' -- test -e "$R/target/debug/incremental/orphan-older"
+check "tidy-cargo kept the debug binary" 0 'debug-bin' -- cat "$R/target/debug/moqui"
+check "tidy-cargo kept the release binary" 0 'stub:' -- head -n 5 "$R/target/release/moqui"
+check "tidy-cargo kept moqui-app" 0 'app' -- cat "$R/target/moqui-app/src/main.rs"
+check "tidy-cargo kept an older build-script run" 0 '' -- test -d "$R/target/debug/build/bs-$RUN1"
+check "tidy-cargo kept a run with the same fingerprint" 0 '' -- test -d "$R/target/debug/build/bs-$RUN1B"
+check "tidy-cargo kept the other build-script run" 0 '' -- test -d "$R/target/debug/build/bs-$RUN2"
+check "tidy-cargo kept the older run fingerprint" 0 '' -- test -d "$R/target/debug/.fingerprint/bs-$RUN1"
+check "tidy-cargo removed the unreferenced build-script run" 1 '' -- test -e "$R/target/debug/build/bs-$RUNX"
+check "tidy-cargo removed the unreferenced run fingerprint" 1 '' -- test -e "$R/target/debug/.fingerprint/bs-$RUNX"
+check "tidy-cargo kept both build-script libraries" 0 '' -- test -f "$R/target/debug/deps/libbs-$BS1.rlib" -a -f "$R/target/debug/deps/libbs-$BS2.rlib"
+check "tidy-cargo again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
+
 rm -f "$R/cargo.log"
 check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"
-check "clean-all ran cargo clean" 0 'cargo: clean$' -- cat "$R/cargo.log"
+check "clean-all did not run cargo clean" 1 '' -- test -f "$R/cargo.log"
+check "clean-all runs tidy-cargo" 0 '^tidy-cargo:' -- "$M" clean-all
 check "clean-all kept saves" 0 '' -- test -f "$R/runtime/save/t1/moqui.dump"
 check "load-save dry run" 0 'save-db .*runtime/save/demo/moqui.dump.part' -- dry "$M" load-save -n demo seed
 check "opensearch-start without install" 1 'no OpenSearch' -- "$M" opensearch-start

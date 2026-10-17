@@ -23,6 +23,16 @@ use crate::error::Error;
 use crate::node::{MNode, NodeInner};
 
 pub(crate) fn parse_document(location: Option<&str>, text: &str, root_only: bool) -> Result<MNode, Error> {
+    parse_document_with(location, text, root_only, false)
+}
+
+/// [`parse_document`], with `raw_text` keeping each element's text as written, whitespace included.
+pub(crate) fn parse_document_with(
+    location: Option<&str>,
+    text: &str,
+    root_only: bool,
+    raw_text: bool,
+) -> Result<MNode, Error> {
     let mut parser = Parser {
         src: text,
         index: 0,
@@ -30,6 +40,7 @@ pub(crate) fn parse_document(location: Option<&str>, text: &str, root_only: bool
         column: 1,
         file: location.filter(|value| !value.is_empty()).map(str::to_string),
         depth: 0,
+        raw_text,
     };
     parser.skip_bom();
     parser.skip_misc()?;
@@ -89,6 +100,7 @@ impl<'a> XmlEvents<'a> {
                 column: 1,
                 file: location.filter(|value| !value.is_empty()).map(str::to_string),
                 depth: 0,
+                raw_text: false,
             },
             open: Vec::new(),
             pending_end: None,
@@ -176,6 +188,8 @@ struct Parser<'a> {
     file: Option<String>,
     /// Elements open in `parse_element`, bounded by [`MAX_DEPTH`]: nesting recurses.
     depth: usize,
+    /// Keep element text as written. Otherwise it is trimmed, and whitespace only is no text, as Java's `MNode`.
+    raw_text: bool,
 }
 
 /// Deepest element nesting the tree parser accepts. A deeper document is an error, where recursing on it would
@@ -351,7 +365,9 @@ impl<'a> Parser<'a> {
             }
             text.push_str(&self.read_text()?);
         }
-        let text = {
+        let text = if self.raw_text {
+            Some(text).filter(|text| !text.is_empty())
+        } else {
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 None

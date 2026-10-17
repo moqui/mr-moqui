@@ -121,8 +121,22 @@ fn first_enter_sim_starts_the_overlay_and_stop_removes_it() {
     assert!(find_one(&facade, "moqui.test.TestEntity", "testId", "LAZY1").is_some());
     exit_sim(&facade).unwrap();
     assert!(find_one(&facade, "moqui.test.TestEntity", "testId", "LAZY1").is_none());
-    // A second sim reuses the running overlay.
+    // A second sim reuses the running overlay. A transaction that wrote to it and rolled back ends it, as Java's
+    // `TransactionCacheDb` poison: the sim write is not undone.
     enter_sim(&facade).unwrap();
+    facade.begin("moqui.test.TestEntity", None).unwrap();
+    create_test(&facade, "LAZY2", "sim");
+    facade.rollback("moqui.test.TestEntity").unwrap();
+    let err = facade
+        .find("moqui.test.TestEntity")
+        .unwrap()
+        .eq("testId", Value::string("LAZY2"))
+        .one()
+        .unwrap_err();
+    assert!(err.to_string().contains("terminated"), "{err}");
+    exit_sim(&facade).unwrap();
+    enter_sim(&facade).unwrap();
+    assert!(find_one(&facade, "moqui.test.TestEntity", "testId", "LAZY2").is_none());
     exit_sim(&facade).unwrap();
 
     drop(facade);

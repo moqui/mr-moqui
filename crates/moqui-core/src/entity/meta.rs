@@ -24,8 +24,9 @@ use std::sync::{Mutex, RwLock};
 
 use moqui_db::dialect::Dialect;
 use moqui_db::sql::{
-    add_column, create_fk_index, create_foreign_key, create_index, create_table, foreign_key_index_name,
-    foreign_key_name, fts_index_sql, is_mysql, is_sqlite, legacy_name, physical_column_name, physical_name,
+    add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index,
+    foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name, is_mysql, is_sqlite,
+    legacy_name, physical_column_name, physical_name,
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
@@ -506,7 +507,7 @@ fn apply(
     for name in names.iter().filter(|name| !missing.contains(name.as_str())) {
         ensure_columns(facade, conn, name, &mut counts);
         ensure_indexes(facade, conn, name, &existing, &mut counts);
-        ensure_fts(facade, conn, name, &mut counts);
+        ensure_fts(facade, conn, name, &existing, &mut counts);
     }
     if !skip_fk {
         if counts.tables_created > 0 {
@@ -660,17 +661,39 @@ fn ensure_indexes(
     }
 }
 
-fn ensure_fts(facade: &EntityFacade, conn: &mut dyn DbConnection, name: &str, counts: &mut Counts) {
+/// The full-text column and index of each `text-fts` field, as Java's `FtsDdl` (see [`fts_index_sql`]), skipped when
+/// the index is there. A database this port set up before has an index of another name and shape on the field
+/// ([`fts_old_index_name`]); it is dropped, so the field has one full-text index.
+fn ensure_fts(
+    facade: &EntityFacade,
+    conn: &mut dyn DbConnection,
+    name: &str,
+    existing: &HashSet<String>,
+    counts: &mut Counts,
+) {
     let statements = facade.with_entity(name, |entity, dialect, _| {
         let mut statements = Vec::new();
         for field in entity.fields.iter().filter(|field| field.field_type == "text-fts") {
+            let index = fts_index_name(entity, field, dialect).to_ascii_lowercase();
+            let old = fts_old_index_name(entity, field, dialect);
+            let drop_old = old.to_ascii_lowercase() != index && existing.contains(&old.to_ascii_lowercase());
+            let mut planned = Vec::new();
             match fts_index_sql(entity, field, dialect) {
-                Ok(Some(sql)) => statements.push((sql, field.name.clone())),
-                Ok(None) => {}
+                Ok(sql) if sql.is_empty() => continue,
+                Ok(_) if existing.contains(&index) => {}
+                Ok(sql) => planned.extend(sql),
                 Err(err) => {
                     tracing::error!(error = %err, "Could not build the full-text index on field {} of entity {name}", field.name);
                     counts.errors += 1;
+                    continue;
                 }
+            }
+            let creates = !planned.is_empty();
+            if drop_old {
+                planned.push(drop_fts_index(entity, &old, dialect));
+            }
+            if !planned.is_empty() {
+                statements.push((planned, creates, field.name.clone()));
             }
         }
         Ok(statements)
@@ -678,13 +701,10 @@ fn ensure_fts(facade: &EntityFacade, conn: &mut dyn DbConnection, name: &str, co
     let Some(statements) = planned(statements, "full-text indexes", name, counts) else {
         return;
     };
-    for (sql, field) in statements {
-        if run_statement(
-            conn,
-            &sql,
-            &format!("full-text index on field {field} of entity {name}"),
-            counts,
-        ) {
+    for (sql, creates, field) in statements {
+        let what = format!("full-text index on field {field} of entity {name}");
+        // The column, then its index, then the old index: a statement runs only after the one before it.
+        if sql.iter().all(|sql| run_statement(conn, sql, &what, counts)) && creates {
             counts.fts += 1;
             tracing::info!("Created full-text index on field {field} of entity {name}");
         }

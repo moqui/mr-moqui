@@ -1,6 +1,6 @@
 # Converting a Groovy component: the Mantle trial
 
-> Historical: this work later moved to the forks `moqui/mr-mantle-udm` and `moqui/mr-mantle-usl` (branch `master`), and the Spock flows are now JavaScript specs run by `moqui test` (see [MantleFlowTests](../MantleFlowTests.md)). Branch names and the Rust flow tests below are as they were then.
+> Historical: this work later moved to the forks `moqui/mr-mantle-udm` and `moqui/mr-mantle-usl` (branch `master`), and the Spock flows are now JavaScript specs run by `moqui test` (see [MantleFlowTests](MantleFlowTests.md)). Branch names and the Rust flow tests below are as they were then.
 
 This is how `mantle-udm` and `mantle-usl` were converted until all their data loads into MR-Moqui. The goal was every data type with entity ECA rules on. Services and screens that the load never reaches were not ported. The work happened on 2026-10-14, on the `mr-moqui-temp` branch of each repository in `runtime/component`. Each repository has two commits: the converter's output, then the hand ports on top, so the two can be reviewed separately.
 
@@ -209,7 +209,7 @@ Phase 0a of the next round. Rules added to `moqui convert --groovy`, run on `man
 
 Every service file of mantle-usl is now hand ported. `moqui lint --groovy runtime/component/mantle-usl` reports 0 parse failures (582 before this iteration); the idiom sites left (about 430) are lint false positives such as decimal `.add(`, `new Date`, and `?.`. The data load is unchanged (8136 records, exit 0). Drools/KIE was removed from the component rather than ported (the `kie/` module, the `ProductPriceKS` registration and service, and the KIE call in `get#OrderShippingRateLocal`).
 
-The work ran in phases, each worker owning disjoint files and committing by path: ECA and data files; small services; medium services; then the six large files (`OrderServices`, `ReturnServices`, `PaymentServices`, `InvoiceServices`, `ShipmentServices`, `AssetServices`). A framework worker added the host features the ports needed, and flow workers then ran the Spock flows (`plans/MantleFlowTests.md`) and fixed what lint cannot see. Eight flows pass in Rust; `OrderTenantAccess` (data commented out), `RestApiTests` (the `s1/mantle` screen cases need a ScreenTest harness) and `MantleUslSuite` stay ignored.
+The work ran in phases, each worker owning disjoint files and committing by path: ECA and data files; small services; medium services; then the six large files (`OrderServices`, `ReturnServices`, `PaymentServices`, `InvoiceServices`, `ShipmentServices`, `AssetServices`). A framework worker added the host features the ports needed, and flow workers then ran the Spock flows (`plans/archive/MantleFlowTests.md`) and fixed what lint cannot see. Eight flows pass in Rust; `OrderTenantAccess` (data commented out), `RestApiTests` (the `s1/mantle` screen cases need a ScreenTest harness) and `MantleUslSuite` stay ignored.
 
 What lint does not catch, found only by running (check these first in any further port):
 
@@ -241,7 +241,7 @@ Bugs the new specs found, all in the ports or the host (the lint could not see t
 
 ## Seventh iteration: more specs, and the host gaps they found (2026-10-16)
 
-The coverage went from 459 to 751 of 762 services called (344 features in 43 specs) with the specs in [MantleFlowTests](../MantleFlowTests.md). The 11 services left need a network, belong to the deprecated multi-tenant mode, or are upstream stubs; [Remaining-Work](../Remaining-Work.md) names them. `moqui lint --groovy` is still at 0 flagged sites over 83 files.
+The coverage went from 459 to 751 of 762 services called (344 features in 43 specs) with the specs in [MantleFlowTests](MantleFlowTests.md). The 11 services left need a network, belong to the deprecated multi-tenant mode, or are upstream stubs; [Remaining-Work](../Remaining-Work.md) names them. `moqui lint --groovy` is still at 0 flagged sites over 83 files.
 
 Host bugs the specs found and fixed (each has a unit test):
 

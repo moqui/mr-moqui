@@ -25,7 +25,7 @@ use std::sync::Arc;
 use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
 
-/// The methods `remote-rest` sends.
+/// The methods `remote-rest` sends, those of Java's `RestClient.Method`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Get,
@@ -33,6 +33,8 @@ pub enum Method {
     Put,
     Patch,
     Delete,
+    Head,
+    Options,
 }
 
 impl Method {
@@ -44,6 +46,8 @@ impl Method {
             "PUT" => Some(Self::Put),
             "PATCH" => Some(Self::Patch),
             "DELETE" => Some(Self::Delete),
+            "HEAD" => Some(Self::Head),
+            "OPTIONS" => Some(Self::Options),
             _ => None,
         }
     }
@@ -55,6 +59,8 @@ impl Method {
             Self::Put => "PUT",
             Self::Patch => "PATCH",
             Self::Delete => "DELETE",
+            Self::Head => "HEAD",
+            Self::Options => "OPTIONS",
         }
     }
 }
@@ -137,6 +143,8 @@ fn send_default(request: Request) -> Result<Response, Error> {
         Method::Put => moqui_lib::http::Method::Put,
         Method::Patch => moqui_lib::http::Method::Patch,
         Method::Delete => moqui_lib::http::Method::Delete,
+        Method::Head => moqui_lib::http::Method::Head,
+        Method::Options => moqui_lib::http::Method::Options,
     };
     let mut call = crate::service::shared_http_client().request(method, request.url);
     let content_type = request
@@ -170,6 +178,41 @@ fn send_default(request: Request) -> Result<Response, Error> {
         request.method,
         redacted(&request.url)
     )))
+}
+
+/// The standard reason phrase of an HTTP status; the transport does not pass the server's own.
+pub fn reason_phrase(status: u16) -> &'static str {
+    match status {
+        100 => "Continue",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
+        422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
+    }
 }
 
 /// `scheme://host/path` with no user, password, query, or fragment, for messages and logs.

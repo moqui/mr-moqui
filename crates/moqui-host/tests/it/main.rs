@@ -24,6 +24,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod backup;
 mod cluster_notify;
 mod elfinder;
 mod entity_cache;

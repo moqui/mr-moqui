@@ -46,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Footer items -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="200" resourceTypeEnumId="STRT_FOOTER_ITEM">
-        <resourceValue><![CDATA[<div class="col-md-6 text-center q-px-md"><a class="text-grey-1" href="https://www.moqui.org/" target="_blank">${ec.resource.expand('Built on Moqui ${ec.factory.moquiVersion}', '')}</a></div>]]></resourceValue>
+        <resourceValue><![CDATA[<div class="col-md-6 text-center q-px-md"><a class="text-grey-1" href="https://www.moqui.org/" target="_blank">${ec.resource.expand('Built on MR Moqui ${ec.factory.moquiVersion}', '')}</a></div>]]></resourceValue>
     </moqui.screen.ScreenThemeResource>
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="201" resourceTypeEnumId="STRT_FOOTER_ITEM">
         <resourceValue><![CDATA[<div class="col-md-6 text-center q-px-md"><a class="text-grey-1" href="/qapps/ScreenTree">${ec.l10n.localize('Site Map')}</a></div>]]></resourceValue>

@@ -261,8 +261,10 @@ impl HostService {
         })
     }
 
-    /// Run the service. A failure is added to the message facade and the result is null, so the
-    /// generated code's `hasError()` check decides, as in the Java call builder.
+    /// Run the service. As Java's, a failure of its body is in the message facade and the result is the results as
+    /// they were, empty. An authorization failure is thrown, with its kind, as Java's `ArtifactAuthorizationException`
+    /// passes through the script. Another error of the call, which Java throws too (an unknown service), is added to the
+    /// message facade and the result is null. Either way the generated code's `hasError()` check decides.
     fn call<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
             // The callee may read or change the caller's names, so they are written back first.
@@ -282,15 +284,10 @@ impl HostService {
             };
             match called {
                 Ok(results) => host_to_js(&ctx, Value::Map(results.into_iter().collect())),
+                Err(err) if err.kind() == ErrorKind::Unauthorized => Err(throw_context(&ctx, &err)),
                 Err(err) => {
-                    let message = err.message().to_string();
-                    // The call already recorded its own failure as a message.
-                    with_ec(&ctx, |ec| {
-                        let known = ec.message().errors().iter().any(|text| text == &message);
-                        if !known {
-                            ec.message().add_error(message);
-                        }
-                    })?;
+                    let message = err.diagnostic();
+                    with_ec(&ctx, |ec| ec.message().add_error(message))?;
                     Null.into_js(&ctx)
                 }
             }
@@ -331,7 +328,7 @@ impl HostFuture {
                     &ctx,
                     "the service call did not finish in time",
                 )),
-                Err(err) => Err(Exception::throw_message(&ctx, err.message())),
+                Err(err) => Err(throw_context(&ctx, &err)),
             }
         })
     }

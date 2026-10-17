@@ -69,6 +69,7 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
     let mut email = Vec::new();
     let (mut seca_files, mut email_files, mut no_id, mut skipped) = (0_usize, 0_usize, 0_usize, 0_usize);
     let facade = factory.entity();
+    let mut known_services = None;
     let started = std::time::Instant::now();
     for component in factory.components() {
         let dir = component.location.join("service");
@@ -101,7 +102,7 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
                             continue;
                         }
                     };
-                    if !rule.service_defined(facade.as_ref()) {
+                    if !rule.service_defined(facade.as_ref(), &mut known_services) {
                         tracing::warn!(
                             "Invalid service name {} found in SECA file {}, skipping",
                             node.attribute("service").unwrap_or_default(),

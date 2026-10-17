@@ -515,6 +515,8 @@ pub(crate) struct Column {
     /// The field's Java type when the entity or view knows it. A text value compared to a date, time, or number
     /// field is converted to it before binding, as Java's condition does with the field type.
     pub java_type: Option<String>,
+    /// The generated full-text column of a `text-fts` field of a plain entity, Java's `{column}_tsv` on Postgres.
+    pub fts: Option<String>,
 }
 
 impl Column {
@@ -526,6 +528,7 @@ impl Column {
             sql,
             text: None,
             java_type: None,
+            fts: None,
         }
     }
 
@@ -654,6 +657,8 @@ impl<'a> Writer<'a> {
                 Ok(())
             }
             Condition::Where(sql) => {
+                // Wrapped, where Java appends the fragment as it is, so an `OR` in it cannot bind across the conditions
+                // around it.
                 self.push("(");
                 self.push(sql);
                 self.push(")");
@@ -807,10 +812,15 @@ impl<'a> Writer<'a> {
         match self.dialect.fts_style.as_deref() {
             Some("postgres-tsvector") => {
                 let config = fts_config(self.dialect)?;
-                self.push(&format!(
-                    "to_tsvector('{config}', {}) @@ plainto_tsquery('{config}', ",
-                    column.sql
-                ));
+                // A `text-fts` field searches its generated column, which has the GIN index, as Java's `FtsSql`. Any
+                // other column (a view alias, an expression) has none, so the vector is computed.
+                match &column.fts {
+                    Some(tsv) => self.push(&format!("{tsv} @@ plainto_tsquery('{config}', ")),
+                    None => self.push(&format!(
+                        "to_tsvector('{config}', {}) @@ plainto_tsquery('{config}', ",
+                        column.sql
+                    )),
+                }
                 self.bind(value);
                 self.push(")");
                 Ok(())
@@ -930,6 +940,7 @@ mod typed_tests {
             sql: "\"f\"".to_string(),
             text: Some(false),
             java_type: Some(java_type.to_string()),
+            fts: None,
         }
     }
 

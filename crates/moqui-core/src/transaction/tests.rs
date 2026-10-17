@@ -20,6 +20,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
+use crate::testing::LogSubscriber;
 
 use super::{PoolConfig, TransactionAttribute, TransactionManager};
 
@@ -442,7 +443,7 @@ fn check_caps_allows_40_and_rejects_80() {
 fn statement_error_marks_rollback_only_and_commit_rolls_back() {
     let (mgr, driver) = harness(small());
     let _clean = Clean(&mgr);
-    driver.shared.fail_at.store(2, Ordering::SeqCst);
+    driver.shared.fail_at.store(1, Ordering::SeqCst);
     assert!(mgr.begin(None).expect("begin"));
     let err = mgr.with_connection(|conn| conn.execute("boom", &[])).expect_err("boom");
     assert!(err.to_string().contains("boom"), "{err}");
@@ -560,6 +561,28 @@ fn reserve_work_does_not_take_the_enlisted_connection() {
 }
 
 #[test]
+fn fresh_connections_run_application_sql_before_any_checkout_test() {
+    let (mgr, driver) = harness(small());
+    let _clean = Clean(&mgr);
+    mgr.with_connection(|conn| conn.query_once("metadata-probe", &[]))
+        .expect("ordinary connect");
+    mgr.with_reserve(|conn| conn.query_once("reserve-metadata-probe", &[]))
+        .expect("reserve connect");
+    assert_eq!(driver.connects(), 2);
+    assert_eq!(driver.event_count("sql:SELECT 1"), 0);
+    assert_eq!(driver.event_count("sql:metadata-probe"), 1);
+    assert_eq!(driver.event_count("sql:reserve-metadata-probe"), 1);
+    assert_eq!(mgr.stats().ordinary_idle, 1);
+    assert_eq!(mgr.stats().reserve_idle, 1);
+    assert_eq!(mgr.stats().checked_out, 0);
+
+    mgr.with_connection(|_| Ok(())).expect("ordinary reuse");
+    mgr.with_reserve(|_| Ok(())).expect("reserve reuse");
+    assert_eq!(driver.connects(), 2);
+    assert_eq!(driver.event_count("sql:SELECT 1"), 2);
+}
+
+#[test]
 fn failed_checkout_test_discards_the_idle_connection() {
     let (mgr, driver) = harness(small());
     let _clean = Clean(&mgr);
@@ -601,7 +624,7 @@ fn idle_connections_past_the_idle_time_close_down_to_min() {
 }
 
 #[test]
-fn checkout_runs_the_configured_test_query() {
+fn idle_checkout_runs_the_configured_test_query() {
     let config = PoolConfig {
         test_query: Some("SELECT 42".to_string()),
         ..small()
@@ -609,8 +632,9 @@ fn checkout_runs_the_configured_test_query() {
     let (mgr, driver) = harness(config);
     let _clean = Clean(&mgr);
     mgr.with_connection(|_| Ok(())).expect("connect");
+    assert_eq!(driver.event_count("sql:SELECT 42"), 0);
     mgr.with_connection(|_| Ok(())).expect("reuse");
-    assert_eq!(driver.event_count("sql:SELECT 42"), 2);
+    assert_eq!(driver.event_count("sql:SELECT 42"), 1);
     assert_eq!(driver.event_count("sql:SELECT 1"), 0);
 }
 
@@ -895,41 +919,6 @@ fn lock_track_warns_only_for_overlapping_transactions() {
     });
     let text = lines.lock().expect("lines").join("\n");
     assert!(text.contains("same entity primary key"), "{text}");
-}
-
-struct LogSubscriber(Arc<Mutex<Vec<String>>>);
-
-impl tracing::Subscriber for LogSubscriber {
-    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-
-    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut visit = FieldVisit(String::new());
-        event.record(&mut visit);
-        self.0.lock().expect("lines").push(visit.0);
-    }
-
-    fn enter(&self, _span: &tracing::span::Id) {}
-
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-struct FieldVisit(String);
-
-impl tracing::field::Visit for FieldVisit {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        use std::fmt::Write as _;
-        let _ = write!(self.0, "{}={:?} ", field.name(), value);
-    }
 }
 
 #[test]

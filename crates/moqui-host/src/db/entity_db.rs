@@ -57,6 +57,13 @@ impl EntityDb {
     pub fn is_embedded(&self) -> bool {
         self.conf.kind == DatasourceKind::Embedded
     }
+
+    /// `pg_dump` / `pg_basebackup` coordinates when this process runs the postmaster.
+    #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
+    #[must_use]
+    pub fn tool_target(&self) -> Option<super::embedded::ToolTarget> {
+        self.cluster.as_ref().map(|cluster| cluster.tool_connect("moqui"))
+    }
 }
 
 impl Drop for EntityDb {

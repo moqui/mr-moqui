@@ -109,6 +109,10 @@ selected by entity_ds_db_conf. The usual directory is runtime/db/embedded.
 ./moq save-db also copies OpenSearch data. This command does not.
 
   moqui save-db runtime/db/embedded runtime/save/before-upgrade/moqui.dump
+
+The job backup_EmbeddedDatabase_daily takes this same kind of dump while Moqui is running and rotates
+the archives. Stop Moqui before load-save of that dump onto a cluster Moqui is using. A physical or
+incremental archive is restored with the cluster stopped. See plans/PostgresBackup.md.
 ";
 
 const LOAD_SAVE: &str = "\
@@ -121,6 +125,9 @@ command started. A postmaster that was already running keeps running. This is th
 only. The usual directory is runtime/db/embedded.
 
   moqui load-save runtime/db/embedded runtime/save/before-upgrade/moqui.dump
+
+Stop Moqui before restoring a dump from backup_EmbeddedDatabase_daily onto a cluster it is using.
+A physical or incremental archive is restored with the cluster stopped. See plans/PostgresBackup.md.
 ";
 
 const LINT: &str = "\

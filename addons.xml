@@ -42,8 +42,10 @@
     <!-- Mantle Business Artifact Components, as the mr- forks (moqui/mr-mantle-udm, moqui/mr-mantle-usl; no MR Moqui releases yet) -->
     <component name="mr-mantle-udm" group="moqui" version="" branch="master"/>
     <component name="mr-mantle-usl" group="moqui" version="" branch="master"/>
+    <component name="MrSimpleScreens" group="moqui" version="" branch="master"/>
     <!-- Applications -->
     <component name="ironstone-boss" group="moqui" version="" branch="master"/>
+    <component name="MrMarbleERP" group="moqui" version="" branch="master"/>
 
     <!-- Component Sets -->
     <component-set name="mantle" components="mantle-udm,mantle-usl"/>

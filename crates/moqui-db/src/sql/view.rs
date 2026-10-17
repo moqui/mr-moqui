@@ -604,6 +604,7 @@ impl<'a> Renderer<'a> {
                 sql: self.member_column(entity_alias, &field.name)?,
                 text: entity.java_type_of(&field.name).map(is_text_java_type),
                 java_type: entity.java_type_of(&field.name).map(str::to_string),
+                fts: None,
             });
         }
         let alias = self
@@ -621,6 +622,7 @@ impl<'a> Renderer<'a> {
             sql,
             text: (!alias.java_type.is_empty()).then(|| is_text_java_type(&alias.java_type)),
             java_type: (!alias.java_type.is_empty()).then(|| alias.java_type.clone()),
+            fts: None,
         })
     }
 
@@ -1130,6 +1132,7 @@ impl<'a> Renderer<'a> {
                     sql: column(&field.name)?,
                     text: entity.field(&field.name).map(|definition| definition.is_text()),
                     java_type: entity.java_type_of(&field.name).map(str::to_string),
+                    fts: None,
                 })
             };
             let mut inner = Writer::new(self.dialect);

@@ -30,8 +30,11 @@ use crate::context::Error;
 /// How often the thread looks at the stop flag. A pass runs every `check_interval`.
 const SLICE: Duration = Duration::from_millis(250);
 
+/// Java's wait before the first job pass, "to make sure all is loaded and we're past an initial activity burst".
+const INITIAL_DELAY: Duration = Duration::from_secs(120);
+
 pub(crate) fn scheduler_loop(shared: Arc<Shared>) {
-    let mut last_pass = Instant::now();
+    let mut clock = Clock::new(Instant::now(), shared.job_runner, shared.check_interval);
     loop {
         {
             let state = lock(&shared.state);
@@ -46,12 +49,49 @@ pub(crate) fn scheduler_loop(shared: Arc<Shared>) {
                 return;
             }
         }
-        if last_pass.elapsed() >= shared.check_interval {
-            last_pass = Instant::now();
-            let _cleanup = super::pool::WorkCleanup::new(shared.factory());
+        let (jobs, hooks) = clock.due(Instant::now());
+        if !jobs && !hooks {
+            continue;
+        }
+        let _cleanup = super::pool::WorkCleanup::new(shared.factory());
+        if jobs {
             super::jobs::run_scheduled(&shared);
+        }
+        if hooks {
             super::pool::run_tick_hook(&shared);
         }
+    }
+}
+
+/// When the scheduler runs a job pass and the tick hooks. Job passes are Java's `scheduleAtFixedRate(jobRunner, 120,
+/// rate)`: the first after [`INITIAL_DELAY`], then every interval, and none without a job runner. The tick hooks (the
+/// cluster heartbeat) are this port's own, so they run every interval from the start.
+struct Clock {
+    next_jobs: Option<Instant>,
+    last_hooks: Instant,
+    interval: Duration,
+}
+
+impl Clock {
+    fn new(start: Instant, job_runner: bool, interval: Duration) -> Self {
+        Self {
+            next_jobs: job_runner.then(|| start + INITIAL_DELAY),
+            last_hooks: start,
+            interval,
+        }
+    }
+
+    /// Whether a job pass and the hooks are due at `now`; each that is is counted as run.
+    fn due(&mut self, now: Instant) -> (bool, bool) {
+        let jobs = self.next_jobs.is_some_and(|at| now >= at);
+        if jobs {
+            self.next_jobs = Some(now + self.interval);
+        }
+        let hooks = now.duration_since(self.last_hooks) >= self.interval;
+        if hooks {
+            self.last_hooks = now;
+        }
+        (jobs, hooks)
     }
 }
 
@@ -101,6 +141,23 @@ mod tests {
     use crate::context::{ExecutionContext, ExecutionContextFactory};
     use crate::entity::EntityFacade;
 
+    /// As Java's `scheduleAtFixedRate(jobRunner, 120, rate)`, the first job pass waits 120 seconds; the hooks do not.
+    #[test]
+    fn the_first_job_pass_waits_the_initial_delay_and_none_runs_without_a_runner() {
+        let start = Instant::now();
+        let minute = Duration::from_secs(60);
+        let mut clock = super::Clock::new(start, true, minute);
+        assert_eq!(clock.due(start + Duration::from_secs(30)), (false, false));
+        assert_eq!(clock.due(start + Duration::from_secs(61)), (false, true));
+        assert_eq!(clock.due(start + Duration::from_secs(120)), (true, false));
+        assert_eq!(clock.due(start + Duration::from_secs(150)), (false, true));
+        assert_eq!(clock.due(start + Duration::from_secs(170)), (false, false));
+        assert_eq!(clock.due(start + Duration::from_secs(181)), (true, false));
+        let mut off = super::Clock::new(start, false, minute);
+        assert_eq!(off.due(start + Duration::from_secs(61)), (false, true));
+        assert_eq!(off.due(start + Duration::from_secs(600)), (false, true));
+    }
+
     #[test]
     fn quartz_patterns_parse_and_describe() {
         parse_cron("0 0/15 * * * ?").unwrap();
@@ -132,6 +189,7 @@ mod tests {
     fn full_queue_call_future_returns_immediately() {
         let ctx = ExecutionContextFactory::test_context();
         let _entered = ctx.enter();
+        register_echo();
         let pools = ServicePools::bounded(1, 1);
         let hold = Hold::new();
         fill_queue(&pools, &hold);
@@ -190,17 +248,36 @@ mod tests {
         let pools = super::super::start_pools(&text).unwrap();
         assert_eq!(pools.sizes(), (30, 65_535));
         drop(pools);
+        // With no `worker-queue`, Java's code default.
         let missing = super::super::start_pools("<moqui-conf/>").unwrap();
-        assert_eq!(missing.sizes(), (30, 65_535));
+        assert_eq!(missing.sizes(), (30, 65_536));
         drop(missing);
         let junk = super::super::start_pools(
             r#"<moqui-conf><tools worker-pool-max="nope" worker-queue="nope"/></moqui-conf>"#,
         )
         .unwrap();
-        assert_eq!(junk.sizes(), (30, 65_535));
+        assert_eq!(junk.sizes(), (30, 65_536));
         drop(junk);
         let none = super::super::start_pools(r#"<moqui-conf><tools worker-pool-max="0"/></moqui-conf>"#);
         assert!(none.is_err(), "a pool with no workers can never run anything");
+    }
+
+    /// As Java, `scheduled-job-check-time="0"` starts no job runner; the tick hooks keep the default interval.
+    #[test]
+    fn a_check_time_of_zero_runs_no_job_passes() {
+        let off =
+            super::super::start_pools(r#"<moqui-conf><service-facade scheduled-job-check-time="0"/></moqui-conf>"#)
+                .unwrap();
+        assert_eq!(off.runner_stats(), None, "no job runner");
+        assert_eq!(off.check_interval(), Duration::from_secs(60));
+        assert_eq!(off.tick().jobs_run, 0);
+        assert_eq!(off.runner_stats(), None, "a tick runs no job pass");
+        drop(off);
+        let on =
+            super::super::start_pools(r#"<moqui-conf><service-facade scheduled-job-check-time="5"/></moqui-conf>"#)
+                .unwrap();
+        assert!(on.runner_stats().is_some());
+        assert_eq!(on.check_interval(), Duration::from_secs(5));
     }
 
     // ---- scheduled jobs ----------------------------------------------------------------------
@@ -339,7 +416,64 @@ mod tests {
             .expect("the lock row");
         assert_eq!(text(&lock, "jobRunId"), "", "the lock is cleared after the run");
         assert!(!text(&lock, "lastRunTime").is_empty());
-        assert_eq!(runs(&world, "J1").len(), 1);
+        let history = runs(&world, "J1");
+        assert_eq!(history.len(), 1);
+        // As Java's `ServiceCallJobImpl`, the run records the host it ran on.
+        assert!(!text(&history[0], "hostAddress").is_empty());
+        assert!(!text(&history[0], "hostName").is_empty());
+        assert!(!text(&history[0], "runThread").is_empty());
+    }
+
+    /// As Java's `ScheduledJobRunner`, a run that cannot be started once the lock is taken is kept as a failed run, and
+    /// the lock is cleared with this pass's run time.
+    #[test]
+    fn a_run_that_cannot_be_started_is_recorded_as_failed() {
+        let world = jobs_world(1, 4);
+        let _entered = world.ctx.enter();
+        let _authz = world.ctx.disable_authz();
+        add_job(&world, "NOSTART", "echo#Note", "* * * * * *", &[]);
+        let pools = world.ctx.factory().service_pools();
+        // A stopped pool takes no job run.
+        pools.shutdown();
+        let report = pools.tick();
+        assert_eq!(report.jobs_run, 1, "{report:?}");
+        let history = runs(&world, "NOSTART");
+        assert_eq!(history.len(), 1, "the run row is kept");
+        assert_eq!(text(&history[0], "hasError"), "Y");
+        assert!(!text(&history[0], "errors").is_empty());
+        assert!(!text(&history[0], "endTime").is_empty());
+        let lock = world
+            .facade
+            .find("moqui.service.job.ServiceJobRunLock")
+            .unwrap()
+            .eq("jobName", Value::string("NOSTART"))
+            .one()
+            .unwrap()
+            .expect("the lock row");
+        assert_eq!(text(&lock, "jobRunId"), "");
+        assert!(!text(&lock, "lastRunTime").is_empty());
+    }
+
+    /// As Java's `ScheduledJobRunner`, the runner's counters are updated after a pass that failed.
+    #[test]
+    fn a_failed_pass_is_still_counted() {
+        let world = jobs_world(1, 4);
+        // A database with no service job entities: the pass fails before it looks at a job.
+        let dir = std::env::temp_dir().join(format!("moqui-no-job-entities-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("entity")).unwrap();
+        std::fs::create_dir_all(dir.join("conf")).unwrap();
+        std::fs::copy(
+            framework_dir().join("conf/MoquiDefaultConf.xml"),
+            dir.join("conf/MoquiDefaultConf.xml"),
+        )
+        .unwrap();
+        world.ctx.factory().set_entity(crate::testing::open_at(&dir));
+        let pools = world.ctx.factory().service_pools();
+        assert_eq!(pools.tick(), super::super::jobs::PassReport::default());
+        let stats = pools.runner_stats().expect("a job runner");
+        assert_eq!(stats.execute_count, 1);
+        assert!(stats.last_execute_millis > 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// As Java's `ScheduledJobRunner`, a job whose cron pattern does not parse is logged and skipped, and the jobs
@@ -510,7 +644,9 @@ mod tests {
         let _entered = world.ctx.enter();
         let _authz = world.ctx.disable_authz();
         let pools = world.ctx.factory().service_pools();
-        pools.submit("nothing#Registered", &BTreeMap::new()).unwrap();
+        // An unknown service is an error at once, as Java's `validateCall`; one that fails as it runs is logged.
+        assert!(pools.submit("nothing#Registered", &BTreeMap::new()).is_err());
+        pools.submit("fail#Always", &BTreeMap::new()).unwrap();
         let mut params = BTreeMap::new();
         params.insert("note".into(), Value::string("after-failure"));
         pools.submit("markOpen#Row", &params).unwrap();

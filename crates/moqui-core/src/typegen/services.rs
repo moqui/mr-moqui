@@ -40,7 +40,7 @@ fn expand(
     let mut out = Vec::new();
     for param in params {
         let Some(auto) = param.auto.as_ref().filter(|_| param.name.is_empty()) else {
-            out.push(param.clone());
+            crate::service::merge_param(&mut out, param.clone());
             continue;
         };
         let expanded = crate::service::auto_entity_name(def, auto).and_then(|name| {
@@ -49,7 +49,11 @@ fn expand(
             Ok(crate::service::auto_fields(auto, entity, model))
         });
         match expanded {
-            Ok(params) => out.extend(params),
+            Ok(params) => {
+                for param in params {
+                    crate::service::merge_param(&mut out, param);
+                }
+            }
             Err(err) => notes.push(format!("{}: auto-parameters: {err}", def.name)),
         }
     }

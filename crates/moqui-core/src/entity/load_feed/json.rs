@@ -24,8 +24,8 @@ use moqui_lib::object::Value;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 
 use super::loader::{
-    apply_default_parameters, apply_default_values, apply_key_pairs, call_data_file_service, decode_binary,
-    entity_defined, inherit_pk_fields, shape_of, shared_pks, skip_type, store_record, Record,
+    apply_default_parameters, apply_default_values, apply_key_pairs, call_data_file_service, data_service_name,
+    decode_binary, entity_defined, inherit_pk_fields, shape_of, shared_pks, skip_type, store_record, Record,
 };
 use super::pull::Pull;
 use super::{DataFileService, LoadOptions};
@@ -117,9 +117,9 @@ fn load_json_document(facade: &EntityFacade, location: &str, value: Json, option
         let mut record = json_record(facade, &entity_name, &pairs)?;
         apply_default_values(facade, options, &mut record);
         store_record(facade, options, &record)
-    } else if entity_name.contains('#') {
+    } else if let Some(name) = data_service_name(&entity_name) {
         let mut service = DataFileService {
-            name: entity_name,
+            name,
             location: location.to_string(),
             parameters: json_service_parameters(&pairs)?,
         };
@@ -284,8 +284,11 @@ fn json_scalar_string(value: &Json) -> Option<String> {
 
 fn json_field_value(field_type: &str, value: &Json) -> Result<Option<Value>, Error> {
     match value {
-        Json::Null => Ok(None),
-        Json::String(text) if text.is_empty() => Ok(None),
+        // Java puts a null or empty value as null, so a store clears the column.
+        Json::Null => Ok(Some(Value::Null)),
+        Json::String(text) if text.is_empty() => Ok(Some(Value::Null)),
+        // Base64, as this port's data writer writes bytes in JSON, so the two round-trip; Java's JSON reader stores the
+        // text's UTF-8 bytes, and its writer has no text form for bytes. Text that is not Base64 is its UTF-8 bytes.
         Json::String(text) if field_type == "binary-very-long" => Ok(Some(Value::Bytes(decode_binary(text)))),
         Json::String(text) => Ok(Some(Value::string(text))),
         Json::Bool(flag) => Ok(Some(Value::Bool(*flag))),

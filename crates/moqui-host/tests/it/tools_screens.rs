@@ -42,12 +42,22 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.sync.EntitySync entitySyncId="GATE_SYNC" description="Gate sync" statusId="EsNotStarted" forPull="N"/>
     <moqui.server.Visit visitId="GATE_VISIT" userId="EX_JOHN_DOE" clientIpAddress="127.0.0.1" fromDate="2026-01-02 03:04:05"/>
     <moqui.server.instance.AppInstance appInstanceId="GATE_AI" instanceName="gate" hostName="gate.example"/>
+    <moqui.basic.EnumerationType enumTypeId="GateEnumType" description="Gate enum type"/>
+    <moqui.basic.Enumeration enumId="GATE_ENUM" enumTypeId="GateEnumType" description="Gate enum"/>
     <moqui.entity.view.DbViewEntity dbViewEntityName="GateView" packageName="gate.view" isDataView="Y"/>
     <moqui.entity.view.DbViewEntityMember dbViewEntityName="GateView" entityAlias="MASTER" entityName="moqui.basic.Enumeration"/>
+    <moqui.entity.view.DbViewEntityMember dbViewEntityName="GateView" entityAlias="MEMBER1" entityName="moqui.basic.EnumerationType"
+        joinFromAlias="MASTER" joinOptional="Y"/>
+    <moqui.entity.view.DbViewEntityKeyMap dbViewEntityName="GateView" joinFromAlias="MASTER" entityAlias="MEMBER1" fieldName="enumTypeId"/>
+    <moqui.entity.view.DbViewEntityAlias dbViewEntityName="GateView" fieldAlias="enumId" entityAlias="MASTER" fieldName="enumId"/>
+    <moqui.entity.view.DbViewEntityAlias dbViewEntityName="GateView" fieldAlias="description" entityAlias="MASTER" fieldName="description"/>
+    <moqui.entity.view.DbViewEntityAlias dbViewEntityName="GateView" fieldAlias="description2" entityAlias="MEMBER1" fieldName="description"/>
     <moqui.entity.document.DataDocument dataDocumentId="GateDoc" documentName="Gate Document" primaryEntityName="moqui.basic.Enumeration"
         indexName="gate"/>
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="01" fieldPath="enumId"/>
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="02" fieldPath="description"/>
+    <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="03" fieldPath="(enumId + ' / ' + description)"
+        fieldNameAlias="enumLabel" defaultDisplay="Y"/>
 </entity-facade-xml>"#;
 
 /// Detail screens with the parameters of a record in [`DATA`] or the seed data.
@@ -85,6 +95,8 @@ const DETAILS: &[&str] = &[
     "/Tools/AutoScreen/AutoEdit/AutoEditMaster?aen=moqui.basic.StatusType&statusTypeId=PrintJob",
     "/Tools/AutoScreen/AutoEdit/AutoEditDetail?aen=moqui.basic.StatusType&den=moqui.basic.StatusItem&statusTypeId=PrintJob",
     "/Tools/DataView/ViewDbView?dbViewEntityName=GateView",
+    "/Tools/DataView/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
+    "/Tools/Entity/DataEdit/EntityDataFind?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
     "/Tools/DataView/EditDbView?dbViewEntityName=GateView",
     "/Tools/Service/ServiceDetail?serviceName=org.moqui.impl.BasicServices.convert%23Uom",
     "/Tools/Service/ServiceRun?serviceName=org.moqui.impl.BasicServices.echo%23Data",
@@ -215,6 +227,27 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     assert!(
         entity.contains("enumTypeId") && entity.contains("moqui.basic.EnumerationType"),
         "{entity}"
+    );
+    // A DB view entity is built from its rows, so the data view shows them, as Java's.
+    let (_, view) = get(
+        address,
+        &john,
+        "/Tools/DataView/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
+    );
+    assert!(
+        view.contains("Gate enum type") && !view.contains("is not available"),
+        "{view}"
+    );
+    // A data document's view is an entity to the entity data screens: the find shows its row, and its expression field
+    // with `defaultDisplay` `Y` is a display field of the find form.
+    let (_, doc) = get(
+        address,
+        &john,
+        "/Tools/Entity/DataEdit/EntityDataFind?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
+    );
+    assert!(
+        doc.contains(r#"<span class="display">Gate enum</span>"#) && doc.contains(r#"name="enumLabel""#),
+        "{doc}"
     );
     // The conf caches, the screen definitions, and the entity list caches are listed together.
     let (_, cache) = get(address, &john, "/System/Cache/CacheList?filterRegexp=screen.def");

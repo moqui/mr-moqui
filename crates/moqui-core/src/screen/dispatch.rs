@@ -84,7 +84,7 @@ fn entity_rest(call: &Call<'_>, master: bool) -> Result<bool, Error> {
         return Ok(true);
     }
     let facade = facade()?;
-    let verb = entity_verb(call.request);
+    let verb = effective_verb(call.request);
     let entity_name = &call.extra[0];
     query_rest::begin_page_info();
     let result = match call.json_list {
@@ -151,7 +151,8 @@ fn service_rest(call: &Call<'_>) -> Result<bool, Error> {
         return Ok(true);
     }
     let before = message_error_count();
-    let verb = call.request.method.to_ascii_lowercase();
+    // The overridden method, for the path authorization as well as the method that runs, as Java.
+    let verb = effective_verb(call.request);
     query_rest::begin_page_info();
     let result = match call.json_list {
         Some(items) => service_list(call, &verb, items),
@@ -329,7 +330,8 @@ fn logout_transition() -> Result<bool, Error> {
     Ok(true)
 }
 
-fn entity_verb(request: &WebRequest) -> String {
+/// Java's `PathNode.effectiveRequestMethod`: a POST takes the method in `X-HTTP-Method-Override`.
+fn effective_verb(request: &WebRequest) -> String {
     let method = request.method.to_ascii_lowercase();
     if method == "post" {
         if let Some(over) = request.header("x-http-method-override") {
@@ -368,7 +370,8 @@ fn message_error_count() -> usize {
 }
 
 fn message_errors() -> Vec<String> {
-    ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default()
+    // Java's `errorsString`: a validation error written with its field, form and service.
+    ExecutionContext::with_current(|ec| ec.message().errors_text()).unwrap_or_default()
 }
 
 /// The `X-Page-*` headers for the page info the last REST find recorded, if any.

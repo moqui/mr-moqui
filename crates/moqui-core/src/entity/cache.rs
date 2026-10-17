@@ -150,6 +150,11 @@ struct SimSession {
     replicas: HashSet<String>,
     /// Rows copied from production in this session, against [`SIM_TOTAL_COPY_CAP`].
     copied: usize,
+    /// Java's `poisonedReason`: set when a transaction that wrote to the sim rolled back. Every later read or write of
+    /// the sim fails with it.
+    poisoned: Option<String>,
+    /// The transactions (frame tokens) with a rollback hook for this sim, Java's `trackedTransactions`.
+    tracked: HashSet<u64>,
 }
 
 impl SimSession {
@@ -162,8 +167,89 @@ impl SimSession {
             seq_banks: HashMap::new(),
             replicas: HashSet::new(),
             copied: 0,
+            poisoned: None,
+            tracked: HashSet::new(),
         }
     }
+}
+
+const SIM_ROLLED_BACK: &str =
+    "A transaction that wrote to the sim was rolled back, and sim writes are not undone, so the sim \
+     state can no longer be trusted. The sim has been terminated. Start a new sim to continue testing.";
+
+/// [`sim_check_open`] for a find of `entity_name`, which finds call first, since a failed overlay read otherwise falls
+/// back to production. The entities a sim leaves on production ([`SIM_PRODUCTION_ENTITIES`]) are not the sim's, as Java's
+/// `handles`, so they are still read.
+pub(super) fn sim_check_find(facade: &EntityFacade, entity_name: &str) -> Result<(), Error> {
+    if !sim_session_open() {
+        return Ok(());
+    }
+    let production = facade
+        .with_entity(entity_name, |entity, _, _| {
+            Ok(SIM_PRODUCTION_ENTITIES.contains(&entity.full_name.as_str()))
+        })
+        .unwrap_or(false);
+    if production {
+        return Ok(());
+    }
+    sim_check_open()
+}
+
+/// Java's `TransactionCacheDb.checkOpen`: an error once this thread's sim is poisoned.
+fn sim_check_open() -> Result<(), Error> {
+    SIM.with(
+        |slot| match slot.borrow().last().and_then(|session| session.poisoned.clone()) {
+            Some(reason) => Err(Error::new(reason)),
+            None => Ok(()),
+        },
+    )
+}
+
+/// Java's `TransactionCacheDb.noteWrite`, before each sim write: once per transaction, a hook that poisons the sim when
+/// that transaction rolls back, since what it wrote to the sim is not undone. A write outside a transaction is not
+/// tracked. A hook that cannot be added poisons the sim at once.
+fn note_sim_write(tx: &TransactionManager) -> Result<(), Error> {
+    sim_check_open()?;
+    let Some(token) = tx.frame_token() else {
+        return Ok(());
+    };
+    let schema = SIM.with(|slot| {
+        let mut sessions = slot.borrow_mut();
+        let session = sessions.last_mut()?;
+        session.tracked.insert(token).then(|| session.schema.clone())
+    });
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let on_commit = schema.clone();
+    let registered = tx
+        .on_rollback(move || end_sim_tracking(&schema, token, Some(SIM_ROLLED_BACK)))
+        .and_then(|()| tx.on_commit(move || end_sim_tracking(&on_commit, token, None)));
+    if let Err(err) = registered {
+        let reason =
+            format!("The sim could not track its transaction ({err}), so it has been terminated. Start a new sim.");
+        let schema = SIM.with(|slot| slot.borrow().last().map(|session| session.schema.clone()));
+        if let Some(schema) = schema {
+            end_sim_tracking(&schema, token, Some(&reason));
+        }
+        return Err(Error::new(reason));
+    }
+    Ok(())
+}
+
+/// The end of a tracked transaction of the sim `schema` on this thread; `poison` ends the sim with that reason.
+fn end_sim_tracking(schema: &str, token: u64, poison: Option<&str>) {
+    SIM.with(|slot| {
+        let mut sessions = slot.borrow_mut();
+        let Some(session) = sessions.iter_mut().rev().find(|session| session.schema == schema) else {
+            return;
+        };
+        session.tracked.remove(&token);
+        if let (Some(reason), None) = (poison, &session.poisoned) {
+            tracing::warn!("Sim overlay terminated: {reason}");
+            session.poisoned = Some(reason.to_string());
+        }
+    });
 }
 
 /// Java's `TransactionCacheDb.TOTAL_COPY_CAP`: rows copied from production over one sim, which bounds its size.
@@ -451,6 +537,8 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
     if let Err(err) = result {
         tracing::warn!(error = %err, entity = %full_name, "entity cache clear at transaction end failed");
     }
+    // After the evict, so a definition built meanwhile does not keep rows read from the cache before it.
+    super::derived::note_write(facade, full_name);
 }
 
 /// One write of a frame, kept to evict again at the frame's end.
@@ -695,6 +783,7 @@ pub fn gate_write(
         if tx.in_transaction() {
             tx.with_connection(|_| Ok(()))?;
         }
+        note_sim_write(&tx)?;
         write_sim(facade, entity_name, op, values, &prepared)?;
         return Ok(WriteGate::Handled);
     }
@@ -779,6 +868,7 @@ pub fn on_write(
     )?;
     note_screen_config(facade, &meta.full_name);
     note_feed_definition(facade, &meta.full_name);
+    super::derived::note_write(facade, &meta.full_name);
     crate::cluster::note_write(facade, entity_name, &meta.pk_fields, values).map_err(Error::from)
 }
 
@@ -792,10 +882,12 @@ pub(crate) fn clear_one_cache(
     let meta = read_meta(facade, entity_name)?;
     note_screen_config(facade, &meta.full_name);
     note_feed_definition(facade, &meta.full_name);
-    match primary_key.filter(|keys| meta.pk_fields.iter().all(|name| keys.contains_key(name))) {
+    let cleared = match primary_key.filter(|keys| meta.pk_fields.iter().all(|name| keys.contains_key(name))) {
         Some(keys) => evict(facade, &meta, "update", keys),
         None => clear_named(facade, &meta.full_name),
-    }
+    };
+    super::derived::note_write(facade, &meta.full_name);
+    cleared
 }
 
 /// Clear the list and count caches of `full_name`, and those of the views it is a member of.
@@ -1051,6 +1143,7 @@ pub(super) fn copy_replica(
 
 /// Run a read on the sim schema `schema`.
 pub(super) fn query_sim(facade: &EntityFacade, schema: &str, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
+    sim_check_open()?;
     let sim = facade
         .sim_transactions()
         .ok_or_else(|| Error::new("sim transactions are not configured"))?;
@@ -2329,6 +2422,41 @@ mod tests {
         });
         assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(900_000_001));
         assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(900_000_002));
+        super::SIM.with(|slot| slot.borrow_mut().clear());
+    }
+
+    /// Java's `TransactionCacheDb.noteWrite`: a transaction that wrote to the sim and rolled back ends the sim; one
+    /// that committed, or a write with no transaction, does not.
+    #[test]
+    fn a_rolled_back_sim_write_poisons_the_sim() {
+        let facade = testing::open();
+        let tx = facade.transactions_for(TEST).unwrap();
+        super::SIM.with(|slot| {
+            slot.borrow_mut().push(super::SimSession::new("sim_poison".to_string()));
+        });
+        super::note_sim_write(&tx).unwrap();
+        tx.begin(None).unwrap();
+        super::note_sim_write(&tx).unwrap();
+        super::note_sim_write(&tx).unwrap();
+        assert_eq!(super::SIM.with(|slot| slot.borrow().last().unwrap().tracked.len()), 1);
+        tx.commit().unwrap();
+        assert!(super::sim_check_open().is_ok());
+        assert_eq!(super::SIM.with(|slot| slot.borrow().last().unwrap().tracked.len()), 0);
+        // A transaction that never wrote to the sim is not tracked.
+        tx.begin(None).unwrap();
+        tx.rollback().unwrap();
+        assert!(super::sim_check_open().is_ok());
+        tx.begin(None).unwrap();
+        super::note_sim_write(&tx).unwrap();
+        tx.rollback().unwrap();
+        let err = super::sim_check_open().unwrap_err();
+        assert!(err.to_string().contains("rolled back"), "{err}");
+        assert!(super::note_sim_write(&tx).is_err());
+        let err = super::query_sim(&facade, "sim_poison", "SELECT 1", &[]).unwrap_err();
+        assert!(err.to_string().contains("terminated"), "{err}");
+        assert!(super::sim_check_find(&facade, TEST).is_err());
+        // The sim's own records on production are still read.
+        assert!(super::sim_check_find(&facade, "moqui.llm.LlmConversation").is_ok());
         super::SIM.with(|slot| slot.borrow_mut().clear());
     }
 

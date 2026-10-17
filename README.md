@@ -1,5 +1,13 @@
 # Modern Rust Moqui Framework - MR Moqui
 
+## Quick Start
+
+```sh
+./moq build   # Do a release build; builds are from full source (including dependencies)
+./moq load    # Load all data, including demo; skip this and production data loads on first run
+./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
+```
+
 ## Goals
 
 - Keep XML as the spec language for configuration, entities, services, screens, SECAs, and data files, with only the adaptations required by a Rust runtime.
@@ -9,7 +17,7 @@
 - Make OpenSearch optional from day one by planning a search interface that can be satisfied by Postgres full-text search and JSON operators.
 - Preserve the ExecutionContext / facade shape that makes Moqui’s artifact model work.
 
-## Significant Redesigns
+## Significant Redesigns vs Moqui Java
 
 Most of MR-Moqui is a port of the Java framework as it exists when the port begins. These are the places that change on purpose.
 
@@ -28,8 +36,12 @@ Components can supply linked Rust services, tools, resource schemes, template re
 as a Gradle build did for a Java Moqui component: a `Cargo.toml` and `src/` beside the `component.xml`, which
 `./moq build` links into the binary. Service XML still defines services; component configuration selects
 implementations, and scripts get tools with `ec.factory.getTool("Name")`. See
-[Native component usage](plans/Native-Components-Usage.md), the [plan](plans/Native-Components.md), and
+[Native component usage](docs/Native-Components.md), the [plan](plans/archive/Native-Components.md), and
 `runtime/base-component/example`, which is off by default (`./moq run -D example_disabled=false`).
+
+## Documentation
+
+Reference guides for built features are in [`docs/`](docs/). Design, status and review documents are in [`plans/`](plans/), indexed by [`plans/README.md`](plans/README.md): what is still open, what comes next, the proposals, and the archive of built designs and finished reviews.
 
 ## Build, Test, and Run
 
@@ -131,50 +143,6 @@ directory (the framework component is inside it) and run `./target/release/moqui
 holds them (or point `MOQUI_RUNTIME` / `MOQUI_FRAMEWORK` at them), with
 `MOQUI_CONF=conf/MoquiProductionConf.xml`. From a checkout, `./moq run-production` does that
 with the release binary.
-
-## Entity SQL names and existing Rust databases
-
-Fresh schemas default to Java's physical naming: `UserAccount.userId` becomes
-`USER_ACCOUNT.USER_ID`, stored as `user_account.user_id` on PostgreSQL. Every capital
-gets a separator (`URLValue` becomes `U_R_L_VALUE`); logical entity/field API names
-and query result keys remain unchanged. Explicit `table-name` and `column-name`
-attributes bypass this conversion, but still follow the database's unquoted case
-folding. Ordered database `name-replace` rules apply to columns, including explicit
-overrides, not tables or result aliases. `use-pk-constraint-names` controls explicit
-PK labels in Java mode. Runtime configuration is used for both schema creation
-and queries.
-
-**Before opening an existing Rust database**, back it up and set
-`entity_sql_name_style=legacy` in the environment or `runtime/.env`, or put
-`<entity-facade sql-name-style="legacy"/>` in the runtime configuration. This preserves
-the former quoted names (`"UserAccount"."userId"`), including explicit overrides
-and the old first-match replacements (which also affected table names).
-The mode is selected when the model is loaded; restart after changing it. Java-style
-and legacy naming cannot be mixed within one facade. Custom embedded applications
-must pass the same configuration to the model and dialects (or use
-`EntityFacade::open_components_with_conf`).
-
-There is **no automatic rename, migration, or data copying**. Schema checks refuse
-detected legacy table/column names before modifying that entity group's schema.
-The check is a safety net for known old naming patterns, not a migration inventory;
-it cannot identify arbitrary manually renamed tables. Normal queries never migrate
-anything. To switch existing data to Java names, stop writers, inventory and resolve
-name collisions, migrate tables/columns and dependent SQL offline from a backup,
-then restart in `java` mode. Do not simply switch modes on a populated database.
-
-This is table/column identifier compatibility, **not whole-schema parity**. SQL types,
-constraint/index generation policies, schema/search-path selection and database
-features retain the port's existing behavior. Handwritten SQL expressions must use
-physical identifiers appropriate to the selected mode. Naming tests cover the
-framework's ASCII names; non-ASCII case mappings are not guaranteed to match Java's
-Character/Unicode mappings. Only PostgreSQL behavior is integration-tested here; MySQL and other
-profiles have SQL-generation coverage.
-
-## Implementation Order
-
-The port is bottom-up. The entity facade and the service facade are finished before the first gate, a data file load. Plan: [`plans/archive/Implementation-Phases.md`](plans/archive/Implementation-Phases.md).
-
-The architecture direction is [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md). The crate cut is [`plans/archive/Crate-Layout.md`](plans/archive/Crate-Layout.md). Context objects are [`plans/archive/ContextObjects.md`](plans/archive/ContextObjects.md). Embedded Postgres is [`plans/archive/EmbeddedPostgres.md`](plans/archive/EmbeddedPostgres.md). TypeScript generation from definitions is [`plans/archive/TypeGeneration.md`](plans/archive/TypeGeneration.md). Cluster coordination is [`plans/archive/Cluster.md`](plans/archive/Cluster.md). SSH and SFTP crates are [`plans/archive/Ssh.md`](plans/archive/Ssh.md). The SSO relying party is [`plans/archive/Sso.md`](plans/archive/Sso.md). The architecture and tool-fit review of this plan set, with the deployment-configuration decisions, is [`plans/archive/MimoReview.md`](plans/archive/MimoReview.md).
 
 ## AI/LLM Policy
 

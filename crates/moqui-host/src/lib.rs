@@ -969,6 +969,7 @@ fn boot_server(
             None
         }
     };
+    crate::db::backup::install(&facade, &db, search.as_ref(), &runtime_dir);
     // Log events and HTTP requests go to moqui_logs and moqui_http_log through the search backend (shipped above).
     factory.init_tools().map_err(moqui_lib::error::Error::from)?;
     if search.is_some() {
@@ -1181,7 +1182,7 @@ fn load_in_context(
     startup: bool,
     startup_add_missing: bool,
 ) -> Result<LoadReport, moqui_lib::error::Error> {
-    use moqui_core::entity::load_feed::conf_data_locations;
+    use moqui_core::entity::load_feed::{conf_data_locations, location_in_components};
 
     let checks_before = moqui_core::service::security_checks_run();
     apply_facade_flags(facade, flags);
@@ -1194,7 +1195,7 @@ fn load_in_context(
     // The ECA rules load on first use; reading the count here puts them in the log at a known point.
     tracing::info!(
         "{} Service ECA rules are active",
-        moqui_core::service::info::seca_rule_count()
+        moqui_core::service::info::seca_rules_active()
     );
     // As Java, `startup-add-missing` checks every table now; without it a table is made on first use when
     // `runtime-add-missing` is on, or is left to the database.
@@ -1252,7 +1253,9 @@ fn load_in_context(
             })
             .map(|path| path.display().to_string())
             .collect();
-        let conf_files = conf_data_locations(facade)?;
+        // The conf locations are narrowed to the components; the loader does not filter a location it is given.
+        let mut conf_files = conf_data_locations(facade)?;
+        conf_files.retain(|location| location_in_components(location, &flags.components));
         let mut listing = String::from("Loading entity data from the following locations:");
         for location in framework_files.iter().chain(&conf_files).chain(component_data) {
             listing.push_str("\n - ");

@@ -22,7 +22,7 @@
 //! Each sequence name has its own bank lock. A refill holds only that name's lock, so a slow or blocked
 //! refill of one name does not stop ids for the others.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -171,7 +171,14 @@ struct SeqSql {
     upsert_sql: String,
 }
 
-pub(crate) fn assign_primary(facade: &EntityFacade, entity_name: &str) -> Result<(String, String), Error> {
+/// The first primary key and its next id for a value of `entity_name` with `values`: a UUID, the sim's own id, or the
+/// next of the bank with the global `sequenced-id-prefix`, after the entity's `sequence-primary-prefix` (`${}` expanded
+/// with the value's fields, as Java's `setSequencedIdPrimary`).
+pub(crate) fn assign_primary(
+    facade: &EntityFacade,
+    entity_name: &str,
+    values: &BTreeMap<String, Value>,
+) -> Result<(String, String), Error> {
     let spec = facade.with_entity(entity_name, |entity, _, _| {
         let pk_field = entity
             .pk_field_names()
@@ -183,29 +190,45 @@ pub(crate) fn assign_primary(facade: &EntityFacade, entity_name: &str) -> Result
             seq_name: entity.full_name.clone(),
             bank_size: entity.sequence_bank_size,
             stagger: entity.sequence_primary_stagger,
-            use_uuid: entity.sequence_primary_use_uuid,
+            use_uuid: entity.sequence_primary_use_uuid || facade.datasource_uses_uuid(entity.group.as_deref()),
             prefix: entity.sequence_primary_prefix.clone(),
             pk_field,
         })
     })?;
+    let prefix = expand_prefix(spec.prefix.as_deref(), values)?;
     if spec.use_uuid {
-        return Ok((spec.pk_field, apply_prefix(spec.prefix.as_deref(), &uuid_v4()?)));
+        return Ok((spec.pk_field, apply_prefix(prefix.as_deref(), &uuid_v4()?)));
     }
     // A sim takes its ids from its own bank, as Java's `TransactionCacheDb.nextSeq`.
     if let Some(id) = super::cache::sim_next_seq(&spec.seq_name) {
-        return Ok((spec.pk_field, apply_prefix(spec.prefix.as_deref(), &id.to_string())));
+        return Ok((spec.pk_field, apply_prefix(prefix.as_deref(), &id.to_string())));
     }
     let prepared = facade.with_entity(SEQUENCE_ENTITY, |entity, dialect, _| seq_sql(entity, dialect))?;
     let tx = facade.transactions_for(SEQUENCE_ENTITY)?;
     let id = facade.inner.banks.next_id(&spec.seq_name, spec.stagger, |hint| {
         refill(&tx, &prepared, &spec.seq_name, spec.bank_size, hint)
     })?;
-    Ok((spec.pk_field, apply_prefix(spec.prefix.as_deref(), &id.to_string())))
+    let id = apply_prefix(facade.inner.sequenced_id_prefix.as_deref(), &id.to_string());
+    Ok((spec.pk_field, apply_prefix(prefix.as_deref(), &id)))
 }
 
-/// `EntityFacade.sequencedIdPrimary(seqName, staggerMax, bankSize)`: the next id of any sequence name, as text. A
-/// name that is an entity with a UUID primary sequence gets a UUID. No stagger is 0 and no bank size is the default of
-/// 50 (also for zero or less), as Java.
+/// The entity's `sequence-primary-prefix`, with `${}` run against the value's fields.
+pub(super) fn expand_prefix(raw: Option<&str>, values: &BTreeMap<String, Value>) -> Result<Option<String>, Error> {
+    match raw {
+        Some(raw) if raw.contains("${") => {
+            let _frame = crate::script::ContextFrame::push();
+            for (name, value) in values {
+                crate::script::set_context_name(name, value.clone())?;
+            }
+            Ok(Some(crate::script::expand(raw)?))
+        }
+        other => Ok(other.map(str::to_string)),
+    }
+}
+
+/// `EntityFacade.sequencedIdPrimary(seqName, staggerMax, bankSize)`: the next id of any sequence name, as text, with the
+/// global `sequenced-id-prefix`. A name that is an entity with a UUID primary sequence (its own or its datasource's)
+/// gets a UUID. No stagger is 0 and no bank size is the default of 50 (also for zero or less), as Java.
 pub(crate) fn sequenced_id_primary(
     facade: &EntityFacade,
     seq_name: &str,
@@ -213,7 +236,9 @@ pub(crate) fn sequenced_id_primary(
     bank_size: Option<u64>,
 ) -> Result<String, Error> {
     let uuid = facade
-        .with_entity(seq_name, |entity, _, _| Ok(entity.sequence_primary_use_uuid))
+        .with_entity(seq_name, |entity, _, _| {
+            Ok(entity.sequence_primary_use_uuid || facade.datasource_uses_uuid(entity.group.as_deref()))
+        })
         .unwrap_or(false);
     if uuid {
         return uuid_v4();
@@ -228,7 +253,10 @@ pub(crate) fn sequenced_id_primary(
     let id = facade.inner.banks.next_id(seq_name, stagger, |hint| {
         refill(&tx, &prepared, seq_name, bank_size, hint)
     })?;
-    Ok(id.to_string())
+    Ok(apply_prefix(
+        facade.inner.sequenced_id_prefix.as_deref(),
+        &id.to_string(),
+    ))
 }
 
 fn seq_sql(entity: &moqui_db::model::EntityDefinition, dialect: &moqui_db::dialect::Dialect) -> Result<SeqSql, Error> {

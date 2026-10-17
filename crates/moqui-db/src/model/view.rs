@@ -16,7 +16,8 @@
 //!
 //! [`EntityModel::complete_view`] resolves `member-relationship` into a member, expands `alias-all`
 //! into aliases, and copies type, primary key, encrypt, and localization from each member field.
-//! After that, `member_entities` and `aliases` are the whole view, in document order.
+//! After that, `member_entities` and `aliases` are the whole view, in document order. An alias with `pq-expression`
+//! is in `pq_aliases` instead: it is not selected, and the value layer evaluates it on each row.
 
 use std::collections::HashSet;
 
@@ -130,6 +131,8 @@ pub struct FieldAlias {
     pub from_alias_all: bool,
     /// Full name of the member entity a column alias reads. Set when the view is completed.
     pub member_entity: Option<String>,
+    /// `default-display`: whether a form-list's auto fields show the alias. `None` leaves it to the type.
+    pub default_display: Option<bool>,
 }
 
 impl FieldAlias {
@@ -203,6 +206,16 @@ impl ComplexAlias {
     }
 }
 
+/// An alias with `pq-expression`, as Java's `pqExpressionNodeMap`. Java evaluates the expression with a row's values
+/// in `EntityValueBase.get`; here moqui-db keeps it and the value layer evaluates it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PqAlias {
+    pub name: String,
+    pub expression: String,
+    /// `default-display="true"`: a form's auto fields show it, as `ScreenForm.addEntityFields`.
+    pub default_display: bool,
+}
+
 /// `alias-all` as written. Completion turns it into aliases.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AliasAll {
@@ -244,6 +257,18 @@ pub(super) fn parse_member(node: &MNode) -> Result<MemberEntity, Error> {
     })
 }
 
+/// The alias as a [`PqAlias`] when it has `pq-expression`; then Java checks none of its other attributes.
+pub(super) fn parse_pq_alias(node: &MNode) -> Result<Option<PqAlias>, Error> {
+    let Some(expression) = optional_attr(node, "pq-expression") else {
+        return Ok(None);
+    };
+    Ok(Some(PqAlias {
+        name: require_attr(node, "name")?,
+        expression,
+        default_display: is_true(node, "default-display"),
+    }))
+}
+
 pub(super) fn parse_alias(node: &MNode, dictionary: &HashSet<String>) -> Result<FieldAlias, Error> {
     let name = require_attr(node, "name")?;
     let field_type = optional_attr(node, "type");
@@ -274,6 +299,7 @@ pub(super) fn parse_alias(node: &MNode, dictionary: &HashSet<String>) -> Result<
         field_type,
         is_aggregate: optional_attr(node, "is-aggregate").map(|value| value.eq_ignore_ascii_case("true")),
         expr,
+        default_display: optional_attr(node, "default-display").map(|value| value == "true"),
         ..FieldAlias::default()
     })
 }
@@ -367,7 +393,7 @@ impl EntityModel {
     /// Members named by short entity name get the full name. A `member-relationship` member gets
     /// the related entity and the relationship's expanded key map. `alias-all` becomes aliases,
     /// after the declared ones, skipping `lastUpdatedStamp`, excluded fields, and names already
-    /// used. Each column alias takes the member field's type, primary key, encrypt, and
+    /// used, a `pq-expression` alias's among them. Each column alias takes the member field's type, primary key, encrypt, and
     /// localization flags. The view takes its group from the first member when it has none, and
     /// is never cached when a member is never cached. Running it twice changes nothing.
     pub fn complete_view(&self, view: &mut EntityDefinition) -> Result<(), Error> {
@@ -445,7 +471,12 @@ impl EntityModel {
     }
 
     fn expand_alias_alls(&self, view: &mut EntityDefinition) -> Result<(), Error> {
-        let mut used: HashSet<String> = view.aliases.iter().map(|alias| alias.name.clone()).collect();
+        let mut used: HashSet<String> = view
+            .aliases
+            .iter()
+            .map(|alias| alias.name.clone())
+            .chain(view.pq_aliases.iter().map(|alias| alias.name.clone()))
+            .collect();
         let mut added = Vec::new();
         for alias_all in &view.alias_alls {
             let member = view.member(&alias_all.entity_alias).ok_or_else(|| {

@@ -23,6 +23,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::sync::{read, write};
 
 use super::feed::note_touch;
+use super::loader::canonical_name;
 use crate::context::ExecutionContext;
 use crate::entity::facade::EntityFacade;
 
@@ -88,7 +89,7 @@ pub fn eca_rule_count(facade: &EntityFacade) -> usize {
 pub(crate) fn add_eca_rules(facade: &EntityFacade, eecas: &str) -> Result<(), moqui_lib::error::Error> {
     let root = MNode::parse_text("eecas", eecas)?;
     let mut index = (*eca_index(facade)).clone();
-    index.ingest(&root);
+    index.ingest(facade, &root, "eecas");
     *write(&facade.inner.eca_rules) = Some(Arc::new(index));
     Ok(())
 }
@@ -114,7 +115,7 @@ pub(crate) struct EcaIndex {
 }
 
 impl EcaIndex {
-    /// The rules of `entity_name`, in file order.
+    /// The rules of `entity_name`: those with no id, then those with one, each in file order.
     fn of_entity<'a>(&'a self, entity_name: &str) -> impl Iterator<Item = &'a EcaRule> + 'a {
         self.by_entity
             .get(entity_name)
@@ -126,10 +127,21 @@ impl EcaIndex {
 
     /// Read every `*.eecas.xml` of `dirs`: the framework's rules, then each component's, as Java loads them from
     /// every entity directory.
-    fn load(dirs: &[PathBuf]) -> Self {
+    fn load(facade: &EntityFacade, dirs: &[PathBuf]) -> Self {
         let mut index = Self::default();
         let mut files = 0;
         for dir in dirs {
+            // A conf `load-entity` file outside the directories.
+            if dir.is_file() {
+                if dir.to_string_lossy().ends_with(".eecas.xml") {
+                    files += 1;
+                    match MNode::parse_file(dir) {
+                        Ok(root) => index.ingest(facade, &root, &dir.display().to_string()),
+                        Err(err) => tracing::warn!(error = %err, path = %dir.display(), "could not parse eeca file"),
+                    }
+                }
+                continue;
+            }
             let read = match std::fs::read_dir(dir) {
                 Ok(read) => read,
                 Err(err) => {
@@ -150,7 +162,7 @@ impl EcaIndex {
             files += paths.len();
             for path in paths {
                 match MNode::parse_file(&path) {
-                    Ok(root) => index.ingest(&root),
+                    Ok(root) => index.ingest(facade, &root, &path.display().to_string()),
                     Err(err) => tracing::warn!(error = %err, path = %path.display(), "could not parse eeca file"),
                 }
             }
@@ -163,12 +175,18 @@ impl EcaIndex {
         index
     }
 
-    /// Add the `<eeca>` rules of `root`. A rule with the id of a stored one replaces it in place.
-    fn ingest(&mut self, root: &MNode) {
+    /// Add the `<eeca>` rules of `root`, read from `location`. A rule with the id of a stored one replaces it in place.
+    /// As Java, a rule's entity is kept by its full name, and a rule for an entity that is not defined is skipped.
+    fn ingest(&mut self, facade: &EntityFacade, root: &MNode, location: &str) {
         for node in root.children_named("eeca") {
+            let entity = node.attribute("entity").unwrap_or_default();
+            let Ok(entity_name) = canonical_name(facade, &entity) else {
+                tracing::warn!("Invalid entity name {entity} found in EECA file {location}, skipping");
+                continue;
+            };
             let rule = EcaRule {
                 id: node.attribute("id").unwrap_or_default(),
-                entity_name: node.attribute("entity").unwrap_or_default(),
+                entity_name,
                 on_create: attr_true(&node, "on-create"),
                 on_update: attr_true(&node, "on-update"),
                 on_delete: attr_true(&node, "on-delete"),
@@ -177,10 +195,7 @@ impl EcaIndex {
                 get_original_value: attr_true(&node, "get-original-value"),
                 set_results: attr_true(&node, "set-results"),
                 run_on_error: attr_true(&node, "run-on-error"),
-                condition: node
-                    .first_named("condition")
-                    .map(|child| child.write_string())
-                    .unwrap_or_default(),
+                condition: crate::service::rule_actions::first_condition(&node),
                 actions: node
                     .first_named("actions")
                     .map(|child| child.write_string())
@@ -196,9 +211,16 @@ impl EcaIndex {
                 self.rules.push(rule);
             }
         }
+        // As Java, an entity's rules with no id come first, then those with an id; each in file order (Java's id'd
+        // rules are in `HashMap` order, which is not defined).
         self.by_entity.clear();
-        for (at, rule) in self.rules.iter().enumerate() {
-            self.by_entity.entry(rule.entity_name.clone()).or_default().push(at);
+        let (no_id, with_id): (Vec<usize>, Vec<usize>) =
+            (0..self.rules.len()).partition(|at| self.rules[*at].id.is_empty());
+        for at in no_id.into_iter().chain(with_id) {
+            self.by_entity
+                .entry(self.rules[at].entity_name.clone())
+                .or_default()
+                .push(at);
         }
     }
 }
@@ -210,7 +232,7 @@ fn eca_index(facade: &EntityFacade) -> Arc<EcaIndex> {
         return Arc::clone(index);
     }
     let mut slot = write(rules);
-    Arc::clone(slot.get_or_insert_with(|| Arc::new(EcaIndex::load(&facade.entity_dirs()))))
+    Arc::clone(slot.get_or_insert_with(|| Arc::new(EcaIndex::load(facade, &facade.model_paths()))))
 }
 
 fn attr_true(node: &MNode, name: &str) -> bool {

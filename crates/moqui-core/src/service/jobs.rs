@@ -96,10 +96,7 @@ pub(crate) fn run_scheduled(shared: &Arc<Shared>) -> PassReport {
         let _authz = context.disable_authz();
         pass(shared, &factory)
     }));
-    if let Ok(Ok(report)) = &outcome {
-        shared.note_pass(report);
-    }
-    match outcome {
+    let report = match outcome {
         Ok(Ok(report)) => report,
         Ok(Err(err)) => {
             tracing::error!(error = %err, "scheduled job pass failed");
@@ -109,7 +106,10 @@ pub(crate) fn run_scheduled(shared: &Arc<Shared>) -> PassReport {
             tracing::error!("scheduled job pass panicked");
             PassReport::default()
         }
-    }
+    };
+    // As Java's `ScheduledJobRunner`, a pass that failed is still counted. A pass fails only before it looks at a job.
+    shared.note_pass(&report);
+    report
 }
 
 fn pass(shared: &Arc<Shared>, factory: &Arc<ExecutionContextFactory>) -> Result<PassReport, Error> {
@@ -275,34 +275,51 @@ fn dispatch(
         return Ok(false);
     }
     let queued = job_name.starts_with(QUEUE_PREFIX);
-    let previous_run_time = ready.last_run_time.clone();
-    let run = JobRun {
-        job_name: job_name.clone(),
-        service_name: field_text(job, "serviceName"),
-        parameters: job_parameters(facade, &job_name)?,
-        timeout: Duration::from_secs(
-            number(job, "transactionTimeout").map_or(DEFAULT_JOB_TIMEOUT_SECONDS, |secs| {
-                u64::try_from(secs).unwrap_or(DEFAULT_JOB_TIMEOUT_SECONDS)
-            }),
-        ),
-        job_run_id: run_id.clone(),
-        last_run_time: ready.last_run_time,
-        delete_when_done: queued,
-        user_name: None,
-        topic: Some(field_text(job, "topic")).filter(|topic| !topic.is_empty()),
-        description: Some(field_text(job, "description")).filter(|text| !text.is_empty()),
-        factory: Arc::clone(factory),
-    };
-    if shared.submit_job(run) {
-        tracing::info!(job = %job_name, run = %run_id, "submitted job");
+    let submitted = job_parameters(facade, &job_name).and_then(|parameters| {
+        let run = JobRun {
+            job_name: job_name.clone(),
+            service_name: field_text(job, "serviceName"),
+            parameters,
+            timeout: Duration::from_secs(
+                number(job, "transactionTimeout").map_or(DEFAULT_JOB_TIMEOUT_SECONDS, |secs| {
+                    u64::try_from(secs).unwrap_or(DEFAULT_JOB_TIMEOUT_SECONDS)
+                }),
+            ),
+            job_run_id: run_id.clone(),
+            last_run_time: ready.last_run_time,
+            delete_when_done: queued,
+            user_name: None,
+            topic: Some(field_text(job, "topic")).filter(|topic| !topic.is_empty()),
+            description: Some(field_text(job, "description")).filter(|text| !text.is_empty()),
+            factory: Arc::clone(factory),
+        };
+        if shared.submit_job(run) {
+            Ok(())
+        } else {
+            Err(Error::new("the service job queue is full or the pool stopped"))
+        }
+    });
+    if let Err(err) = submitted {
+        // As Java's `ScheduledJobRunner`, a run that could not be started is a failed run: the lock is cleared and
+        // keeps this pass's run time, and the run row records the error.
+        tracing::error!(job = %job_name, run = %run_id, error = %err, "Error running scheduled job");
+        if let Err(err) = plan.release(&job_name, &run_id, now_stamp) {
+            tracing::warn!(job = %job_name, run = %run_id, error = %err, "could not clear the job lock");
+        }
+        record(
+            facade,
+            &run_id,
+            &[
+                ("hasError", Value::string("Y")),
+                ("errors", Value::string(err.to_string())),
+                ("startTime", now_stamp.clone()),
+                ("endTime", now_stamp.clone()),
+            ],
+        );
         return Ok(true);
     }
-    // The pool filled between the slot count and the submit. Put everything back.
-    if let Err(err) = plan.release(&job_name, &run_id, &previous_run_time) {
-        tracing::warn!(job = %job_name, run = %run_id, error = %err, "could not clear the job lock");
-    }
-    delete_run(facade, &run_id);
-    Ok(false)
+    tracing::info!(job = %job_name, run = %run_id, "submitted job");
+    Ok(true)
 }
 
 /// Store a call the pool queue had no room for. The pass will submit it.
@@ -443,11 +460,18 @@ pub(crate) fn run_job(job: JobRun) {
     let Some(facade) = factory.entity() else {
         return;
     };
+    // The thread's name is this port's (`moqui-job-0`, not Java's `MoquiJob-1`), an accepted difference (P7b-16).
     let thread = std::thread::current().name().unwrap_or("").to_string();
+    let (host_address, host_name) = crate::context::hits::server_address();
     record(
         &facade,
         &job.job_run_id,
-        &[("startTime", now_stamp()), ("runThread", Value::string(thread))],
+        &[
+            ("hostAddress", Value::string(host_address)),
+            ("hostName", Value::string(host_name)),
+            ("runThread", Value::string(thread)),
+            ("startTime", now_stamp()),
+        ],
     );
     let end = RunEnd {
         facade: &facade,
@@ -798,13 +822,16 @@ fn repeat_exhausted(facade: &EntityFacade, job: &EntityValue, job_name: &str, no
 fn within_dates(job: &EntityValue, now_ms: i64) -> bool {
     let from = millis_of(job.get("fromDate").unwrap_or(&Value::Null));
     let thru = millis_of(job.get("thruDate").unwrap_or(&Value::Null));
-    from.is_none_or(|from| from <= now_ms) && thru.is_none_or(|thru| thru > now_ms)
+    // As Java's `filterByDate`, both ends are inclusive.
+    from.is_none_or(|from| from <= now_ms) && thru.is_none_or(|thru| thru >= now_ms)
 }
 
-/// Active when `paused` is null or `N`.
+/// Active when `paused` is null or `N`; any other value, an empty one too, is paused, as Java's.
 fn paused_ok(job: &EntityValue) -> bool {
-    let paused = field_text(job, "paused");
-    paused.is_empty() || paused == "N"
+    match job.get("paused") {
+        None | Some(Value::Null) => true,
+        Some(paused) => to_plain_string(paused) == "N",
+    }
 }
 
 // ---- the lock row -------------------------------------------------------------------------
@@ -1040,6 +1067,27 @@ mod tests {
             .one()
             .unwrap();
         assert!(kept.is_none(), "the panicked job's frame was committed");
+    }
+
+    /// As Java's `filterByDate` and its paused check: both date ends are inclusive, and a `paused` that is not null or
+    /// `N`, an empty one too, pauses the job.
+    #[test]
+    fn job_dates_are_inclusive_and_an_empty_paused_pauses() {
+        let facade = crate::testing::open();
+        let mut job = facade.make_value(super::SERVICE_JOB).unwrap();
+        assert!(super::paused_ok(&job));
+        job.set("paused", Value::string("N"));
+        assert!(super::paused_ok(&job));
+        for paused in ["", "Y", "T"] {
+            job.set("paused", Value::string(paused));
+            assert!(!super::paused_ok(&job), "paused {paused:?}");
+        }
+        job.set("fromDate", timestamp_value(PREVIOUS));
+        job.set("thruDate", timestamp_value(PREVIOUS + 1_000));
+        assert!(super::within_dates(&job, PREVIOUS));
+        assert!(super::within_dates(&job, PREVIOUS + 1_000));
+        assert!(!super::within_dates(&job, PREVIOUS - 1));
+        assert!(!super::within_dates(&job, PREVIOUS + 1_001));
     }
 
     #[test]

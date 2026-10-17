@@ -161,6 +161,11 @@ test("an m-form keeps its own field errors and leaves the rest to notify", () =>
     assert.deepEqual(form.fieldErrors, {});
     // nothing placed is the same response
     assert.equal(moqui.placeFieldErrors(form, { errors: "e" }).errors, "e");
+    // the server writes a validation error's line as Java's toStringPretty; a placed one's line goes too
+    const pretty = { field: "title", message: "Field cannot be empty", fieldPretty: "Title", serviceName: "save#Thing", serviceNamePretty: "Save#Thing" };
+    assert.equal(moqui.validationErrorText(pretty), "Field cannot be empty(for field Title of service Save#Thing");
+    const placedPretty = moqui.placeFieldErrors(form, { errors: "Field cannot be empty(for field Title of service Save#Thing\nOther", validationErrors: [pretty] });
+    assert.equal(placedPretty.errors, "Other");
 });
 
 test("a field widget puts its form's error on the Quasar field", () => {

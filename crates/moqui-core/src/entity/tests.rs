@@ -640,11 +640,17 @@ fn entity_rest_serves_the_verbs() {
         .unwrap_err();
     assert!(err.to_string().contains("No value found"), "{err}");
 
+    // As Java's update, one with no field to set writes nothing, primary key or not; one with a field and no key fails.
+    facade.rest("patch", "moqui.test.TestEntity", &BTreeMap::new()).unwrap();
     let err = facade
-        .rest("patch", "moqui.test.TestEntity", &BTreeMap::new())
+        .rest(
+            "patch",
+            "moqui.test.TestEntity",
+            &params(vec![("testMedium", Value::string("keyless"))]),
+        )
         .unwrap_err();
-    // The entity-auto service's parameter check refuses it before the update. The error stays in the message facade,
-    // where it would stop the next service call, as in Java; a request starts with none.
+    // The error stays in the message facade, where it would stop the next service call, as in Java; a request starts
+    // with none.
     assert!(err.to_string().contains("testId is required"), "{err}");
     context.message().clear_errors();
     let updated = facade
@@ -1510,6 +1516,46 @@ fn entity_rest_delete_needs_every_key_and_takes_a_wildcard() {
     assert_eq!(left.values()[0].get("statusFlowId").and_then(Value::as_str), Some("F2"));
 }
 
+/// As Java's `getPlainValueMap`, a REST find of a view-entity gives its alias values, and the primary key aliases
+/// (here `enumId`, from the path or the parameters) find one row.
+#[test]
+fn entity_rest_find_of_a_view_gives_its_aliases_and_finds_one_by_its_key() {
+    let facade = crate::testing::open();
+    let mut kind = facade.make_value("moqui.basic.EnumerationType").unwrap();
+    kind.set("enumTypeId", Value::string("T1"));
+    kind.set("description", Value::string("Type One"));
+    kind.create(&facade).unwrap();
+    for enum_id in ["E1", "E2"] {
+        let mut row = facade.make_value("moqui.basic.Enumeration").unwrap();
+        row.set("enumId", Value::string(enum_id));
+        row.set("enumTypeId", Value::string("T1"));
+        row.create(&facade).unwrap();
+    }
+    let view = "moqui.basic.EnumerationAndType";
+    let field = |row: &Value, name: &str| match row {
+        Value::Map(map) => map.get(name).and_then(Value::as_str).map(str::to_string),
+        other => panic!("not a row: {other:?}"),
+    };
+
+    let mut by_type = BTreeMap::new();
+    by_type.insert("enumTypeId".to_string(), Value::string("T1"));
+    let Value::List(rows) = facade.rest("get", view, &by_type).unwrap() else {
+        panic!("a list");
+    };
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(field(&rows[0], "typeDescription").as_deref(), Some("Type One"));
+    assert_eq!(field(&rows[0], "enumTypeId").as_deref(), Some("T1"));
+    assert_eq!(field(&rows[0], "_entity").as_deref(), Some(view));
+
+    let one = facade.rest("get", &format!("{view}/E2"), &BTreeMap::new()).unwrap();
+    assert_eq!(field(&one, "enumId").as_deref(), Some("E2"));
+    assert_eq!(field(&one, "typeDescription").as_deref(), Some("Type One"));
+    let mut missing = BTreeMap::new();
+    missing.insert("enumId".to_string(), Value::string("E9"));
+    let err = facade.rest("get", view, &missing).unwrap_err();
+    assert!(err.to_string().contains("No value found"), "{err}");
+}
+
 /// As Java's `oneInternal`: a find one with no condition, or with a primary key field null or empty, is null.
 #[test]
 fn find_one_with_no_condition_or_an_empty_key_is_none() {
@@ -1834,4 +1880,749 @@ fn a_find_that_uses_the_clone_reads_the_clone_group() {
         .unwrap();
     assert!(cloned.is_none());
     assert_eq!(facade.group_names()[0], "transactional");
+}
+
+const PARITY_ENTITIES: &str = r#"<entities>
+    <entity entity-name="ParityItem" package="moqui.test">
+        <field name="itemId" type="id" is-pk="true"/>
+        <field name="code" type="id"/>
+        <field name="seq" type="number-integer" default="(code == null ? null : Math.trunc(toDecimal(code).toNumber()))"/>
+        <field name="kind" type="id" default="'plain'"/>
+        <field name="unknown" type="id" default="NotAName"/>
+        <field name="note" type="text-medium"/>
+        <field name="other" type="text-medium"/>
+    </entity>
+    <entity entity-name="ParityLocked" package="moqui.test" optimistic-lock="true">
+        <field name="lockedId" type="id" is-pk="true"/>
+        <field name="note" type="text-medium"/>
+    </entity>
+    <view-entity entity-name="ParityItemView" package="moqui.test">
+        <member-entity entity-alias="I" entity-name="moqui.test.ParityItem"/>
+        <alias-all entity-alias="I"/>
+        <alias name="other" pq-expression="code + '-' + note" default-display="true"/>
+        <alias name="selfRead" pq-expression="pqRow.code + '?'"/>
+        <alias name="broken" pq-expression="noSuchName.length"/>
+        <alias name="withSuffix" pq-expression="code + pqSuffix"/>
+        <alias name="sameItem" pq-expression="'not the relationship'"/>
+        <relationship type="one" related="moqui.test.ParityItem" short-alias="sameItem">
+            <key-map field-name="itemId"/></relationship>
+    </view-entity>
+</entities>"#;
+
+/// The framework entities plus [`PARITY_ENTITIES`], in a directory removed on drop.
+struct ParityFixture(PathBuf);
+
+impl ParityFixture {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "moqui-parity-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        for name in ["entity", "conf"] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        let real = framework_dir();
+        std::os::unix::fs::symlink(
+            real.join("conf/MoquiDefaultConf.xml"),
+            dir.join("conf/MoquiDefaultConf.xml"),
+        )
+        .unwrap();
+        for entry in std::fs::read_dir(real.join("entity")).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_file() {
+                std::os::unix::fs::symlink(entry.path(), dir.join("entity").join(entry.file_name())).unwrap();
+            }
+        }
+        std::fs::write(dir.join("entity/ParityEntities.xml"), PARITY_ENTITIES).unwrap();
+        Self(dir)
+    }
+
+    fn open(&self, tape: Option<Arc<Mutex<Vec<String>>>>) -> EntityFacade {
+        crate::testing::open_with(
+            &self.0,
+            crate::testing::Options {
+                tape,
+                ..Default::default()
+            },
+        )
+    }
+}
+
+impl Drop for ParityFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn parity_item(facade: &EntityFacade, id: &str) -> super::EntityValue {
+    facade
+        .find("moqui.test.ParityItem")
+        .unwrap()
+        .eq("itemId", Value::string(id))
+        .use_cache(false)
+        .one()
+        .unwrap()
+        .unwrap()
+}
+
+/// Java's `checkSetFieldDefaults`: a default is an expression run with the value's fields, an empty string is unset,
+/// a name that is nothing is null, and an update fills a default too, but never over a stored value.
+#[test]
+fn field_defaults_are_expressions_that_also_fill_an_update() {
+    let fixture = ParityFixture::new();
+    let facade = fixture.open(None);
+    let mut item = facade.make_value("moqui.test.ParityItem").unwrap();
+    item.set("itemId", Value::string("I1"));
+    item.set("code", Value::string("07"));
+    item.set("kind", Value::string(""));
+    item.create(&facade).unwrap();
+    let created = parity_item(&facade, "I1");
+    assert_eq!(created.get("seq"), Some(&Value::I64(7)));
+    assert_eq!(created.get("kind"), Some(&Value::string("plain")));
+    assert!(created.get("unknown").is_none_or(Value::is_null));
+
+    let mut custom = created.clone();
+    custom.set("kind", Value::string("custom"));
+    custom.update(&facade).unwrap();
+    // Left out, the stored value stays; set empty, the default fills it.
+    let mut partial = facade.make_value("moqui.test.ParityItem").unwrap();
+    partial.set("itemId", Value::string("I1"));
+    partial.set("note", Value::string("n"));
+    partial.update(&facade).unwrap();
+    assert_eq!(parity_item(&facade, "I1").get("kind"), Some(&Value::string("custom")));
+    partial.set("kind", Value::string(""));
+    partial.update(&facade).unwrap();
+    assert_eq!(parity_item(&facade, "I1").get("kind"), Some(&Value::string("plain")));
+}
+
+/// Java's `pq-expression` alias: `get` and `getMap` evaluate it with the row's stored fields, here
+/// `get_localized`, `localized_fields` and a script's read; the stored fields and a REST find (`getPlainValueMap`)
+/// have none of it. Its name keeps `alias-all` from the member field of the same name, each read evaluates it again,
+/// an expression that reads the value it is on does not find the value locked, a failing one is logged and reads as
+/// null, and a script reads a relationship of the same name first.
+#[test]
+fn a_pq_expression_alias_is_evaluated_on_read_and_left_out_of_the_stored_fields() {
+    let fixture = ParityFixture::new();
+    let facade = fixture.open(None);
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let _frame = crate::script::ContextFrame::push();
+    crate::script::set_context_name("pqSuffix", Value::string("a")).unwrap();
+    let mut item = facade.make_value("moqui.test.ParityItem").unwrap();
+    for (name, value) in [("itemId", "I1"), ("code", "7"), ("note", "n"), ("other", "stored")] {
+        item.set(name, Value::string(value));
+    }
+    item.create(&facade).unwrap();
+    let view = "moqui.test.ParityItemView";
+    let find = || {
+        facade
+            .find(view)
+            .unwrap()
+            .eq("itemId", Value::string("I1"))
+            .one()
+            .unwrap()
+            .unwrap()
+    };
+    let mut row = find();
+    assert_eq!(row.get("code"), Some(&Value::string("7")));
+    for name in ["other", "selfRead", "broken", "withSuffix"] {
+        assert!(!row.fields().contains_key(name), "{name} is not a stored field");
+    }
+    assert_eq!(row.get_localized(&facade, "other"), Some(Value::string("7-n")));
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let all = tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        row.localized_fields(&facade)
+    });
+    assert_eq!(all.get("other"), Some(&Value::string("7-n")));
+    assert_eq!(all.get("code"), Some(&Value::string("7")));
+    assert_eq!(all.get("broken"), Some(&Value::Null));
+    let text = lines.lock().unwrap().join("\n");
+    assert!(
+        text.contains("alias broken on entity moqui.test.ParityItemView"),
+        "{text}"
+    );
+    row.set("note", Value::string("m"));
+    assert_eq!(row.get_localized(&facade, "other"), Some(Value::string("7-m")));
+    // Not remembered: a read sees what the expression reads from outside the row now, as Java's `get`.
+    assert_eq!(row.get_localized(&facade, "withSuffix"), Some(Value::string("7a")));
+    crate::script::set_context_name("pqSuffix", Value::string("b")).unwrap();
+    assert_eq!(row.get_localized(&facade, "withSuffix"), Some(Value::string("7b")));
+
+    // A script reads it as a property, by `get` and in `getMap`; the expression reads the value from the context with
+    // the value unlocked.
+    let read = crate::script::eval_value(
+        r#"(function () {
+            pqRow = ec.entity.find("moqui.test.ParityItemView").condition("itemId", "I1").one();
+            const value = pqRow;
+            const before = value.other === "7-n" && value.get("other") === "7-n" && value.getMap().other === "7-n";
+            value.note = "z";
+            return before && value.other === "7-z" && value.selfRead === "7?" && value.broken === null
+                && value.withSuffix === "7b" && value.sameItem.itemId === "I1" && value.get("sameItem").itemId === "I1";
+        })()"#,
+    )
+    .unwrap();
+    assert_eq!(read, Value::Bool(true));
+    // As a template or XML action reads it.
+    let held = crate::script::context_value("pqRow").expect("the script put the value in the context");
+    assert_eq!(crate::script::value_field(&held, "other"), Some(Value::string("7-z")));
+    assert_eq!(
+        crate::script::value_map(&held).and_then(|map| map.get("selfRead").cloned()),
+        Some(Value::string("7?"))
+    );
+
+    let found = facade
+        .rest(
+            "get",
+            view,
+            &BTreeMap::from([("itemId".to_string(), Value::string("I1"))]),
+        )
+        .unwrap();
+    let Value::Map(found) = found else {
+        panic!("a REST find by primary key returns one map: {found:?}");
+    };
+    assert_eq!(found.get("code"), Some(&Value::string("7")));
+    for name in ["other", "selfRead", "broken", "withSuffix"] {
+        assert!(!found.contains_key(name), "{name} is not in the REST output");
+    }
+}
+
+/// Java's `update`: an entity whose update reads the row first writes only the fields that changed, and nothing when
+/// none did; one that does not read it writes every field given, but not for a stamp alone.
+#[test]
+fn an_update_writes_the_changed_fields_of_a_row_it_reads_and_nothing_for_no_change() {
+    let fixture = ParityFixture::new();
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = fixture.open(Some(Arc::clone(&tape)));
+    let mut item = facade.make_value("moqui.test.ParityItem").unwrap();
+    item.set("itemId", Value::string("I1"));
+    item.set("note", Value::string("a"));
+    item.set("other", Value::string("b"));
+    item.create(&facade).unwrap();
+    let updates = || -> Vec<String> {
+        tape.lock()
+            .unwrap()
+            .iter()
+            .filter(|sql| sql.starts_with("UPDATE"))
+            .cloned()
+            .collect()
+    };
+
+    let mut found = parity_item(&facade, "I1");
+    found.update(&facade).unwrap();
+    assert!(updates().is_empty(), "{:?}", updates());
+    found.set("note", Value::string("c"));
+    found.update(&facade).unwrap();
+    let written = updates();
+    assert_eq!(written.len(), 1, "{written:?}");
+    let set = written[0].split(" WHERE ").next().unwrap();
+    assert!(
+        set.contains("\"note\"") && set.contains("\"last_updated_stamp\""),
+        "{set}"
+    );
+    assert!(!set.contains("\"other\"") && !set.contains("\"kind\""), "{set}");
+    assert_eq!(parity_item(&facade, "I1").get("other"), Some(&Value::string("b")));
+
+    let mut test = facade.make_value("moqui.test.TestEntity").unwrap();
+    test.set("testId", Value::string("T1"));
+    test.create(&facade).unwrap();
+    test.update(&facade).unwrap();
+    assert_eq!(updates().len(), 1, "a stamp alone is no update: {:?}", updates());
+    test.set("testMedium", Value::string("m"));
+    test.update(&facade).unwrap();
+    assert_eq!(updates().len(), 2);
+}
+
+/// Java stamps `lastUpdatedStamp` with the transaction start time, and an update keeps a stamp the caller changed from
+/// the stored one.
+#[test]
+fn the_stamp_is_the_transaction_start_and_a_changed_stamp_is_kept() {
+    let fixture = ParityFixture::new();
+    let facade = fixture.open(None);
+    let entity = "moqui.test.ParityItem";
+    assert!(facade.begin(entity, None).unwrap());
+    for id in ["I1", "I2"] {
+        let mut item = facade.make_value(entity).unwrap();
+        item.set("itemId", Value::string(id));
+        item.create(&facade).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    facade.commit(entity).unwrap();
+    let stamp = |id: &str| parity_item(&facade, id).get("lastUpdatedStamp").cloned();
+    assert!(stamp("I1").is_some_and(|stamp| !stamp.is_null()));
+    assert_eq!(stamp("I1"), stamp("I2"));
+
+    let chosen = moqui_lib::object::basic_convert(&Value::I64(1_000_000_000_000), "java.sql.Timestamp").value;
+    let mut item = parity_item(&facade, "I1");
+    item.set("note", Value::string("x"));
+    item.set("lastUpdatedStamp", chosen.clone());
+    item.update(&facade).unwrap();
+    assert_eq!(stamp("I1"), Some(chosen));
+}
+
+/// Java's `optimistic-lock`: an update of a value read before another update of the row is refused.
+#[test]
+fn optimistic_lock_refuses_an_update_of_a_stale_value() {
+    let fixture = ParityFixture::new();
+    let facade = fixture.open(None);
+    let entity = "moqui.test.ParityLocked";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("lockedId", Value::string("L1"));
+    row.create(&facade).unwrap();
+    let read = || {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq("lockedId", Value::string("L1"))
+            .use_cache(false)
+            .one()
+            .unwrap()
+            .unwrap()
+    };
+    let (mut first, mut second) = (read(), read());
+    std::thread::sleep(Duration::from_millis(5));
+    first.set("note", Value::string("first"));
+    first.update(&facade).unwrap();
+    second.set("note", Value::string("second"));
+    let err = second.update(&facade).unwrap_err();
+    assert!(err.to_string().contains("updated by someone else"), "{err}");
+    assert_eq!(read().get("note"), Some(&Value::string("first")));
+}
+
+/// The framework conf, to change before a facade is opened on it.
+fn framework_conf() -> MNode {
+    MNode::parse_file(crate::testing::framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap()
+}
+
+#[test]
+fn the_global_sequenced_id_prefix_is_put_in_front_of_bank_ids() {
+    let conf = framework_conf();
+    conf.first_named("entity-facade")
+        .unwrap()
+        .set_attribute("sequenced-id-prefix", "G");
+    let facade = crate::testing::open_with_conf(&conf);
+    facade.temp_set_sequenced_id_primary("moqui.test.Foo", 1000, 10);
+    let mut foo = facade.make_value("moqui.test.Foo").unwrap();
+    foo.set_sequenced_id_primary(&facade).unwrap();
+    assert_eq!(foo.get("fooId").and_then(Value::as_str), Some("G1000"));
+    facade.temp_set_sequenced_id_primary("SomeName", 7, 10);
+    assert_eq!(
+        super::sequenced_id_primary(&facade, "SomeName", None, None).unwrap(),
+        "G7"
+    );
+    // An empty prefix is none, as the framework conf has it.
+    let plain = crate::testing::open();
+    plain.temp_set_sequenced_id_primary("SomeName", 7, 10);
+    assert_eq!(
+        super::sequenced_id_primary(&plain, "SomeName", None, None).unwrap(),
+        "7"
+    );
+}
+
+#[test]
+fn a_datasource_with_sequence_primary_use_uuid_gives_its_entities_uuids() {
+    let conf = framework_conf();
+    let datasource = super::datasource::datasource_nodes(&conf)
+        .into_iter()
+        .find(|node| node.attribute("group-name").as_deref() == Some("transactional"))
+        .unwrap();
+    datasource.set_attribute("sequence-primary-use-uuid", "true");
+    let facade = crate::testing::open_with_conf(&conf);
+    let mut foo = facade.make_value("moqui.test.Foo").unwrap();
+    foo.set_sequenced_id_primary(&facade).unwrap();
+    let id = foo.get("fooId").and_then(Value::as_str).unwrap().to_string();
+    assert_eq!((id.len(), id.matches('-').count()), (36, 4), "{id}");
+    let id = super::sequenced_id_primary(&facade, "moqui.test.Foo", None, None).unwrap();
+    assert_eq!(id.len(), 36, "{id}");
+    // A name that is no entity still comes from the bank.
+    facade.temp_set_sequenced_id_primary("SomeName", 7, 10);
+    assert_eq!(
+        super::sequenced_id_primary(&facade, "SomeName", None, None).unwrap(),
+        "7"
+    );
+}
+
+#[test]
+fn a_load_entity_file_outside_the_entity_directories_joins_the_model() {
+    let dir = std::env::temp_dir().join(format!("moqui-load-entity-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Extra.xml");
+    std::fs::write(
+        &file,
+        r#"<entities><entity entity-name="LoadedByConf" package="moqui.test.conf">
+            <field name="confId" type="id" is-pk="true"/></entity></entities>"#,
+    )
+    .unwrap();
+    let conf = framework_conf();
+    let entity_facade = conf.first_named("entity-facade").unwrap();
+    let extra = MNode::parse_text("load", &format!(r#"<load-entity location="{}"/>"#, file.display())).unwrap();
+    entity_facade.append_node(extra);
+    let missing = MNode::parse_text("load", r#"<load-entity location="component://nowhere/entity/X.xml"/>"#).unwrap();
+    entity_facade.append_node(missing);
+    let facade = crate::testing::open_with_conf(&conf);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The framework's own load-entity files are its entity directory, read once.
+    assert_eq!(facade.entity_files().len(), 1, "{:?}", facade.entity_files());
+    assert!(facade.make_value("moqui.test.conf.LoadedByConf").is_ok());
+    assert!(facade.make_value("moqui.basic.Enumeration").is_ok());
+}
+
+#[test]
+fn a_sequence_primary_prefix_is_expanded_with_the_value_fields() {
+    let context = crate::context::ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let mut values = BTreeMap::new();
+    values.insert("kind".to_string(), Value::string("INV"));
+    assert_eq!(
+        super::sequence::expand_prefix(Some("${kind}-"), &values)
+            .unwrap()
+            .as_deref(),
+        Some("INV-")
+    );
+    assert_eq!(
+        super::sequence::expand_prefix(Some("P"), &values).unwrap().as_deref(),
+        Some("P")
+    );
+}
+
+fn create_row(facade: &EntityFacade, entity: &str, pairs: &[(&str, &str)]) {
+    let mut row = facade.make_value(entity).unwrap();
+    for (name, value) in pairs {
+        row.set(*name, Value::string(*value));
+    }
+    row.create(facade).unwrap();
+}
+
+/// Enumeration types `T1` and `T2`, with `E1` and `E2` of `T1` and `E3` of `T2`.
+fn seed_enumerations(facade: &EntityFacade) {
+    for (id, description) in [("T1", "Type one"), ("T2", "Type two")] {
+        create_row(
+            facade,
+            "moqui.basic.EnumerationType",
+            &[("enumTypeId", id), ("description", description)],
+        );
+    }
+    for (id, type_id) in [("E1", "T1"), ("E2", "T1"), ("E3", "T2")] {
+        create_row(
+            facade,
+            "moqui.basic.Enumeration",
+            &[
+                ("enumId", id),
+                ("enumTypeId", type_id),
+                ("description", &format!("Enum {id}")),
+            ],
+        );
+    }
+}
+
+/// A `DbViewEntity` of `members` (alias, entity, join-from alias), each joined on `enumTypeId`, and `aliases` (name,
+/// member alias, field).
+fn create_db_view(facade: &EntityFacade, name: &str, members: &[(&str, &str, &str)], aliases: &[(&str, &str, &str)]) {
+    create_row(
+        facade,
+        "moqui.entity.view.DbViewEntity",
+        &[
+            ("dbViewEntityName", name),
+            ("packageName", "test.dbview"),
+            ("cache", "Y"),
+        ],
+    );
+    for (alias, entity, join_from) in members {
+        let mut fields = vec![
+            ("dbViewEntityName", name),
+            ("entityAlias", *alias),
+            ("entityName", *entity),
+        ];
+        if !join_from.is_empty() {
+            fields.extend([("joinFromAlias", *join_from), ("joinOptional", "Y")]);
+            create_row(
+                facade,
+                "moqui.entity.view.DbViewEntityKeyMap",
+                &[
+                    ("dbViewEntityName", name),
+                    ("joinFromAlias", join_from),
+                    ("entityAlias", alias),
+                    ("fieldName", "enumTypeId"),
+                ],
+            );
+        }
+        create_row(facade, "moqui.entity.view.DbViewEntityMember", &fields);
+    }
+    for (alias, member, field) in aliases {
+        create_row(
+            facade,
+            "moqui.entity.view.DbViewEntityAlias",
+            &[
+                ("dbViewEntityName", name),
+                ("fieldAlias", alias),
+                ("entityAlias", member),
+                ("fieldName", field),
+            ],
+        );
+    }
+}
+
+/// Java's `DbViewEntity`: a view-entity built from its member, key map and alias rows on its first use, under its name
+/// and its full name, that finds, counts and iterates as a file view does. A name looked up before its rows are there
+/// is found once they are, and a write to its rows builds it again.
+#[test]
+fn a_db_view_entity_is_built_from_its_rows_and_again_when_they_change() {
+    let facade = crate::testing::open();
+    seed_enumerations(&facade);
+    assert!(facade.find("EnumWithType").is_err());
+    create_db_view(
+        &facade,
+        "EnumWithType",
+        &[
+            ("MASTER", "moqui.basic.Enumeration", ""),
+            ("TYPE", "moqui.basic.EnumerationType", "MASTER"),
+        ],
+        &[
+            ("enumId", "MASTER", "enumId"),
+            ("description", "MASTER", "description"),
+            ("typeDescription", "TYPE", "description"),
+        ],
+    );
+    let one = |name: &str| {
+        facade
+            .find(name)
+            .unwrap()
+            .eq("enumId", Value::string("E1"))
+            .one()
+            .unwrap()
+            .unwrap()
+    };
+    let row = one("EnumWithType");
+    assert_eq!(row.get("typeDescription"), Some(&Value::string("Type one")));
+    assert_eq!(row.get("description"), Some(&Value::string("Enum E1")));
+    assert!(row.get("enumTypeId").is_none());
+    let (full_name, pk, cache) = facade
+        .with_entity("EnumWithType", |entity, _, _| {
+            let pk: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
+            Ok((entity.full_name.clone(), pk, entity.cache.clone()))
+        })
+        .unwrap();
+    assert_eq!(full_name, "test.dbview.EnumWithType");
+    assert_eq!(pk, ["enumId"]);
+    // Never cached, though the row says `Y`: the entity cache does not know a member's views built here.
+    assert_eq!(cache, "never");
+    assert_eq!(
+        one("test.dbview.EnumWithType").get("typeDescription"),
+        Some(&Value::string("Type one"))
+    );
+    assert!(facade.find("other.EnumWithType").is_err());
+    assert_eq!(facade.find("EnumWithType").unwrap().count().unwrap(), 3);
+    let mut iterator = facade
+        .find("EnumWithType")
+        .unwrap()
+        .order_by("enumId", true)
+        .iterator()
+        .unwrap();
+    let first = iterator.next_value().unwrap().unwrap();
+    assert_eq!(first.get("enumId"), Some(&Value::string("E3")));
+    iterator.close().unwrap();
+    assert!(super::info::is_entity_defined(&facade, "EnumWithType"));
+    let info = super::info::definition_info(&facade, "EnumWithType").unwrap();
+    assert_eq!(info.get("isViewEntity"), Some(&Value::Bool(true)));
+
+    // A new alias row: the next lookup builds the view with it.
+    create_row(
+        &facade,
+        "moqui.entity.view.DbViewEntityAlias",
+        &[
+            ("dbViewEntityName", "EnumWithType"),
+            ("fieldAlias", "enumTypeId"),
+            ("entityAlias", "MASTER"),
+        ],
+    );
+    assert_eq!(one("EnumWithType").get("enumTypeId"), Some(&Value::string("T1")));
+
+    // An alias's function, as Java's `function` attribute.
+    create_db_view(
+        &facade,
+        "EnumCount",
+        &[("MASTER", "moqui.basic.Enumeration", "")],
+        &[("enumTypeId", "MASTER", "enumTypeId")],
+    );
+    create_row(
+        &facade,
+        "moqui.entity.view.DbViewEntityAlias",
+        &[
+            ("dbViewEntityName", "EnumCount"),
+            ("fieldAlias", "enumCount"),
+            ("entityAlias", "MASTER"),
+            ("fieldName", "enumId"),
+            ("functionName", "count"),
+        ],
+    );
+    let counted = facade
+        .with_entity("EnumCount", |entity, _, _| {
+            Ok(entity
+                .alias("enumCount")
+                .map(|alias| (alias.function.clone(), alias.aggregates())))
+        })
+        .unwrap();
+    assert_eq!(counted, Some((Some("count".to_string()), true)));
+}
+
+/// AGENTS.md failure tolerance: a `DbViewEntity` with a member that is not an entity, or an alias of a field its
+/// member does not have, is logged with its name once and is not found, until its rows change; other entities and
+/// views go on. A name that is no entity is not found, with nothing logged.
+#[test]
+fn a_db_view_entity_that_does_not_build_is_logged_and_not_found() {
+    let facade = crate::testing::open();
+    seed_enumerations(&facade);
+    create_db_view(
+        &facade,
+        "NoMemberView",
+        &[("MASTER", "moqui.test.NoSuchEntity", "")],
+        &[("enumId", "MASTER", "enumId")],
+    );
+    create_db_view(
+        &facade,
+        "BadAliasView",
+        &[("MASTER", "moqui.basic.Enumeration", "")],
+        &[("enumId", "MASTER", "noSuchField")],
+    );
+    create_db_view(
+        &facade,
+        "GoodView",
+        &[("MASTER", "moqui.basic.Enumeration", "")],
+        &[("enumId", "MASTER", "enumId")],
+    );
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        for _ in 0..2 {
+            assert!(facade.find("NoMemberView").is_err());
+            assert!(facade.find("BadAliasView").is_err());
+            assert!(facade.find("NoSuchEntityAnywhere").is_err());
+            assert!(facade.find("DataDocument.NoSuchDocument").is_err());
+        }
+        assert!(!super::info::is_entity_defined(&facade, "NoMemberView"));
+        assert_eq!(facade.find("moqui.basic.Enumeration").unwrap().count().unwrap(), 3);
+        assert_eq!(facade.find("GoodView").unwrap().count().unwrap(), 3);
+    });
+    let lines = lines.lock().unwrap().clone();
+    let text = lines.join("\n");
+    let logged = |name: &str| lines.iter().filter(|line| line.contains(name)).count();
+    assert_eq!(logged("NoMemberView"), 1, "{text}");
+    assert!(text.contains("moqui.test.NoSuchEntity"), "{text}");
+    assert_eq!(logged("BadAliasView"), 1, "{text}");
+    assert!(text.contains("noSuchField"), "{text}");
+    assert!(
+        !text.contains("NoSuchEntityAnywhere") && !text.contains("NoSuchDocument"),
+        "{text}"
+    );
+    let Err(err) = facade.find("NoSuchEntityAnywhere") else {
+        panic!("not an entity");
+    };
+    assert!(
+        err.to_string().contains("no entity named NoSuchEntityAnywhere"),
+        "{err}"
+    );
+
+    // Fixed rows: found.
+    facade
+        .find("moqui.entity.view.DbViewEntityAlias")
+        .unwrap()
+        .eq("dbViewEntityName", Value::string("BadAliasView"))
+        .update_all([("fieldName".to_string(), Value::string("enumId"))])
+        .unwrap();
+    assert_eq!(facade.find("BadAliasView").unwrap().count().unwrap(), 3);
+}
+
+/// Java's `getEntityDefinition("DataDocument.<id>")`: the document's view, its aliases with `fieldNameAlias`,
+/// `functionName` and `defaultDisplay`, an expression field a `pq-expression` alias that a read evaluates; a find on it
+/// has the document's conditions, as Java's `makeDataDocumentFind`. As Java's `isEntityDefined`, the name is not an
+/// entity name, and a write to the document's rows builds it again.
+#[test]
+fn a_data_document_name_is_its_view_with_its_conditions() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    seed_enumerations(&facade);
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocument",
+        &[
+            ("dataDocumentId", "EnumDoc"),
+            ("primaryEntityName", "moqui.basic.EnumerationType"),
+        ],
+    );
+    for (seq, path, alias, display) in [
+        ("01", "enumTypeId", "", ""),
+        ("02", "description", "typeDescription", "N"),
+        ("03", "enums:enumId", "", ""),
+        ("04", "enums:description", "enumDescription", ""),
+        ("05", "(enumTypeId + '/' + enumId)", "label", "Y"),
+    ] {
+        let mut fields = vec![("dataDocumentId", "EnumDoc"), ("fieldSeqId", seq), ("fieldPath", path)];
+        if !alias.is_empty() {
+            fields.push(("fieldNameAlias", alias));
+        }
+        if !display.is_empty() {
+            fields.push(("defaultDisplay", display));
+        }
+        create_row(&facade, "moqui.entity.document.DataDocumentField", &fields);
+    }
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocumentCondition",
+        &[
+            ("dataDocumentId", "EnumDoc"),
+            ("conditionSeqId", "01"),
+            ("fieldNameAlias", "enumTypeId"),
+            ("fieldValue", "T1"),
+        ],
+    );
+    let name = "DataDocument.EnumDoc";
+    let rows = facade.find(name).unwrap().order_by("enumId", false).list().unwrap();
+    let ids: Vec<_> = rows.iter().map(|row| row.get("enumId").cloned()).collect();
+    assert_eq!(ids, [Some(Value::string("E1")), Some(Value::string("E2"))]);
+    let row = &rows.values()[0];
+    assert_eq!(row.get("typeDescription"), Some(&Value::string("Type one")));
+    assert_eq!(row.get("enumDescription"), Some(&Value::string("Enum E1")));
+    assert!(!row.fields().contains_key("label"));
+    assert_eq!(row.get_localized(&facade, "label"), Some(Value::string("T1/E1")));
+    let (full_name, aliases, displays, pq) = facade
+        .with_entity(name, |entity, _, _| {
+            Ok((
+                entity.full_name.clone(),
+                entity.field_names().into_iter().map(str::to_string).collect::<Vec<_>>(),
+                entity
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.default_display)
+                    .collect::<Vec<_>>(),
+                entity
+                    .pq_aliases
+                    .iter()
+                    .map(|alias| (alias.name.clone(), alias.default_display))
+                    .collect::<Vec<_>>(),
+            ))
+        })
+        .unwrap();
+    assert_eq!(full_name, name);
+    assert_eq!(aliases, ["enumTypeId", "typeDescription", "enumId", "enumDescription"]);
+    assert_eq!(displays, [None, Some(false), None, None]);
+    assert_eq!(pq, [("label".to_string(), true)]);
+    assert!(!super::info::is_entity_defined(&facade, name));
+
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocumentField",
+        &[
+            ("dataDocumentId", "EnumDoc"),
+            ("fieldSeqId", "06"),
+            ("fieldPath", "enums:enumCode"),
+        ],
+    );
+    assert!(facade
+        .with_entity(name, |entity, _, _| Ok(entity.has_field("enumCode")))
+        .unwrap());
 }

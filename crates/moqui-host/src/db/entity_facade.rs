@@ -302,6 +302,51 @@ mod tests {
             matched.get(0).unwrap().get("testFtsId").and_then(Value::as_str),
             Some("FTS1")
         );
+        // A table set up before the generated column has the old expression index. A check adds the column and its
+        // index and drops the old one.
+        let fts_indexes = |facade: &moqui_core::entity::EntityFacade| -> Vec<String> {
+            let rows = facade
+                .transactions_for("moqui.test.TestFts")
+                .unwrap()
+                .with_connection(|conn| {
+                    conn.query(
+                        "SELECT indexname FROM pg_indexes WHERE tablename = 'test_fts' ORDER BY indexname",
+                        &[],
+                    )
+                })
+                .unwrap();
+            rows.iter()
+                .filter_map(|row| {
+                    row.columns
+                        .first()
+                        .and_then(|(_, value)| value.as_str().map(str::to_string))
+                })
+                .filter(|name| name.contains("fts_"))
+                .collect()
+        };
+        assert_eq!(fts_indexes(&facade), ["fts_test_fts_body"]);
+        facade
+            .transactions_for("moqui.test.TestFts")
+            .unwrap()
+            .with_connection(|conn| {
+                conn.execute("ALTER TABLE test_fts DROP COLUMN body_tsv", &[])?;
+                conn.execute(
+                    "CREATE INDEX test_fts_body_fts ON test_fts USING gin (to_tsvector('english', body))",
+                    &[],
+                )
+            })
+            .unwrap();
+        assert_eq!(fts_indexes(&facade), ["test_fts_body_fts"]);
+        facade.forget_tables();
+        facade.check_tables(&["moqui.test.TestFts"]).unwrap();
+        assert_eq!(fts_indexes(&facade), ["fts_test_fts_body"]);
+        let rematched = facade
+            .find("moqui.test.TestFts")
+            .unwrap()
+            .matches("body", Value::string("lazy dog"))
+            .count()
+            .unwrap();
+        assert_eq!(rematched, 1);
 
         facade.begin("moqui.test.TestEntity", None).unwrap();
         for index in 1..=60 {

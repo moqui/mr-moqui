@@ -21,6 +21,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use indexmap::IndexMap;
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, compare_obj, to_plain_string, Value};
 
@@ -28,35 +29,54 @@ use super::loader::{convert_fields, inherit_pk_fields, load_entity_data, load_en
 use super::{DataFileService, LoadOptions};
 use crate::entity::facade::EntityFacade;
 
-/// What a check found: one message for each record not found and each field that did not match, and how many
-/// fields were compared.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// What a check found: one message for each record not found and each field that did not match (with
+/// [`check_info_with`] a row in `diff_info` instead), and how many fields were compared.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CheckResult {
     pub messages: Vec<String>,
     pub fields_checked: u64,
+    /// Java's `checkInfo` rows: `entity`, `pk`, `notFound`, `pkComplete` and `location`, with `createValues` for a
+    /// record not found, or `field`, `value` and `dbValue` for a field that did not match.
+    pub diff_info: Vec<IndexMap<String, Value>>,
+}
+
+/// The check running on this thread.
+struct CheckState {
+    result: CheckResult,
+    /// Java's `checkInfo`: rows in `diff_info`, not messages.
+    info: bool,
+    /// The file or text being read, for the rows.
+    location: String,
 }
 
 thread_local! {
-    static CHECKING: RefCell<Option<CheckResult>> = const { RefCell::new(None) };
+    static CHECKING: RefCell<Option<CheckState>> = const { RefCell::new(None) };
 }
 
 /// Ends the check of this thread, also on an error or a panic.
 struct CheckScope;
 
 impl CheckScope {
-    fn enter() -> Result<Self, Error> {
+    fn enter(info: bool) -> Result<Self, Error> {
         CHECKING.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.is_some() {
                 return Err(Error::new("a data check is already running on this thread"));
             }
-            *slot = Some(CheckResult::default());
+            *slot = Some(CheckState {
+                result: CheckResult::default(),
+                info,
+                location: String::new(),
+            });
             Ok(CheckScope)
         })
     }
 
     fn finish(self) -> CheckResult {
-        CHECKING.with(|slot| slot.borrow_mut().take()).unwrap_or_default()
+        CHECKING
+            .with(|slot| slot.borrow_mut().take())
+            .map(|state| state.result)
+            .unwrap_or_default()
     }
 }
 
@@ -69,7 +89,15 @@ impl Drop for CheckScope {
 /// Run `body`, a load of any kind, as a check: the records it reads are compared with the database and none is
 /// written.
 pub fn check_with<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<(R, CheckResult), Error> {
-    let scope = CheckScope::enter()?;
+    let scope = CheckScope::enter(false)?;
+    let out = body()?;
+    Ok((out, scope.finish()))
+}
+
+/// Run `body` as Java's `checkInfo`: like [`check_with`], but what did not match is a row of
+/// [`CheckResult::diff_info`] rather than a message.
+pub fn check_info_with<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<(R, CheckResult), Error> {
+    let scope = CheckScope::enter(true)?;
     let out = body()?;
     Ok((out, scope.finish()))
 }
@@ -84,16 +112,10 @@ pub fn check_entity_xml_text(
     check_with(|| load_entity_xml_text(facade, location, text, options)).map(|(_, result)| result)
 }
 
-/// Check the data of one location, a file or a directory, as `makeDataLoader().location(location).check()`. When
-/// the location gave messages, a last one names it, as Java's.
+/// Check the data of one location, a file or a directory, as `makeDataLoader().location(location).check()`. Each
+/// file adds a last message that names it, as Java's.
 pub fn check_entity_data(facade: &EntityFacade, location: &str, options: &LoadOptions) -> Result<CheckResult, Error> {
-    let (loaded, mut result) = check_with(|| load_entity_data(facade, location, options))?;
-    if !result.messages.is_empty() {
-        result
-            .messages
-            .push(format!("-- Checked data ({} records) in {location}", loaded.records));
-    }
-    Ok(result)
+    check_with(|| load_entity_data(facade, location, options)).map(|(_, result)| result)
 }
 
 /// True while a check runs on this thread: the readers then check records instead of storing them.
@@ -101,16 +123,69 @@ pub(super) fn checking() -> bool {
     CHECKING.with(|slot| slot.borrow().is_some())
 }
 
+/// Run `body`, the read of `location` (a file or text), with the check's rows naming it.
+pub(super) fn at_location<R>(location: &str, body: impl FnOnce() -> R) -> R {
+    let before = CHECKING.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .map(|state| std::mem::replace(&mut state.location, location.to_string()))
+    });
+    let out = body();
+    if let Some(before) = before {
+        CHECKING.with(|slot| {
+            if let Some(state) = slot.borrow_mut().as_mut() {
+                state.location = before;
+            }
+        });
+    }
+    out
+}
+
+/// Run `body`, the check of the file `location`. As Java's `loadSingleFile`, a `-- Checked data` message follows it
+/// unless the file gave no messages and the load hides those (`messageNoActionFiles(false)`).
+pub(super) fn check_file(
+    location: &str,
+    options: &LoadOptions,
+    body: impl FnOnce() -> Result<u64, Error>,
+) -> Result<u64, Error> {
+    let before = CHECKING.with(|slot| slot.borrow().as_ref().map(|state| state.result.messages.len()));
+    let Some(before) = before else {
+        return body();
+    };
+    let records = at_location(location, body)?;
+    CHECKING.with(|slot| {
+        if let Some(state) = slot.borrow_mut().as_mut() {
+            if !options.hide_no_action_files || state.result.messages.len() > before {
+                state
+                    .result
+                    .messages
+                    .push(format!("-- Checked data ({records} records) in {location}"));
+            }
+        }
+    });
+    Ok(records)
+}
+
 /// Check one record read from the data and its nested records. Returns how many records it read, as a store
 /// returns how many it wrote.
 pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64, Error> {
-    let mut messages = Vec::new();
-    let mut fields_checked = 0_u64;
-    let records = check_tree(facade, record, &BTreeMap::new(), &mut messages, &mut fields_checked)?;
+    let (info, location) = CHECKING.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|state| (state.info, state.location.clone()))
+            .unwrap_or_default()
+    });
+    let mut found = Findings {
+        info,
+        location,
+        ..Findings::default()
+    };
+    let records = check_tree(facade, record, &BTreeMap::new(), &mut found)?;
     CHECKING.with(|slot| {
-        if let Some(result) = slot.borrow_mut().as_mut() {
-            result.messages.extend(messages);
-            result.fields_checked = result.fields_checked.saturating_add(fields_checked);
+        if let Some(state) = slot.borrow_mut().as_mut() {
+            state.result.messages.extend(found.messages);
+            state.result.diff_info.extend(found.diff_info);
+            state.result.fields_checked = state.result.fields_checked.saturating_add(found.fields_checked);
         }
     });
     Ok(records)
@@ -123,18 +198,46 @@ pub(super) fn skip_service(service: &DataFileService) {
         service.name, service.parameters
     );
     CHECKING.with(|slot| {
-        if let Some(result) = slot.borrow_mut().as_mut() {
-            result.messages.push(message);
+        if let Some(state) = slot.borrow_mut().as_mut() {
+            state.result.messages.push(message);
         }
     });
+}
+
+/// What the check of one record tree found.
+#[derive(Default)]
+struct Findings {
+    info: bool,
+    location: String,
+    messages: Vec<String>,
+    diff_info: Vec<IndexMap<String, Value>>,
+    fields_checked: u64,
+}
+
+impl Findings {
+    /// A `checkInfo` row with the fields every row has.
+    fn row(&self, entity: &str, pk: &[(String, Value)], not_found: bool) -> IndexMap<String, Value> {
+        let mut row = IndexMap::new();
+        row.insert("entity".to_string(), Value::string(entity));
+        row.insert(
+            "pk".to_string(),
+            Value::Map(pk.iter().map(|(name, value)| (name.clone(), value.clone())).collect()),
+        );
+        row.insert("notFound".to_string(), Value::Bool(not_found));
+        row.insert(
+            "pkComplete".to_string(),
+            Value::Bool(pk.iter().all(|(_, value)| !value.is_null())),
+        );
+        row.insert("location".to_string(), Value::string(&self.location));
+        row
+    }
 }
 
 fn check_tree(
     facade: &EntityFacade,
     record: &Record,
     ancestor: &BTreeMap<String, Value>,
-    messages: &mut Vec<String>,
-    fields_checked: &mut u64,
+    found: &mut Findings,
 ) -> Result<u64, Error> {
     let mut fields = record.fields.clone();
     inherit_pk_fields(facade, &record.entity, ancestor, &mut fields)?;
@@ -154,7 +257,7 @@ fn check_tree(
         .map(|name| (name.clone(), fields.get(name).cloned().unwrap_or(Value::Null)))
         .collect();
     let pk_text = pk_display(&pk);
-    let found = if pk.iter().any(|(_, value)| value.is_null()) {
+    let db = if pk.iter().any(|(_, value)| value.is_null()) {
         None
     } else {
         let mut find = facade.find(&record.entity)?;
@@ -163,20 +266,42 @@ fn check_tree(
         }
         find.one()?
     };
-    match found {
-        None => messages.push(format!(
+    match db {
+        None if found.info => {
+            let mut row = found.row(&record.entity, &pk, true);
+            row.insert(
+                "createValues".to_string(),
+                Value::Map(
+                    fields
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.clone()))
+                        .collect(),
+                ),
+            );
+            found.diff_info.push(row);
+        }
+        None => found.messages.push(format!(
             "Entity {} record not found for primary key {pk_text}",
             record.entity
         )),
         Some(db) => {
             for name in &non_pk_names {
-                *fields_checked = fields_checked.saturating_add(1);
+                found.fields_checked = found.fields_checked.saturating_add(1);
                 let Some(check) = fields.get(name).filter(|value| !value.is_null()) else {
                     continue;
                 };
                 let stored = db.get(name).cloned().unwrap_or(Value::Null);
-                if !same(check, &stored) {
-                    messages.push(format!(
+                if same(check, &stored) {
+                    continue;
+                }
+                if found.info {
+                    let mut row = found.row(&record.entity, &pk, false);
+                    row.insert("field".to_string(), Value::string(name));
+                    row.insert("value".to_string(), check.clone());
+                    row.insert("dbValue".to_string(), stored);
+                    found.diff_info.push(row);
+                } else {
+                    found.messages.push(format!(
                         "Field {}.{name} did not match; check (file) value [{}], db value [{}] for primary key {pk_text}",
                         record.entity,
                         value_display(check),
@@ -195,7 +320,7 @@ fn check_tree(
     }
     let mut records = 1_u64;
     for child in &record.children {
-        records = records.saturating_add(check_tree(facade, child, &shared, messages, fields_checked)?);
+        records = records.saturating_add(check_tree(facade, child, &shared, found)?);
     }
     Ok(records)
 }

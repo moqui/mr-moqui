@@ -251,6 +251,11 @@
         moqui.handleAjaxError(err);
     };
 
+    // A validation error's line in errors, as the server writes it (Java's ValidationError.toStringPretty): the message, then "(" and the
+    // pretty field, form and service names that are there, with no closing parenthesis.
+    moqui.validationErrorText = (ve) => (ve.message || "") + "(" + (ve.fieldPretty ? "for field " + ve.fieldPretty : "") +
+        (ve.formPretty ? " on form " + ve.formPretty : "") + (ve.serviceNamePretty ? " of service " + ve.serviceNamePretty : "");
+
     // The validation errors of a form's own fields go to the form (m-form fieldErrors), shown by the field. A copy of the response without
     // them, and without their text in errors, is what is left to notify. An error for another form or for no field stays in the copy.
     moqui.placeFieldErrors = (form, resp) => {
@@ -265,7 +270,7 @@
         });
         if (!placed.length) return resp;
         form.setFieldErrors(placed);
-        const placedText = placed.map((ve) => ve.message);
+        const placedText = placed.map((ve) => ve.message).concat(placed.map(moqui.validationErrorText));
         const copy = Object.assign({}, resp, { validationErrors: rest, fieldErrorsPlaced: placed.length });
         if (moqui.isString(resp.errors)) {
             const lines = resp.errors.split("\n").filter((line) => placedText.indexOf(line) === -1);

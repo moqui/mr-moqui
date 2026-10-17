@@ -776,6 +776,36 @@ fn data_loader_check_compares_records_and_nested_records() {
     );
 }
 
+/// Java's `checkInfo(diffInfoList, messages)`, which the DataImport screen calls: a row for each field that did not
+/// match and each record not found, and no message for them.
+#[test]
+fn data_loader_check_info_gives_diff_rows() {
+    let context = database();
+    let _entered = context.enter();
+    run_script(
+        r#"ec.artifactExecution.disableAuthz();
+        ec.entity.makeDataLoader().xmlText(`<entity-facade-xml>
+            <moqui.service.job.ServiceJob jobName="info_job" serviceName="example"/>
+        </entity-facade-xml>`).load();"#,
+    )
+    .unwrap();
+    holds(
+        r#"(function () {
+            const rows = [], messages = [];
+            const checked = ec.entity.makeDataLoader().xmlText(`<entity-facade-xml>
+                <moqui.service.job.ServiceJob jobName="info_job" serviceName="other"/>
+                <moqui.service.job.ServiceJob jobName="missing_job" serviceName="made"/>
+            </entity-facade-xml>`).checkInfo(rows, messages);
+            const diff = rows.find((row) => !row.notFound), missing = rows.find((row) => row.notFound);
+            return rows.length === 2 && messages.length === 0 && checked > 3
+                && diff.entity === "moqui.service.job.ServiceJob" && diff.field === "serviceName"
+                && diff.value === "other" && diff.dbValue === "example" && diff.pk.jobName === "info_job"
+                && diff.pkComplete === true && diff.location === "xmlText"
+                && missing.pk.jobName === "missing_job" && missing.createValues.serviceName === "made";
+        })()"#,
+    );
+}
+
 #[test]
 fn order_map_list_action_sorts_an_entity_list() {
     let context = database();

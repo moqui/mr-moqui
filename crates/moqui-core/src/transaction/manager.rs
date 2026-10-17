@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::ThreadId;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
@@ -54,6 +54,8 @@ struct Frame {
     cache_hold: bool,
     fired: Arc<AtomicBool>,
     deadline_token: u64,
+    /// When the frame began, in epoch milliseconds, as Java's `transactionBeginStartTime`.
+    began_millis: i64,
     cache_flush: Vec<ConnHook>,
     feed_insert: Vec<ConnHook>,
     on_commit: Vec<AfterHook>,
@@ -234,6 +236,7 @@ impl TransactionManager {
                 cache_hold: false,
                 fired,
                 deadline_token,
+                began_millis: epoch_millis(),
                 cache_flush: Vec::new(),
                 feed_insert: Vec::new(),
                 on_commit: Vec::new(),
@@ -588,6 +591,12 @@ impl TransactionManager {
     /// frames are all suspended, as in an `ignore` plus `force-new` body, has no transaction in place.
     pub fn in_transaction(&self) -> bool {
         self.has_active()
+    }
+
+    /// When the active transaction began, in epoch milliseconds, as Java's `getCurrentTransactionStartTime`: every
+    /// write in one transaction stamps `lastUpdatedStamp` with it. `None` with no transaction in place.
+    pub fn start_time_millis(&self) -> Option<i64> {
+        self.with_frames(|frames| active(frames).map(|frame| frame.began_millis))
     }
 
     /// A token for the active frame, unique per begun transaction and shared by its joins.
@@ -1159,6 +1168,14 @@ impl Drop for ResumeOnDrop<'_> {
             self.mgr.resume_parked_parent();
         }
     }
+}
+
+fn epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0)
 }
 
 fn active(frames: &[Frame]) -> Option<&Frame> {

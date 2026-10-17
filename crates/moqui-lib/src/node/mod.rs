@@ -89,6 +89,12 @@ impl MNode {
         parse::parse_document(Some(location), text, false)
     }
 
+    /// Parse keeping each element's text as written, whitespace included, as SAX `characters` gives it; the entity
+    /// data loader reads field text this way, as Java's does.
+    pub fn parse_text_raw(location: &str, text: &str) -> Result<Self, Error> {
+        parse::parse_document_with(Some(location), text, false, true)
+    }
+
     pub fn parse_root_only(location: &str, text: &str) -> Result<Self, Error> {
         parse::parse_document(Some(location), text, true)
     }
@@ -493,6 +499,23 @@ mod tests {
         assert_eq!(root.text().as_deref(), Some("hello & not-an-entity"));
         assert_eq!(root.children_named("child").len(), 1);
         assert!(root.first_named("child").unwrap().text().is_none());
+    }
+
+    #[test]
+    fn raw_text_keeps_whitespace() {
+        let xml = "<root>\n  <a>  spaced  </a><b> </b><c><![CDATA[ x ]]>\n</c><d/></root>";
+        let raw = MNode::parse_text_raw("raw.xml", xml).unwrap();
+        let text = |name: &str| raw.first_named(name).and_then(|child| child.text());
+        assert_eq!(text("a").as_deref(), Some("  spaced  "));
+        assert_eq!(text("b").as_deref(), Some(" "));
+        assert_eq!(text("c").as_deref(), Some(" x \n"));
+        assert_eq!(text("d"), None);
+        let trimmed = MNode::parse_text("trimmed.xml", xml).unwrap();
+        assert_eq!(
+            trimmed.first_named("a").and_then(|child| child.text()).as_deref(),
+            Some("spaced")
+        );
+        assert!(trimmed.first_named("b").and_then(|child| child.text()).is_none());
     }
 
     #[test]

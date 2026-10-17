@@ -136,7 +136,7 @@ fn a_transition_runs_always_actions_but_not_pre_actions_or_screen_actions() {
     let context = ExecutionContextFactory::test_context();
     let output = render(context.factory(), "/byId/7").unwrap();
     assert_eq!(output.status, 200);
-    assert!(output.body_text().contains("\"id\": \"7\""), "{}", output.body_text());
+    assert!(output.body_text().contains("\"id\" : \"7\""), "{}", output.body_text());
     assert!(output.body_text().contains("Root.always"), "{}", output.body_text());
     assert!(!output.body_text().contains("Root.pre"), "{}", output.body_text());
     assert!(!output.body_text().contains("Root.actions"), "{}", output.body_text());
@@ -225,9 +225,9 @@ fn make_render_fills_parameters_session_and_base_url_from_maps() {
         .render()
         .unwrap();
     let text = output.body_text();
-    assert!(text.contains("\"who\": \"session-value\""), "{text}");
-    assert!(text.contains("\"p\": \"from-map\""), "{text}");
-    assert!(text.contains("\"pFromContext\": \"from-map\""), "{text}");
+    assert!(text.contains("\"who\" : \"session-value\""), "{text}");
+    assert!(text.contains("\"p\" : \"from-map\""), "{text}");
+    assert!(text.contains("\"pFromContext\" : \"from-map\""), "{text}");
 
     let redirect = make_render(context.factory())
         .root_screen(fixture_root())
@@ -771,6 +771,39 @@ fn an_auto_display_field_shows_the_related_entity_description() {
     let text = output.body_text();
     // The type's own description with its key, from the related EnumerationType, not the Enumeration's description.
     assert!(text.contains("Test [TestType]"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// As Java's `addEntityFields`, which reads `getFieldNames`: the auto fields of a view-entity are its aliases.
+#[test]
+fn auto_fields_of_a_view_entity_are_its_aliases() {
+    let world = World::open("");
+    world.enumeration_type();
+    let mut row = world.facade.make_value("moqui.basic.Enumeration").unwrap();
+    row.set("enumId", Value::string("TestOne"));
+    row.set("enumTypeId", Value::string("TestType"));
+    row.set("enumCode", Value::string("CodeOne"));
+    row.create(&world.facade).unwrap();
+    let dir = std::env::temp_dir().join(format!("moqui-screen-auto-view-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Auto.xml"),
+        r#"<screen require-authentication="false"><widgets>
+            <form-list name="Enums" list="enums">
+                <entity-find entity-name="moqui.basic.EnumerationAndType" list="enums"/>
+                <auto-fields-entity entity-name="moqui.basic.EnumerationAndType" field-type="display" include="all"/>
+            </form-list></widgets></screen>"#,
+    )
+    .unwrap();
+    let output = make_render(&world.factory)
+        .root_screen(dir.join("Auto.xml").to_string_lossy().into_owned())
+        .screen_path("/")
+        .render_mode("text")
+        .render()
+        .unwrap();
+    let text = output.body_text();
+    assert!(text.contains("CodeOne") && text.contains("TestOne"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

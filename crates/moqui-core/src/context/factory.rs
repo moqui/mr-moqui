@@ -1250,6 +1250,16 @@ impl ExecutionContextFactory {
         pools: crate::service::ServicePools,
         framework_dir: PathBuf,
     ) -> ExecutionContext {
+        Self::test_context_with_components(conf_text, pools, framework_dir, Vec::new())
+    }
+
+    /// [`Self::test_context_in`] with `components`, in their load order.
+    pub(crate) fn test_context_with_components(
+        conf_text: &str,
+        pools: crate::service::ServicePools,
+        framework_dir: PathBuf,
+        components: Vec<ComponentInfo>,
+    ) -> ExecutionContext {
         // The conf's cache-list, when the test gives one, makes the named caches.
         let conf = MNode::parse_text("test", conf_text)
             .ok()
@@ -1267,10 +1277,13 @@ impl ExecutionContextFactory {
         if framework_dir != Path::new(".") {
             component_dirs.insert("framework".to_string(), framework_dir.clone());
         }
+        for component in &components {
+            component_dirs.insert(component.name.clone(), component.location.clone());
+        }
         let factory = Arc::new(Self {
             runtime_dir: runtime_dir.clone(),
             framework_dir,
-            components: Vec::new(),
+            components,
             resource: ResourceFacade::new(runtime_dir, component_dirs, entity.clone()),
             cache: CacheFacade::from_conf(&conf).expect("cache"),
             conf_text: conf_text.to_string(),

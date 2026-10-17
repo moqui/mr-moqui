@@ -24,6 +24,7 @@ pub mod screen_lint;
 pub mod template;
 pub(crate) mod walker;
 
+pub(crate) use actions::run_actions_at;
 pub use actions::{check_actions, eval_condition_element, eval_condition_group, run_actions};
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;

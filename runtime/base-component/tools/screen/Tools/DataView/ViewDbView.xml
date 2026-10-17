@@ -32,9 +32,6 @@ along with this software (see the LICENSE.md file). If not, see
             <field-map field-name="dbViewEntityName"/><field-map field-name="entityAlias" value="MASTER"/></entity-find-one>
         <set field="masterDef" from="ec.entity.getEntityDefinition(masterMember.entityName)"/>
         <if condition="masterDef == null"><message error="true">Could not find master entity with name: ${masterMember.entityName}</message><return/></if>
-        <!-- Java defines a view entity from the DbViewEntity records; the port's entity model does not read those yet -->
-        <set field="dbViewAvailable" from="ec.entity.isEntityDefined(dbViewEntityName)"/>
-        <if condition="!dbViewAvailable"><return/></if>
 
         <entity-find-one entity-name="moqui.entity.view.DbViewEntity" value-field="fieldValues"/>
         <entity-find entity-name="${dbViewEntityName}" list="dbViewList" use-clone="true">
@@ -47,7 +44,6 @@ along with this software (see the LICENSE.md file). If not, see
             <link url="DbView.csv" text="Get as CSV"/>
         </container>
         <label text="Data View for: ${dbViewEntityName}" type="h2"/>
-        <section name="DbViewSection" condition="dbViewAvailable"><widgets>
         <container-dialog id="FilterViewDialog" button-text="Filter ${ec.entity.getEntityDefinition(dbViewEntityName).getPrettyName(null, null)}">
             <form-single name="FilterDbView" transition="filter" dynamic="true">
                 <auto-fields-entity entity-name="${dbViewEntityName}" field-type="find"/>
@@ -58,8 +54,5 @@ along with this software (see the LICENSE.md file). If not, see
         <form-list name="ViewList" list="dbViewList" dynamic="true">
             <auto-fields-entity entity-name="${dbViewEntityName}" field-type="display"/>
         </form-list>
-        </widgets><fail-widgets>
-            <label text="The data view ${dbViewEntityName} is not available: view entities defined by DbViewEntity records are not part of the entity model in this port" type="p" style="text-warning"/>
-        </fail-widgets></section>
     </widgets>
 </screen>

@@ -323,6 +323,52 @@ pub fn parse_decimal(text: &str, locale: &str) -> Option<Decimal> {
     plain.parse().ok()
 }
 
+/// A number written by the `DecimalFormat` `pattern` for `locale`, as Java's `BigDecimalValidator.validate(text,
+/// pattern, locale)` reads it: the pattern's prefix and suffix around the digits (the negative sub-pattern's, else `-`
+/// before the prefix, for a negative number), the locale's decimal separator, its grouping separator only when the
+/// pattern groups, and a `%` or per-mille pattern scaled back. None for text the pattern does not read.
+pub fn parse_decimal_pattern(text: &str, pattern: &str, locale: &str) -> Option<Decimal> {
+    let (positive, negative) = parse_pattern(pattern, "").ok()?;
+    let text = text.trim();
+    let implicit = Layout {
+        prefix: format!("-{}", positive.prefix),
+        ..positive.clone()
+    };
+    let negative = negative.unwrap_or(implicit);
+    let strip = |layout: &Layout| {
+        text.strip_prefix(layout.prefix.as_str())
+            .and_then(|rest| rest.strip_suffix(layout.suffix.as_str()))
+    };
+    // The longer prefix first, so `-` is not read as part of the digits.
+    let (body, negate) = match (strip(&negative), strip(&positive)) {
+        (Some(body), _) if negative.prefix.len() >= positive.prefix.len() => (body, true),
+        (_, Some(body)) => (body, false),
+        (Some(body), None) => (body, true),
+        (None, None) => return None,
+    };
+    let (grouping, decimal) = separators(locale);
+    let mut plain = String::with_capacity(body.len());
+    for ch in body.chars() {
+        if ch.is_ascii_digit() {
+            plain.push(ch);
+        } else if decimal.contains(ch) {
+            plain.push('.');
+        } else if positive.group > 0 && (grouping.contains(ch) || matches!(ch, '\u{a0}' | '\u{202f}')) {
+            continue;
+        } else {
+            return None;
+        }
+    }
+    if plain.is_empty() || plain == "." || plain.matches('.').count() > 1 {
+        return None;
+    }
+    let mut value: Decimal = plain.parse().ok()?;
+    for _ in 0..positive.scale {
+        value = value.checked_div(Decimal::TEN)?;
+    }
+    Some(if negate { -value } else { value })
+}
+
 /// A number as text. With no `pattern` it has grouping, at least one integer digit and up to 12
 /// fraction digits, which is what `L10nFacade.format` does for a number with no format.
 ///
@@ -482,5 +528,23 @@ mod tests {
     #[test]
     fn an_exponent_pattern_is_an_error() {
         assert!(format_number(Decimal::ONE, Some("0.###E0"), "en_US").is_err());
+    }
+
+    /// `BigDecimalValidator.validate(text, pattern, locale)`: the pattern's affixes, the locale's separators, grouping
+    /// only when the pattern groups, and a percent scaled back.
+    #[test]
+    fn a_number_reads_by_its_pattern() {
+        let read = |text: &str, pattern: &str, locale: &str| parse_decimal_pattern(text, pattern, locale);
+        let decimal = |text: &str| Some(Decimal::from_str(text).unwrap());
+        assert_eq!(read("1,234.50", "#,##0.00", "en_US"), decimal("1234.50"));
+        assert_eq!(read("1.234,5", "#,##0.00", "de"), decimal("1234.5"));
+        assert_eq!(read("-12.5", "0.00", "en_US"), decimal("-12.5"));
+        assert_eq!(read("(12.5)", "0.00;(0.00)", "en_US"), decimal("-12.5"));
+        assert_eq!(read("$12", "'$'0", "en_US"), decimal("12"));
+        assert_eq!(read("50%", "0%", "en_US"), decimal("0.5"));
+        // no grouping in the pattern, no prefix in the text, and text that is not a number do not read
+        assert_eq!(read("1,234", "0", "en_US"), None);
+        assert_eq!(read("12", "'$'0", "en_US"), None);
+        assert_eq!(read("abc", "0.00", "en_US"), None);
     }
 }

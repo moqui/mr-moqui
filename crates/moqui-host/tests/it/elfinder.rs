@@ -154,7 +154,7 @@ fn the_elfinder_screen_renders_and_its_connector_runs_on_a_dbresource_volume() {
     let refused = json(address, &john, &[("cmd", "rm"), ("targets[]", "garbage")]);
     assert_eq!(refused, serde_json::json!({"error": "errFileNotFound"}), "{refused}");
     let refused = json(address, &john, &[("cmd", "rm"), ("targets[]", "db_cm9vdA")]);
-    assert_eq!(refused["error"], "Not allowed on the volume root", "{refused}");
+    assert_eq!(refused["error"], "Operation not allowed on the root", "{refused}");
     let listed = json(address, &john, &[("cmd", "ls"), ("target", &hash("docs"))]);
     assert_eq!(listed["list"], serde_json::json!(["a.txt"]), "{listed}");
 

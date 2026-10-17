@@ -13,7 +13,7 @@
  */
 
 //! `moqui test [component ...]`: run the JavaScript spec files in each component's `test` directory, Moqui Java's
-//! Spock tests on the script engine (`plans/TestHarness.md`).
+//! Spock tests on the script engine (`plans/archive/TestHarness.md`).
 //!
 //! A component's specs run in the order of its `test/suite.js` (`suite(["SpecA", "SpecB"])`), then the other
 //! `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs

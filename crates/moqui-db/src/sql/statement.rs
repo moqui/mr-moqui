@@ -26,8 +26,8 @@ use crate::model::{EntityDefinition, EntityModel, FieldDefinition, IndexDefiniti
 
 use super::condition::{fts_config, Column, Condition, FieldRef, LimitOffset, OrderBy, Writer};
 use super::ident::{
-    clip_length, clip_name, is_mysql, physical_column_name, placeholders, quote_column, quote_ident as quote_alias,
-    quote_list, quote_physical_ident as quote_ident, shrink_name,
+    clip_length, clip_name, is_mysql, physical_column_name, physical_name, placeholders, quote_column,
+    quote_ident as quote_alias, quote_list, quote_physical_ident as quote_ident, shrink_name,
 };
 use super::Statement;
 
@@ -54,6 +54,8 @@ pub(crate) fn entity_column(entity: &EntityDefinition, dialect: &Dialect, field:
             sql: quote_column(dialect, &definition.column_name),
             text: Some(definition.is_text()),
             java_type: entity.java_type_of(&field.name).map(str::to_string),
+            fts: (definition.field_type == FTS_TYPE)
+                .then(|| quote_ident(dialect, &fts_column_name(definition, dialect))),
         },
         None => Column::plain(dialect, field),
     }
@@ -207,11 +209,10 @@ pub(crate) fn for_update(out: &mut Writer<'_>) {
 fn select_list(entity: &EntityDefinition, dialect: &Dialect, fields: &[FieldRef]) -> String {
     let all: Vec<FieldRef>;
     let fields = if fields.is_empty() {
-        if entity
-            .fields
-            .iter()
-            .all(|field| physical_column_name(dialect, &field.column_name) == field.name)
-        {
+        // Not with a `text-fts` field: its table has the generated full-text column, which is no field.
+        if entity.fields.iter().all(|field| {
+            physical_column_name(dialect, &field.column_name) == field.name && field.field_type != FTS_TYPE
+        }) {
             return "*".to_string();
         }
         all = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
@@ -242,8 +243,8 @@ pub fn count(entity: &EntityDefinition, dialect: &Dialect, condition: Option<&Co
     count_with(entity, dialect, condition, &SelectOptions::default())
 }
 
-/// [`count`] with [`SelectOptions`]. A distinct count over `options.fields` counts a
-/// `SELECT DISTINCT` sub-select, as Java does.
+/// [`count`] with [`SelectOptions`]. A distinct count counts a `SELECT DISTINCT` sub-select of
+/// `options.fields`, or of every field when none are given, as Java does.
 pub fn count_with(
     entity: &EntityDefinition,
     dialect: &Dialect,
@@ -257,7 +258,9 @@ pub fn count_with(
         )));
     }
     let mut out = Writer::new(dialect);
-    let wrapped = options.distinct && !options.fields.is_empty();
+    // As Java's `makeCountFunction`: a distinct count counts the distinct rows of the selected fields, all of them when
+    // none are selected.
+    let wrapped = options.distinct;
     if wrapped {
         let fields: Vec<FieldRef> = options.fields.iter().map(FieldRef::new).collect();
         out.push("SELECT COUNT(*) FROM (SELECT DISTINCT ");
@@ -357,10 +360,10 @@ pub fn insert_or_update(entity: &EntityDefinition, dialect: &Dialect, columns: &
     Ok(sql)
 }
 
-/// `CREATE TABLE`, plus one `CREATE INDEX ... USING gin (to_tsvector(...))` per `text-fts`
-/// column when the profile is `postgres-tsvector`. MySQL puts `FULLTEXT` on the table and
-/// appends `ENGINE`, character set, and collate when the profile sets them. Primary key columns
-/// are `NOT NULL`, and the key constraint is `PK_` plus the table name, clipped.
+/// `CREATE TABLE`, plus the full-text column and index of each `text-fts` field ([`fts_index_sql`]) when the
+/// profile is `postgres-tsvector`. MySQL puts `FULLTEXT` on the table and appends `ENGINE`, character set, and
+/// collate when the profile sets them. Primary key columns are `NOT NULL`, and the key constraint is `PK_` plus the
+/// table name, clipped.
 pub fn create_table(entity: &EntityDefinition, model: &EntityModel, dialect: &Dialect) -> Result<String, Error> {
     if entity.is_view {
         return Err(Error::new(format!(
@@ -394,10 +397,10 @@ pub fn create_table(entity: &EntityDefinition, model: &EntityModel, dialect: &Di
         sql.push_str(&quote_list(dialect, &pk_columns));
         sql.push(')');
     }
-    if is_mysql(dialect) && dialect.fts_style.as_deref() == Some("mysql-fulltext") {
-        for field in entity.fields.iter().filter(|field| field.field_type == "text-fts") {
+    if is_mysql(dialect) && dialect.fts_ddl && dialect.fts_style.as_deref() == Some("mysql-fulltext") {
+        for field in entity.fields.iter().filter(|field| field.field_type == FTS_TYPE) {
             sql.push_str(", FULLTEXT INDEX ");
-            sql.push_str(&quote_ident(dialect, &fts_index_name(entity, &field.name, dialect)));
+            sql.push_str(&quote_ident(dialect, &fts_index_name(entity, field, dialect)));
             sql.push_str(" (");
             sql.push_str(&quote_column(dialect, &field.column_name));
             sql.push(')');
@@ -417,38 +420,103 @@ pub fn create_table(entity: &EntityDefinition, model: &EntityModel, dialect: &Di
         sql.push_str(collate);
     }
     if dialect.fts_style.as_deref() == Some("postgres-tsvector") {
-        for field in entity.fields.iter().filter(|field| field.field_type == "text-fts") {
-            if let Some(index) = fts_index_sql(entity, field, dialect)? {
+        for field in entity.fields.iter().filter(|field| field.field_type == FTS_TYPE) {
+            for statement in fts_index_sql(entity, field, dialect)? {
                 sql.push_str(";\n");
-                sql.push_str(&index);
+                sql.push_str(&statement);
             }
         }
     }
     Ok(sql)
 }
 
-/// The statement that adds the full-text index on a `text-fts` field to an existing table, or
-/// `None` when the profile's `fts-style` has no index of its own.
+/// The field type that has a full-text index.
+pub(crate) const FTS_TYPE: &str = "text-fts";
+
+/// The statements that add the full-text column and index of a `text-fts` field to an existing table, as Java's
+/// `FtsDdl`: on Postgres the generated `{column}_tsv` column and a GIN index on it, on MySQL a `FULLTEXT` index. Both
+/// are named by [`fts_index_name`]. Empty when the profile's `fts-style` has no index of its own or `fts-ddl` is false.
 pub fn fts_index_sql(
     entity: &EntityDefinition,
     field: &FieldDefinition,
     dialect: &Dialect,
-) -> Result<Option<String>, Error> {
-    let index_name = quote_ident(dialect, &fts_index_name(entity, &field.name, dialect));
+) -> Result<Vec<String>, Error> {
+    if !dialect.fts_ddl {
+        return Ok(Vec::new());
+    }
+    let index_name = quote_ident(dialect, &fts_index_name(entity, field, dialect));
     let table = quote_ident(dialect, &entity.table_name);
     let column = quote_column(dialect, &field.column_name);
     match dialect.fts_style.as_deref() {
         Some("postgres-tsvector") => {
             let config = fts_config(dialect)?;
-            Ok(Some(format!(
-                "CREATE INDEX {index_name} ON {table} USING gin (to_tsvector('{config}', {column}))"
-            )))
+            let tsv = quote_ident(dialect, &fts_column_name(field, dialect));
+            Ok(vec![
+                format!(
+                    "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {tsv} tsvector GENERATED ALWAYS AS \
+                     (to_tsvector('{config}', coalesce({column}, ''))) STORED"
+                ),
+                format!("CREATE INDEX IF NOT EXISTS {index_name} ON {table} USING GIN ({tsv})"),
+            ])
         }
-        Some("mysql-fulltext") => Ok(Some(format!(
+        Some("mysql-fulltext") => Ok(vec![format!(
             "ALTER TABLE {table} ADD FULLTEXT INDEX {index_name} ({column})"
-        ))),
-        _ => Ok(None),
+        )]),
+        _ => Ok(Vec::new()),
     }
+}
+
+/// Java's `FtsDdl` index name, as the database stores it: `fts_{table}_{column}` on Postgres and `{table}_{column}_FTS`
+/// on MySQL, characters other than letters, digits and `_` as `_`, clipped to 60.
+pub fn fts_index_name(entity: &EntityDefinition, field: &FieldDefinition, dialect: &Dialect) -> String {
+    let column = physical_column_name(dialect, &field.column_name);
+    let name = if is_mysql(dialect) {
+        format!("{}_{column}_FTS", entity.table_name)
+    } else {
+        format!("fts_{}_{column}", entity.table_name)
+    };
+    let clipped: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .take(60)
+        .collect();
+    physical_name(dialect, &clipped)
+}
+
+/// The full-text index name this port used before it followed Java's `FtsDdl`: `{table}_{field}_FTS`, clipped to the
+/// constraint name length. On Postgres it is an expression index with no generated column.
+pub fn fts_old_index_name(entity: &EntityDefinition, field: &FieldDefinition, dialect: &Dialect) -> String {
+    physical_name(
+        dialect,
+        &clip_name(
+            &format!("{}_{}_FTS", entity.table_name, field.name),
+            clip_length(dialect),
+        ),
+    )
+}
+
+/// The statement that drops a full-text index named `name` (as [`fts_old_index_name`] gives it) from the table.
+pub fn drop_fts_index(entity: &EntityDefinition, name: &str, dialect: &Dialect) -> String {
+    if is_mysql(dialect) {
+        format!(
+            "ALTER TABLE {} DROP INDEX {}",
+            quote_ident(dialect, &entity.table_name),
+            quote_alias(dialect, name)
+        )
+    } else {
+        format!("DROP INDEX IF EXISTS {}", quote_alias(dialect, name))
+    }
+}
+
+/// The generated `tsvector` column of a `text-fts` field on Postgres, Java's `{column}_tsv`.
+pub(crate) fn fts_column_name(field: &FieldDefinition, dialect: &Dialect) -> String {
+    format!("{}_tsv", physical_column_name(dialect, &field.column_name))
 }
 
 /// `CREATE [UNIQUE] INDEX name ON table (fields)`. The name is written as defined, as Java does.
@@ -491,10 +559,15 @@ fn require_foreign_key(entity: &EntityDefinition, relationship: &Relationship) -
     Ok(())
 }
 
-/// `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ... REFERENCES ...`.
+/// `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ... REFERENCES ...`, `INITIALLY DEFERRED` under
+/// `use-fk-initially-deferred`.
 ///
 /// Only a `type=one` relationship that is not `is-auto-reverse`. The keys are the relationship's
 /// expanded key map. The name is [`foreign_key_name`].
+///
+/// `fk-style="name_fk"` (MySQL) is not followed: Java writes `ADD FOREIGN KEY name (...)` there, and MySQL 8.0.16 and
+/// later ignore that name and call the constraint `{table}_ibfk_N`. The check that skips a foreign key already there
+/// goes by this name, so it would add the key again on each check.
 pub fn create_foreign_key(
     entity: &EntityDefinition,
     relationship: &Relationship,
@@ -523,6 +596,9 @@ pub fn create_foreign_key(
     sql.push_str(" (");
     sql.push_str(&quote_list(dialect, &targets));
     sql.push(')');
+    if dialect.use_fk_initially_deferred {
+        sql.push_str(" INITIALLY DEFERRED");
+    }
     Ok(sql)
 }
 
@@ -658,6 +734,9 @@ fn write_column(
         }
     }
     if in_create && (field.is_pk || field.not_null) {
+        if dialect.always_use_constraint_keyword {
+            sql.push_str(" CONSTRAINT");
+        }
         sql.push_str(" NOT NULL");
     }
     Ok(())
@@ -675,8 +754,4 @@ fn column_type(model: &EntityModel, dialect: &Dialect, field: &FieldDefinition) 
         .unwrap_or(dictionary.default_sql_type.as_str())
         .to_string();
     Ok((sql_type, dictionary.java_type.clone()))
-}
-
-fn fts_index_name(entity: &EntityDefinition, field: &str, dialect: &Dialect) -> String {
-    clip_name(&format!("{}_{}_FTS", entity.table_name, field), clip_length(dialect))
 }

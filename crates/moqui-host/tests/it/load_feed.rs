@@ -273,16 +273,13 @@ fn load_data_stores_eca_and_inserts_pending() {
         "GMISSING"
     ));
 
+    // As Java's `componentNameList`, the components narrow only the locations a load gathers; a location given is
+    // read (here it is not there), not skipped.
     let other = LoadOptions {
         components: vec!["tools".to_string()],
         ..LoadOptions::default()
     };
-    assert_eq!(
-        load_entity_data(&facade, "component://other/data/x.xml", &other)
-            .unwrap()
-            .records,
-        0
-    );
+    assert!(load_entity_data(&facade, "component://other/data/x.xml", &other).is_err());
 
     // A restricted load refuses a sensitive record by entity name, entity short alias, or nested relationship
     // name, and any service element, before anything of the tree is written.

@@ -24,7 +24,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::{HostObject, Value};
 
 use super::rule_actions::{condition_allows, publish_names, run_stored_actions};
-use super::util::has_error;
+use super::util::{has_error, take_errors_string};
 use crate::context::ExecutionContext;
 use crate::entity::load_feed::{self, DataFileService, EcaRule};
 use crate::entity::EntityFacade;
@@ -210,7 +210,11 @@ pub fn run_data_file_service(facade: &EntityFacade, service: &DataFileService) -
                 service.name,
                 started.elapsed().as_millis()
             );
-            Ok(())
+            // As Java's `handleService`: errors the call left fail the element, and are cleared.
+            match take_errors_string() {
+                Some(errors) => Err(Error::new(format!("Error handling data load service call: {errors}"))),
+                None => Ok(()),
+            }
         }
         Err(err) => {
             tracing::warn!(
@@ -273,7 +277,7 @@ mod tests {
 
     use moqui_lib::object::{basic_convert, Value};
 
-    use super::super::security_checks::{reset_sealed_grant, sealed_grant_entered};
+    use super::super::security_checks::{reset_sealed_grant, sealed_grant_entered, user_has_permission, user_in_group};
     use super::search_not_up;
     use crate::context::ExecutionContextFactory;
     use crate::entity::load_feed::{load_entity_data, LoadOptions};
@@ -541,6 +545,78 @@ mod tests {
             .list()
             .unwrap();
         assert_eq!(members.len(), 0);
+    }
+
+    #[test]
+    fn an_eeca_condition_checks_only_its_first_child() {
+        let facade = crate::testing::open_with(
+            &crate::testing::framework_dir(),
+            crate::testing::Options {
+                entity_eca: true,
+                data_feed: false,
+                tape: None,
+            },
+        );
+        // As Java's `EntityEcaRule`: the second child is not part of the condition.
+        crate::entity::load_feed::add_eca_rules(
+            &facade,
+            r#"<eecas>
+                <eeca id="TestFirstConditionChild" entity="moqui.test.TestEntity" on-create="true">
+                    <condition><expression>true</expression><expression>false</expression></condition>
+                    <actions>
+                        <entity-make-value entity-name="moqui.test.Foo" value-field="foo"/>
+                        <script>foo.set("fooId", "FIRST_ONLY")</script>
+                        <entity-create value-field="foo"/>
+                    </actions>
+                </eeca>
+            </eecas>"#,
+        )
+        .unwrap();
+        let context = ExecutionContextFactory::test_context();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        create_row(&facade, "moqui.test.TestEntity", &[("testId", "T1")]);
+        let found = facade
+            .find("moqui.test.Foo")
+            .unwrap()
+            .eq("fooId", Value::string("FIRST_ONLY"))
+            .one()
+            .unwrap();
+        assert!(found.is_some(), "the rule did not run");
+    }
+
+    #[test]
+    fn everyone_is_in_all_users_without_a_lookup() {
+        let (facade, context, _runtime) = boot_security();
+        let _entered = context.enter();
+        // No one is logged in, so any lookup would find no membership.
+        assert!(user_in_group(&facade, "ALL_USERS").unwrap());
+        let _authz = context.disable_authz();
+        assert!(!user_in_group(&facade, "ADMIN").unwrap());
+    }
+
+    #[test]
+    fn a_permission_granted_to_all_users_counts_only_with_a_membership_row() {
+        let (facade, context, _runtime) = boot_security();
+        let _entered = context.enter();
+        {
+            let _authz = context.disable_authz();
+            seed_entity_allow(&facade);
+            seed_user(&facade, "plain", "Secret-12");
+            permission_row(&facade, "ALL_USERS", "ALL_USERS_PERM")
+                .create(&facade)
+                .unwrap();
+        }
+        login_user("plain", "Secret-12").expect("login");
+        let _authz = context.disable_authz();
+        // As Java's `UserPermissionCheck` view, which joins the user's own memberships.
+        assert!(!user_has_permission(&facade, "ALL_USERS_PERM").unwrap());
+        let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+        member.set("userGroupId", Value::string("ALL_USERS"));
+        member.set("userId", Value::string("U1"));
+        member.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+        member.create(&facade).unwrap();
+        assert!(user_has_permission(&facade, "ALL_USERS_PERM").unwrap());
     }
 
     fn boot_security() -> (EntityFacade, crate::context::ExecutionContext, TempDir) {

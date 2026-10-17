@@ -385,6 +385,17 @@ impl SftpSession for RusshSession {
         })
     }
 
+    fn remove_dir(&mut self, path: &str) -> Result<(), Error> {
+        let path = path.to_string();
+        self.run(|inner| async move {
+            inner
+                .sftp
+                .remove_dir(path.clone())
+                .await
+                .map_err(|err| failed(&path, &err))
+        })
+    }
+
     fn open(&mut self, path: &str, write: bool) -> Result<u64, Error> {
         self.next_handle += 1;
         let id = self.next_handle;

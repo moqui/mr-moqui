@@ -35,13 +35,17 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
+use super::call::AsyncCall;
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 use crate::transaction::TransactionManager;
 
 const DEFAULT_WORKERS: usize = 32;
-const DEFAULT_QUEUE: usize = 65_535;
+/// Java's `makeWorkerPool` default; `MoquiDefaultConf.xml` sets 65535.
+const DEFAULT_QUEUE: usize = 65_536;
 const DEFAULT_CHECK_SECONDS: u64 = 60;
+/// Java's `workerPool.awaitTermination(30, TimeUnit.SECONDS)` at shutdown.
+const DRAIN_WAIT: Duration = Duration::from_secs(30);
 /// Java's `job-pool-core` and `job-pool-max` defaults.
 const DEFAULT_JOB_POOL_CORE: usize = 2;
 const DEFAULT_JOB_POOL_MAX: usize = 8;
@@ -198,8 +202,12 @@ pub(crate) struct Shared {
     pub(crate) job_pool_max: usize,
     /// Wakes the job workers.
     pub(crate) job_wake: Condvar,
-    /// How often the scheduler thread runs a pass, from `service-facade/@scheduled-job-check-time`.
+    /// How often the scheduler thread runs a pass, from `service-facade/@scheduled-job-check-time`; the default when
+    /// that is 0, for the tick hooks.
     pub(crate) check_interval: Duration,
+    /// Whether the scheduler runs job passes: Java starts its `ScheduledJobRunner` only when
+    /// `scheduled-job-check-time` is more than 0.
+    pub(crate) job_runner: bool,
     /// The factory the pool serves, set once it is built. Weak, so the pool never keeps it alive.
     pub(crate) factory: Mutex<Weak<ExecutionContextFactory>>,
     /// Threads running a nested `call_future` for a worker. Bounded by the worker count.
@@ -242,7 +250,10 @@ impl Shared {
 
 #[derive(Default)]
 pub(crate) struct State {
+    /// Shutdown began: no new work is taken, and the scheduler and job workers end. Service workers run what is queued.
     pub(crate) stop: bool,
+    /// Service workers end even with work queued: the queue drained, or the wait for it ran out.
+    pub(crate) halt: bool,
     pub(crate) queue: VecDeque<Work>,
     /// Workers running something now.
     pub(crate) active: usize,
@@ -399,9 +410,12 @@ impl ServicePools {
         }
     }
 
-    /// The scheduler pass counters, or `None` when the pool is idle and runs no scheduler.
+    /// The scheduler pass counters, or `None` when the pool is idle or runs no job passes.
     pub fn runner_stats(&self) -> Option<RunnerStats> {
-        self.shared.as_ref().map(|shared| lock(&shared.runner).clone())
+        self.shared
+            .as_ref()
+            .filter(|shared| shared.job_runner)
+            .map(|shared| lock(&shared.runner).clone())
     }
 
     /// Worker count and queue capacity. Idle is `(0, 0)`.
@@ -500,9 +514,7 @@ impl ServicePools {
         parameters: &BTreeMap<String, Value>,
     ) -> Result<CallReceiver, Error> {
         if self.inline.is_some() {
-            let (tx, rx) = mpsc::channel();
-            let _ = tx.send(call_now(name, parameters));
-            return Ok(rx);
+            return Ok(settled(call_now(name, parameters)));
         }
         self.running()?.submit_future(name, parameters)
     }
@@ -516,15 +528,24 @@ impl ServicePools {
 
     /// Fire-and-forget. A full queue stores the call as a one-shot service job, which the scheduler
     /// pass submits when a worker is free. With no database to store it in, a full queue is an error.
+    ///
+    /// The call is checked first, as Java's `validateCall` (see `call::prepare_async`): parameters that fail
+    /// validation leave their errors in the message facade and queue nothing, and nothing is queued in a sim session.
     pub fn submit(&self, name: &str, parameters: &BTreeMap<String, Value>) -> Result<(), Error> {
         if let Some(inline) = &self.inline {
             let factory = capture_factory()?;
+            let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
+                return Ok(());
+            };
             let user_name = crate::user::current_username().ok().flatten();
-            lock(&inline.queue).push_back(Work::service(name.to_string(), parameters.clone(), factory, user_name));
+            lock(&inline.queue).push_back(Work::service(name.to_string(), parameters, factory, user_name));
             return Ok(());
         }
         let shared = self.running()?;
         let factory = capture_factory()?;
+        let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
+            return Ok(());
+        };
         let user_name = crate::user::current_username().ok().flatten();
         {
             let mut state = lock(&shared.state);
@@ -534,20 +555,24 @@ impl ServicePools {
             if state.queue.len() < shared.queue_cap {
                 state
                     .queue
-                    .push_back(Work::service(name.to_string(), parameters.clone(), factory, user_name));
+                    .push_back(Work::service(name.to_string(), parameters, factory, user_name));
                 drop(state);
                 shared.wake.notify_all();
                 return Ok(());
             }
         }
-        super::jobs::persist_queued(&factory, name, parameters)
+        super::jobs::persist_queued(&factory, name, &parameters)
     }
 
-    /// One scheduler pass now, as the scheduler thread runs it on its interval.
+    /// One scheduler pass now, as the scheduler thread runs it on its interval. With no job runner only the hooks run.
     pub fn tick(&self) -> super::jobs::PassReport {
         match &self.shared {
             Some(shared) => {
-                let report = super::jobs::run_scheduled(shared);
+                let report = if shared.job_runner {
+                    super::jobs::run_scheduled(shared)
+                } else {
+                    super::jobs::PassReport::default()
+                };
                 run_tick_hook(shared);
                 report
             }
@@ -588,11 +613,22 @@ impl ServicePools {
         Arc::clone(self.shared.as_ref().expect("service worker pool"))
     }
 
-    /// Stop threaded workers and the scheduler before shutting down their tools.
+    /// Stop threaded workers and the scheduler before shutting down their tools. As Java's `workerPool.shutdown()` and
+    /// `awaitTermination(30s)`, the async calls already queued still run, for up to 30 seconds; what is left then
+    /// fails. Queued job runs are abandoned at once, as Java never shuts down its `jobWorkerPool`.
     pub(crate) fn shutdown(&self) {
+        self.shutdown_within(DRAIN_WAIT);
+    }
+
+    fn shutdown_within(&self, limit: Duration) {
         let Some(shared) = &self.shared else {
             return;
         };
+        // On one of this pool's own workers, no other may be left to run the queue.
+        let own = lock(&shared.handles)
+            .iter()
+            .any(|handle| handle.thread().id() == thread::current().id());
+        drain(shared, if own { Duration::ZERO } else { limit });
         fail_pending(shared);
         let handles = std::mem::take(&mut *lock(&shared.handles));
         join_all(handles);
@@ -639,6 +675,11 @@ impl Shared {
         parameters: &BTreeMap<String, Value>,
     ) -> Result<CallReceiver, Error> {
         let factory = capture_factory()?;
+        let parameters = match super::call::prepare_async(name, parameters)? {
+            AsyncCall::Run(parameters) => parameters,
+            AsyncCall::Skip(result) => return Ok(settled(Ok(result))),
+        };
+        let parameters = &parameters;
         if in_worker() {
             return reserved(self, factory, name, parameters);
         }
@@ -663,6 +704,13 @@ impl Shared {
 /// The receiving end of a started service call.
 pub(crate) type CallReceiver = mpsc::Receiver<Result<BTreeMap<String, Value>, Error>>;
 
+/// A receiver that already holds `outcome`.
+fn settled(outcome: Result<BTreeMap<String, Value>, Error>) -> CallReceiver {
+    let (tx, rx) = mpsc::channel();
+    let _ = tx.send(outcome);
+    rx
+}
+
 pub(crate) fn receive(rx: &CallReceiver) -> Result<BTreeMap<String, Value>, Error> {
     rx.recv()
         .unwrap_or_else(|_| Err(Error::new("service worker pool is not running")))
@@ -685,6 +733,7 @@ struct Settings {
     job_pool_core: usize,
     job_pool_max: usize,
     check_interval: Duration,
+    job_runner: bool,
 }
 
 #[cfg(test)]
@@ -697,6 +746,7 @@ impl Settings {
             job_pool_core: DEFAULT_JOB_POOL_CORE,
             job_pool_max: DEFAULT_JOB_POOL_MAX,
             check_interval: Duration::from_secs(DEFAULT_CHECK_SECONDS),
+            job_runner: true,
         }
     }
 }
@@ -715,8 +765,17 @@ fn settings(conf_text: &str) -> Result<Settings, Error> {
     let seconds = service(
         "scheduled-job-check-time",
         usize::try_from(DEFAULT_CHECK_SECONDS).unwrap_or(60),
-    )
-    .max(1);
+    );
+    // As Java, 0 starts no job runner. The tick hooks still run, at the default interval.
+    let job_runner = seconds > 0;
+    if !job_runner {
+        tracing::warn!("Not starting Scheduled Service Job Runner (config:{seconds})");
+    }
+    let seconds = if job_runner {
+        u64::try_from(seconds).unwrap_or(DEFAULT_CHECK_SECONDS)
+    } else {
+        DEFAULT_CHECK_SECONDS
+    };
     Ok(Settings {
         workers: tool("worker-pool-max", DEFAULT_WORKERS),
         queue: tool("worker-queue", DEFAULT_QUEUE),
@@ -724,7 +783,8 @@ fn settings(conf_text: &str) -> Result<Settings, Error> {
         job_pool_core: service("job-pool-core", DEFAULT_JOB_POOL_CORE).max(1),
         job_pool_max: service("job-pool-max", DEFAULT_JOB_POOL_MAX)
             .max(thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get) * 2),
-        check_interval: Duration::from_secs(u64::try_from(seconds).unwrap_or(DEFAULT_CHECK_SECONDS)),
+        check_interval: Duration::from_secs(seconds),
+        job_runner,
     })
 }
 
@@ -756,6 +816,7 @@ fn start(settings: Settings) -> Result<ServicePools, Error> {
         job_pool_max: settings.job_pool_max,
         job_wake: Condvar::new(),
         check_interval: settings.check_interval,
+        job_runner: settings.job_runner,
         factory: Mutex::new(Weak::new()),
         reserved: std::sync::atomic::AtomicUsize::new(0),
         runner: Mutex::new(RunnerStats::default()),
@@ -860,11 +921,18 @@ fn worker_loop(shared: Arc<Shared>) {
 fn next_work(shared: &Shared) -> Option<Work> {
     let mut state = lock(&shared.state);
     loop {
-        if state.stop {
+        if state.halt {
             return None;
         }
         if let Some(work) = state.queue.pop_front() {
+            if state.stop && state.queue.is_empty() {
+                // Tell the shutdown waiting in `drain` that the queue is empty.
+                shared.wake.notify_all();
+            }
             return Some(work);
+        }
+        if state.stop {
+            return None;
         }
         state = shared.wake.wait(state).unwrap_or_else(|err| err.into_inner());
     }
@@ -938,16 +1006,28 @@ fn invoke(
     if let Some(user_name) = user_name {
         crate::user::internal_login_user(user_name)?;
     }
-    super::call::sync(name, parameters)
+    // As Java's `AsyncServiceInfo`: authorization was checked as the caller before the call was queued.
+    let options = super::call::CallOptions {
+        disable_authz: true,
+        ..super::call::CallOptions::default()
+    };
+    super::call::sync_with(name, parameters, &options)
 }
 
 /// `callFuture()` on the inline executor: run now in a fresh context, as the caller, under a new
 /// transaction so the call does not join the caller's.
 fn call_now(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     let factory = capture_factory()?;
+    let parameters = match super::call::prepare_async(name, parameters)? {
+        AsyncCall::Run(parameters) => parameters,
+        AsyncCall::Skip(result) => return Ok(result),
+    };
+    let parameters = &parameters;
     let user_name = crate::user::current_username().ok().flatten();
+    // Checked as the caller above, so the call runs with authorization disabled, as on a worker.
     let options = super::call::CallOptions {
         require_new_transaction: Some(true),
+        disable_authz: true,
         ..super::call::CallOptions::default()
     };
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1054,10 +1134,36 @@ fn unwind_result(
     }
 }
 
+/// Stop taking work and wait up to `limit` for the service workers to take what is queued.
+fn drain(shared: &Shared, limit: Duration) {
+    let deadline = std::time::Instant::now() + limit;
+    let mut state = lock(&shared.state);
+    state.stop = true;
+    shared.wake.notify_all();
+    shared.job_wake.notify_all();
+    while !state.queue.is_empty() {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            tracing::warn!(
+                queued = state.queue.len(),
+                "Worker pool NOT YET terminated, waited {} seconds",
+                limit.as_secs()
+            );
+            return;
+        }
+        state = shared
+            .wake
+            .wait_timeout(state, left)
+            .unwrap_or_else(|err| err.into_inner())
+            .0;
+    }
+}
+
 fn fail_pending(shared: &Shared) {
     let (pending, jobs) = {
         let mut state = lock(&shared.state);
         state.stop = true;
+        state.halt = true;
         (std::mem::take(&mut state.queue), std::mem::take(&mut state.jobs))
     };
     shared.wake.notify_all();
@@ -1255,6 +1361,60 @@ mod tests {
         assert!(!in_transaction, "the next job joined the frame the last one left");
         assert!(!sim, "the sim flag outlived its job");
         assert!(!found, "the frame left open was committed");
+    }
+
+    /// As Java's `workerPool.shutdown()`, the calls queued when the pool shuts down still run.
+    #[test]
+    fn shutdown_runs_the_queued_work_first() {
+        let pools = ServicePools::bounded(1, 8);
+        let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        pools
+            .submit_task(move || {
+                started_tx.send(()).unwrap();
+                std::thread::sleep(Duration::from_millis(100));
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        for _ in 0..3 {
+            let ran = Arc::clone(&ran);
+            pools
+                .submit_task(move || {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                })
+                .unwrap();
+        }
+        pools.shutdown();
+        assert_eq!(ran.load(Ordering::SeqCst), 3, "a queued call was dropped");
+        assert!(pools.submit_task(|| {}).is_err(), "a stopped pool takes no work");
+    }
+
+    /// The wait for the queue is bounded, as Java's `awaitTermination`: what is still queued then fails.
+    #[test]
+    fn shutdown_waits_for_the_queue_only_so_long() {
+        let pools = ServicePools::bounded(1, 8);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        pools
+            .submit_task(move || {
+                started_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(Duration::from_secs(10));
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let shared = pools.shared_handle();
+        let run: super::ClosureFn = Box::new(|| Ok(Box::new(()) as Box<dyn std::any::Any + Send>));
+        let queued = super::queue_closure(&shared, run).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = release_tx.send(());
+        });
+        let started = std::time::Instant::now();
+        pools.shutdown_within(Duration::from_millis(100));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let outcome = queued.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(outcome.is_err(), "the work left after the wait fails");
+        releaser.join().unwrap();
     }
 
     #[test]

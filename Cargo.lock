@@ -4709,6 +4709,7 @@ name = "moqui-db"
 version = "0.1.0"
 dependencies = [
  "moqui-lib",
+ "tracing",
 ]
 
 [[package]]

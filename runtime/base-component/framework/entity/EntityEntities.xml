@@ -153,7 +153,7 @@ along with this software (see the LICENSE.md file). If not, see
             code, category, or quality. A root field only. The title is what fuzzy and autocomplete search match.</description></field>
         <field name="searchWeight" type="text-indicator"><description>A, B, C, or D: the weight of this root text field when
             a search asks for weighted (cover-density) ranking. Fields with none count as D.</description></field>
-        <field name="sequenceNum" type="number-integer" default="fieldSeqId as int"/>
+        <field name="sequenceNum" type="number-integer" default="(fieldSeqId == null ? null : Math.trunc(toDecimal(fieldSeqId).toNumber()))"/>
         <relationship type="one" related="moqui.entity.document.DataDocument"/>
     </entity>
     <entity entity-name="DataDocumentRelAlias" package="moqui.entity.document" use="configuration">

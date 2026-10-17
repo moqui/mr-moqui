@@ -89,6 +89,9 @@ impl EtlLoader {
             for (name, field) in &entry.values {
                 value.set(name, field.clone());
             }
+            // Java's ETL loader tries the insert even where the database sets `never-try-insert` (Postgres), where the
+            // failed insert aborts the transaction and the update after it fails; here such a database stores with
+            // `createOrUpdate`, as the data loader's `handleValue` does.
             let try_insert = self.use_try_insert
                 && facade.with_entity(entity_name, |_, dialect, _| Ok(!dialect.never_try_insert))?;
             if try_insert {

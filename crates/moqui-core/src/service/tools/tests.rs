@@ -282,6 +282,86 @@ fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_serve
     );
 }
 
+/// As the Groovy on cups4j: `send#PrintJob` sends the record it finds, and one with no copies or duplex as one copy,
+/// one-sided; a job with no document is a failed send; and a hold of a job the server never took fails the call.
+#[test]
+fn a_send_takes_cups4j_defaults_and_fails_with_no_document_and_a_hold_needs_a_sent_job() {
+    let _print = crate::print::print_test_lock();
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["PrintServices.xml"]);
+    let printer = std::sync::Arc::new(FakePrinter {
+        printed: std::sync::Mutex::new(Vec::new()),
+    });
+    crate::print::install_print_client(printer.clone());
+    crate::service::sync(
+        "create#moqui.basic.print.NetworkPrinter",
+        &params(&[
+            ("networkPrinterId", "GATE_PRINTER"),
+            ("serverHost", "localhost"),
+            ("printerName", "gate"),
+        ]),
+    )
+    .unwrap();
+    let mut job = facade.make_value(PRINT_JOB).unwrap();
+    job.set("printJobId", Value::string("BARE_JOB"));
+    job.set("networkPrinterId", Value::string("GATE_PRINTER"));
+    job.set("statusId", Value::string("PtjNotSent"));
+    job.set("document", Value::Bytes(b"bare".to_vec()));
+    job.create(&facade).unwrap();
+    let mut empty = facade.make_value(PRINT_JOB).unwrap();
+    empty.set("printJobId", Value::string("EMPTY_JOB"));
+    empty.set("networkPrinterId", Value::string("GATE_PRINTER"));
+    empty.set("statusId", Value::string("PtjNotSent"));
+    empty.create(&facade).unwrap();
+
+    // A hold before the send fails: the job has no server id.
+    crate::service::sync(
+        "org.moqui.impl.PrintServices.hold#PrintJob",
+        &params(&[("printJobId", "BARE_JOB")]),
+    )
+    .unwrap();
+    assert_eq!(
+        errors(&context),
+        "PrintJob [BARE_JOB] has not been sent to the print server"
+    );
+    assert_eq!(job_field(&facade, "BARE_JOB", "statusId"), "PtjNotSent");
+
+    context.message().clear();
+    crate::service::sync(
+        "org.moqui.impl.PrintServices.send#PrintJob",
+        &params(&[("printJobId", "BARE_JOB")]),
+    )
+    .unwrap();
+    assert_eq!(errors(&context), "");
+    assert_eq!(job_field(&facade, "BARE_JOB", "statusId"), "PtjPending");
+    {
+        let printed = printer.printed.lock().unwrap();
+        let sent = printed.last().unwrap();
+        assert_eq!(sent.bytes, b"bare");
+        assert_eq!((sent.copies, sent.duplex), (Some(1), Some(false)));
+    }
+
+    crate::service::sync(
+        "org.moqui.impl.PrintServices.send#PrintJob",
+        &params(&[("printJobId", "EMPTY_JOB")]),
+    )
+    .unwrap();
+    assert_eq!(errors(&context), "PrintJob [EMPTY_JOB] has no document");
+    assert_eq!(job_field(&facade, "EMPTY_JOB", "statusId"), "PtjSendFailed");
+    assert_eq!(
+        job_field(&facade, "EMPTY_JOB", "errorMessage"),
+        "PrintJob [EMPTY_JOB] has no document"
+    );
+    assert_eq!(
+        printer.printed.lock().unwrap().len(),
+        1,
+        "nothing is printed for the empty job"
+    );
+    crate::print::clear_print_client();
+}
+
 #[test]
 fn a_spreadsheet_loads_into_an_entity_through_the_auto_service() {
     let (facade, context) = setup();
@@ -352,7 +432,17 @@ fn a_screen_document_prints_its_pdf_or_reports_that_pdf_is_not_available() {
     context.message().clear();
     crate::screen::install_pdf_engine(std::sync::Arc::new(FakePdf));
     let out = crate::service::sync("org.moqui.impl.PrintServices.print#ScreenDocument", &call).unwrap();
+    // With no jobName it is the screen name and the screenParameters values in the order given, as Java's `[:]`.
+    let mut unnamed = params(&[("networkPrinterId", "P"), ("screenLocation", &location)]);
+    let mut screen_parameters = indexmap::IndexMap::new();
+    screen_parameters.insert("zeta".to_string(), Value::string("first"));
+    screen_parameters.insert("alpha".to_string(), Value::string("second"));
+    unnamed.insert("screenParameters".to_string(), Value::Map(screen_parameters));
+    context.message().clear();
+    let named = crate::service::sync("org.moqui.impl.PrintServices.print#ScreenDocument", &unnamed).unwrap();
     crate::screen::clear_pdf_engine();
+    let named_id = to_plain_string(named.get("printJobId").unwrap());
+    assert_eq!(job_field(&facade, &named_id, "jobName"), "Print first second");
     let id = to_plain_string(out.get("printJobId").unwrap());
     assert!(!id.is_empty(), "{out:?} {}", errors(&context));
     assert_eq!(job_field(&facade, &id, "contentType"), "application/pdf");
@@ -472,4 +562,29 @@ fn key_after_orders_by_each_key_field_in_turn() {
             ]),
         ])
     );
+}
+
+/// As Java's `findAllFieldsNestedMap`: the values in the document, its nested maps and the maps in its lists, not in a
+/// list in a list; an empty value names no user.
+#[test]
+fn document_user_ids_are_found_in_nested_maps_and_lists_of_maps() {
+    let map = |pairs: Vec<(&str, Value)>| {
+        Value::Map(pairs.into_iter().map(|(key, value)| (key.to_string(), value)).collect())
+    };
+    let document = map(vec![
+        ("userId", Value::string("U1")),
+        ("party", map(vec![("userId", Value::string("U2"))])),
+        (
+            "notes",
+            Value::List(vec![map(vec![("userId", Value::string("U3"))]), Value::string("text")]),
+        ),
+        (
+            "pages",
+            Value::List(vec![Value::List(vec![map(vec![("userId", Value::string("U4"))])])]),
+        ),
+        ("blank", map(vec![("userId", Value::string(""))])),
+    ]);
+    let mut found = std::collections::BTreeSet::new();
+    super::find_nested("userId", &document, &mut found);
+    assert_eq!(found.into_iter().collect::<Vec<_>>(), ["U1", "U2", "U3"]);
 }

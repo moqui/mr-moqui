@@ -22,9 +22,9 @@ use crate::model::EntityModel;
 
 use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
-    foreign_key_index_name, foreign_key_name, fts_index_sql, insert, insert_or_update, render_condition, select,
-    select_view, select_view_with, select_with, update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy,
-    PlainValues, SelectOptions, Statement,
+    drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
+    insert, insert_or_update, render_condition, select, select_view, select_view_with, select_with, update, CompareOp,
+    Condition, FieldRef, LimitOffset, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -120,6 +120,16 @@ fn postgres_enumeration_insert_select_and_count() {
     assert_eq!(
         counted.sql,
         "SELECT COUNT(*) FROM (SELECT DISTINCT \"enumTypeId\" FROM \"Enumeration\" WHERE \"enumTypeId\" = ?) TEMP_NAME"
+    );
+    // With no field selected a distinct count is of whole rows, as Java's `makeCountFunction`.
+    let whole_rows = SelectOptions {
+        distinct: true,
+        ..SelectOptions::default()
+    };
+    let counted = checked(count_with(enumeration, postgres, Some(&condition), &whole_rows).unwrap());
+    assert_eq!(
+        counted.sql,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT * FROM \"Enumeration\" WHERE \"enumTypeId\" = ?) TEMP_NAME"
     );
 }
 
@@ -301,9 +311,9 @@ fn matches_uses_the_profile_fts_style() {
     let condition = Condition::matches("body", Value::string("warehouse"));
 
     let pg = checked(select(fts, postgres, &[], Some(&condition), &[], LimitOffset::default()).unwrap());
+    // The `text-fts` field searches its generated column, which has the GIN index.
     assert!(
-        pg.sql
-            .contains("to_tsvector('english', \"body\") @@ plainto_tsquery('english', ?)"),
+        pg.sql.contains("\"body_tsv\" @@ plainto_tsquery('english', ?)"),
         "{}",
         pg.sql
     );
@@ -318,9 +328,12 @@ fn matches_uses_the_profile_fts_style() {
 
     let mut simple = postgres.clone();
     simple.fts_config = Some("simple".to_string());
+    // With no entity to say the field is `text-fts`, the vector is computed.
     let rendered = render_condition(&condition, &simple).unwrap();
     assert!(
-        rendered.sql.contains("to_tsvector('simple', \"body\")"),
+        rendered
+            .sql
+            .contains("to_tsvector('simple', \"body\") @@ plainto_tsquery('simple', ?)"),
         "{}",
         rendered.sql
     );
@@ -499,26 +512,111 @@ fn column_name_is_written_and_read_back_under_the_field_name() {
 }
 
 #[test]
-fn fts_index_names_the_column_not_the_field() {
+fn fts_ddl_is_javas_generated_column_and_named_index() {
     let (model, dialects) = framework();
     let mut fts = model.entity("moqui.test.TestFts").unwrap().clone();
     let body = fts.fields.iter_mut().find(|field| field.name == "body").unwrap();
     body.column_name = "BODY_TEXT".to_string();
     let body = fts.fields.iter().find(|field| field.name == "body").unwrap();
+    let postgres = dialects.get("postgres").unwrap();
+    let mysql = dialects.get("mysql").unwrap();
 
-    let pg = fts_index_sql(&fts, body, dialects.get("postgres").unwrap())
-        .unwrap()
-        .unwrap();
-    assert!(pg.contains("to_tsvector('english', \"BODY_TEXT\")"), "{pg}");
-    let my = fts_index_sql(&fts, body, dialects.get("mysql").unwrap())
-        .unwrap()
-        .unwrap();
-    assert!(my.ends_with("(`BODY_TEXT`)"), "{my}");
-    let table = create_table(&fts, &model, dialects.get("postgres").unwrap()).unwrap();
-    assert!(table.ends_with(&pg), "{table}");
+    let pg = fts_index_sql(&fts, body, postgres).unwrap();
+    assert_eq!(
+        pg,
+        vec![
+            "ALTER TABLE \"TestFts\" ADD COLUMN IF NOT EXISTS \"BODY_TEXT_tsv\" tsvector GENERATED ALWAYS AS \
+             (to_tsvector('english', coalesce(\"BODY_TEXT\", ''))) STORED"
+                .to_string(),
+            "CREATE INDEX IF NOT EXISTS \"fts_TestFts_BODY_TEXT\" ON \"TestFts\" USING GIN (\"BODY_TEXT_tsv\")"
+                .to_string(),
+        ]
+    );
+    let my = fts_index_sql(&fts, body, mysql).unwrap();
+    assert_eq!(
+        my,
+        vec!["ALTER TABLE `TestFts` ADD FULLTEXT INDEX `TestFts_BODY_TEXT_FTS` (`BODY_TEXT`)".to_string()]
+    );
+    let table = create_table(&fts, &model, postgres).unwrap();
+    assert!(table.ends_with(&pg.join(";\n")), "{table}");
     assert!(fts_index_sql(&fts, body, dialects.get("h2").unwrap())
         .unwrap()
-        .is_none());
+        .is_empty());
+
+    // Java's name: characters other than letters, digits and `_` become `_`, clipped to 60.
+    let mut long = fts.clone();
+    long.table_name = format!("A-{}", "B".repeat(70));
+    assert_eq!(
+        fts_index_name(&long, body, postgres),
+        format!("fts_A_{}", "B".repeat(54))
+    );
+
+    // The index this port made before, which a check now drops.
+    assert_eq!(fts_old_index_name(&fts, body, postgres), "TestFts_body_FTS");
+    assert_eq!(
+        drop_fts_index(&fts, "TestFts_body_FTS", postgres),
+        "DROP INDEX IF EXISTS \"TestFts_body_FTS\""
+    );
+    assert_eq!(
+        drop_fts_index(&fts, "TestFts_body_FTS", mysql),
+        "ALTER TABLE `TestFts` DROP INDEX `TestFts_body_FTS`"
+    );
+}
+
+#[test]
+fn fts_ddl_false_leaves_the_full_text_column_and_index_out() {
+    let (model, dialects) = framework();
+    let fts = model.entity("moqui.test.TestFts").unwrap();
+    let body = fts.field("body").unwrap();
+    for name in ["postgres", "mysql"] {
+        let mut dialect = dialects.get(name).unwrap().clone();
+        dialect.fts_ddl = false;
+        assert!(fts_index_sql(fts, body, &dialect).unwrap().is_empty(), "{name}");
+        let table = create_table(fts, &model, &dialect).unwrap();
+        assert!(!table.contains("tsv") && !table.contains("FULLTEXT"), "{table}");
+    }
+}
+
+#[test]
+fn a_text_fts_entity_selects_its_fields_not_the_generated_column() {
+    let (model, dialects) = framework();
+    let fts = model.entity("moqui.test.TestFts").unwrap();
+    let sql = select(
+        fts,
+        dialects.get("postgres").unwrap(),
+        &[],
+        None,
+        &[],
+        LimitOffset::default(),
+    )
+    .unwrap();
+    assert!(sql.sql.starts_with("SELECT \"testFtsId\", "), "{}", sql.sql);
+    assert!(!sql.sql.contains('*'), "{}", sql.sql);
+}
+
+#[test]
+fn fk_initially_deferred_and_constraint_keyword_follow_the_database() {
+    let (model, dialects) = framework();
+    let mut postgres = dialects.get("postgres").unwrap().clone();
+    let enumeration = model.entity("moqui.basic.Enumeration").unwrap();
+    let relationship = enumeration.relationship("type").unwrap();
+    let related = model.entity(&relationship.related).unwrap();
+    let plain = create_foreign_key(enumeration, relationship, related, &postgres).unwrap();
+    assert!(!plain.contains("DEFERRED"), "{plain}");
+    postgres.use_fk_initially_deferred = true;
+    let deferred = create_foreign_key(enumeration, relationship, related, &postgres).unwrap();
+    assert_eq!(deferred, format!("{plain} INITIALLY DEFERRED"));
+
+    let fts = model.entity("moqui.test.TestFts").unwrap();
+    assert!(!create_table(fts, &model, &postgres)
+        .unwrap()
+        .contains("CONSTRAINT NOT NULL"));
+    postgres.always_use_constraint_keyword = true;
+    let table = create_table(fts, &model, &postgres).unwrap();
+    assert!(
+        table.contains("\"testFtsId\" VARCHAR(40) CONSTRAINT NOT NULL"),
+        "{table}"
+    );
 }
 
 #[test]
@@ -530,7 +628,7 @@ fn ddl_table_index_column_and_foreign_key() {
     let fts = model.entity("moqui.test.TestFts").unwrap();
     let pg_table = create_table(fts, &model, postgres).unwrap();
     assert!(pg_table.contains("\"body\" TEXT"), "{pg_table}");
-    assert!(pg_table.contains("USING gin"), "{pg_table}");
+    assert!(pg_table.contains("USING GIN (\"body_tsv\")"), "{pg_table}");
     assert!(pg_table.contains("PRIMARY KEY"), "{pg_table}");
 
     let my_table = create_table(fts, &model, mysql).unwrap();

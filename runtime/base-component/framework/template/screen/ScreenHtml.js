@@ -634,7 +634,7 @@
         const dialogOpen = (n, id, text, extra) => {
             const iconClass = at(n, "icon") || "fa fa-share";
             return "<button" + A({
-                type: "button", id: id + "-button", "data-dialog": id, "data-btn": xn(at(n, "type")) || "primary", class: xn(at(n, "button-style")) || null, title: text
+                type: "button", id: id + "-button", "data-dialog": id, "data-btn": xn(at(n, "type")) || "primary", class: xn(at(n, "button-style")) || null, title: text, "aria-label": text
             }) + ">" + icon(iconClass) + e(text) + "</button>";
         };
         const dialogShell = (n, id, text, bodyAttrs, body, extra) =>

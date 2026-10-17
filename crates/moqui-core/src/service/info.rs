@@ -22,19 +22,30 @@ use moqui_lib::object::Value;
 use super::define::{self, Authenticate, Required, ServiceKind};
 use crate::transaction::TransactionAttribute;
 
-/// The names of every registered service, sorted. Implicit entity-auto names are not included, as in Java.
+/// Java's `getKnownServiceNames`, sorted: the services of the `service-file` locations and of every service file in
+/// a component, read or not, and those registered from elsewhere. Implicit entity-auto names are not included.
 pub fn known_service_names() -> Vec<String> {
-    let mut names: Vec<String> = define::registered()
+    let mut names: std::collections::BTreeSet<String> = define::registered()
         .unwrap_or_default()
         .into_iter()
         .map(|def| def.name)
         .collect();
-    names.sort();
-    names
+    names.extend(define::service_names_in_files());
+    names.into_iter().collect()
 }
 
-/// How many SECA rules are loaded.
+/// Java's `getSecaRuleCount`: the rules counted once for each service they run for, so a rule whose name is a pattern
+/// counts once for each known service it matches.
 pub fn seca_rule_count() -> usize {
+    let Some(rules) = super::eca_rules::current() else {
+        return 0;
+    };
+    let mut known = None;
+    rules.seca.iter().map(|rule| rule.service_count(&mut known)).sum()
+}
+
+/// How many SECA rules are loaded, each once, as Java logs after loading them.
+pub fn seca_rules_active() -> usize {
     super::eca_rules::current().map_or(0, |rules| rules.seca.len())
 }
 

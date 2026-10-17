@@ -31,6 +31,7 @@ use jiff::Timestamp;
 use moqui_db::model::FieldAlias;
 use moqui_db::sql::{Condition, FieldRef, LimitOffset, OrderBy};
 use moqui_lib::error::Error;
+use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::facade::EntityFacade;
@@ -55,6 +56,9 @@ pub struct DocumentInfo {
     /// Short alias or full name of the primary entity, the `_entity` control field.
     pub primary_entity_label: String,
     pub primary_pk: Vec<String>,
+    /// Java's `hasAllPrimaryPks`: each primary key field is a field alias of the document, so the rows of one
+    /// primary record merge into one document. Otherwise each row is a document.
+    pub has_all_primary_pks: bool,
     pub manual_data_service: Option<String>,
     pub manual_mapping_service: Option<String>,
     pub root: FieldNode,
@@ -90,6 +94,8 @@ pub struct DocField {
     pub search_role: Option<String>,
     /// `searchWeight`: A, B, C, or D.
     pub search_weight: Option<String>,
+    /// `defaultDisplay`: `Y` or `N`, else `None`; the `default-display` of its alias in the document's view.
+    pub default_display: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,11 +124,20 @@ struct InfoCache {
 }
 
 impl DocumentInfo {
-    /// The document id for a query row, from the primary key aliases.
+    /// The document id for a query row, from the primary key aliases. Without every primary key field aliased it is,
+    /// as Java's `makeDocId`, made of the document's fields of those names, each empty when there is none, so a
+    /// one-field key gives no `_id`.
     fn doc_id(&self, row: &BTreeMap<String, Value>) -> String {
         self.primary_pk
             .iter()
-            .map(|name| row.get(&pk_alias(name)).map(to_plain_string).unwrap_or_default())
+            .map(|name| {
+                let alias = if self.has_all_primary_pks {
+                    pk_alias(name)
+                } else {
+                    name.clone()
+                };
+                row.get(&alias).map(to_plain_string).unwrap_or_default()
+            })
             .collect::<Vec<_>>()
             .join("::")
     }
@@ -614,20 +629,37 @@ fn load_info(facade: &EntityFacade, data_document_id: &str) -> Result<DocumentIn
             is_expression,
             search_role: text(row.get("searchRole")),
             search_weight: text(row.get("searchWeight")),
+            default_display: match text(row.get("defaultDisplay")).as_deref() {
+                Some("Y") => Some(true),
+                Some("N") => Some(false),
+                _ => None,
+            },
         });
     }
+    let mut aliases = std::collections::HashSet::new();
+    collect_aliases(&root, &mut aliases);
+    let has_all_primary_pks = primary_pk.iter().all(|name| aliases.contains(name.as_str()));
     Ok(DocumentInfo {
         data_document_id: data_document_id.to_string(),
         index_name: text(document.get("indexName")).map(|name| name.to_ascii_lowercase()),
         primary_entity,
         primary_entity_label: primary_label,
         primary_pk,
+        has_all_primary_pks,
         manual_data_service: text(document.get("manualDataServiceName")),
         manual_mapping_service: text(document.get("manualMappingServiceName")),
         root,
         conditions,
         has_expression,
     })
+}
+
+/// The field aliases of `node` and every node below it.
+fn collect_aliases<'a>(node: &'a FieldNode, out: &mut std::collections::HashSet<&'a str>) {
+    out.extend(node.fields.iter().map(|field| field.alias.as_str()));
+    for rel in &node.relationships {
+        collect_aliases(&rel.node, out);
+    }
 }
 
 fn child_node<'a>(
@@ -733,6 +765,91 @@ fn code_view(info: &DocumentInfo) -> CodeView {
     }
 }
 
+/// The document's view as a `view-entity` element, as Java's `makeEntityDefinition` builds it: `DataDocument.{id}`, the
+/// primary entity as `PRIM`, each relationship an optional member with its key maps and its key values as a condition,
+/// each field an alias with its `functionName` and `defaultDisplay`, and an expression field a `pq-expression` alias.
+/// The aliases come in the order of the field tree, each member's fields before the members below it. Unlike
+/// [`code_view`] it has no primary key aliases of its own.
+pub(crate) fn entity_view_node(facade: &EntityFacade, info: &DocumentInfo) -> Result<MNode, Error> {
+    let node = MNode::new("view-entity");
+    node.set_attribute("entity-name", info.data_document_id.clone());
+    node.set_attribute("package", "DataDocument");
+    let primary = node.append("member-entity");
+    primary.set_attribute("entity-alias", PRIMARY_ALIAS);
+    primary.set_attribute("entity-name", info.primary_entity.clone());
+    let mut failed = None;
+    info.walk(|path, field_node| {
+        if failed.is_some() {
+            return;
+        }
+        if let Some(rel) = path.last() {
+            let parent = path.len().checked_sub(2).map_or(&info.root, |at| &path[at].node);
+            if let Err(err) = append_relationship_member(facade, &node, parent, rel) {
+                failed = Some(err);
+                return;
+            }
+        }
+        for field in &field_node.fields {
+            let alias = node.append("alias");
+            alias.set_attribute("name", field.alias.clone());
+            if field.is_expression {
+                alias.set_attribute("pq-expression", field.path_element.clone());
+            } else {
+                alias.set_attribute("entity-alias", field_node.member_alias.clone());
+                alias.set_attribute("field", field.path_element.clone());
+                if let Some(function) = &field.function {
+                    alias.set_attribute("function", function.clone());
+                }
+            }
+            if let Some(display) = field.default_display {
+                alias.set_attribute("default-display", if display { "true" } else { "false" });
+            }
+        }
+    });
+    match failed {
+        Some(err) => Err(err),
+        None => Ok(node),
+    }
+}
+
+/// Java's `addRelationshipMember`: the related entity joined optionally from `parent` by the relationship's keys, its
+/// key values an `entity-condition` of the member.
+fn append_relationship_member(
+    facade: &EntityFacade,
+    node: &MNode,
+    parent: &FieldNode,
+    rel: &RelNode,
+) -> Result<(), Error> {
+    let relationship = facade.with_entity(&parent.entity, |entity, _, _| {
+        entity.relationship(&rel.relationship).cloned().ok_or_else(|| {
+            Error::new(format!(
+                "Relationship not found with name [{}] on entity [{}]",
+                rel.relationship, parent.entity
+            ))
+        })
+    })?;
+    let member = node.append("member-entity");
+    member.set_attribute("entity-alias", rel.node.member_alias.clone());
+    member.set_attribute("entity-name", relationship.related.clone());
+    member.set_attribute("join-from-alias", parent.member_alias.clone());
+    member.set_attribute("join-optional", "true");
+    for (field_name, related) in &relationship.key_pairs {
+        let key_map = member.append("key-map");
+        key_map.set_attribute("field-name", field_name.clone());
+        key_map.set_attribute("related", related.clone());
+    }
+    if !relationship.key_values.is_empty() {
+        let condition = member.append("entity-condition");
+        for key_value in &relationship.key_values {
+            let econdition = condition.append("econdition");
+            econdition.set_attribute("entity-alias", rel.node.member_alias.clone());
+            econdition.set_attribute("field-name", key_value.related.clone());
+            econdition.set_attribute("value", key_value.value.clone());
+        }
+    }
+    Ok(())
+}
+
 fn query_rows(
     facade: &EntityFacade,
     info: &DocumentInfo,
@@ -787,7 +904,7 @@ fn query_rows(
     run_code_view(facade, &view, condition, order, page)
 }
 
-fn document_condition(cond: &DocCondition) -> Result<Condition, Error> {
+pub(crate) fn document_condition(cond: &DocCondition) -> Result<Condition, Error> {
     let field = FieldRef::new(cond.field_alias.clone());
     if let Some(to_alias) = &cond.to_field_alias {
         let op = match cond.operator.as_str() {
@@ -834,9 +951,15 @@ fn document_condition(cond: &DocCondition) -> Result<Condition, Error> {
 fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Timestamp) -> Vec<Document> {
     let stamp_text = stamp.to_string();
     let mut docs: IndexMap<String, Document> = IndexMap::new();
-    for row in rows {
+    for (at, row) in rows.iter().enumerate() {
         let id = info.doc_id(row);
-        let doc = docs.entry(id.clone()).or_insert_with(|| {
+        // Without every primary key aliased, Java does not merge: each row is its own document.
+        let key = if info.has_all_primary_pks {
+            id.clone()
+        } else {
+            at.to_string()
+        };
+        let doc = docs.entry(key).or_insert_with(|| {
             let mut doc = Document::new();
             doc.insert("_type".to_string(), Value::string(&info.data_document_id));
             if !id.is_empty() {
@@ -938,10 +1061,21 @@ fn manual_data(service: &str, info: &DocumentInfo, doc: Document) -> Document {
     params.insert("dataDocumentId".to_string(), Value::string(&info.data_document_id));
     params.insert("document".to_string(), Value::Map(doc.clone()));
     match crate::service::call::sync(service, &params) {
-        Ok(result) => match result.get("document") {
-            Some(Value::Map(out)) if !out.is_empty() => out.clone(),
-            _ => doc,
-        },
+        Ok(result) => {
+            // As Java: errors the call left are logged and cleared, and the document stays as it was.
+            if let Some(errors) = crate::service::util::take_errors_string() {
+                tracing::error!(
+                    document = %info.data_document_id,
+                    service,
+                    "Error calling manual data service, document may be missing data: {errors}"
+                );
+                return doc;
+            }
+            match result.get("document") {
+                Some(Value::Map(out)) if !out.is_empty() => out.clone(),
+                _ => doc,
+            }
+        }
         Err(err) => {
             tracing::error!(
                 document = %info.data_document_id,
@@ -1122,6 +1256,7 @@ mod tests {
             is_expression: true,
             search_role: None,
             search_weight: None,
+            default_display: None,
         };
         let stamp = super::expression_value(&field("date"), Value::string("1791979200000"));
         assert!(matches!(stamp, Value::Timestamp(_)), "{stamp:?}");
@@ -1168,15 +1303,13 @@ mod tests {
                 ("primaryEntityName", "moqui.test.TestEntity"),
             ],
         );
-        create_row(
-            &facade,
-            super::DOCUMENT_FIELD,
-            &[
-                ("dataDocumentId", "PAGED"),
-                ("fieldSeqId", "01"),
-                ("fieldPath", "testMedium"),
-            ],
-        );
+        for (seq, path) in [("01", "testId"), ("02", "testMedium")] {
+            create_row(
+                &facade,
+                super::DOCUMENT_FIELD,
+                &[("dataDocumentId", "PAGED"), ("fieldSeqId", seq), ("fieldPath", path)],
+            );
+        }
         for id in ["A", "C", "E", "G"] {
             create_row(&facade, "moqui.test.TestEntity", &[("testId", id), ("testMedium", id)]);
         }
@@ -1206,6 +1339,57 @@ mod tests {
         .unwrap();
         assert_eq!(seen, ["A", "C", "E", "F", "G"]);
         assert_eq!(count, 5);
+    }
+
+    /// Java's `hasAllPrimaryPks`: the rows of one primary record merge into one document only when every primary key
+    /// field is a field alias; otherwise each row is a document.
+    #[test]
+    fn rows_merge_only_when_every_primary_key_is_aliased() {
+        let facade = crate::testing::open();
+        create_row(
+            &facade,
+            "moqui.basic.EnumerationType",
+            &[("enumTypeId", "T1"), ("description", "type")],
+        );
+        for id in ["E1", "E2"] {
+            create_row(
+                &facade,
+                "moqui.basic.Enumeration",
+                &[("enumId", id), ("enumTypeId", "T1")],
+            );
+        }
+        for (id, paths) in [
+            ("MERGED", &["enumTypeId", "description", "enums:enumId"][..]),
+            ("ROWS", &["description", "enums:enumId"][..]),
+        ] {
+            create_row(
+                &facade,
+                super::DOCUMENT,
+                &[
+                    ("dataDocumentId", id),
+                    ("primaryEntityName", "moqui.basic.EnumerationType"),
+                ],
+            );
+            for (at, path) in paths.iter().enumerate() {
+                let seq = format!("{:02}", at + 1);
+                create_row(
+                    &facade,
+                    super::DOCUMENT_FIELD,
+                    &[("dataDocumentId", id), ("fieldSeqId", &seq), ("fieldPath", path)],
+                );
+            }
+        }
+        let merged = super::data_documents(&facade, "MERGED", None, None, None).unwrap();
+        assert_eq!(merged.len(), 1, "{merged:?}");
+        assert!(matches!(merged[0].get("enums"), Some(moqui_lib::object::Value::List(list)) if list.len() == 2));
+        assert_eq!(merged[0].get("_id"), Some(&moqui_lib::object::Value::string("T1")));
+        let rows = super::data_documents(&facade, "ROWS", None, None, None).unwrap();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        // As Java's `makeDocId`, a one-field key that is not a field of the document gives no `_id`.
+        assert!(rows.iter().all(|doc| doc.get("_id").is_none()), "{rows:?}");
+        assert!(rows
+            .iter()
+            .all(|doc| matches!(doc.get("enums"), Some(moqui_lib::object::Value::List(list)) if list.len() == 1)));
     }
 
     #[test]

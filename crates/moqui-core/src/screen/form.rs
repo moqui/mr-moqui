@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use moqui_db::model::EntityModel;
+use moqui_db::model::{EntityDefinition, EntityModel};
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
@@ -811,6 +811,10 @@ pub(super) struct EntityShape {
     /// Related `one` entities reached by a single key field: the field, the related entity, its key field.
     pub one_relations: Vec<(String, String, String)>,
     pub description_field: String,
+    /// A view alias's `default-display`, by alias name.
+    pub default_display: HashMap<String, bool>,
+    /// The view's `pq-expression` aliases with `default-display="true"`, which the auto fields show after the others.
+    pub pq_display: Vec<String>,
 }
 
 /// The shapes made so far, by entity name, for the model they were read from. A form-list row and an option item ask
@@ -852,18 +856,40 @@ pub(super) fn entity_shape(entity_name: &str) -> Result<Arc<EntityShape>, Error>
     })
     .flatten()
     .ok_or_else(|| Error::new("no entity facade is installed"))?;
+    // A definition built at runtime (a DB view entity, `DataDocument.<id>`) changes with its rows, so its shape is read
+    // each time rather than kept with the model's.
+    if facade.with_model(|model| model.entity(entity_name).is_err()) {
+        return facade
+            .with_entity(entity_name, |entity, _, _| Ok(Arc::new(entity_shape_of(entity))))
+            .map_err(Error::from);
+    }
     facade
         .with_model(|model| shapes.get(model, entity_name))
         .map_err(Error::from)
 }
 
 fn read_entity_shape(model: &EntityModel, entity_name: &str) -> Result<EntityShape, moqui_lib::error::Error> {
-    let entity = model.entity(entity_name)?;
-    let fields: Vec<(String, String, bool)> = entity
-        .fields
-        .iter()
-        .map(|field| (field.name.clone(), field.field_type.clone(), field.is_pk))
-        .collect();
+    Ok(entity_shape_of(model.entity(entity_name)?))
+}
+
+fn entity_shape_of(entity: &EntityDefinition) -> EntityShape {
+    // A view's fields are its aliases, as Java's `getFieldNames`; an alias with no type is `text-long` to the forms.
+    let fields: Vec<(String, String, bool)> = if entity.is_view {
+        entity
+            .aliases
+            .iter()
+            .map(|alias| {
+                let field_type = alias.field_type.clone().unwrap_or_else(|| "text-long".to_string());
+                (alias.name.clone(), field_type, alias.is_pk)
+            })
+            .collect()
+    } else {
+        entity
+            .fields
+            .iter()
+            .map(|field| (field.name.clone(), field.field_type.clone(), field.is_pk))
+            .collect()
+    };
     let mut one_relations = Vec::new();
     for relationship in &entity.relationships {
         // The expanded keys, so a relationship with no key-map (the related entity's primary key of the
@@ -875,15 +901,24 @@ fn read_entity_shape(model: &EntityModel, entity_name: &str) -> Result<EntitySha
         let (field, related_key) = relationship.key_pairs[0].clone();
         one_relations.push((field, relationship.related.clone(), related_key));
     }
-    let description_field = entity
-        .fields
+    let description_field = fields
         .iter()
-        .filter(|field| !field.is_pk)
-        .find(|field| field.name.ends_with("Name"))
-        .map(|field| field.name.clone())
-        .or_else(|| entity.field("description").map(|field| field.name.clone()))
+        .find(|(name, _, is_pk)| !*is_pk && name.ends_with("Name"))
+        .or_else(|| fields.iter().find(|(name, _, _)| name == "description"))
+        .map(|(name, _, _)| name.clone())
         .unwrap_or_default();
-    Ok(EntityShape {
+    let default_display = entity
+        .aliases
+        .iter()
+        .filter_map(|alias| alias.default_display.map(|display| (alias.name.clone(), display)))
+        .collect();
+    let pq_display = entity
+        .pq_aliases
+        .iter()
+        .filter(|alias| alias.default_display)
+        .map(|alias| alias.name.clone())
+        .collect();
+    EntityShape {
         full_name: entity.full_name.clone(),
         pk_fields: fields
             .iter()
@@ -893,7 +928,9 @@ fn read_entity_shape(model: &EntityModel, entity_name: &str) -> Result<EntitySha
         fields,
         one_relations,
         description_field,
-    })
+        default_display,
+        pq_display,
+    }
 }
 
 fn add_entity_fields(
@@ -914,16 +951,14 @@ fn add_entity_fields(
             continue;
         }
         let mut make_default = true;
-        if form.name() == "form-list"
-            && matches!(
-                entity_type.as_str(),
-                "text-long" | "text-very-long" | "text-fts" | "binary-very-long"
-            )
-        {
-            if entity_type != "text-long" {
+        if form.name() == "form-list" {
+            // As Java: an alias's `default-display` decides; without it a form-list leaves out the long text types but
+            // `text-long`.
+            let display = shape.default_display.get(name).copied();
+            if display.is_none() && matches!(entity_type.as_str(), "text-very-long" | "text-fts" | "binary-very-long") {
                 continue;
             }
-            make_default = true;
+            make_default = display.unwrap_or(true);
         }
         displayed.push(name.clone());
         let field = MNode::new("field");
@@ -935,6 +970,17 @@ fn add_entity_fields(
             sub
         });
         add_auto_entity_field(shape, name, field_type, &field, sub.as_ref(), form);
+        merge_field_node(form, &field, false);
+    }
+    // As Java, a `pq-expression` alias with `default-display="true"` is a display field whatever `include`, the
+    // excludes and the field type, and is not among the displayed names.
+    for name in &shape.pq_display {
+        let field = MNode::new("field");
+        field.set_attribute("name", name.clone());
+        let sub = field.append("default-field");
+        sub.set_attribute("validate-entity", shape.full_name.clone());
+        sub.set_attribute("validate-field", name.clone());
+        add_auto_entity_field(shape, name, "display", &field, Some(&sub), form);
         merge_field_node(form, &field, false);
     }
     displayed
@@ -1313,7 +1359,9 @@ fn add_auto_entity_columns(form: &MNode, initial: &MNode, shape: &EntityShape, d
 mod tests {
     use moqui_lib::node::MNode;
 
-    use super::{merge_field_node, merge_form_nodes};
+    use moqui_db::model::EntityModel;
+
+    use super::{add_entity_fields, merge_field_node, merge_form_nodes, read_entity_shape};
 
     fn parse(xml: &str) -> MNode {
         MNode::parse_text("test", xml).unwrap()
@@ -1386,5 +1434,141 @@ mod tests {
         let first = &field.children_named("conditional-field")[0];
         assert_eq!(first.attribute("title").as_deref(), Some("T"));
         assert!(first.first_named("text-line").is_some() && first.first_named("display").is_none());
+    }
+
+    /// As Java's `addEntityFields`: a view's auto fields are its aliases, and in a form-list an alias's
+    /// `default-display` decides whether it gets a field to show, over the default that leaves out the long text types.
+    #[test]
+    fn a_view_alias_default_display_decides_a_form_list_auto_field() {
+        let conf = parse(
+            r#"<database-list>
+                <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
+                <dictionary-type type="text-very-long" java-type="java.lang.String" default-sql-type="TEXT"/>
+            </database-list>"#,
+        );
+        let entities = parse(
+            r#"<entities>
+                <entity entity-name="Item" package="t" no-update-stamp="true">
+                    <field name="itemId" type="id" is-pk="true"/><field name="note" type="text-very-long"/>
+                    <field name="code" type="id"/><field name="body" type="text-very-long"/></entity>
+                <view-entity entity-name="ItemView" package="t">
+                    <member-entity entity-alias="I" entity-name="t.Item"/>
+                    <alias name="itemId" entity-alias="I"/>
+                    <alias name="note" entity-alias="I" default-display="true"/>
+                    <alias name="code" entity-alias="I" default-display="false"/>
+                    <alias name="body" entity-alias="I"/>
+                </view-entity></entities>"#,
+        );
+        let model = EntityModel::load(&conf, &[entities]).unwrap();
+        let shape = read_entity_shape(&model, "t.ItemView").unwrap();
+        assert_eq!(shape.pk_fields, ["itemId"]);
+        let form = parse(r#"<form-list name="L" list="items"/>"#);
+        let shown = add_entity_fields(&shape, "all", "display", &[], &form);
+        assert_eq!(shown, ["itemId", "note", "code"]);
+        let field = |name: &str| {
+            form.children_named("field")
+                .into_iter()
+                .find(|field| field.attribute("name").as_deref() == Some(name))
+                .unwrap()
+        };
+        assert!(field("note").first_named("default-field").is_some());
+        assert!(field("code").first_named("default-field").is_none());
+    }
+
+    /// As Java's `addEntityFields`: a view's `pq-expression` alias with `default-display="true"` is a display field
+    /// whatever the form, `include`, field type and excludes, and is not one of the names shown; one without it gets no
+    /// field.
+    #[test]
+    fn a_pq_expression_alias_with_default_display_is_an_auto_display_field() {
+        let conf = parse(
+            r#"<database-list>
+                <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
+            </database-list>"#,
+        );
+        let entities = parse(
+            r#"<entities>
+                <entity entity-name="Item" package="t" no-update-stamp="true">
+                    <field name="itemId" type="id" is-pk="true"/><field name="code" type="id"/></entity>
+                <view-entity entity-name="ItemView" package="t">
+                    <member-entity entity-alias="I" entity-name="t.Item"/>
+                    <alias-all entity-alias="I"/>
+                    <alias name="label" pq-expression="itemId + ':' + code" default-display="true"/>
+                    <alias name="quiet" pq-expression="code"/>
+                </view-entity></entities>"#,
+        );
+        let model = EntityModel::load(&conf, &[entities]).unwrap();
+        let shape = read_entity_shape(&model, "t.ItemView").unwrap();
+        assert_eq!(shape.pq_display, ["label"]);
+        let form = parse(r#"<form-single name="S"/>"#);
+        let shown = add_entity_fields(&shape, "pk", "edit", &["label".to_string()], &form);
+        assert_eq!(shown, ["itemId"]);
+        let names: Vec<String> = form
+            .children_named("field")
+            .iter()
+            .filter_map(|field| field.attribute("name"))
+            .collect();
+        assert_eq!(names, ["itemId", "label"]);
+        let label = form.children_named("field")[1].first_named("default-field").unwrap();
+        assert_eq!(label.attribute("validate-entity").as_deref(), Some("t.ItemView"));
+        assert_eq!(label.attribute("validate-field").as_deref(), Some("label"));
+        assert!(label.first_named("display").is_some());
+        assert!(label.first_named("text-area").is_none() && label.first_named("text-line").is_none());
+    }
+
+    /// Java's `addEntityFields` of a `DataDocument.<id>` name: the document's view, its fields' `defaultDisplay` and
+    /// an expression field with `defaultDisplay` `Y` a display field; its shape is read again after its rows change.
+    #[test]
+    fn a_data_document_name_gives_the_auto_fields_of_its_view() {
+        use moqui_lib::object::Value;
+        let facade = crate::testing::open();
+        let context = crate::context::ExecutionContextFactory::test_context();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let create = |entity: &str, pairs: &[(&str, &str)]| {
+            let mut row = facade.make_value(entity).unwrap();
+            for (name, value) in pairs {
+                row.set(*name, Value::string(*value));
+            }
+            row.create(&facade).unwrap();
+        };
+        create(
+            "moqui.entity.document.DataDocument",
+            &[
+                ("dataDocumentId", "FormDoc"),
+                ("primaryEntityName", "moqui.basic.Enumeration"),
+            ],
+        );
+        let field = |seq: &str, path: &str, extra: &[(&str, &str)]| {
+            let mut pairs = vec![("dataDocumentId", "FormDoc"), ("fieldSeqId", seq), ("fieldPath", path)];
+            pairs.extend_from_slice(extra);
+            create("moqui.entity.document.DataDocumentField", &pairs);
+        };
+        field("01", "enumId", &[]);
+        field("02", "description", &[("defaultDisplay", "N")]);
+        field(
+            "03",
+            "(enumId + '!')",
+            &[("fieldNameAlias", "shout"), ("defaultDisplay", "Y")],
+        );
+        let shape = super::entity_shape("DataDocument.FormDoc").unwrap();
+        assert_eq!(shape.full_name, "DataDocument.FormDoc");
+        assert_eq!(shape.pq_display, ["shout"]);
+        let form = parse(r#"<form-list name="L"/>"#);
+        let shown = add_entity_fields(&shape, "all", "display", &[], &form);
+        assert_eq!(shown, ["enumId", "description"]);
+        let fields = form.children_named("field");
+        let names: Vec<String> = fields.iter().filter_map(|field| field.attribute("name")).collect();
+        assert_eq!(names, ["enumId", "description", "shout"]);
+        assert!(fields[1].first_named("default-field").is_none(), "defaultDisplay N");
+        assert!(fields[2]
+            .first_named("default-field")
+            .unwrap()
+            .first_named("display")
+            .is_some());
+
+        field("04", "enumTypeId", &[]);
+        let shape = super::entity_shape("DataDocument.FormDoc").unwrap();
+        assert!(shape.fields.iter().any(|(name, _, _)| name == "enumTypeId"));
     }
 }

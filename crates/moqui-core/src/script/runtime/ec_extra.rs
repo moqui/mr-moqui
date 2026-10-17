@@ -88,7 +88,7 @@ fn expand_with<'js>(
 }
 
 fn throw_error(ctx: &Ctx<'_>, err: &Error) -> JsError {
-    Exception::throw_message(ctx, err.message())
+    throw_context(ctx, err)
 }
 
 fn resource_expand_l10n<'js>(

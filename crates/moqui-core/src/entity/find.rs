@@ -43,7 +43,7 @@ pub struct EntityFind {
     pub(super) limit: Option<i64>,
     pub(super) offset: Option<i64>,
     distinct: bool,
-    for_update: bool,
+    pub(super) for_update: bool,
     pub(super) having: Vec<Condition>,
     select_fields: Vec<String>,
     /// Set by `select_form_fields`: order only by a selected field, as a form-list's find does.
@@ -55,7 +55,7 @@ pub struct EntityFind {
     /// `disableAuthz`: this find is not checked against the user's authorizations.
     disable_authz: bool,
     /// `useCache`: `None` follows the entity's `cache` attribute.
-    use_cache: Option<bool>,
+    pub(super) use_cache: Option<bool>,
     /// Java's scroll-insensitive result set type: the iterator can move back. See [`EntityListIterator`].
     scrollable: bool,
     /// Java's `useClone`: read from a clone datasource of the entity's group when one is open.
@@ -126,8 +126,9 @@ impl EntityFind {
         &self.entity_name
     }
 
+    /// Java's `condition(field, value)`: a second value for the same field replaces the first.
     pub fn eq(mut self, field: &str, value: Value) -> Self {
-        self.conditions.push(Condition::equals(field, value));
+        add_condition(&mut self.conditions, Condition::equals(field, value));
         self
     }
 
@@ -136,8 +137,10 @@ impl EntityFind {
         self
     }
 
+    /// As Java's `condition(EntityCondition)`: an equality (or `IS NULL`) on a plain field replaces the one the find
+    /// already has for that field, and an `AND` is unrolled so its equalities do the same.
     pub fn condition(mut self, condition: Condition) -> Self {
-        self.conditions.push(condition);
+        add_condition(&mut self.conditions, condition);
         self
     }
 
@@ -188,10 +191,11 @@ impl EntityFind {
         self
     }
 
-    /// Read only these fields. A field the entity does not have is an error. The values returned
-    /// have just these fields. On a view-entity only the members those fields read are joined,
-    /// and with an aggregate alias the selected fields are the `GROUP BY`. As in Java, `field` may
-    /// be a comma-separated list, and a field already selected is not added again.
+    /// Read only these fields. A field the entity does not have is skipped with a warning when the
+    /// find runs, as Java's `selectField`. The values returned have just these fields. On a
+    /// view-entity only the members those fields read are joined, and with an aggregate alias the
+    /// selected fields are the `GROUP BY`. As in Java, `field` may be a comma-separated list, and a
+    /// field already selected is not added again.
     pub fn select_field(mut self, field: &str) -> Self {
         for name in field.split(',').map(str::trim).filter(|name| !name.is_empty()) {
             if !self.select_fields.iter().any(|known| known == name) {
@@ -232,7 +236,9 @@ impl EntityFind {
     }
 
     /// True when the result depends on more than the conditions, order, and paging, so the entity
-    /// cache and the held-row overlay, which key on those alone, must not answer.
+    /// cache and the held-row overlay, which key on those alone, must not answer. Java caches a distinct or
+    /// select-field find of a cached entity by reading every field, so it answers with whole, non-distinct rows; this
+    /// reads the database and returns what was asked for.
     fn bypasses_cache(&self) -> bool {
         self.distinct || self.for_update || !self.having.is_empty() || !self.select_fields.is_empty()
     }
@@ -268,6 +274,7 @@ impl EntityFind {
         // The view frame is what authorizes the read, and the filters come from its record.
         let _authz = self.authz_guard();
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", operation)?;
+        cache::sim_check_find(&self.facade, &self.entity_name)?;
         let condition = self.combined();
         let lookup = self.lookup(&condition);
         if let Some(schema) = self.sim_view_schema(false)? {
@@ -455,6 +462,7 @@ impl EntityFind {
         }
         let _authz = self.authz_guard();
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", "count")?;
+        cache::sim_check_find(&self.facade, &self.entity_name)?;
         if let Some(schema) = self.sim_view_schema(true)? {
             let plan = self.plan(true)?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
@@ -521,6 +529,7 @@ impl EntityFind {
                 EntityList::new(Vec::new()),
             ));
         }
+        cache::sim_check_find(&self.facade, &self.entity_name)?;
         // A view the sim changed is read from the sim schema, into memory.
         if sim_view::plan_for(&self.facade, &self.entity_name)?.is_some() {
             let facade = self.facade.clone();
@@ -707,6 +716,35 @@ impl EntityFind {
                 .collect(),
         )
     }
+}
+
+/// Java keeps one value per field in `simpleAndMap`: `condition(field, value)`, and an `EQUALS` condition routed to it,
+/// replace the field's earlier value in place. Other conditions are ANDed in order; an `AND` list is unrolled.
+pub(super) fn add_condition(conditions: &mut Vec<Condition>, condition: Condition) {
+    let simple_field = |condition: &Condition| match condition {
+        Condition::Equals(field, _) | Condition::IsNull(field)
+            if field.entity_alias.is_none() && field.expr.is_none() =>
+        {
+            Some(field.name.clone())
+        }
+        _ => None,
+    };
+    if let Condition::And(list) = condition {
+        for item in list {
+            add_condition(conditions, item);
+        }
+        return;
+    }
+    if let Some(name) = simple_field(&condition) {
+        if let Some(slot) = conditions
+            .iter_mut()
+            .find(|known| simple_field(known).as_deref() == Some(name.as_str()))
+        {
+            *slot = condition;
+            return;
+        }
+    }
+    conditions.push(condition);
 }
 
 /// What a view's `entity-condition` and SQL expressions read: the time now, `${}` expansion in
@@ -1170,6 +1208,39 @@ mod tests {
         // The in-memory driver does not read FOR UPDATE; the statement is what counts here.
         let _ = outcome;
         assert!(tape.lock().unwrap().iter().any(|sql| sql.ends_with(" FOR UPDATE")));
+    }
+
+    /// Java's `condition(field, value)` keeps one value per field: the second replaces the first, also inside an `AND`.
+    #[test]
+    fn a_second_equality_on_a_field_replaces_the_first() {
+        let (facade, _tape) = seeded();
+        let found = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("B"))
+            .eq("testId", Value::string("A"))
+            .list()
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found.values()[0].get("testId").and_then(Value::as_str), Some("A"));
+        let find = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testMedium", Value::string("beta"))
+            .condition(Condition::and(vec![
+                Condition::equals("testMedium", Value::string("alpha")),
+                Condition::not_equals("testId", Value::string("B")),
+            ]))
+            .condition(Condition::not_equals("testId", Value::string("C")));
+        assert_eq!(
+            find.conditions,
+            [
+                Condition::equals("testMedium", Value::string("alpha")),
+                Condition::not_equals("testId", Value::string("B")),
+                Condition::not_equals("testId", Value::string("C")),
+            ]
+        );
+        assert_eq!(find.list().unwrap().len(), 1);
     }
 
     #[test]

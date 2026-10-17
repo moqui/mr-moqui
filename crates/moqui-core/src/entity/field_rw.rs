@@ -18,7 +18,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 
-use moqui_db::model::{EntityDefinition, EntityModel};
+use moqui_db::model::{EntityDefinition, EntityModel, PqAlias};
 use moqui_db::sql::{Condition, FieldRef};
 use moqui_lib::error::Error;
 use moqui_lib::object::{decimal_compare, to_plain_string, Value};
@@ -63,7 +63,19 @@ pub fn before_write(
     operation: &str,
     values: BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, Error> {
-    audit_log(facade, entity, operation, &values)?;
+    before_write_known(facade, entity, operation, values, None)
+}
+
+/// [`before_write`] for an update that already read the stored row (`stored`), which the audit log compares with
+/// instead of reading it again.
+pub(crate) fn before_write_known(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    operation: &str,
+    values: BTreeMap<String, Value>,
+    stored: Option<&BTreeMap<String, Value>>,
+) -> Result<BTreeMap<String, Value>, Error> {
+    audit_log(facade, entity, operation, &values, stored)?;
     encrypt_fields(facade, entity, values)
 }
 
@@ -273,6 +285,7 @@ fn audit_log(
     entity: &EntityDefinition,
     operation: &str,
     values: &BTreeMap<String, Value>,
+    stored: Option<&BTreeMap<String, Value>>,
 ) -> Result<(), Error> {
     if operation == "delete" || facade.flags().disable_audit_log || facade.sim_active() {
         return Ok(());
@@ -292,10 +305,10 @@ fn audit_log(
     if pk_names.is_empty() || pk_names.iter().any(|name| values.get(*name).is_none_or(Value::is_null)) {
         return Ok(());
     }
-    let old = if operation == "update" {
-        stored_row(facade, entity, values)?
-    } else {
-        BTreeMap::new()
+    let old = match stored {
+        Some(row) if operation == "update" => row.clone(),
+        _ if operation == "update" => stored_row(facade, entity, values)?,
+        _ => BTreeMap::new(),
     };
     for field in &entity.fields {
         let Some(flag) = field.enable_audit_log.as_deref() else {
@@ -407,50 +420,70 @@ fn insert_audit(
     new_text: Option<String>,
     old_text: Option<String>,
 ) -> Result<(), Error> {
-    let mut row = facade.make_value(AUDIT_ENTITY)?;
-    row.set_sequenced_id_primary(facade)?;
-    row.set("changedEntityName", Value::string(entity.full_name.as_str()));
-    row.set("changedFieldName", Value::string(field_name));
-    row.set("changedDate", changed_now());
-    row.set("artifactStack", Value::string(audit_stack()));
+    let mut row = BTreeMap::new();
+    row.insert(
+        "changedEntityName".to_string(),
+        Value::string(entity.full_name.as_str()),
+    );
+    row.insert("changedFieldName".to_string(), Value::string(field_name));
+    row.insert("changedDate".to_string(), changed_now());
+    row.insert("artifactStack".to_string(), Value::string(audit_stack()));
     // Java stamps the acting user and visit on each audit row.
     if let Some(user_id) = crate::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty())
     {
-        row.set("changedByUserId", Value::string(user_id));
+        row.insert("changedByUserId".to_string(), Value::string(user_id));
     }
     if let Some(visit_id) = crate::user::visit_id().ok().flatten().filter(|id| !id.is_empty()) {
-        row.set("changedInVisitId", Value::string(visit_id));
+        row.insert("changedInVisitId".to_string(), Value::string(visit_id));
     }
     if let Some(text) = new_text {
-        row.set("newValueText", Value::string(text));
+        row.insert("newValueText".to_string(), Value::string(text));
     }
     if let Some(text) = old_text {
-        row.set("oldValueText", Value::string(text));
+        row.insert("oldValueText".to_string(), Value::string(text));
     }
     // As Java: a `{field}_changeReason` in the context.
     if let Some(reason) = crate::script::context_value(&format!("{field_name}_changeReason"))
         .map(|value| moqui_lib::object::to_plain_string(&value))
         .filter(|reason| !reason.is_empty())
     {
-        row.set("changeReason", Value::string(reason));
+        row.insert("changeReason".to_string(), Value::string(reason));
     }
     put_pk(&mut row, entity, values);
-    row.create(facade)
+    // As Java, through `create#moqui.entity.EntityAuditLog` with authorization off, so its service ECA rules run. With
+    // no context entered, or one whose services write through another facade, the row is created directly.
+    let same_facade = ExecutionContext::with_current(|ctx| ctx.factory().entity())
+        .flatten()
+        .is_some_and(|current| std::sync::Arc::ptr_eq(&current.inner, &facade.inner));
+    if same_facade {
+        let options = crate::service::call::CallOptions {
+            disable_authz: true,
+            ..Default::default()
+        };
+        crate::service::call::sync_with(&format!("create#{AUDIT_ENTITY}"), &row, &options)?;
+        return Ok(());
+    }
+    let mut value = facade.make_value(AUDIT_ENTITY)?;
+    value.set_sequenced_id_primary(facade)?;
+    for (name, field_value) in row {
+        value.set(name, field_value);
+    }
+    value.create(facade)
 }
 
-fn put_pk(row: &mut super::value::EntityValue, entity: &EntityDefinition, values: &BTreeMap<String, Value>) {
+fn put_pk(row: &mut BTreeMap<String, Value>, entity: &EntityDefinition, values: &BTreeMap<String, Value>) {
     let names = entity.pk_field_names();
     if let Some(name) = names.first() {
         if let Some(text) = plain_text(values.get(*name)) {
-            row.set("pkPrimaryValue", Value::string(text));
+            row.insert("pkPrimaryValue".to_string(), Value::string(text));
         }
     }
     if let Some(name) = names.get(1) {
         if let Some(text) = plain_text(values.get(*name)) {
-            row.set("pkSecondaryValue", Value::string(text));
+            row.insert("pkSecondaryValue".to_string(), Value::string(text));
         }
     }
     if names.len() <= 2 {
@@ -468,7 +501,7 @@ fn put_pk(row: &mut super::value::EntityValue, entity: &EntityDefinition, values
         combined.push('\'');
     }
     if !combined.is_empty() {
-        row.set("pkRestCombinedValue", Value::string(combined));
+        row.insert("pkRestCombinedValue".to_string(), Value::string(combined));
     }
 }
 
@@ -481,15 +514,29 @@ fn changed_now() -> Value {
     crate::user::now_effective_value()
 }
 
-/// The localized fields of a find's entity, worked out once per find and shared by each value it returns.
+/// The localized fields of a find's entity, worked out once per find and shared by each value it returns, and a view's
+/// `pq-expression` aliases, which a value also reads in place of a stored field.
 #[derive(Debug)]
 pub(crate) struct L10nTargets {
     targets: Vec<LocalTarget>,
+    pq_aliases: Vec<PqAlias>,
 }
 
 impl L10nTargets {
     pub(crate) fn has(&self, column: &str) -> bool {
         self.targets.iter().any(|target| target.column == column)
+    }
+
+    /// The expression of the `pq-expression` alias `name`.
+    pub(crate) fn pq_expression(&self, name: &str) -> Option<&str> {
+        self.pq_aliases
+            .iter()
+            .find(|alias| alias.name == name)
+            .map(|alias| alias.expression.as_str())
+    }
+
+    pub(crate) fn pq_names(&self) -> impl Iterator<Item = &str> {
+        self.pq_aliases.iter().map(|alias| alias.name.as_str())
     }
 
     pub(crate) fn columns(&self) -> impl Iterator<Item = &str> {
@@ -516,8 +563,8 @@ struct LocalTarget {
     pk_column: Option<String>,
 }
 
-/// The localized fields of `entity`, or `None` when it has none or this is a raw read (an internal read that must
-/// see what is stored). A lookup that fails is logged and the values stay as stored.
+/// The localized fields and `pq-expression` aliases of `entity`, or `None` when it has none or this is a raw read (an
+/// internal read that must see what is stored). A lookup that fails is logged and the values stay as stored.
 pub(crate) fn l10n_targets(facade: &EntityFacade, entity: &EntityDefinition) -> Option<std::sync::Arc<L10nTargets>> {
     if raw_read() {
         return None;
@@ -527,13 +574,14 @@ pub(crate) fn l10n_targets(facade: &EntityFacade, entity: &EntityDefinition) -> 
             Ok(targets) => targets,
             Err(err) => {
                 tracing::error!(error = %err, "Could not find the localized fields of {}, not localizing", entity.full_name);
-                return None;
+                Vec::new()
             }
         }
     } else {
         plain_targets(entity)
     };
-    (!targets.is_empty()).then(|| std::sync::Arc::new(L10nTargets { targets }))
+    let pq_aliases = entity.pq_aliases.clone();
+    (!targets.is_empty() || !pq_aliases.is_empty()).then(|| std::sync::Arc::new(L10nTargets { targets, pq_aliases }))
 }
 
 /// The user's locale, as Java's `userFacade.getLocale()`; the facade's own with no execution context.

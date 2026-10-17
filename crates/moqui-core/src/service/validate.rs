@@ -17,13 +17,12 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use moqui_lib::object::{
     basic_convert, convert_checked, decimal_compare, decimal_eq, is_empty, regex_full_match, to_plain_string, Value,
 };
 
-use super::define::{AllowHtml, AutoParams, Check, Include, ParamDef, Required, ServiceDef, ServiceKind};
+use super::define::{merge_param, AllowHtml, AutoParams, Check, Include, ParamDef, Required, ServiceDef};
 use crate::context::Error;
 use crate::entity::EntityFacade;
 
@@ -46,37 +45,38 @@ pub(crate) fn clean(
     let mut failed: Vec<(String, String)> = Vec::new();
     let mut scope = DefaultScope::default();
     for param in declared.iter() {
+        // `required="disabled"` is, as the XSD says, as if the parameter did not exist, so validating drops it. Java
+        // only makes it not required and still converts a value passed for it (accepted, P6a-12).
         if param.name.is_empty() || param.required == Required::Disabled {
             continue;
         }
         known.insert(param.name.clone());
-        match clean_param(param, &params, &mut scope) {
+        match clean_param(param, &params, &mut scope, def.validate_input) {
             Ok(Some(value)) => {
                 let value = nested(param, value, &param.name, &mut failed, def.validate_input);
                 scope.set(&param.name, &value)?;
                 params.insert(param.name.clone(), value);
             }
             Ok(None) => {}
-            Err(err) => failed.push((param.name.clone(), err.message().to_string())),
+            Err(messages) => failed.extend(messages.into_iter().map(|message| (param.name.clone(), message))),
         }
     }
     if !failed.is_empty() {
         let joined = failed
             .iter()
-            .map(|(_, message)| message.as_str())
+            .map(|(field, message)| format!("{message} (for field {field})"))
             .collect::<Vec<_>>()
             .join("; ");
         crate::context::ExecutionContext::with_current(|ec| {
             let mut messages = ec.message();
             for (field, message) in &failed {
-                let text = message.strip_prefix("parameter ").unwrap_or(message);
-                messages.add_validation_error("", field, &def.name, &format!("{text} (in service {})", def.name));
+                messages.add_validation_error("", field, &def.name, message);
             }
         });
         return Err(Error::of_kind(crate::context::ErrorKind::Validation, joined));
     }
     if def.validate_input {
-        retain_known(def, &mut params, &known, facade)?;
+        params.retain(|name, _| known.contains(name));
     }
     Ok(params)
 }
@@ -101,7 +101,7 @@ fn nested(param: &ParamDef, value: Value, path: &str, failed: &mut Vec<(String, 
             continue;
         }
         let child_path = format!("{path}.{}", child.name);
-        match clean_param(child, &source, &mut scope) {
+        match clean_param(child, &source, &mut scope, validate) {
             Ok(Some(value)) => {
                 let value = nested(child, value, &child_path, failed, validate);
                 out.insert(child.name.clone(), value);
@@ -111,35 +111,29 @@ fn nested(param: &ParamDef, value: Value, path: &str, failed: &mut Vec<(String, 
                     out.insert(child.name.clone(), value.clone());
                 }
             }
-            Err(err) => {
-                let message = err.message().replacen(
-                    &format!("parameter {}", child.name),
-                    &format!("parameter {child_path}"),
-                    1,
-                );
-                failed.push((child_path, message));
-            }
+            Err(messages) => failed.extend(messages.into_iter().map(|message| (child_path.clone(), message))),
         }
     }
     Value::Map(out)
 }
 
 /// One parameter: its default when blank, the required check, conversion to its type, HTML cleaning, and the
-/// declared checks. The value to store, if any.
+/// declared checks. The value to store, if any, or Java's message for each thing that failed: a missing required
+/// value or a failed conversion stops there, and each check that fails is a message of its own. As Java,
+/// `validate="false"` skips the required, HTML and declared checks but still converts.
 fn clean_param(
     param: &ParamDef,
     params: &BTreeMap<String, Value>,
     scope: &mut DefaultScope,
-) -> Result<Option<Value>, Error> {
+    validate: bool,
+) -> Result<Option<Value>, Vec<String>> {
     let mut defaulted = None;
     if is_blank(params.get(&param.name)) {
-        if let Some(value) = default_for(param, params, scope)? {
-            defaulted = Some(value);
-        }
+        defaulted = default_for(param, params, scope).map_err(|err| vec![err.message().to_string()])?;
     }
     let current = defaulted.clone().or_else(|| params.get(&param.name).cloned());
-    if param.required == Required::True && is_blank(current.as_ref()) {
-        return Err(Error::new(format!("parameter {} is required", param.name)));
+    if validate && param.required == Required::True && is_blank(current.as_ref()) {
+        return Err(vec![localized("Field cannot be empty")]);
     }
     let Some(value) = current else {
         return Ok(None);
@@ -154,19 +148,77 @@ fn clean_param(
         items
     } else if let Some(converted) = convert_text(param, &value) {
         converted
+    } else if param.format.is_some() && matches!(value, Value::String(_)) && is_number_type(&param.java_type) {
+        // Java parses a number by its format and adds this error when it does not read
+        return Err(vec![not_converted(param, &value)]);
     } else {
-        convert_checked(&value, &param.java_type).ok_or_else(|| {
-            Error::new(format!(
-                "parameter {} value {} is not a valid {}",
-                param.name,
-                to_plain_string(&value),
-                short_type(&param.java_type)
-            ))
-        })?
+        convert_checked(&value, &param.java_type).ok_or_else(|| vec![not_converted(param, &value)])?
     };
-    let value = clean_html(param, value)?;
-    check_param(param, &value)?;
-    Ok(Some(value))
+    if !validate {
+        return Ok(Some(value));
+    }
+    let mut failures = Vec::new();
+    let value = clean_html(param, value, &mut failures);
+    for check in &param.checks {
+        failures.extend(apply_check(check, &value));
+    }
+    if failures.is_empty() {
+        Ok(Some(value))
+    } else {
+        Err(failures)
+    }
+}
+
+/// Java's message for a value that does not convert to the parameter's type, naming the format when there is one.
+fn not_converted(param: &ParamDef, value: &Value) -> String {
+    let with_format = param.format.is_some();
+    localized("Value entered ({0}) could not be converted to a {1}{2,choice,0#|1# using format [}{3}{2,choice,0#|1#]}")
+        .replace("{0}", to_plain_string(value).trim())
+        .replace("{1}", &param.java_type)
+        .replace(
+            "{2,choice,0#|1# using format [}",
+            if with_format { " using format [" } else { "" },
+        )
+        .replace("{2,choice,0#|1#]}", if with_format { "]" } else { "" })
+        .replace("{3}", param.format.as_deref().unwrap_or(""))
+}
+
+/// `text` in the session locale, or as it is when there is no localized message for it.
+fn localized(text: &str) -> String {
+    crate::l10n::localize(text).unwrap_or_else(|_| text.to_string())
+}
+
+/// Java's text for a failed check: `template` localized, then each `${name}` in it replaced by its value.
+fn java_text(template: &str, values: &[(&str, &str)]) -> Vec<String> {
+    let mut text = localized(template);
+    for (name, value) in values {
+        text = text.replace(&format!("${{{name}}}"), value);
+    }
+    vec![text]
+}
+
+/// A check's own `message`, localized and expanded with `values` in the context, as Java's `ec.resource.expand`.
+fn expand_message(message: &str, values: &[(&str, Value)]) -> Vec<String> {
+    let _frame = crate::script::ContextFrame::push();
+    for (name, value) in values {
+        let _ = crate::script::set_context_name(name, value.clone());
+    }
+    vec![crate::script::expand_localized(message).unwrap_or_else(|_| message.to_string())]
+}
+
+/// Java's message for a check that could not be done, an exception there.
+fn failed_validation(check: &str, reason: &str) -> Vec<String> {
+    java_text(
+        "Value entered failed ${valNode.name} validation: ${t.message}",
+        &[("valNode.name", check), ("t.message", reason)],
+    )
+}
+
+fn is_number_type(java_type: &str) -> bool {
+    matches!(
+        short_type(java_type),
+        "Integer" | "int" | "Long" | "long" | "Float" | "float" | "Double" | "double" | "BigDecimal" | "BigInteger"
+    )
 }
 
 /// `ParameterInfo` for a `List` or `Set` parameter given as text: square brackets stripped, then split on commas, or
@@ -275,11 +327,15 @@ pub(crate) fn expand_params(
     for param in params {
         if param.name.is_empty() {
             if let Some(auto) = &param.auto {
-                out.extend(expand_auto(def, auto, facade)?);
+                // As Java's `mergeAutoParameters`, a field of the same name as a parameter so far sets its type,
+                // `required`, `allow-html` and entity field, and a later parameter of that name merges into it.
+                for field in expand_auto(def, auto, facade)? {
+                    merge_param(&mut out, field);
+                }
                 continue;
             }
         }
-        out.push(param.clone());
+        merge_param(&mut out, param.clone());
     }
     Ok(out)
 }
@@ -365,24 +421,20 @@ pub(crate) fn auto_fields(
             checks: Vec::new(),
             auto: None,
             entity_name: Some(entity.full_name.clone()),
-            field_name: None,
+            field_name: Some(name.to_string()),
             format: None,
+            // The entity model keeps no field `<description>`, and Java's mergeAutoParameters copies none.
+            description: None,
             children: Vec::new(),
+            given: BTreeSet::from(["type", "required", "allow-html", "entity-name", "field-name"]),
         });
     }
     params
 }
 
-fn check_param(param: &ParamDef, value: &Value) -> Result<(), Error> {
-    for check in &param.checks {
-        apply_check(&param.name, check, value)?;
-    }
-    Ok(())
-}
-
-/// Java's `ParameterInfo.convertType` for text: a number as the user's locale writes it, a date or time by the
-/// parameter's `format` then the usual forms, and a timestamp by its `format` (in UTC unless the text has an offset).
-/// `None` leaves the value to the plain conversion.
+/// Java's `ParameterInfo.convertType` for text: a number by the parameter's `format`, else as the user's locale writes
+/// it, a date or time by its `format` then the usual forms, and a timestamp by its `format` (in UTC unless the text has
+/// an offset). `None` leaves the value to the plain conversion.
 fn convert_text(param: &ParamDef, value: &Value) -> Option<Value> {
     let Value::String(text) = value else {
         return None;
@@ -391,7 +443,7 @@ fn convert_text(param: &ParamDef, value: &Value) -> Option<Value> {
     let format = param.format.as_deref();
     let parsed = match short_type(&param.java_type) {
         "Integer" | "int" | "Long" | "long" | "Float" | "float" | "Double" | "double" | "BigDecimal" | "BigInteger" => {
-            crate::l10n::parse_number(text)
+            crate::l10n::parse_number_format(text, format)
         }
         // A timestamp by its format, read as every other timestamp text of this port is (its offset, else UTC), so a
         // parameter and the data check that compares it read the same text the same way.
@@ -472,39 +524,41 @@ fn default_for(
     Ok(Some(Value::string(expanded)))
 }
 
-/// `allow-html`. Text with a `<` is rejected unless the parameter allows HTML. With `safe` the
+/// `allow-html`. Text with a `<` is an error unless the parameter allows HTML. With `safe` the
 /// markup is cleaned instead: elements and attributes outside ammonia's default allow-list are
 /// removed, script and style content goes with its element, and links lose unsafe URLs. Text with no
 /// `<` is returned as it came, so plain values are never reformatted.
-fn clean_html(param: &ParamDef, value: Value) -> Result<Value, Error> {
+fn clean_html(param: &ParamDef, value: Value, failures: &mut Vec<String>) -> Value {
     if param.allow_html == AllowHtml::Any {
-        return Ok(value);
+        return value;
     }
     match value {
-        Value::String(text) => clean_text(param, text).map(Value::String),
-        Value::List(items) => items
-            .into_iter()
-            .map(|item| match item {
-                Value::String(text) => clean_text(param, text).map(Value::String),
-                other => Ok(other),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::List),
-        other => Ok(other),
+        Value::String(text) => Value::String(clean_text(param, text, failures)),
+        Value::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(match item {
+                    Value::String(text) => Value::String(clean_text(param, text, failures)),
+                    other => other,
+                });
+            }
+            Value::List(out)
+        }
+        other => other,
     }
 }
 
-fn clean_text(param: &ParamDef, text: String) -> Result<String, Error> {
+fn clean_text(param: &ParamDef, text: String, failures: &mut Vec<String>) -> String {
     if !text.contains('<') {
-        return Ok(text);
+        return text;
     }
     if param.allow_html == AllowHtml::Safe {
-        return Ok(safe_html().clean(&text).to_string());
+        return safe_html().clean(&text).to_string();
     }
-    Err(Error::new(format!(
-        "parameter {}: HTML not allowed including less-than (<), greater-than (>), etc symbols",
-        param.name
-    )))
+    failures.push(localized(
+        "HTML not allowed including less-than (<), greater-than (>), etc symbols",
+    ));
+    text
 }
 
 /// HTML cleaned as an `allow-html="safe"` parameter is, for a script that cleans text it takes with `any` (the wiki's
@@ -520,18 +574,24 @@ fn safe_html() -> &'static ammonia::Builder<'static> {
     CLEANER.get_or_init(ammonia::Builder::default)
 }
 
-fn apply_check(name: &str, check: &Check, value: &Value) -> Result<(), Error> {
+/// The messages of a check that `value` fails, Java's text for each; none when it passes.
+fn apply_check(check: &Check, value: &Value) -> Vec<String> {
+    let pv = to_plain_string(value);
     match check {
         Check::Matches { regexp, message } => {
-            let text = to_plain_string(value);
-            let matched = regex_full_match(&text, regexp)?;
-            if !matched {
-                let detail = if message.is_empty() {
-                    format!("parameter {name} does not match {regexp}")
-                } else {
-                    format!("parameter {name} {message}")
-                };
-                return Err(Error::new(detail));
+            if regexp.is_empty() {
+                return Vec::new();
+            }
+            match regex_full_match(&pv, regexp) {
+                Ok(true) => Vec::new(),
+                Ok(false) if !message.is_empty() => {
+                    expand_message(message, &[("pv", value.clone()), ("regexp", Value::string(regexp))])
+                }
+                Ok(false) => java_text(
+                    "Value entered (${pv}) did not match expression: ${regexp}",
+                    &[("pv", &pv), ("regexp", regexp)],
+                ),
+                Err(err) => failed_validation("matches", err.message()),
             }
         }
         Check::NumberRange {
@@ -541,129 +601,279 @@ fn apply_check(name: &str, check: &Check, value: &Value) -> Result<(), Error> {
             max_eq,
             message,
         } => {
+            let range = |template: &str, bound_name: &str, bound: &str| match message
+                .as_deref()
+                .filter(|text| !text.is_empty())
+            {
+                Some(message) => expand_message(message, &[("pv", value.clone()), (bound_name, Value::string(bound))]),
+                None => java_text(template, &[("pv", &pv), (bound_name, bound)]),
+            };
             if !is_decimal(value) {
-                return Err(Error::new(format!("parameter {name} is not a number")));
+                return failed_validation("number-range", &format!("{pv} is not a number"));
             }
-            if let Some(min) = min {
-                let ordering = decimal_against(value, min)
-                    .ok_or_else(|| Error::new(format!("parameter {name} min is not a number")))?;
-                if ordering.is_lt() || (ordering.is_eq() && !min_eq) {
-                    return Err(range_error(name, message));
+            if let Some(min) = min.as_deref().filter(|text| !text.is_empty()) {
+                let Some(ordering) = decimal_against(value, min) else {
+                    return failed_validation("number-range", &format!("min {min} is not a number"));
+                };
+                if !min_eq && ordering.is_le() {
+                    return range(
+                        "Value entered (${pv}) is less than or equal to ${min}, must be greater than.",
+                        "min",
+                        min,
+                    );
+                }
+                if *min_eq && ordering.is_lt() {
+                    return range(
+                        "Value entered (${pv}) is less than ${min} and must be greater than or equal to.",
+                        "min",
+                        min,
+                    );
                 }
             }
-            if let Some(max) = max {
-                let ordering = decimal_against(value, max)
-                    .ok_or_else(|| Error::new(format!("parameter {name} max is not a number")))?;
-                if ordering.is_gt() || (ordering.is_eq() && !max_eq) {
-                    return Err(range_error(name, message));
+            if let Some(max) = max.as_deref().filter(|text| !text.is_empty()) {
+                let Some(ordering) = decimal_against(value, max) else {
+                    return failed_validation("number-range", &format!("max {max} is not a number"));
+                };
+                if *max_eq && ordering.is_gt() {
+                    return range(
+                        "Value entered (${pv}) is greater than ${max} and must be less than or equal to.",
+                        "max",
+                        max,
+                    );
+                }
+                if !max_eq && ordering.is_ge() {
+                    return range(
+                        "Value entered (${pv}) is greater than or equal to ${max} and must be less than.",
+                        "max",
+                        max,
+                    );
                 }
             }
+            Vec::new()
         }
-        Check::NumberInteger => {
-            if !is_whole(value) {
-                return Err(Error::new(format!("parameter {name} is not an integer")));
-            }
+        Check::NumberInteger if !is_whole(value) => {
+            java_text("Value [${pv}] is not a whole (integer) number.", &[("pv", &pv)])
         }
-        Check::NumberDecimal => {
-            if !is_decimal(value) {
-                return Err(Error::new(format!("parameter {name} is not a decimal")));
-            }
+        Check::NumberDecimal if !is_decimal(value) => {
+            java_text("Value [${pv}] is not a decimal number.", &[("pv", &pv)])
         }
         Check::TextLength { min, max } => {
-            let len = to_plain_string(value).chars().count();
-            if min.is_some_and(|min| len < min) || max.is_some_and(|max| len > max) {
-                return Err(Error::new(format!("parameter {name} length is out of range")));
+            let len = pv.chars().count();
+            let length = len.to_string();
+            if let Some(min) = min.filter(|min| len < *min) {
+                return java_text(
+                    "Value entered (${pv}), length ${str.length()}, is shorter than ${minStr} characters.",
+                    &[("pv", &pv), ("str.length()", &length), ("minStr", &min.to_string())],
+                );
             }
+            if let Some(max) = max.filter(|max| len > *max) {
+                return java_text(
+                    "Value entered (${pv}), length ${str.length()}, is longer than ${maxStr} characters.",
+                    &[("pv", &pv), ("str.length()", &length), ("maxStr", &max.to_string())],
+                );
+            }
+            Vec::new()
         }
-        Check::TextEmail => require_match(name, value, r"^[^@\s]+@[^@\s]+\.[^@\s]+$", "is not an email address")?,
+        Check::TextEmail if !is_email(&pv) => {
+            java_text("Value entered (${str}) is not a valid email address.", &[("str", &pv)])
+        }
         // Java's `UrlValidator(ALLOW_ALL_SCHEMES)`: any scheme, then an authority (a `file:` URL may leave it empty).
-        Check::TextUrl => require_match(
-            name,
-            value,
-            r"^(?:[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#]+|file://)[^\s]*$",
-            "is not a URL",
-        )?,
-        Check::TextLetters => require_match(name, value, "^[A-Za-z]+$", "is not letters")?,
-        Check::TextDigits => require_match(name, value, "^[0-9]+$", "is not digits")?,
+        Check::TextUrl
+            if !regex_full_match(&pv, r"^(?:[A-Za-z][A-Za-z0-9+.\-]*://[^\s/?#]+|file://)[^\s]*$").unwrap_or(false) =>
+        {
+            java_text("Value entered (${str}) is not a valid URL.", &[("str", &pv)])
+        }
+        // Java's `Character.isLetter` and `isDigit`, which take a UTF-16 unit, so only the Basic Multilingual Plane.
+        // Alphabetic is a little more than Java's letters: combining vowel signs and letter numbers (accepted, P6a-20).
+        Check::TextLetters if !pv.chars().all(|ch| ch.is_alphabetic() && u32::from(ch) <= 0xFFFF) => {
+            java_text("Value entered (${str}) must have only letters.", &[("str", &pv)])
+        }
+        Check::TextDigits if !pv.chars().all(is_java_digit) => {
+            java_text("Value [${str}] must have only digits.", &[("str", &pv)])
+        }
         Check::TimeRange { after, before, format } => {
-            let read = match format {
-                Some(pattern) if !value.is_null() => {
-                    crate::l10n::parse_timestamp_format(&to_plain_string(value), Some(pattern))
-                }
-                _ => None,
-            };
-            let stamp = stamp_millis(read.as_ref().unwrap_or(value))
-                .ok_or_else(|| Error::new(format!("parameter {name} is not a date")))?;
-            if let Some(after) = after {
-                let bound = bound_millis(after)?;
-                if stamp <= bound {
-                    return Err(Error::new(format!("parameter {name} is not after {after}")));
-                }
-            }
-            if let Some(before) = before {
-                let bound = bound_millis(before)?;
-                if stamp >= bound {
-                    return Err(Error::new(format!("parameter {name} is not before {before}")));
-                }
-            }
+            time_range(value, &pv, after.as_deref(), before.as_deref(), format.as_deref())
         }
         Check::CreditCard { types } => {
-            let digits: String = to_plain_string(value)
-                .chars()
-                .filter(|ch| ch.is_ascii_digit())
-                .collect();
-            if !luhn(&digits) || !card_type_ok(&digits, types.as_deref()) {
-                return Err(Error::new(format!("parameter {name} is not a credit card number")));
+            let digits: String = pv.chars().filter(|ch| ch.is_ascii_digit()).collect();
+            if luhn(&digits) && card_type_ok(&digits, types.as_deref()) {
+                Vec::new()
+            } else {
+                java_text("Value entered is not a valid credit card number.", &[])
             }
         }
-        Check::And(checks) => {
-            for child in checks {
-                apply_check(name, child, value)?;
-            }
-        }
+        Check::And(checks) => checks.iter().flat_map(|child| apply_check(child, value)).collect(),
+        // As logic, not as Java, which records the failure of each child even when another passes (accepted, P6a-19):
+        // when none passes each says why, and an empty `val-or` passes, as Java adds no error for it.
         Check::Or(checks) => {
-            if checks.is_empty() {
-                return Err(Error::new(format!("parameter {name} failed validation")));
-            }
-            // As Java, each check that failed says why, when none passed.
             let mut reasons = Vec::new();
             for child in checks {
-                match apply_check(name, child, value) {
-                    Ok(()) => return Ok(()),
-                    Err(err) => reasons.push(
-                        err.message()
-                            .strip_prefix(&format!("parameter {name} "))
-                            .unwrap_or(err.message())
-                            .to_string(),
-                    ),
+                let failed = apply_check(child, value);
+                if failed.is_empty() {
+                    return Vec::new();
                 }
+                reasons.extend(failed);
             }
-            return Err(Error::new(format!("parameter {name} {}", reasons.join(", or "))));
+            reasons
         }
         Check::Not(checks) => {
-            for child in checks {
-                if apply_check(name, child, value).is_ok() {
-                    return Err(Error::new(format!("parameter {name} failed validation")));
-                }
+            if checks.iter().any(|child| apply_check(child, value).is_empty()) {
+                java_text("Value entered (${pv}) failed val-not validation.", &[("pv", &pv)])
+            } else {
+                Vec::new()
             }
         }
-    }
-    Ok(())
-}
-
-fn range_error(name: &str, message: &Option<String>) -> Error {
-    match message {
-        Some(message) if !message.is_empty() => Error::new(format!("parameter {name} {message}")),
-        _ => Error::new(format!("parameter {name} is out of range")),
+        Check::NumberInteger
+        | Check::NumberDecimal
+        | Check::TextEmail
+        | Check::TextUrl
+        | Check::TextLetters
+        | Check::TextDigits => Vec::new(),
     }
 }
 
-fn require_match(name: &str, value: &Value, pattern: &str, detail: &str) -> Result<(), Error> {
-    let text = to_plain_string(value);
-    if !regex_full_match(&text, pattern)? {
-        return Err(Error::new(format!("parameter {name} {detail}")));
+/// Java's `time-range`: text is read by the `format` (a value that does not read is not checked), and the bounds,
+/// with `now` as the current time written and read again by the format, are inclusive.
+fn time_range(value: &Value, pv: &str, after: Option<&str>, before: Option<&str>, format: Option<&str>) -> Vec<String> {
+    let format = format.filter(|pattern| !pattern.is_empty());
+    let stamp = match value {
+        Value::String(text) => match crate::l10n::parse_timestamp_format(text, format)
+            .as_ref()
+            .and_then(stamp_millis)
+        {
+            Some(stamp) => stamp,
+            None => return Vec::new(),
+        },
+        other => match stamp_millis(other) {
+            Some(stamp) => stamp,
+            None => return failed_validation("time-range", &format!("{pv} is not a date")),
+        },
+    };
+    if let Some(after) = after.filter(|text| !text.is_empty()) {
+        match bound_millis(after, format) {
+            Some(bound) if stamp < bound => {
+                return java_text(
+                    "Value entered (${pv}) is before ${after}.",
+                    &[("pv", pv), ("after", after)],
+                );
+            }
+            Some(_) => {}
+            None => return failed_validation("time-range", &format!("{after} is not a date")),
+        }
     }
-    Ok(())
+    if let Some(before) = before.filter(|text| !text.is_empty()) {
+        match bound_millis(before, format) {
+            Some(bound) if stamp > bound => {
+                return java_text(
+                    "Value entered (${pv}) is after ${before}.",
+                    &[("pv", pv), ("before", before)],
+                );
+            }
+            Some(_) => {}
+            None => return failed_validation("time-range", &format!("{before} is not a date")),
+        }
+    }
+    Vec::new()
+}
+
+/// Java's `Character.isDigit` for a UTF-16 unit: a decimal digit (general category Nd) of the Basic Multilingual
+/// Plane. Each such run of ten starts at one of these.
+fn is_java_digit(ch: char) -> bool {
+    const ZEROS: [u32; 37] = [
+        0x30, 0x660, 0x6F0, 0x7C0, 0x966, 0x9E6, 0xA66, 0xAE6, 0xB66, 0xBE6, 0xC66, 0xCE6, 0xD66, 0xDE6, 0xE50, 0xED0,
+        0xF20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620,
+        0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+    ];
+    let code = u32::from(ch);
+    ZEROS.iter().any(|zero| (*zero..zero + 10).contains(&code))
+}
+
+/// Java's `EmailValidator` (commons-validator): a user part of dot-separated words, each plain characters, escaped
+/// ones or a quoted string, at most 64 long, then a bracketed IP address or a host name of letter, digit and hyphen
+/// labels whose last is a top-level domain. Java also looks that domain up in the IANA list and turns a Unicode
+/// host into its ASCII form; here the last label must only be letters or hyphens and digits after a letter, two or
+/// more long, and a Unicode host is not valid (accepted, P6a-20).
+fn is_email(text: &str) -> bool {
+    if text.ends_with('.') {
+        return false;
+    }
+    let Some((user, domain)) = text.rsplit_once('@') else {
+        return false;
+    };
+    if user.is_empty()
+        || user.encode_utf16().count() > 64
+        || domain.is_empty()
+        || domain.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    if !is_email_user(user) {
+        return false;
+    }
+    if let Some(address) = domain.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        return address.parse::<std::net::IpAddr>().is_ok();
+    }
+    is_host_name(domain)
+}
+
+/// The user part of an address: `\s*WORD(\.WORD)*`, a word being characters other than space, control and
+/// `()<>@,;:'"\.[]`, a backslash and any character, an apostrophe, or a quoted string.
+fn is_email_user(user: &str) -> bool {
+    let chars: Vec<char> = user.trim_start().chars().collect();
+    let mut index = 0;
+    loop {
+        if chars.get(index) == Some(&'"') {
+            index += 1;
+            loop {
+                match chars.get(index) {
+                    None => return false,
+                    Some('"') => break,
+                    Some('\\') if chars.get(index + 1) == Some(&'"') => index += 2,
+                    Some(_) => index += 1,
+                }
+            }
+            index += 1;
+        } else {
+            let start = index;
+            while let Some(&ch) = chars.get(index) {
+                if ch == '\\' && index + 1 < chars.len() {
+                    index += 2;
+                } else if ch == '\'' || !(ch.is_whitespace() || ch.is_control() || "()<>@,;:'\"\\.[]".contains(ch)) {
+                    index += 1;
+                } else {
+                    break;
+                }
+            }
+            if index == start {
+                return false;
+            }
+        }
+        match chars.get(index) {
+            None => return true,
+            Some('.') => index += 1,
+            Some(_) => return false,
+        }
+    }
+}
+
+/// `DomainValidator`'s host name: ASCII letter and digit labels with inner hyphens, up to 63 long and 253 in all, two
+/// or more, the last starting with a letter.
+fn is_host_name(domain: &str) -> bool {
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
+    let labels: Vec<&str> = domain.split('.').collect();
+    if domain.len() > 253 || labels.len() < 2 {
+        return false;
+    }
+    let label_ok = |label: &str| {
+        let bytes = label.as_bytes();
+        !bytes.is_empty()
+            && bytes.len() <= 63
+            && bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+            && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+            && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+    };
+    let tld = labels.last().copied().unwrap_or_default();
+    labels.iter().all(|label| label_ok(label)) && tld.len() >= 2 && tld.as_bytes()[0].is_ascii_alphabetic()
 }
 
 fn is_decimal(value: &Value) -> bool {
@@ -683,34 +893,6 @@ fn decimal_against(value: &Value, bound: &str) -> Option<std::cmp::Ordering> {
     Some(decimal_compare(left, right))
 }
 
-fn retain_known(
-    def: &ServiceDef,
-    params: &mut BTreeMap<String, Value>,
-    known: &BTreeSet<String>,
-    facade: Option<&EntityFacade>,
-) -> Result<(), Error> {
-    if def.kind == ServiceKind::EntityAuto {
-        let Some(facade) = facade else {
-            return Err(Error::new("no entity facade is installed"));
-        };
-        let fields = facade
-            .with_entity(&def.noun, |entity, _, _| {
-                Ok(entity
-                    .fields
-                    .iter()
-                    .map(|field| field.name.clone())
-                    .collect::<BTreeSet<_>>())
-            })
-            .map_err(Error::from)?;
-        params.retain(|name, value| {
-            known.contains(name) || fields.contains(name) || matches!(value, Value::Map(_) | Value::List(_))
-        });
-        return Ok(());
-    }
-    params.retain(|name, _| known.contains(name));
-    Ok(())
-}
-
 fn is_blank(value: Option<&Value>) -> bool {
     value.is_none_or(is_empty)
 }
@@ -719,23 +901,31 @@ pub(crate) fn current_facade() -> Option<EntityFacade> {
     crate::context::ExecutionContext::with_current(|ctx| ctx.factory().entity()).flatten()
 }
 
+/// A date, time or timestamp value, or text Java's conversion reads as one, as epoch millis.
 fn stamp_millis(value: &Value) -> Option<i64> {
-    if value.is_null() {
-        return None;
+    match basic_convert(value, "Timestamp").value {
+        Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
+        _ => None,
     }
-    to_plain_string(value).parse().ok()
 }
 
-fn bound_millis(text: &str) -> Result<i64, Error> {
-    if text == "now" {
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
-        return Ok(millis);
+/// A `time-range` bound as epoch millis: `now` is the effective time, written by `format` and read back so it has the
+/// format's precision, as Java does; other text is read by the format, then the usual forms.
+fn bound_millis(text: &str, format: Option<&str>) -> Option<i64> {
+    if text != "now" {
+        return crate::l10n::parse_timestamp_format(text, format)
+            .as_ref()
+            .and_then(stamp_millis);
     }
-    let converted = basic_convert(&Value::string(text), "Timestamp").value;
-    stamp_millis(&converted).ok_or_else(|| Error::new(format!("time {text} is not a timestamp")))
+    let now = crate::user::now_effective_millis();
+    let Some(pattern) = format else {
+        return Some(now);
+    };
+    let stamp = jiff::Timestamp::from_millisecond(now).ok()?;
+    let written = moqui_lib::format::format_timestamp(stamp, Some(pattern), &crate::l10n::time_zone()).ok()?;
+    crate::l10n::parse_timestamp_format(&written, Some(pattern))
+        .as_ref()
+        .and_then(stamp_millis)
 }
 
 fn luhn(digits: &str) -> bool {
@@ -783,6 +973,8 @@ fn card_type_ok(digits: &str, types: Option<&str>) -> bool {
 mod time_range_tests {
     use super::*;
 
+    /// Java's `time-range`: the value read by the `format`, `now` at the format's precision, inclusive bounds, and a
+    /// value that does not read is not checked.
     #[test]
     fn a_time_range_reads_the_value_by_its_format() {
         let after_now = Check::TimeRange {
@@ -790,20 +982,36 @@ mod time_range_tests {
             before: None,
             format: Some("MM/yyyy".to_string()),
         };
-        // a month and year far ahead pass, one long past does not, and text that does not fit the pattern is not a date
-        assert!(apply_check("expireDate", &after_now, &Value::string("12/2099")).is_ok());
-        let past = apply_check("expireDate", &after_now, &Value::string("01/2001")).unwrap_err();
-        assert!(past.message().contains("not after now"), "{}", past.message());
-        let bad = apply_check("expireDate", &after_now, &Value::string("soon")).unwrap_err();
-        assert!(bad.message().contains("not a date"), "{}", bad.message());
-        // without a format the value is epoch milliseconds, as before
+        // a month and year far ahead pass, one long past does not, and text that does not fit the pattern is skipped
+        assert!(apply_check(&after_now, &Value::string("12/2099")).is_empty());
+        let past = apply_check(&after_now, &Value::string("01/2001"));
+        assert_eq!(past, ["Value entered (01/2001) is before now."]);
+        assert!(apply_check(&after_now, &Value::string("soon")).is_empty());
+        // this month is not before now read as a month
+        let this_month =
+            moqui_lib::format::format_timestamp(jiff::Timestamp::now(), Some("MM/yyyy"), &crate::l10n::time_zone())
+                .unwrap();
+        assert!(apply_check(&after_now, &Value::string(&this_month)).is_empty());
+        // the bounds are inclusive
+        let between = Check::TimeRange {
+            after: Some("2024-01-01".to_string()),
+            before: Some("2024-12-31".to_string()),
+            format: Some("yyyy-MM-dd".to_string()),
+        };
+        assert!(apply_check(&between, &Value::string("2024-01-01")).is_empty());
+        assert!(apply_check(&between, &Value::string("2024-12-31")).is_empty());
+        assert_eq!(
+            apply_check(&between, &Value::string("2025-01-01")),
+            ["Value entered (2025-01-01) is after 2024-12-31."]
+        );
+        // without a format the usual forms read, epoch milliseconds among them
         let plain = Check::TimeRange {
             after: Some("now".to_string()),
             before: None,
             format: None,
         };
-        assert!(apply_check("when", &plain, &Value::string("4102444800000")).is_ok());
-        assert!(apply_check("when", &plain, &Value::string("12/2099")).is_err());
+        assert!(apply_check(&plain, &Value::string("4102444800000")).is_empty());
+        assert!(!apply_check(&plain, &Value::string("2001-01-01")).is_empty());
     }
 }
 
@@ -824,7 +1032,9 @@ mod parameter_tests {
             entity_name: None,
             field_name: None,
             format: None,
+            description: None,
             children: Vec::new(),
+            given: BTreeSet::new(),
         }
     }
 
@@ -859,38 +1069,39 @@ mod parameter_tests {
         assert!(kept.contains_key("extra"));
         let missing = Value::Map([("city".to_string(), Value::string("Town"))].into_iter().collect());
         nested(&parent, missing, "address", &mut failed, true);
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].0, "address.zip");
-        assert!(failed[0].1.contains("address.zip is required"), "{}", failed[0].1);
+        assert_eq!(
+            failed,
+            [("address.zip".to_string(), "Field cannot be empty".to_string())]
+        );
     }
 
-    /// `val-or` reports why each check failed when none passed; `text-url` takes any scheme.
+    /// `val-or` passes when one check passes and otherwise has each check's message; `text-url` takes any scheme.
     #[test]
     fn val_or_keeps_the_child_messages_and_a_url_takes_any_scheme() {
         let either = Check::Or(vec![Check::TextDigits, Check::TextLetters]);
-        assert!(apply_check("code", &either, &Value::string("abc")).is_ok());
-        let err = apply_check("code", &either, &Value::string("a1!")).unwrap_err();
-        assert_eq!(err.message(), "parameter code is not digits, or is not letters");
+        assert!(apply_check(&either, &Value::string("abc")).is_empty());
+        assert_eq!(
+            apply_check(&either, &Value::string("a1!")),
+            [
+                "Value [a1!] must have only digits.",
+                "Value entered (a1!) must have only letters."
+            ]
+        );
+        assert!(apply_check(&Check::Or(Vec::new()), &Value::string("x")).is_empty());
         for url in [
             "https://moqui.org/x",
             "ftp://host/file",
             "s3://bucket/key",
             "file:///tmp/x",
         ] {
-            assert!(
-                apply_check("url", &Check::TextUrl, &Value::string(url)).is_ok(),
-                "{url}"
-            );
+            assert!(apply_check(&Check::TextUrl, &Value::string(url)).is_empty(), "{url}");
         }
         for url in ["moqui.org", "https://", "not a url"] {
-            assert!(
-                apply_check("url", &Check::TextUrl, &Value::string(url)).is_err(),
-                "{url}"
-            );
+            assert!(!apply_check(&Check::TextUrl, &Value::string(url)).is_empty(), "{url}");
         }
     }
 
-    /// Java's `convertType`: a date by the parameter's `format`, a number as the locale writes it.
+    /// Java's `convertType`: a date by the parameter's `format`, a number as the locale writes it or by its `format`.
     #[test]
     fn text_converts_by_the_parameter_format_and_the_locale() {
         let mut date = param("when", "java.sql.Date", Required::False);
@@ -899,10 +1110,128 @@ mod parameter_tests {
             convert_text(&date, &Value::string("15.01.2024")),
             Some(Value::Date(jiff::civil::date(2024, 1, 15)))
         );
-        let amount = param("amount", "BigDecimal", Required::False);
+        let mut amount = param("amount", "BigDecimal", Required::False);
         assert_eq!(
             convert_text(&amount, &Value::string("1,234.50")),
             Some(Value::Decimal("1234.50".parse().unwrap()))
         );
+        amount.format = Some("0.00%".to_string());
+        assert_eq!(
+            convert_text(&amount, &Value::string("12.50%")),
+            Some(Value::Decimal("0.1250".parse().unwrap()))
+        );
+        // text the format does not read is Java's error, which names the format
+        let mut scope = DefaultScope::default();
+        let params = BTreeMap::from([("amount".to_string(), Value::string("12.50"))]);
+        assert_eq!(
+            clean_param(&amount, &params, &mut scope, true),
+            Err(vec![
+                "Value entered (12.50) could not be converted to a BigDecimal using format [0.00%]".to_string()
+            ])
+        );
+        let plain = param("count", "Integer", Required::False);
+        let params = BTreeMap::from([("count".to_string(), Value::string("many"))]);
+        assert_eq!(
+            clean_param(&plain, &params, &mut scope, true),
+            Err(vec![
+                "Value entered (many) could not be converted to a Integer".to_string()
+            ])
+        );
+    }
+
+    /// Java's `validate="false"` skips the required, HTML and declared checks, and still converts.
+    #[test]
+    fn validate_false_converts_but_does_not_check() {
+        let mut code = param("code", "Integer", Required::True);
+        code.checks = vec![Check::NumberRange {
+            min: Some("10".to_string()),
+            min_eq: true,
+            max: None,
+            max_eq: false,
+            message: None,
+        }];
+        let mut scope = DefaultScope::default();
+        let empty = BTreeMap::new();
+        assert_eq!(
+            clean_param(&code, &empty, &mut scope, true),
+            Err(vec!["Field cannot be empty".to_string()])
+        );
+        assert_eq!(clean_param(&code, &empty, &mut scope, false), Ok(None));
+        let low = BTreeMap::from([("code".to_string(), Value::string("5"))]);
+        assert_eq!(
+            clean_param(&code, &low, &mut scope, true),
+            Err(vec![
+                "Value entered (5) is less than 10 and must be greater than or equal to.".to_string()
+            ])
+        );
+        assert_eq!(clean_param(&code, &low, &mut scope, false), Ok(Some(Value::I32(5))));
+        let html = param("note", "String", Required::False);
+        let markup = BTreeMap::from([("note".to_string(), Value::string("<b>x</b>"))]);
+        assert!(clean_param(&html, &markup, &mut scope, true).is_err());
+        assert_eq!(
+            clean_param(&html, &markup, &mut scope, false),
+            Ok(Some(Value::string("<b>x</b>")))
+        );
+    }
+
+    /// As Java, each check of a parameter that fails is a message of its own, and an HTML error does not stop them.
+    #[test]
+    fn every_failed_check_has_its_message() {
+        let mut code = param("code", "String", Required::False);
+        code.checks = vec![
+            Check::TextLength {
+                min: Some(5),
+                max: None,
+            },
+            Check::TextDigits,
+            Check::Matches {
+                regexp: "[a-z<>]+".to_string(),
+                message: "Use ${regexp} for ${pv}".to_string(),
+            },
+        ];
+        let mut scope = DefaultScope::default();
+        let params = BTreeMap::from([("code".to_string(), Value::string("A<"))]);
+        assert_eq!(
+            clean_param(&code, &params, &mut scope, true),
+            Err(vec![
+                "HTML not allowed including less-than (<), greater-than (>), etc symbols".to_string(),
+                "Value entered (A<), length 2, is shorter than 5 characters.".to_string(),
+                "Value [A<] must have only digits.".to_string(),
+                "Use [a-z<>]+ for A<".to_string(),
+            ])
+        );
+    }
+
+    /// Java's `EmailValidator`, `Character.isLetter` and `Character.isDigit`.
+    #[test]
+    fn email_letters_and_digits_follow_java() {
+        for email in [
+            "user@example.com",
+            "first.last+tag@sub.example.org",
+            "o'brien@example.ie",
+            "\"quoted user\"@example.com",
+            "user@[192.168.0.1]",
+        ] {
+            assert!(is_email(email), "{email}");
+        }
+        for email in [
+            "user@localhost",
+            "user@example.c",
+            "user@-example.com",
+            "user.@example.com",
+            ".user@example.com",
+            "us er@example.com",
+            "user@example.com.",
+            "user@exam_ple.com",
+            "@example.com",
+            "user@",
+        ] {
+            assert!(!is_email(email), "{email}");
+        }
+        assert!(apply_check(&Check::TextLetters, &Value::string("Ærøskøbing")).is_empty());
+        assert!(!apply_check(&Check::TextLetters, &Value::string("abc1")).is_empty());
+        // Arabic-Indic and fullwidth digits are digits, a superscript two is not
+        assert!(apply_check(&Check::TextDigits, &Value::string("٣٤５")).is_empty());
+        assert!(!apply_check(&Check::TextDigits, &Value::string("1²")).is_empty());
     }
 }

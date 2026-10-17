@@ -292,8 +292,9 @@ fn rename_grammar_locations(text: &str, grammars: &BTreeSet<String>, rewrites: &
 /// Expression attributes: the whole value is an expression.
 fn is_expression_attr(element: &str, attr: &str) -> bool {
     match attr {
+        // `default` is an expression on a service parameter and an entity field.
         "condition" | "from" | "in-map" | "parameter-map" | "text-map" | "default" => {
-            attr != "default" || element == "parameter"
+            attr != "default" || matches!(element, "parameter" | "field")
         }
         "list" => matches!(
             element,
@@ -1711,6 +1712,19 @@ mod tests {
         assert!(file.text.contains("Prose with ?: stays"), "{}", file.text);
         assert_eq!(file.rewrites.len(), 4);
         assert_eq!(file.rewrites[0].line, 6);
+    }
+
+    #[test]
+    fn an_entity_field_default_is_an_expression() {
+        let file = convert_xml(
+            r#"<entity><field name="sequenceNum" type="number-integer" default="fieldSeqId as int"/></entity>"#,
+        );
+        assert!(
+            file.text
+                .contains(r#"default="(fieldSeqId == null ? null : Math.trunc(toDecimal(fieldSeqId).toNumber()))""#),
+            "{}",
+            file.text
+        );
     }
 
     #[test]

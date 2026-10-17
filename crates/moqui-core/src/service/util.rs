@@ -31,6 +31,21 @@ pub(crate) fn has_error() -> bool {
     ExecutionContext::with_current(|ctx| !ctx.message().errors().is_empty()).unwrap_or(false)
 }
 
+/// Java's `getErrorsString()` then `clearErrors()`, for a caller that consumes the errors a call left: their text, or
+/// `None` when there are none.
+pub(crate) fn take_errors_string() -> Option<String> {
+    ExecutionContext::with_current(|ctx| {
+        let mut messages = ctx.message();
+        if messages.errors().is_empty() {
+            return None;
+        }
+        let text = messages.errors_string();
+        messages.clear_errors();
+        Some(text)
+    })
+    .flatten()
+}
+
 /// Now, in epoch milliseconds.
 pub(crate) fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()

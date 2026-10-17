@@ -30,6 +30,15 @@ pub(crate) fn publish_names(
     Ok(frame)
 }
 
+/// The `<condition>` of a rule element as Java's `EntityEcaRule` and `EmailEcaRule` read it: only its first child, "the
+/// script is effectively the first child of the condition element". Empty when there is none, so the rule always runs.
+pub(crate) fn first_condition(rule: &moqui_lib::node::MNode) -> String {
+    rule.first_named("condition")
+        .and_then(|condition| condition.children().into_iter().next())
+        .map(|first| format!("<condition>{}</condition>", first.write_string()))
+        .unwrap_or_default()
+}
+
 /// An empty condition passes. A `<condition>` element is the xml-actions condition group
 /// (`expression`, `compare`, `and`, `or`, `not`), evaluated as `<if>` evaluates it; any other
 /// child is an error, so a rule never runs because its condition was not understood. Plain text
@@ -55,4 +64,30 @@ pub(crate) fn run_stored_actions(actions: &str) -> Result<(), crate::context::Er
         return crate::script::run_actions(trimmed);
     }
     crate::script::run_actions(&format!("<actions>{trimmed}</actions>"))
+}
+
+#[cfg(test)]
+mod tests {
+    use moqui_lib::node::MNode;
+
+    use super::first_condition;
+
+    #[test]
+    fn a_rule_condition_is_its_first_child_as_java_reads_it() {
+        let rule = MNode::parse_text(
+            "eeca",
+            "<eeca><condition><expression>true</expression><expression>false</expression></condition></eeca>",
+        )
+        .unwrap();
+        let condition = first_condition(&rule);
+        assert!(condition.starts_with("<condition><expression>"), "{condition}");
+        assert!(
+            condition.contains("true") && !condition.contains("false"),
+            "{condition}"
+        );
+        let empty = MNode::parse_text("eeca", "<eeca><condition/></eeca>").unwrap();
+        assert_eq!(first_condition(&empty), "");
+        let none = MNode::parse_text("emeca", "<emeca/>").unwrap();
+        assert_eq!(first_condition(&none), "");
+    }
 }

@@ -93,7 +93,7 @@ pub fn async_call(name: &str, parameters: &BTreeMap<String, Value>) -> Result<()
 ///
 /// # Errors
 ///
-/// Returns an error when the call fails, or the worker queue is full.
+/// Returns the errors of [`sync`], or an error when the worker queue is full.
 pub fn call_future(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     let factory = super::pool::capture_factory()?;
     factory.service_pools().call_future(&canonical(name), parameters)
@@ -166,8 +166,41 @@ impl ServiceFuture {
 }
 
 /// Run `name` and return its out parameters. `create-entity` is `create#entity`.
+///
+/// As Java's `call()`, a failure of the service's body or of its commit is not an error of the call: its message and
+/// causes are recorded in the message facade, the transaction rolls back, and the results come back as they were, empty
+/// when the body failed. Callers read the message facade, as Java's read `hasError()`; [`sync_checked`] does that for
+/// Rust code that needs a `Result`.
+///
+/// # Errors
+///
+/// Returns an error for what Java throws: an unknown or interface service, a call that needs a logged-in user, a held
+/// semaphore, a failing pre-validate or pre-auth rule, and an authorization failure, in the body too.
 pub fn sync(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     sync_with(name, parameters, &CallOptions::default())
+}
+
+/// [`sync_with`] for Rust code that needs a `Result`: the errors the call recorded in the message facade are an error
+/// here too, with their text. They stay in the message facade.
+///
+/// # Errors
+///
+/// Returns the errors of [`sync`], and the errors the call recorded.
+pub fn sync_checked(
+    name: &str,
+    parameters: &BTreeMap<String, Value>,
+    options: &CallOptions,
+) -> Result<BTreeMap<String, Value>, Error> {
+    let mark = ExecutionContext::with_current(|ctx| ctx.message().error_mark());
+    let results = sync_with(name, parameters, options)?;
+    let errors = mark
+        .and_then(|mark| ExecutionContext::with_current(|ctx| ctx.message().errors_since(mark)))
+        .unwrap_or_default();
+    if errors.is_empty() {
+        Ok(results)
+    } else {
+        Err(Error::new(errors.join("\n")))
+    }
 }
 
 /// The multi call of Java's `ServiceCallSyncImpl`: for each row `N` (from 0, until a row has none of the in-parameters
@@ -177,7 +210,7 @@ pub fn sync(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap
 ///
 /// # Errors
 ///
-/// Returns an error when a call fails other than with error messages.
+/// Returns the errors of [`sync`] for a row, and an error of the transaction around the rows.
 pub fn sync_multi(
     name: &str,
     parameters: &BTreeMap<String, Value>,
@@ -253,7 +286,70 @@ pub fn sync_multi(
     }
 }
 
+/// What [`prepare_async`] decided for an async call.
+pub(super) enum AsyncCall {
+    /// Queue the call with these parameters.
+    Run(BTreeMap<String, Value>),
+    /// Queue nothing; a future gets this result at once.
+    Skip(BTreeMap<String, Value>),
+}
+
+/// Java's `validateCall`, run as the caller before an async call is queued: an unknown or interface service is an error
+/// at once, the parameters are converted and validated, the caller must be authorized for the service, and
+/// `authUsername` is added. The worker then runs the call with authorization disabled, as Java's.
+///
+/// Nothing is queued when the parameters failed validation: the errors are in the message facade and a future gets an
+/// empty result. Java queues the call anyway, without the authorization check, and its run fails the same validation.
+/// In a sim session nothing is queued either, as Java's `ServiceCallAsyncImpl`, since a worker would not run in the
+/// sim: a future gets `simSkipped` and `serviceName`.
+pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) -> Result<AsyncCall, Error> {
+    let name = canonical(name);
+    let facade = current_facade();
+    if facade.as_ref().is_some_and(EntityFacade::sim_active) {
+        tracing::info!("Skipping async service {name} in LLM sim session");
+        let mut skipped = BTreeMap::new();
+        skipped.insert("simSkipped".to_string(), Value::Bool(true));
+        skipped.insert("serviceName".to_string(), Value::string(&name));
+        return Ok(AsyncCall::Skip(skipped));
+    }
+    let def = resolve(&name, facade.as_ref())?;
+    if def.kind == ServiceKind::Interface {
+        return Err(Error::new(format!("Cannot run interface service [{}]", def.name)));
+    }
+    let mut cleaned = match validate::clean(&def, parameters, facade.as_ref()) {
+        Ok(cleaned) => cleaned,
+        Err(err) if err.kind() == crate::context::ErrorKind::Validation => {
+            tracing::warn!(service = %def.name, "async call not queued, input failed validation: {}", err.message());
+            return Ok(AsyncCall::Skip(BTreeMap::new()));
+        }
+        Err(err) => return Err(err),
+    };
+    // As Java: the service is pushed, which checks its authorization, and popped at once, with no artifact hit.
+    let checked = ExecutionContext::with_current(|ctx| {
+        ctx.push_checked(
+            "AT_SERVICE",
+            &def.name,
+            verb_action(&def.verb),
+            def.authenticate == Authenticate::Required,
+            true,
+            None,
+        )?;
+        ctx.untrack_hit();
+        ctx.pop()
+    });
+    if let Some(Err(err)) = checked {
+        return Err(err);
+    }
+    let username = crate::user::current_username().ok().flatten();
+    cleaned.insert("authUsername".to_string(), username.map_or(Value::Null, Value::String));
+    Ok(AsyncCall::Run(cleaned))
+}
+
 /// [`sync`] with per-call overrides of authorization and the transaction attribute.
+///
+/// # Errors
+///
+/// Returns the errors of [`sync`].
 pub fn sync_with(
     name: &str,
     parameters: &BTreeMap<String, Value>,
@@ -290,11 +386,15 @@ pub fn sync_with(
         }
     }
     super::coverage::record(&def.name);
-    super::seca::run_seca_rules(&def.name, "pre-validate", parameters, None)?;
+    // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
+    let mut input = std::borrow::Cow::Borrowed(parameters);
+    if super::seca::has_rules(&def.name, "pre-validate") {
+        super::seca::run_seca_rules(&def.name, "pre-validate", input.to_mut(), None)?;
+    }
     // Input that fails its checks is validation errors in the message facade and no run, as in Java: the caller sees
     // the errors (a screen shows them by their fields) instead of a failed call.
     let mark = crate::context::ExecutionContext::with_current(|ctx| ctx.message().error_mark());
-    let cleaned = match validate::clean(&def, parameters, facade.as_ref()) {
+    let mut cleaned = match validate::clean(&def, &input, facade.as_ref()) {
         Ok(cleaned) => cleaned,
         Err(err) if err.kind() == crate::context::ErrorKind::Validation && options.soft_validate => {
             if let Some(mark) = mark {
@@ -313,7 +413,6 @@ pub fn sync_with(
         }
         Err(err) => return Err(err),
     };
-    super::seca::run_seca_rules(&def.name, "pre-auth", &cleaned, None)?;
     // A call with credentials logs in first, as Java does with authUsername and authPassword, and the caller's user
     // is back when the call returns, as Java's logoutLocal in finally.
     let _login = match auth_credentials(parameters) {
@@ -338,6 +437,21 @@ pub fn sync_with(
             format!("User must be logged in to call service {}", def.name),
         ));
     }
+    // As Java, an interface is an error before the run, not a failure of its body.
+    if def.kind == ServiceKind::Interface {
+        return Err(Error::new(format!(
+            "Service {} is an interface and cannot be run",
+            def.name
+        )));
+    }
+    if def.service_type == "entity-implicit" {
+        // As Java's `runImplicitEntityAuto`, which runs the pre-validate rules a second time and returns before the
+        // pre-auth rules.
+        super::seca::run_seca_rules(&def.name, "pre-validate", &mut cleaned, None)?;
+    } else {
+        // After the login and the authentication check, as Java's.
+        super::seca::run_seca_rules(&def.name, "pre-auth", &mut cleaned, None)?;
+    }
     // The service goes on the artifact stack, so the entity operations it makes inherit its
     // authorization. Only a service that requires authentication needs an allow record.
     let _frame = ServiceFrame::push(&def, &cleaned, options.no_remember_parameters)?;
@@ -350,53 +464,106 @@ pub fn sync_with(
     };
     let tx = facade.transactions_for(&entity_name)?;
     let attribute = options.attribute(def.transaction);
+    // Java's `result`: empty until the runner returns, then its results, which the post-service rules may change.
+    let mut produced: BTreeMap<String, Value> = BTreeMap::new();
     // Errors the service leaves in the message facade roll the transaction back but are not a
     // failure of the call: the results come back with the errors alongside, as in Java.
-    let mut message_failed: Option<BTreeMap<String, Value>> = None;
+    let mut message_failed = false;
+    // The body and its post-service rules ran; a failure after that is the commit's.
+    let mut finished = false;
     let outcome = tx.run(attribute, options.timeout.or(def.timeout), || {
         let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining());
         if def.no_tx_cache {
             crate::entity::cache::flush_and_disable(&facade, &tx)?;
         }
-        // on_rollback is not a commit hook. tx-commit is last so a post-service
-        // entity write can still register the feed schedule hook.
-        register_tx_rollback(&tx, &def.name, &cleaned)?;
-        super::seca::run_seca_rules(&def.name, "pre-service", &cleaned, None).map_err(script_err)?;
+        super::seca::run_seca_rules(&def.name, "pre-service", &mut cleaned, None).map_err(script_err)?;
         if has_error() {
             tracing::warn!(service = %def.name, "errors before the service ran, so it was not run");
-            return Ok(BTreeMap::new());
+            return Ok(());
         }
-        let produced = execute(&def, &cleaned, &facade)?;
-        super::seca::run_seca_rules(&def.name, "post-service", &cleaned, Some(&produced)).map_err(script_err)?;
+        let ran = execute(&def, &cleaned, &facade);
+        // As Java's `finally` after the runner: tx-rollback rules are registered once the service ran, with its results,
+        // empty when it failed. tx-commit is last so a post-service entity write can still register the feed schedule
+        // hook.
+        let registered = register_tx_rollback(&tx, &def.name, &cleaned, ran.as_ref().unwrap_or(&BTreeMap::new()));
+        produced = ran?;
+        registered?;
+        // Java registers the tx-commit rules here too, with copies, so they do not see what the post-service rules set.
+        let for_commit = super::seca::has_rules(&def.name, "tx-commit").then(|| (cleaned.clone(), produced.clone()));
+        super::seca::run_seca_rules(&def.name, "post-service", &mut cleaned, Some(&mut produced))
+            .map_err(script_err)?;
+        finished = true;
         if has_error() {
-            message_failed = Some(produced.clone());
+            message_failed = true;
             // Under `ignore` with nothing in place there is no transaction to mark.
             if tx.in_transaction() {
                 tx.set_rollback_only(format!("Error running service {} (message)", def.name))?;
             }
-        } else {
-            register_tx_commit(&tx, &def.name, &cleaned, &produced)?;
+        } else if let Some((parameters, results)) = &for_commit {
+            register_tx_commit(&tx, &def.name, parameters, results)?;
         }
-        Ok(produced)
+        Ok(())
     });
-    let produced = match outcome {
-        Ok(produced) => Ok(produced),
-        Err(err) => match message_failed.take() {
-            Some(produced) => Ok(produced),
-            None => {
-                // A failure is also an error message, so rules that skip on error skip.
-                add_error(&err.to_string());
-                Err(err)
-            }
-        },
+    // As Java's `callSingle`, a failure of the body or of the commit is recorded in the message facade, the transaction
+    // is rolled back, and the call returns the results as they were: empty when the runner failed. Only an authorization
+    // failure goes on as an error, as Java rethrows `ArtifactAuthorizationException`, and so does a failure with no
+    // message facade to record it in.
+    let mut failure = match outcome {
+        Ok(()) => None,
+        // The rollback the message errors asked for.
+        Err(_) if message_failed => None,
+        Err(err) => Some(err),
     };
-    call_callbacks(&def.name, &cleaned, produced.as_ref());
-    // post-commit rules run whether or not the service worked. Those that skip on error do.
-    let post = super::seca::run_seca_rules(&def.name, "post-commit", &cleaned, produced.as_ref().ok());
+    if let Some(err) = &failure {
+        // An authorization failure has already rolled back the transaction the call began, where Java's `finally`
+        // commits what the body wrote before the refusal: safer, so a refused call leaves nothing (accepted, P6b-15).
+        let authz = crate::context::ErrorKind::of(err) == crate::context::ErrorKind::Unauthorized;
+        if !authz {
+            // Java tells the callbacks of a body failure; a commit failure comes after they heard the results.
+            if finished {
+                call_callbacks(&def.name, &cleaned, Ok(&produced));
+            } else {
+                call_callbacks(&def.name, &cleaned, Err(err));
+            }
+            if record_failure(err) {
+                failure = None;
+            }
+        }
+    } else {
+        call_callbacks(&def.name, &cleaned, Ok(&produced));
+    }
+    // post-commit rules run whether or not the service worked. Those that skip on error do. As Java's, a failed call
+    // gives them its results as they were, an empty map when the runner failed.
+    let post = super::seca::run_seca_rules(&def.name, "post-commit", &mut cleaned, Some(&mut produced));
     drop(guard);
-    let produced = produced?;
+    if let Some(err) = failure {
+        return Err(err.into());
+    }
     post?;
     Ok(project(&def, produced))
+}
+
+/// Java's `catch (Throwable t)`: the failure's message and each cause's are added to the message facade. Display here
+/// already writes the causes after the message, so the first error is the diagnostic, with the Rust origin, and a cause
+/// is added on its own only when no error so far shows its text. False with no execution context, where the error
+/// would be lost.
+fn record_failure(err: &LibError) -> bool {
+    let mut texts = vec![err.diagnostic()];
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !texts.iter().any(|known| known.contains(&text)) {
+            texts.push(text);
+        }
+        source = cause.source();
+    }
+    ExecutionContext::with_current(|ctx| {
+        let mut messages = ctx.message();
+        for text in texts {
+            messages.add_error(text);
+        }
+    })
+    .is_some()
 }
 
 /// The message errors set aside by `ignorePreviousError`, put back when dropped (Java's `pushErrors`/`popErrors`).
@@ -508,8 +675,9 @@ fn register_tx_rollback(
     tx: &crate::transaction::TransactionManager,
     service: &str,
     parameters: &BTreeMap<String, Value>,
+    results: &BTreeMap<String, Value>,
 ) -> Result<(), LibError> {
-    register_tx_rules(tx, service, "tx-rollback", parameters, None)
+    register_tx_rules(tx, service, "tx-rollback", parameters, Some(results))
 }
 
 fn register_tx_commit(
@@ -524,6 +692,9 @@ fn register_tx_commit(
 /// Java's `SecaSynchronization`: when the transaction commits (or rolls back), the `tx-commit` (or `tx-rollback`)
 /// rules run on a service worker, in a context and transaction of their own. A sim session never really commits, so
 /// its rules do not run.
+///
+/// A pattern rule runs here as at any other `when`. Java's `registerTx` compares the rule's service name, the pattern
+/// text, to the called name, so its pattern tx rules never run (an accepted difference, P7a-15).
 fn register_tx_rules(
     tx: &crate::transaction::TransactionManager,
     service: &str,
@@ -539,8 +710,8 @@ fn register_tx_rules(
     };
     let sim = current_facade().is_some_and(|facade| facade.sim_active());
     let service = service.to_string();
-    let parameters = parameters.clone();
-    let results = results.cloned();
+    let mut parameters = parameters.clone();
+    let mut results = results.cloned();
     let hook = move || {
         if sim {
             tracing::info!("Skipping {when} rules of {service} in a sim session");
@@ -553,7 +724,7 @@ fn register_tx_rules(
                 .ok_or_else(|| Error::new("no entity facade is installed"))?;
             let tx = facade.default_transactions()?;
             tx.run(TransactionAttribute::UseOrBegin, None, || {
-                super::seca::run_seca_rules(&service, when, &parameters, results.as_ref()).map_err(Into::into)
+                super::seca::run_seca_rules(&service, when, &mut parameters, results.as_mut()).map_err(Into::into)
             })
             .map_err(Into::into)
         });
@@ -818,7 +989,7 @@ fn run_inline(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> Result<
         crate::script::set_context_name(name, value.clone()).map_err(script_err)?;
     }
     if !def.actions.trim().is_empty() {
-        crate::script::run_actions(&def.actions).map_err(|err| in_service(def, &err))?;
+        crate::script::run_actions_at(&def.actions, def.action_source.as_ref()).map_err(|err| in_service(def, err))?;
     }
     Ok(collect_outputs(def))
 }
@@ -844,24 +1015,27 @@ fn run_script(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> Result<
     for (name, value) in parameters {
         crate::script::set_context_name(name, value.clone()).map_err(script_err)?;
     }
-    crate::script::run_script_location(&def.location).map_err(|err| in_service(def, &err))?;
+    crate::script::run_script_location(&def.location).map_err(|err| in_service(def, err))?;
     Ok(collect_outputs(def))
 }
 
 /// A failure in a service's body, with the service named after it (Java logs "Error running service ..."): a script
 /// error alone gives only a line in the generated code.
-fn in_service(def: &ServiceDef, err: &crate::context::Error) -> LibError {
-    let message = err.message();
-    if message.contains("\n    in service ") {
-        return LibError::new(message);
+fn in_service(def: &ServiceDef, err: crate::context::Error) -> LibError {
+    if err.message().contains("\n    in service ") {
+        return err.into();
     }
-    LibError::new(format!("{}\n    in service {}", message.trim_end(), def.name))
+    let message = format!("{}\n    in service {}", err.message().trim_end(), def.name);
+    err.with_message(message).into()
 }
 
 fn script_err(err: crate::context::Error) -> LibError {
-    LibError::new(err.message())
+    err.into()
 }
 
+/// The results a caller gets: only the declared out-parameters, or all when none are declared. Java returns the
+/// runner's map as it is; keeping to the declared ones means a body's other values do not reach a REST or remote
+/// caller (accepted, P6b-14). Inline and script bodies have no `result` map to fill, as a script here may use that name.
 fn project(def: &ServiceDef, values: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
     let out_params = super::validate::expanded_out(def);
     let names: Vec<&str> = out_params
@@ -888,20 +1062,28 @@ fn run_entity(
     if depth > 8 {
         return Err(LibError::new("nested entity-auto is too deep"));
     }
-    let pk_names = facade.with_entity(noun, |entity, _, _| {
-        Ok(entity
-            .pk_field_names()
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>())
+    let (pk_names, field_names) = facade.with_entity(noun, |entity, _, _| {
+        Ok((
+            entity
+                .pk_field_names()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            entity
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+        ))
     })?;
     if verb == "delete" {
         delete_entity(facade, noun, parameters, &pk_names)?;
         return Ok(BTreeMap::new());
     }
     let mut record = facade.make_value(noun)?;
+    // As Java's `setFields`, only the entity's fields are set: an implicit call passes its parameters as they came.
     for (key, value) in parameters {
-        if reserved(key) || matches!(value, Value::Map(_) | Value::List(_)) {
+        if reserved(key) || !field_names.contains(key) || matches!(value, Value::Map(_) | Value::List(_)) {
             continue;
         }
         record.set(key, value.clone());
@@ -1096,23 +1278,53 @@ fn check_status(
         }
     }
     if valid == 0 {
-        let name_of = |id: &str| -> Result<String, LibError> {
+        let name_of = |id: &str| -> Result<Value, LibError> {
             let item = facade
                 .find("moqui.basic.StatusItem")?
                 .eq("statusId", Value::string(id.to_string()))
+                .use_cache(true)
                 .one()?;
             Ok(item
-                .and_then(|item| item.get("description").map(moqui_lib::object::to_plain_string))
-                .filter(|text| !text.is_empty())
-                .unwrap_or_else(|| id.to_string()))
+                .and_then(|item| item.get("description").cloned())
+                .unwrap_or(Value::Null))
         };
-        return Err(LibError::new(format!(
-            "Status change not allowed from {} to {}",
-            name_of(&old_id)?,
-            name_of(&new_id)?
-        )));
+        let values = [
+            (
+                "fullEntityName",
+                Value::string(localize_or(&format!("{noun}##EntityName"))),
+            ),
+            ("lookedUpStatusId", Value::string(old_id.clone())),
+            ("parameterStatusId", Value::string(new_id.clone())),
+            ("lookedUpStatusName", name_of(&old_id)?),
+            ("parameterStatusName", name_of(&new_id)?),
+        ];
+        return Err(LibError::new(status_transition_message(&values)));
     }
     Ok(true)
+}
+
+/// `text` in the session locale, or as it is.
+fn localize_or(text: &str) -> String {
+    crate::l10n::localize(text).unwrap_or_else(|_| text.to_string())
+}
+
+/// Java's `StatusFlowTransitionNotFoundTemplate` expanded with `values`. Without its localized message (the seed
+/// data's `CommonL10nData.xml` is not loaded) the default locale's text is used.
+fn status_transition_message(values: &[(&str, Value)]) -> String {
+    const TEMPLATE: &str = "StatusFlowTransitionNotFoundTemplate";
+    const DEFAULT: &str =
+        "Status change not allowed from ${lookedUpStatusName || lookedUpStatusId} to ${parameterStatusName || parameterStatusId}";
+    let localized = localize_or(TEMPLATE);
+    let template = if localized == TEMPLATE {
+        DEFAULT
+    } else {
+        localized.as_str()
+    };
+    let _frame = crate::script::ContextFrame::push();
+    for (name, value) in values {
+        let _ = crate::script::set_context_name(name, value.clone());
+    }
+    crate::script::expand(template).unwrap_or_else(|_| template.to_string())
 }
 
 fn nest(
@@ -1421,16 +1633,25 @@ mod tests {
             (messages.errors().to_vec(), messages.validation_errors().to_vec())
         })
         .unwrap();
-        assert!(
-            errors
-                .iter()
-                .any(|text| text.contains("amount") && text.contains("required")),
-            "{errors:?}"
+        // Java's text, which names no field: the validation error carries it, and the errors string writes it with the
+        // field and service, as Java's `toStringPretty`.
+        assert_eq!(errors, ["Field cannot be empty"]);
+        let text = ExecutionContext::with_current(|ec| ec.message().errors_string()).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "Field cannot be empty(for field Amount of service {}",
+                moqui_lib::string::camel_case_to_pretty("need#Value")
+            )
         );
         assert_eq!(validation.len(), 1);
         assert_eq!(
-            (validation[0].field.as_str(), validation[0].service.as_str()),
-            ("amount", "need#Value")
+            (
+                validation[0].field.as_str(),
+                validation[0].service.as_str(),
+                validation[0].message.as_str()
+            ),
+            ("amount", "need#Value", "Field cannot be empty")
         );
     }
 
@@ -1465,7 +1686,15 @@ mod tests {
         row.create(&facade).unwrap();
         let err = sync("lock#Row", &BTreeMap::new()).unwrap_err();
         let text = err.to_string();
-        assert!(text.contains("semaphore"), "{text}");
+        // Java's text, with the holder's thread
+        assert!(
+            text.contains("An instance of service semaphore lock#Row with parameter value [_NA_] is already running (thread [other], locked at "),
+            "{text}"
+        );
+        assert!(
+            text.contains("and it is setup to fail on semaphore conflict."),
+            "{text}"
+        );
         assert!(!text.contains("actions not run"), "{text}");
     }
 
@@ -1576,6 +1805,32 @@ mod tests {
             }
         }
         (facade, ctx)
+    }
+
+    #[test]
+    fn service_failures_identify_owning_actions_and_rust_origin() {
+        let path = write_fixture(
+            "source-locations",
+            "<services>\n<service verb=\"locate\" noun=\"Failure\">\n<actions><script><![CDATA[\nconst location = 'component://MissingDiagnostics/screen/A.xml';\nec.resource.getLocationText(location);\n]]></script></actions>\n</service>\n</services>",
+        );
+        let (_facade, ctx) = seeded_context(&[]);
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        // As Java's, the failure is recorded in the message facade and the call returns its empty results.
+        let out = sync("locate#Failure", &BTreeMap::new()).expect("a body failure is recorded, not returned");
+        assert!(out.is_empty(), "{out:?}");
+        let diagnostic = ctx.message().errors().join("\n");
+        assert!(
+            diagnostic.contains(&format!("{}#actions-3-1.generated.js:", path.display())),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("Rust: crates/moqui-core/src/context/resource.rs:"),
+            "{diagnostic}"
+        );
+        assert!(diagnostic.contains("in service locate#Failure"), "{diagnostic}");
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1714,10 +1969,159 @@ mod tests {
         assert_eq!(rows.len(), 0, "the create was rolled back with the message error");
     }
 
+    /// Java's `ServiceCallback`, recording what it hears.
+    struct Heard(Mutex<Vec<String>>);
+
+    impl super::ServiceCallback for Heard {
+        fn receive_result(&self, _context: &BTreeMap<String, Value>, result: &BTreeMap<String, Value>) {
+            self.0.lock().unwrap().push(format!("result {}", result.len()));
+        }
+        fn receive_error(&self, _context: &BTreeMap<String, Value>, error: &moqui_lib::error::Error) {
+            self.0.lock().unwrap().push(format!("error {}", error.message()));
+        }
+    }
+
+    /// As Java's `callSingle`: a failing body is recorded in the message facade, the callbacks hear of the error, the
+    /// transaction rolls back (and its tx-rollback rules run), the post-commit rules that run on error get an empty
+    /// result map, and the call returns that empty map.
     #[test]
-    fn post_commit_rules_run_after_a_failure_only_when_they_run_on_error() {
+    fn a_body_failure_is_recorded_rolled_back_and_returns_empty_results() {
         let path = write_fixture(
-            "post-commit",
+            "body-failure",
+            r#"<services>
+                <service verb="break" noun="Late">
+                    <out-parameters><parameter name="note"/></out-parameters>
+                    <actions>
+                        <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                        <script>made.set("testId", "ROLLED"); note = "ran";</script>
+                        <entity-create value-field="made"/>
+                        <script>throw new Error("late boom")</script>
+                    </actions>
+                </service>
+            </services>"#,
+        );
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="break#Late" when="post-commit">
+                        <actions><script>ec.message.addMessage("plain")</script></actions>
+                    </seca>
+                    <seca service="break#Late" when="post-commit" run-on-error="true">
+                        <actions><script>ec.message.addMessage("cleanup " + (results == null ? "none" : JSON.stringify(results)))</script></actions>
+                    </seca>
+                    <seca service="break#Late" when="tx-rollback">
+                        <actions>
+                            <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                            <script>made.set("testId", "ROLLBACK_RULE")</script>
+                            <entity-create value-field="made"/>
+                        </actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade.clone());
+        let heard = Arc::new(Heard(Mutex::new(Vec::new())));
+        super::register_callback("break#Late", heard.clone());
+        let _entered = ctx.enter();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        let _authz = ctx.disable_authz();
+        let out = sync("break#Late", &BTreeMap::new()).expect("a body failure is recorded, not returned");
+        assert!(out.is_empty(), "{out:?}");
+        let errors = ctx.message().errors().to_vec();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("late boom") && error.contains("in service break#Late")),
+            "{errors:?}"
+        );
+        assert_eq!(ctx.message().messages(), ["cleanup {}"]);
+        let heard = heard.0.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert!(
+            heard[0].starts_with("error ") && heard[0].contains("late boom"),
+            "{heard:?}"
+        );
+        let find = |id: &str| {
+            facade
+                .find("moqui.test.TestEntity")
+                .unwrap()
+                .eq("testId", Value::string(id))
+                .one()
+                .unwrap()
+        };
+        assert!(find("ROLLED").is_none(), "the create was rolled back");
+        assert!(find("ROLLBACK_RULE").is_some(), "the tx-rollback rule ran");
+    }
+
+    /// As Java's `finally`: a commit that fails is recorded in the message facade, after the callbacks heard the
+    /// results, and the call returns those results; the post-commit rules that run on error get them too.
+    #[test]
+    fn a_commit_failure_is_recorded_and_returns_the_results() {
+        let path = write_fixture(
+            "commit-failure",
+            r#"<services>
+                <service verb="refuse" noun="Commit" type="rust" location="test::refuse_commit">
+                    <out-parameters><parameter name="note"/></out-parameters>
+                </service>
+            </services>"#,
+        );
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        ctx.factory()
+            .register_service("test::refuse_commit", |ec, _info, _parameters| {
+                let facade = ec.factory().entity().expect("an entity facade");
+                let mut row = facade.make_value("moqui.test.TestEntity")?;
+                row.set("testId", Value::string("UNCOMMITTED"));
+                row.create(&facade)?;
+                // A hook that runs before the commit, as the data feed's insert does, and fails it.
+                facade
+                    .transactions_for("moqui.test.TestEntity")?
+                    .on_feed_insert(|_| Err(moqui_lib::error::Error::new("feed insert refused")))?;
+                Ok(BTreeMap::from([("note".to_string(), Value::string("ran"))]))
+            })
+            .unwrap();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="refuse#Commit" when="post-commit" run-on-error="true">
+                        <actions><script>ec.message.addMessage("cleanup " + JSON.stringify(results))</script></actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade.clone());
+        let heard = Arc::new(Heard(Mutex::new(Vec::new())));
+        super::register_callback("refuse#Commit", heard.clone());
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        let _authz = ctx.disable_authz();
+        let out = sync("refuse#Commit", &BTreeMap::new()).expect("a commit failure is recorded, not returned");
+        assert_eq!(out.get("note").and_then(Value::as_str), Some("ran"));
+        let errors = ctx.message().errors().join("\n");
+        assert!(errors.contains("feed insert refused"), "{errors}");
+        assert_eq!(ctx.message().messages(), [r#"cleanup {"note":"ran"}"#]);
+        assert_eq!(*heard.0.lock().unwrap(), ["result 1"]);
+        let row = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("UNCOMMITTED"))
+            .one()
+            .unwrap();
+        assert!(row.is_none(), "the write was rolled back");
+    }
+
+    /// An interface cannot be run: as Java, an error before the call's transaction, so no post-commit rule runs.
+    #[test]
+    fn an_interface_service_is_an_error_before_it_runs() {
+        let path = write_fixture(
+            "interface",
             r#"<services>
                 <service verb="shell" noun="Only" type="interface"/>
             </services>"#,
@@ -1728,9 +2132,6 @@ mod tests {
             ctx.factory(),
             super::super::eca_rules::from_xml(
                 r#"<secas>
-                    <seca service="shell#Only" when="post-commit">
-                        <actions><script>ec.message.addMessage("plain")</script></actions>
-                    </seca>
                     <seca service="shell#Only" when="post-commit" run-on-error="true">
                         <actions><script>ec.message.addMessage("cleanup")</script></actions>
                     </seca>
@@ -1742,8 +2143,10 @@ mod tests {
         let _entered = ctx.enter();
         crate::service::lint(std::slice::from_ref(&path)).unwrap();
         let _authz = ctx.disable_authz();
-        assert!(sync("shell#Only", &BTreeMap::new()).is_err());
-        assert_eq!(ctx.message().messages(), ["cleanup"]);
+        let err = sync("shell#Only", &BTreeMap::new()).unwrap_err();
+        assert!(err.message().contains("is an interface and cannot be run"), "{err}");
+        assert!(ctx.message().messages().is_empty(), "{:?}", ctx.message().messages());
+        assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
     }
 
     #[test]
@@ -1787,7 +2190,11 @@ mod tests {
         assert_eq!(summed.get("sum"), Some(&Value::I32(9)), "{summed:?}");
 
         let bad = call(&[("count", text("abc"))]).unwrap_err();
-        assert!(bad.to_string().contains("not a valid Integer"), "{bad}");
+        assert!(
+            bad.to_string()
+                .contains("Value entered (abc) could not be converted to a Integer"),
+            "{bad}"
+        );
         let range = call(&[("count", text("11"))]).unwrap_err();
         assert!(
             range.to_string().contains("count"),
@@ -1889,8 +2296,13 @@ mod tests {
         assert!(failures.is_empty(), "{failures:?}");
         let _authz = ctx.disable_authz();
         let started = std::time::Instant::now();
-        let err = sync("spin#Forever", &BTreeMap::new()).expect_err("interrupted");
-        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{err}");
+        let out = sync("spin#Forever", &BTreeMap::new()).expect("the interruption is recorded");
+        assert!(out.is_empty(), "{out:?}");
+        assert!(
+            !ctx.message().errors().is_empty(),
+            "the interruption is an error message"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
@@ -1923,6 +2335,181 @@ mod tests {
         assert!(ctx.message().messages().iter().any(|text| text == "seen"));
     }
 
+    /// As Java's, `parameters` and `results` in a rule are the call's own maps: a pre-* rule changes what is validated
+    /// and run, and a post-service rule what is returned.
+    #[test]
+    fn seca_rules_change_the_call_parameters_and_results() {
+        let path = write_fixture(
+            "seca-live",
+            r#"<services>
+                <service verb="echo" noun="Live">
+                    <in-parameters><parameter name="note" required="true"/></in-parameters>
+                    <out-parameters><parameter name="seen"/></out-parameters>
+                    <actions><set field="seen" from="note"/></actions>
+                </service>
+            </services>"#,
+        );
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="echo#Live" when="pre-validate">
+                        <actions><set field="parameters.note" value="pv"/></actions>
+                    </seca>
+                    <seca service="echo#Live" when="pre-auth">
+                        <actions><script>parameters.note = parameters.note + "-pa"</script></actions>
+                    </seca>
+                    <seca service="echo#Live" when="pre-service">
+                        <actions><script>parameters.note = parameters.note + "-ps"</script></actions>
+                    </seca>
+                    <seca service="echo#Live" when="post-service">
+                        <actions><script>results.seen = results.seen + "-post"</script></actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade);
+        let _entered = ctx.enter();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        let _authz = ctx.disable_authz();
+        // `note` is required and not passed: the pre-validate rule sets it.
+        let out = sync("echo#Live", &BTreeMap::new()).unwrap();
+        assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
+        assert_eq!(
+            out.get("seen").and_then(Value::as_str),
+            Some("pv-pa-ps-post"),
+            "{out:?}"
+        );
+    }
+
+    /// As Java's `runImplicitEntityAuto`: an implicit entity-auto call runs its pre-validate rules twice and no pre-auth
+    /// rules.
+    #[test]
+    fn an_implicit_entity_auto_call_runs_pre_validate_twice_and_no_pre_auth() {
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="create#moqui.test.TestEntity" when="pre-validate">
+                        <actions><script>ec.message.addMessage("pre-validate")</script></actions>
+                    </seca>
+                    <seca service="create#moqui.test.TestEntity" when="pre-auth">
+                        <actions><script>ec.message.addMessage("pre-auth")</script></actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        let mut params = BTreeMap::new();
+        params.insert("testId".to_string(), Value::string("IMPLICIT"));
+        sync("create#moqui.test.TestEntity", &params).unwrap();
+        assert_eq!(ctx.message().messages(), ["pre-validate", "pre-validate"]);
+    }
+
+    /// As Java's, the tx-commit rules get the parameters and results from before the post-service rules.
+    #[test]
+    fn tx_commit_rules_get_the_results_from_before_the_post_service_rules() {
+        let path = write_fixture(
+            "tx-commit",
+            r#"<services>
+                <service verb="note" noun="Commit">
+                    <out-parameters><parameter name="note"/></out-parameters>
+                    <actions><set field="note" value="from-service"/></actions>
+                </service>
+            </services>"#,
+        );
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="note#Commit" when="post-service">
+                        <actions><script>results.note = "from-post-service"</script></actions>
+                    </seca>
+                    <seca service="note#Commit" when="tx-commit">
+                        <actions>
+                            <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                            <script>made.set("testId", "COMMIT_RULE"); made.set("testMedium", results.note)</script>
+                            <entity-create value-field="made"/>
+                        </actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        let _authz = ctx.disable_authz();
+        let out = sync("note#Commit", &BTreeMap::new()).unwrap();
+        assert_eq!(out.get("note").and_then(Value::as_str), Some("from-post-service"));
+        let row = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("COMMIT_RULE"))
+            .one()
+            .unwrap()
+            .expect("the tx-commit rule ran");
+        assert_eq!(row.get("testMedium").and_then(Value::as_str), Some("from-service"));
+    }
+
+    /// As Java's, the tx-rollback rules are registered after the service ran, with its results.
+    #[test]
+    fn tx_rollback_rules_get_the_results() {
+        let path = write_fixture(
+            "tx-rollback",
+            r#"<services>
+                <service verb="fail" noun="Late">
+                    <out-parameters><parameter name="note"/></out-parameters>
+                    <actions>
+                        <set field="note" value="before-error"/>
+                        <message error="true">late failure</message>
+                    </actions>
+                </service>
+            </services>"#,
+        );
+        let facade = crate::testing::open();
+        let ctx = ExecutionContextFactory::test_context();
+        super::super::eca_rules::install(
+            ctx.factory(),
+            super::super::eca_rules::from_xml(
+                r#"<secas>
+                    <seca service="fail#Late" when="tx-rollback">
+                        <actions>
+                            <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                            <script>made.set("testId", "ROLLBACK_RULE"); made.set("testMedium", results.note)</script>
+                            <entity-create value-field="made"/>
+                        </actions>
+                    </seca>
+                </secas>"#,
+                "",
+            ),
+        );
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        let _authz = ctx.disable_authz();
+        sync("fail#Late", &BTreeMap::new()).unwrap();
+        assert_eq!(ctx.message().errors(), ["late failure"]);
+        let row = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("ROLLBACK_RULE"))
+            .one()
+            .unwrap()
+            .expect("the tx-rollback rule ran");
+        assert_eq!(row.get("testMedium").and_then(Value::as_str), Some("before-error"));
+    }
+
     #[test]
     fn remote_rest_in_sim_mode_errors_before_a_socket() {
         let path = write_fixture(
@@ -1939,8 +2526,8 @@ mod tests {
         let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
         let _authz = ctx.disable_authz();
-        let err = sync("ping#Remote", &BTreeMap::new()).unwrap_err();
-        let text = err.to_string();
+        assert!(sync("ping#Remote", &BTreeMap::new()).unwrap().is_empty());
+        let text = ctx.message().errors().join("\n");
         assert!(text.contains("sim mode is active"), "{text}");
     }
 
@@ -2014,6 +2601,176 @@ mod tests {
             "{out:?}"
         );
         assert!(!out.contains_key("notDeclared"), "{out:?}");
+    }
+
+    /// Java's `ServiceDefinition` merge: the implemented service's parameters first, then the service's own merged
+    /// into them by name, and an `auto-parameters` field and a parameter of the same name are one parameter, whose
+    /// attributes the later one sets. An empty `default-value` is no default. A `<description>` of the later one
+    /// replaces the earlier one's, and none keeps it.
+    #[test]
+    fn implemented_and_auto_parameters_merge_by_name() {
+        let path = write_fixture(
+            "merge",
+            r#"<services>
+                <service verb="define" noun="Row" type="interface">
+                    <in-parameters>
+                        <parameter name="testId" required="true"><description>Inherited id</description></parameter>
+                        <parameter name="note" default-value="n"><description>Inherited note</description></parameter>
+                        <parameter name="testMedium"><description>Inherited medium</description></parameter>
+                    </in-parameters>
+                </service>
+                <service verb="save" noun="Row">
+                    <implements service="define#Row"/>
+                    <in-parameters>
+                        <auto-parameters entity-name="moqui.test.TestEntity" include="nonpk"/>
+                        <parameter name="testDateTime" required="true"><description>Own stamp</description></parameter>
+                        <parameter name="testId"><text-length max="5"/></parameter>
+                        <parameter name="note" default-value=""><description> Own note </description></parameter>
+                    </in-parameters>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+        );
+        let (facade, ctx) = seeded_context(&[]);
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        let def = crate::service::define::find("save#Row").expect("registered");
+        let declared = super::validate::declared_in(&def, Some(&facade)).unwrap();
+        let names: Vec<&str> = declared.iter().map(|param| param.name.as_str()).collect();
+        assert_eq!(&names[..3], ["testId", "note", "testMedium"], "{names:?}");
+        assert_eq!(
+            names.iter().filter(|name| **name == "testDateTime").count(),
+            1,
+            "{names:?}"
+        );
+        let stamp = declared.iter().find(|param| param.name == "testDateTime").unwrap();
+        assert_eq!(stamp.java_type, "java.sql.Timestamp");
+        assert_eq!(stamp.required, super::super::define::Required::True);
+        assert_eq!(stamp.field_name.as_deref(), Some("testDateTime"));
+        let id = declared.iter().find(|param| param.name == "testId").unwrap();
+        assert_eq!(
+            (id.required, id.checks.len()),
+            (super::super::define::Required::True, 1)
+        );
+        assert_eq!(
+            declared
+                .iter()
+                .find(|param| param.name == "note")
+                .unwrap()
+                .default_value,
+            None
+        );
+        let description = |name: &str| {
+            declared
+                .iter()
+                .find(|param| param.name == name)
+                .and_then(|param| param.description.as_deref())
+        };
+        assert_eq!(description("testId"), Some("Inherited id"), "none of its own keeps it");
+        assert_eq!(description("note"), Some("Own note"), "its own replaces it");
+        assert_eq!(
+            description("testMedium"),
+            Some("Inherited medium"),
+            "an auto field has none"
+        );
+        assert_eq!(description("testDateTime"), Some("Own stamp"), "over an auto field");
+        assert_eq!(description("testLong"), None);
+
+        let params = |pairs: &[(&str, &str)]| -> BTreeMap<String, Value> {
+            pairs
+                .iter()
+                .map(|(name, value)| (name.to_string(), Value::string(*value)))
+                .collect()
+        };
+        let cleaned = crate::service::validate(
+            "save#Row",
+            &params(&[("testId", "R1"), ("testDateTime", "2024-01-02 03:04:05")]),
+        )
+        .unwrap();
+        assert!(
+            matches!(cleaned.get("testDateTime"), Some(Value::Timestamp(_))),
+            "{cleaned:?}"
+        );
+        assert!(!cleaned.contains_key("note"), "{cleaned:?}");
+        let err = crate::service::validate("save#Row", &params(&[("testId", "ABCDEFG")])).unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("Value entered (ABCDEFG), length 7, is longer than 5 characters."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Field cannot be empty (for field testDateTime)"),
+            "{text}"
+        );
+    }
+
+    /// A declared entity-auto service gets only its declared parameters, as any service; an implicit one gets them
+    /// as they came, and the runner sets only the entity's fields.
+    #[test]
+    fn entity_auto_parameters_are_the_declared_ones_or_all_for_an_implicit_call() {
+        let path = write_fixture(
+            "entity-auto-declared",
+            r#"<services>
+                <service verb="create" noun="moqui.test.TestEntity" type="entity-auto">
+                    <in-parameters><auto-parameters include="nonpk"/></in-parameters>
+                    <out-parameters><parameter name="testId"/></out-parameters>
+                </service>
+            </services>"#,
+        );
+        let (facade, ctx) = seeded_context(&[]);
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        let mut params = BTreeMap::new();
+        params.insert("testId".to_string(), Value::string("MINE"));
+        params.insert("testMedium".to_string(), Value::string("declared"));
+        let created = sync("create#moqui.test.TestEntity", &params).unwrap();
+        let id = created
+            .get("testId")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default();
+        assert!(
+            !id.is_empty() && id != "MINE",
+            "the primary key is not a declared parameter: {created:?}"
+        );
+
+        let implicit =
+            super::super::define::ServiceDef::implicit("store#moqui.test.TestEntity", "store", "moqui.test.TestEntity");
+        params.insert("notAField".to_string(), Value::string("x"));
+        let cleaned = super::validate::clean(&implicit, &params, Some(&facade)).unwrap();
+        assert_eq!(cleaned, params);
+        sync("store#moqui.test.TestEntity", &params).unwrap();
+        let row = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("MINE"))
+            .one()
+            .unwrap()
+            .expect("stored");
+        assert_eq!(row.get("testMedium").and_then(Value::as_str), Some("declared"));
+    }
+
+    /// Java's `StatusFlowTransitionNotFoundTemplate`, its default text when the seed data is not loaded.
+    #[test]
+    fn a_status_change_not_allowed_names_the_statuses() {
+        let values = |old_name: Value| {
+            [
+                ("fullEntityName", Value::string("moqui.test.TestEntity")),
+                ("lookedUpStatusId", Value::string("TsOpen")),
+                ("parameterStatusId", Value::string("TsDone")),
+                ("lookedUpStatusName", old_name),
+                ("parameterStatusName", Value::string("Done")),
+            ]
+        };
+        assert_eq!(
+            super::status_transition_message(&values(Value::string("Open"))),
+            "Status change not allowed from Open to Done"
+        );
+        assert_eq!(
+            super::status_transition_message(&values(Value::Null)),
+            "Status change not allowed from TsOpen to Done"
+        );
     }
 
     fn write_fixture(name: &str, body: &str) -> PathBuf {

@@ -30,7 +30,7 @@ use zip::{CompressionMethod, ZipWriter};
 use super::feed::{probe_query, TOUCHES};
 use super::{
     conf_data_locations, data_file_services, eca_rules, error_chain, feed_service_names, load_entity_data,
-    load_entity_xml_text, match_rules, register_feed_insert, LoadOptions,
+    load_entity_xml_text, location_in_components, match_rules, register_feed_insert, LoadOptions,
 };
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 use crate::entity::{EntityFacade, EntityGroup};
@@ -426,8 +426,19 @@ fn loader_filters_types_holds_services_and_reads_zip() {
         components: vec!["tools".to_string()],
         ..LoadOptions::default()
     };
-    let blocked = load_entity_data(&facade, "component://other/data/x.xml", &tools).unwrap();
-    assert_eq!(blocked.records, 0);
+    // As Java's `componentNameList`, the components narrow only the locations a load gathers: a location given is
+    // read (here it is not there), not skipped.
+    assert!(!location_in_components(
+        "component://other/data/x.xml",
+        &tools.components
+    ));
+    assert!(location_in_components(
+        "component://tools/data/x.xml",
+        &tools.components
+    ));
+    assert!(location_in_components(xml.to_str().unwrap(), &tools.components));
+    let given = load_entity_data(&facade, "component://other/data/x.xml", &tools).unwrap_err();
+    assert!(given.to_string().contains("component other was not found"), "{given}");
 
     facade.set_dummy_fks(false);
     facade.set_disable_fk_create(false);
@@ -511,6 +522,30 @@ fn loader_reads_seed_data_inside_entity_definitions() {
     .unwrap();
     let none = load_entity_data(&facade, bare.to_str().unwrap(), &LoadOptions::default()).unwrap();
     assert_eq!(none.records, 0);
+
+    // As Java's SAX handler, any other root is not an error: only the data elements inside it load.
+    let other = dir.join("other.xml");
+    std::fs::write(
+        &other,
+        r#"<services><service verb="noop"/><entity-facade-xml type="demo"><moqui.test.TestEntity testId="O1"/></entity-facade-xml></services>"#,
+    )
+    .unwrap();
+    let seed_only = LoadOptions {
+        data_types: vec!["seed".to_string()],
+        ..LoadOptions::default()
+    };
+    assert_eq!(
+        load_entity_data(&facade, other.to_str().unwrap(), &seed_only)
+            .unwrap()
+            .records,
+        0
+    );
+    assert_eq!(
+        load_entity_data(&facade, other.to_str().unwrap(), &demo)
+            .unwrap()
+            .records,
+        1
+    );
 }
 
 #[test]
@@ -1062,4 +1097,277 @@ fn default_values_csv_options_and_only_create_follow_java() {
     assert_eq!(test_medium(&facade, "X2").as_deref(), Some("own"));
     assert_eq!(test_medium(&facade, "SVC"), None);
     assert!(data_file_services(&facade).is_empty());
+}
+
+fn test_field(facade: &EntityFacade, entity: &str, pk: (&str, &str), field: &str) -> Option<Value> {
+    facade
+        .find(entity)
+        .unwrap()
+        .eq(pk.0, Value::string(pk.1))
+        .one()
+        .unwrap()
+        .and_then(|row| row.get(field).cloned())
+        .filter(|value| !value.is_null())
+}
+
+/// Java's CSV reader: its own primary-key check and then `createOrUpdate`, so no entity-auto `fromDate` or secondary
+/// sequence; a Base64 BLOB cell; an empty cell that clears the field; and a short row, a column that is not a field,
+/// bad Base64 or text the field type does not take failing the file.
+#[test]
+fn csv_rows_check_their_own_key_and_create_or_update() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let (dir, _guard) = temp_dir();
+    let load = |name: &str, text: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        load_entity_data(&facade, path.to_str().unwrap(), &LoadOptions::default())
+    };
+
+    load(
+        "blob.csv",
+        "moqui.resource.DbResourceFile\nresourceId,fileData\nR1,aGVsbG8\n",
+    )
+    .unwrap();
+    assert_eq!(
+        test_field(
+            &facade,
+            "moqui.resource.DbResourceFile",
+            ("resourceId", "R1"),
+            "fileData"
+        ),
+        Some(Value::Bytes(b"hello".to_vec()))
+    );
+    let bad_blob = load(
+        "bad-blob.csv",
+        "moqui.resource.DbResourceFile\nresourceId,fileData\nR2,@@@\n",
+    )
+    .unwrap_err();
+    assert!(error_chain(&bad_blob).contains("not Base64"), "{bad_blob}");
+
+    load(
+        "first.csv",
+        "moqui.test.TestEntity\ntestId,testMedium,testNumberInteger\nC1,kept,7\n",
+    )
+    .unwrap();
+    load(
+        "clear.csv",
+        "moqui.test.TestEntity\ntestId,testMedium,testNumberInteger\nC1,,8\n",
+    )
+    .unwrap();
+    assert_eq!(test_medium(&facade, "C1"), None);
+    // A one-field key that is missing is sequenced.
+    let sequenced = load(
+        "sequenced.csv",
+        "moqui.test.TestEntity\ntestId,testMedium\n,sequenced\n",
+    )
+    .unwrap();
+    assert_eq!(sequenced.records, 1);
+
+    // A multi-field key with `fromDate` missing is an error; the entity-auto store would have filled it.
+    let member = load(
+        "member.csv",
+        "moqui.security.UserGroupMember\nuserGroupId,userId\nADMIN,U1\n",
+    )
+    .unwrap_err();
+    assert!(error_chain(&member).contains("incomplete primary key"), "{member}");
+
+    // A name given twice reads the later column; an empty header cell is no column.
+    load(
+        "twice.csv",
+        "moqui.test.TestEntity\ntestId,testMedium,testMedium,\nC5,first,second,\n",
+    )
+    .unwrap();
+    assert_eq!(test_medium(&facade, "C5").as_deref(), Some("second"));
+
+    let short = load("short.csv", "moqui.test.TestEntity\ntestId,testMedium\nC2\n").unwrap_err();
+    assert!(error_chain(&short).contains("has no column 2"), "{short}");
+    let unknown = load("unknown.csv", "moqui.test.TestEntity\ntestId,noSuchField\nC3,x\n").unwrap_err();
+    assert!(
+        error_chain(&unknown).contains("noSuchField is not a field"),
+        "{unknown}"
+    );
+    let number = load(
+        "number.csv",
+        "moqui.test.TestEntity\ntestId,testNumberInteger\nC4,abc\n",
+    )
+    .unwrap_err();
+    assert!(error_chain(&number).contains("[abc] is not valid"), "{number}");
+    assert_eq!(test_medium(&facade, "C4"), None);
+}
+
+/// An empty XML attribute, a JSON null and the text `null` are null, as Java puts them, so a store clears the
+/// field and a `defaultValues` entry does not fill it. Text the field type does not take fails the record.
+#[test]
+fn empty_values_clear_fields_and_bad_text_fails() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let xml = |text: &str, options: &LoadOptions| {
+        load_entity_xml_text(
+            &facade,
+            "xmlText",
+            &format!("<entity-facade-xml>{text}</entity-facade-xml>"),
+            options,
+        )
+    };
+    let plain = LoadOptions::default();
+    xml(
+        r#"<moqui.test.TestEntity testId="N1" testMedium="kept" value="v"/>"#,
+        &plain,
+    )
+    .unwrap();
+    xml(
+        r#"<moqui.test.TestEntity testId="N1" testMedium="" value="null"/>"#,
+        &plain,
+    )
+    .unwrap();
+    assert_eq!(test_medium(&facade, "N1"), None);
+    assert_eq!(
+        test_field(&facade, "moqui.test.TestEntity", ("testId", "N1"), "value"),
+        None
+    );
+
+    let defaults = LoadOptions {
+        default_values: vec![("testMedium".to_string(), "default".to_string())],
+        ..LoadOptions::default()
+    };
+    xml(r#"<moqui.test.TestEntity testId="N2" testMedium=""/>"#, &defaults).unwrap();
+    assert_eq!(test_medium(&facade, "N2"), None);
+
+    let (dir, _guard) = temp_dir();
+    let json = dir.join("rows.json");
+    std::fs::write(
+        &json,
+        r#"[{"_entity": "moqui.test.TestEntity", "testId": "N2", "testMedium": "set"}]"#,
+    )
+    .unwrap();
+    load_entity_data(&facade, json.to_str().unwrap(), &plain).unwrap();
+    assert_eq!(test_medium(&facade, "N2").as_deref(), Some("set"));
+    std::fs::write(
+        &json,
+        r#"[{"_entity": "moqui.test.TestEntity", "testId": "N2", "testMedium": null}]"#,
+    )
+    .unwrap();
+    load_entity_data(&facade, json.to_str().unwrap(), &plain).unwrap();
+    assert_eq!(test_medium(&facade, "N2"), None);
+
+    // A field element's text is kept as written, as Java's SAX handler reads it.
+    xml(
+        "<moqui.test.TestEntity testId=\"N4\"><testMedium>  spaced\n</testMedium></moqui.test.TestEntity>",
+        &plain,
+    )
+    .unwrap();
+    assert_eq!(test_medium(&facade, "N4").as_deref(), Some("  spaced\n"));
+
+    let bad = xml(r#"<moqui.test.TestEntity testId="N3" testDate="not a date"/>"#, &plain).unwrap_err();
+    assert!(error_chain(&bad).contains("[not a date] is not valid"), "{bad}");
+    assert_eq!(test_medium(&facade, "N3"), None);
+}
+
+/// A CSV or JSON service name is any name Java's `isServiceDefined` takes, not only a `verb#noun` one.
+#[test]
+fn csv_and_json_call_a_service_named_without_a_hash() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let (dir, _guard) = temp_dir();
+    let service_dir = dir.join("service/test");
+    std::fs::create_dir_all(&service_dir).unwrap();
+    let services = service_dir.join("LoadServices.xml");
+    std::fs::write(
+        &services,
+        r#"<services>
+            <service verb="copy" noun="Row">
+                <in-parameters><parameter name="rowId"/></in-parameters>
+                <actions>
+                    <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                    <script>made.set("testId", rowId); made.set("testMedium", "copied");</script>
+                    <entity-create value-field="made"/>
+                </actions>
+            </service>
+        </services>"#,
+    )
+    .unwrap();
+    let failures = crate::service::lint(std::slice::from_ref(&services)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let csv = dir.join("rows.csv");
+    std::fs::write(&csv, "test.LoadServices.copyRow\nrowId\nS1\n").unwrap();
+    load_entity_data(&facade, csv.to_str().unwrap(), &LoadOptions::default()).unwrap();
+    assert_eq!(test_medium(&facade, "S1").as_deref(), Some("copied"));
+    let json = dir.join("rows.json");
+    std::fs::write(&json, r#"{"_entity": "test.LoadServices.copyRow", "rowId": "S2"}"#).unwrap();
+    load_entity_data(&facade, json.to_str().unwrap(), &LoadOptions::default()).unwrap();
+    assert_eq!(test_medium(&facade, "S2").as_deref(), Some("copied"));
+}
+
+/// Java's `-- Checked data` message follows each file a check reads, unless `messageNoActionFiles(false)` and the
+/// file gave no messages.
+#[test]
+fn a_check_names_each_file() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let (dir, _guard) = temp_dir();
+    let file = dir.join("rows.xml");
+    std::fs::write(
+        &file,
+        r#"<entity-facade-xml><moqui.test.TestEntity testId="K1" testMedium="same"/></entity-facade-xml>"#,
+    )
+    .unwrap();
+    let location = file.to_str().unwrap();
+    load_entity_data(&facade, location, &LoadOptions::default()).unwrap();
+    let checked = super::check_entity_data(&facade, location, &LoadOptions::default()).unwrap();
+    assert_eq!(checked.messages, [format!("-- Checked data (1 records) in {location}")]);
+    let quiet = LoadOptions {
+        hide_no_action_files: true,
+        ..LoadOptions::default()
+    };
+    assert!(super::check_entity_data(&facade, location, &quiet)
+        .unwrap()
+        .messages
+        .is_empty());
+    std::fs::write(
+        &file,
+        r#"<entity-facade-xml><moqui.test.TestEntity testId="K1" testMedium="other"/></entity-facade-xml>"#,
+    )
+    .unwrap();
+    let differs = super::check_entity_data(&facade, location, &quiet).unwrap();
+    assert_eq!(differs.messages.len(), 2, "{:?}", differs.messages);
+    assert!(differs.messages[1].starts_with("-- Checked data (1 records)"));
+}
+
+/// As Java's `loadEecaRulesAll`: a rule's entity is kept by its full name, a rule for an entity that is not defined is
+/// skipped, and an entity's rules with no id come before those with one.
+#[test]
+fn eca_rule_entities_are_full_names_and_rules_with_no_id_come_first() {
+    let facade = open_empty();
+    super::add_eca_rules(
+        &facade,
+        r#"<eecas>
+            <eeca id="ShortName" entity="TestEntity" on-create="true"><actions><log message="a"/></actions></eeca>
+            <eeca entity="moqui.test.TestEntity" on-create="true"><actions><log message="b"/></actions></eeca>
+            <eeca id="Undefined" entity="no.such.Entity" on-create="true"><actions><log message="c"/></actions></eeca>
+        </eecas>"#,
+    )
+    .unwrap();
+    let ids: Vec<String> = eca_rules(&facade, "moqui.test.TestEntity")
+        .into_iter()
+        .map(|rule| rule.id)
+        .collect();
+    assert_eq!(ids, ["", "ShortName"]);
+    assert!(eca_rules(&facade, "no.such.Entity").is_empty());
+    facade.begin("moqui.test.TestEntity", None).unwrap();
+    let matched = match_rules(&facade, "moqui.test.TestEntity", "create");
+    facade.rollback("moqui.test.TestEntity").unwrap();
+    assert_eq!(matched, ["", "ShortName"]);
 }

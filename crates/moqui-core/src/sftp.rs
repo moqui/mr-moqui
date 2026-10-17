@@ -152,6 +152,12 @@ pub trait SftpSession: Send {
     ///
     /// See [`SftpSession::read_dir`].
     fn remove_file(&mut self, path: &str) -> Result<(), Error>;
+    /// Remove an empty directory.
+    ///
+    /// # Errors
+    ///
+    /// See [`SftpSession::read_dir`].
+    fn remove_dir(&mut self, path: &str) -> Result<(), Error>;
     /// Open a file for streaming. Writing creates or truncates it. Returns a handle for the chunk calls.
     ///
     /// # Errors
@@ -515,6 +521,92 @@ impl SftpClient {
         self.session()?.remove_file(path)
     }
 
+    /// `stat` of one path. `None` when nothing is there.
+    ///
+    /// # Errors
+    ///
+    /// Not connected, or the server's error.
+    pub fn stat(&mut self, path: &str) -> Result<Option<SftpAttributes>, Error> {
+        self.session()?.stat(path)
+    }
+
+    /// Stream a local file to `remote_path` and, when attributes are preserved, set mode `0600`.
+    ///
+    /// # Errors
+    ///
+    /// Not connected, the local file cannot be read, or the server's error.
+    pub fn put_file(&mut self, remote_path: &str, local: &std::path::Path) -> Result<(), Error> {
+        let mut file = std::fs::File::open(local)
+            .map_err(|err| Error::new(format!("read {}", local.display())).with_source(err))?;
+        let handle = self.put_stream(remote_path)?;
+        let mut buf = [0u8; 32 * 1024];
+        loop {
+            let read = std::io::Read::read(&mut file, &mut buf)
+                .map_err(|err| Error::new(format!("read {}", local.display())).with_source(err));
+            let n = match read {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(err) => {
+                    let _ = self.close_handle(handle);
+                    return Err(err);
+                }
+            };
+            if let Err(err) = self.write_chunk(handle, &buf[..n]) {
+                let _ = self.close_handle(handle);
+                return Err(err);
+            }
+        }
+        self.close_handle(handle)?;
+        if self.preserve_attributes {
+            self.session()?.set_permissions(remote_path, 0o600)?;
+        }
+        Ok(())
+    }
+
+    /// Upload a directory tree. Directories are mode `0700` and files mode `0600` when attributes are preserved.
+    ///
+    /// # Errors
+    ///
+    /// Not connected, a local path cannot be read, or the server's error.
+    pub fn put_tree(&mut self, remote_dir: &str, local: &std::path::Path) -> Result<(), Error> {
+        self.mkdirs(remote_dir)?;
+        if self.preserve_attributes {
+            self.session()?.set_permissions(remote_dir, 0o700)?;
+        }
+        let entries =
+            std::fs::read_dir(local).map_err(|err| Error::new(format!("read {}", local.display())).with_source(err))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| Error::new(format!("read {}", local.display())).with_source(err))?;
+            let path = entry.path();
+            let remote = child_path(remote_dir, &entry.file_name().to_string_lossy());
+            if path.is_dir() {
+                self.put_tree(&remote, &path)?;
+            } else {
+                self.put_file(&remote, &path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a file, or a directory and everything under it.
+    ///
+    /// # Errors
+    ///
+    /// Not connected, or the server's error.
+    pub fn rm_tree(&mut self, path: &str) -> Result<(), Error> {
+        match self.stat(path)? {
+            Some(found) if found.kind == SftpKind::Directory => {
+                let children = self.ls(path)?;
+                for (child, _) in children {
+                    self.rm_tree(&child)?;
+                }
+                self.session()?.remove_dir(path)
+            }
+            Some(_) => self.rm(path),
+            None => Ok(()),
+        }
+    }
+
     /// Open a file to read in chunks. See [`SftpSession::open`].
     ///
     /// # Errors
@@ -745,11 +837,40 @@ pub(crate) mod tests {
         }
         fn rename(&mut self, from: &str, to: &str) -> Result<(), Error> {
             let mut disk = self.disk.lock().unwrap();
-            let bytes = disk
+            if let Some(bytes) = disk.files.remove(from) {
+                disk.files.insert(to.to_string(), bytes);
+                return Ok(());
+            }
+            let from_dir = from.trim_end_matches('/').to_string();
+            if !disk.dirs.contains(&from_dir) {
+                return Err(Error::new(format!("No such file: {from}")));
+            }
+            disk.dirs.remove(&from_dir);
+            disk.dirs.insert(to.trim_end_matches('/').to_string());
+            let prefix = format!("{from_dir}/");
+            let files: Vec<String> = disk
                 .files
-                .remove(from)
-                .ok_or_else(|| Error::new(format!("No such file: {from}")))?;
-            disk.files.insert(to.to_string(), bytes);
+                .keys()
+                .filter(|name| name.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for key in files {
+                let bytes = disk.files.remove(&key).unwrap_or_default();
+                let rest = key.strip_prefix(&from_dir).unwrap_or("");
+                disk.files.insert(format!("{to}{rest}"), bytes);
+            }
+            let dirs: Vec<String> = disk
+                .dirs
+                .iter()
+                .filter(|name| name.starts_with(&prefix))
+                .cloned()
+                .collect();
+            let to_dir = to.trim_end_matches('/');
+            for key in dirs {
+                disk.dirs.remove(&key);
+                let rest = key.strip_prefix(&from_dir).unwrap_or("");
+                disk.dirs.insert(format!("{to_dir}{rest}"));
+            }
             Ok(())
         }
         fn remove_file(&mut self, path: &str) -> Result<(), Error> {
@@ -760,6 +881,21 @@ pub(crate) mod tests {
                 .remove(path)
                 .map(|_| ())
                 .ok_or_else(|| Error::new(format!("No such file: {path}")))
+        }
+        fn remove_dir(&mut self, path: &str) -> Result<(), Error> {
+            let path = path.trim_end_matches('/').to_string();
+            let mut disk = self.disk.lock().unwrap();
+            let prefix = format!("{path}/");
+            if disk.files.keys().any(|name| name.starts_with(&prefix))
+                || disk.dirs.iter().any(|name| name.starts_with(&prefix))
+            {
+                return Err(Error::new(format!("{path} is not empty")));
+            }
+            if disk.dirs.remove(&path) {
+                Ok(())
+            } else {
+                Err(Error::new(format!("No such file: {path}")))
+            }
         }
         fn open(&mut self, path: &str, write: bool) -> Result<u64, Error> {
             if write {

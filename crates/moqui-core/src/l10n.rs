@@ -360,6 +360,15 @@ pub fn parse_number(input: &str) -> Option<Value> {
     format::parse_decimal(input, &locale()).map(Value::Decimal)
 }
 
+/// [`parse_number`] by the Java `DecimalFormat` pattern `format` when there is one, as `ec.l10n.parseNumber(input,
+/// format)`. None for text the pattern does not read.
+pub fn parse_number_format(input: &str, format: Option<&str>) -> Option<Value> {
+    match format.filter(|pattern| !pattern.is_empty()) {
+        Some(pattern) => format::parse_decimal_pattern(input, pattern, &locale()).map(Value::Decimal),
+        None => parse_number(input),
+    }
+}
+
 /// `ec.l10n.roundCurrency(amount, uomId, precise)`: rounded half up to the currency's fraction digits (one more when
 /// `precise`), from its `Uom` row, else ISO 4217, as Java does.
 ///

@@ -19,12 +19,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use base64::engine::general_purpose::STANDARD;
+use base64::alphabet;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
 use moqui_db::model::Relationship;
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
-use moqui_lib::object::{basic_convert, Value};
+use moqui_lib::object::{convert_checked, to_plain_string, Value};
 
 use super::csv::load_csv_reader;
 use super::json::load_json_reader;
@@ -54,11 +56,9 @@ pub(super) struct RelInfo {
     pub(super) pairs: Vec<(String, String)>,
 }
 
-/// Load one XML, CSV, JSON, or zip location, or a directory of those files.
+/// Load one XML, CSV, JSON, or zip location, or a directory of those files. As Java, `options.components` does not
+/// filter a location given here; the callers that gather locations use [`location_in_components`].
 pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOptions) -> Result<LoadResult, Error> {
-    if !component_allowed(location, &options.components) {
-        return Ok(LoadResult::default());
-    }
     let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
     let path = resolve_location(facade, location)?;
     let mut failed_files = 0;
@@ -74,7 +74,27 @@ pub fn load_entity_xml_text(
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
     let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
-    let records = in_file_transaction(facade, options, || load_xml_text(facade, location, text, options))?;
+    let records = super::check::at_location(location, || {
+        in_file_transaction(facade, options, || load_xml_text(facade, location, text, options))
+    })?;
+    Ok(LoadResult {
+        records,
+        failed_files: 0,
+    })
+}
+
+/// CSV or JSON text written to the file `path`, as Java's `csvText` and `jsonText`: one transaction, named `label`,
+/// and in a check no `-- Checked data` message.
+pub fn load_entity_text_file(
+    facade: &EntityFacade,
+    label: &str,
+    path: &Path,
+    options: &LoadOptions,
+) -> Result<LoadResult, Error> {
+    let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
+    let records = super::check::at_location(label, || {
+        in_file_transaction(facade, options, || load_file(facade, label, path, options))
+    })?;
     Ok(LoadResult {
         records,
         failed_files: 0,
@@ -91,7 +111,9 @@ fn load_path(
     if path.is_dir() {
         return load_directory(facade, path, options, failed_files);
     }
-    in_file_transaction(facade, options, || load_file(facade, location, path, options))
+    super::check::check_file(location, options, || {
+        in_file_transaction(facade, options, || load_file(facade, location, path, options))
+    })
 }
 
 /// Java's `loadSingleFile`: one file (or text) in one transaction, 600 seconds unless the load names another timeout.
@@ -188,9 +210,7 @@ pub(super) fn parse_top(facade: &EntityFacade, location: &str, node: &MNode) -> 
     let key = element_key(&node.name());
     if entity_defined(facade, &key) {
         Ok(Some(Top::Record(parse_record(facade, &key, node)?)))
-    } else if let Some(name) =
-        crate::service::define::defined_name(&key).or_else(|| key.contains('#').then(|| key.clone()))
-    {
+    } else if let Some(name) = data_service_name(&key) {
         Ok(Some(Top::Service(DataFileService {
             name,
             location: location.to_string(),
@@ -213,6 +233,11 @@ pub(super) fn parse_top(facade: &EntityFacade, location: &str, node: &MNode) -> 
     }
 }
 
+/// The service a data file names, as Java's `isServiceDefined` takes it, or a `verb#noun` entity-auto name.
+pub(super) fn data_service_name(name: &str) -> Option<String> {
+    crate::service::define::defined_name(name).or_else(|| name.contains('#').then(|| name.to_string()))
+}
+
 pub(super) fn parse_record(facade: &EntityFacade, entity_name: &str, node: &MNode) -> Result<Record, Error> {
     parse_record_in(facade, entity_name, node, &BTreeMap::new())
 }
@@ -230,7 +255,9 @@ fn parse_record_in(
             tracing::warn!(entity = %shape.full_name, field = %name, "attribute is not a field");
             continue;
         }
+        // Java puts an empty attribute as null, so a store clears the column.
         if value.is_empty() {
+            fields.insert(name, Value::Null);
             continue;
         }
         let field_type = shape.fields.get(&name).map(String::as_str).unwrap_or("").to_string();
@@ -240,12 +267,10 @@ fn parse_record_in(
     for child in node.children() {
         let key = element_key(&child.name());
         if shape.fields.contains_key(&key) {
-            if let Some(text) = child.text() {
-                let text = text.trim();
-                if !text.is_empty() {
-                    let field_type = shape.fields.get(&key).map(String::as_str).unwrap_or("");
-                    fields.insert(key, field_text(field_type, text));
-                }
+            // The text as written, whitespace included, as Java's SAX handler reads it (the XML reader parses raw).
+            if let Some(text) = child.text().filter(|text| !text.is_empty()) {
+                let field_type = shape.fields.get(&key).map(String::as_str).unwrap_or("");
+                fields.insert(key, field_text(field_type, &text));
             }
         } else {
             pending.push(child);
@@ -284,11 +309,8 @@ fn service_parameters(node: &MNode) -> BTreeMap<String, String> {
         }
     }
     for child in node.children() {
-        if let Some(text) = child.text() {
-            let text = text.trim();
-            if !text.is_empty() {
-                parameters.insert(element_key(&child.name()), text.to_string());
-            }
+        if let Some(text) = child.text().filter(|text| !text.is_empty()) {
+            parameters.insert(element_key(&child.name()), text);
         }
     }
     parameters
@@ -302,15 +324,24 @@ fn field_text(field_type: &str, text: &str) -> Value {
     }
 }
 
+/// A `binary-very-long` value: Base64, or the UTF-8 bytes of text that is not, as Java's XML reader. The text is
+/// trimmed first, so Base64 laid out on lines of its own still decodes, where Java's strict decoder takes it as text.
 pub(super) fn decode_binary(text: &str) -> Vec<u8> {
-    STANDARD
-        .decode(text.trim())
-        .unwrap_or_else(|_| text.as_bytes().to_vec())
+    decode_base64(text.trim()).unwrap_or_else(|| text.as_bytes().to_vec())
+}
+
+/// Java's `Base64.getDecoder()`: the standard alphabet, with the padding optional.
+pub(super) fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    const JAVA_BASE64: GeneralPurpose = GeneralPurpose::new(
+        &alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    JAVA_BASE64.decode(text).ok()
 }
 
 pub(super) fn apply_key_pairs(parent: &BTreeMap<String, Value>, rel: &RelInfo, child: &mut BTreeMap<String, Value>) {
     for (source, target) in &rel.pairs {
-        if child.contains_key(target) {
+        if child.get(target).is_some_and(|value| !value.is_null()) {
             continue;
         }
         if let Some(value) = parent.get(source) {
@@ -432,7 +463,8 @@ fn write_tree(
         } else if options.dummy_fks {
             value_from(facade, &record.entity, &fields)?.create_or_update(facade)?;
         } else {
-            // Java's plain-map loader uses the entity-auto store path, including status checks.
+            // Java's plain-map loader (XML and JSON records) uses the entity-auto store path, including status checks.
+            // CSV rows go through `store_value` instead.
             crate::service::call::store_entity(facade, &record.entity, &fields)?;
         }
         total = 1;
@@ -441,6 +473,73 @@ fn write_tree(
         total = total.saturating_add(write_tree(facade, options, child, &shared)?);
     }
     Ok(total)
+}
+
+/// A CSV row, as Java's `handleValue`: its primary key is complete ([`complete_csv_pk`]), and it is created when
+/// missing (`onlyCreate`), inserted or updated (`useTryInsert`), or else `createOrUpdate`d. There is no entity-auto
+/// `fromDate` default, secondary sequence or status-flow check, which Java's CSV path does not run either.
+pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: &Record) -> Result<u64, Error> {
+    if super::check::checking() {
+        return super::check::check_record(facade, record);
+    }
+    if options.restrict_sensitive_entities {
+        refuse_restricted(facade, record)?;
+    }
+    let entity = record.entity.as_str();
+    let fields = &record.fields;
+    facade
+        .transactions_for(entity)?
+        .run(TransactionAttribute::UseOrBegin, options.timeout, || {
+            if options.only_create {
+                if !row_exists(facade, entity, fields)? {
+                    value_from(facade, entity, fields)?.create(facade)?;
+                }
+            } else if options.use_try_insert && try_insert_allowed(facade, entity)? {
+                write_upsert(facade, entity, fields)?;
+            } else {
+                value_from(facade, entity, fields)?.create_or_update(facade)?;
+            }
+            Ok(1)
+        })
+}
+
+/// Java's CSV primary-key check: with the fields converted to their types, a missing key of a one-field primary key
+/// is sequenced, and a missing key of a longer one is an error.
+pub(super) fn complete_csv_pk(
+    facade: &EntityFacade,
+    entity_name: &str,
+    fields: &mut BTreeMap<String, Value>,
+) -> Result<(), Error> {
+    convert_fields(facade, entity_name, fields)?;
+    if pk_complete(facade, entity_name, fields)? {
+        return Ok(());
+    }
+    let pk_names = facade.with_entity(entity_name, |entity, _, _| {
+        Ok(entity
+            .pk_field_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>())
+    })?;
+    let [pk_name] = pk_names.as_slice() else {
+        let given: Vec<String> = pk_names
+            .iter()
+            .map(|name| {
+                let value = fields.get(name).map_or_else(|| "null".to_string(), to_plain_string);
+                format!("{name}={value}")
+            })
+            .collect();
+        return Err(Error::new(format!(
+            "Cannot process value with incomplete primary key for [{entity_name}] with more than 1 primary key field: [{}]",
+            given.join(", ")
+        )));
+    };
+    let mut value = value_from(facade, entity_name, fields)?;
+    value.set_sequenced_id_primary(facade)?;
+    if let Some(value) = value.get(pk_name).cloned() {
+        fields.insert(pk_name.clone(), value);
+    }
+    Ok(())
 }
 
 fn stored_pks(
@@ -514,6 +613,8 @@ fn prepare_fields(
     Ok(())
 }
 
+/// Each field's text as its type, as Java's `FieldInfo.convertFromString`. Text the type does not take fails the
+/// record, as Java's validation error (XML, JSON) or exception (CSV) does.
 pub(super) fn convert_fields(
     facade: &EntityFacade,
     entity_name: &str,
@@ -534,23 +635,46 @@ pub(super) fn convert_fields(
             else {
                 continue;
             };
-            let mut converted = basic_convert(value, &java);
-            // Java parses number text with the locale (`L10nFacade.parseNumber`), so `118,500` is 118500.
-            if let Value::String(text) = value {
-                if !converted.changed && text.contains(',') && is_number_type(&java) {
-                    let plain = Value::String(text.replace(',', ""));
-                    let retried = basic_convert(&plain, &java);
-                    if retried.changed {
-                        converted = retried;
-                    }
-                }
-            }
-            updates.insert(field.name.clone(), converted.value);
+            let converted = convert_text(value, &java).ok_or_else(|| {
+                Error::new(format!(
+                    "The value [{}] is not valid for type {java} for field {}.{}",
+                    to_plain_string(value),
+                    entity.full_name,
+                    field.name
+                ))
+            })?;
+            updates.insert(field.name.clone(), converted);
         }
         Ok(updates)
     })?;
     fields.extend(updates);
     Ok(())
+}
+
+/// One value as `java_type`, or `None` when it is not of that type.
+fn convert_text(value: &Value, java_type: &str) -> Option<Value> {
+    if let Value::String(text) = value {
+        // `convertFromString` reads the text `null` as null, for any type.
+        if text == "null" {
+            return Some(Value::Null);
+        }
+        // `Boolean.valueOf`: only `true`, in any case, is true.
+        if matches!(java_type.rsplit('.').next(), Some("Boolean" | "boolean")) {
+            return Some(Value::Bool(text.eq_ignore_ascii_case("true")));
+        }
+    }
+    if let Some(converted) = convert_checked(value, java_type) {
+        return Some(converted);
+    }
+    // Java parses number text with the locale (`L10nFacade.parseNumber`) to a BigDecimal and takes the type's value
+    // of that, so `118,500` is 118500 and `1800.0` is 1800 for a Long.
+    match value {
+        Value::String(text) if is_number_type(java_type) => {
+            let decimal = convert_checked(&Value::String(text.replace(',', "")), "java.math.BigDecimal")?;
+            convert_checked(&decimal, java_type)
+        }
+        _ => None,
+    }
 }
 
 fn is_number_type(java_type: &str) -> bool {
@@ -643,7 +767,8 @@ pub(super) fn call_data_file_service(
     crate::service::run_data_file_service(facade, &service)
 }
 
-/// Java `defaultValues` on a top-level record: each default the record does not set, for a field of its entity.
+/// Java `defaultValues` on a top-level record: each default the record does not set, for a field of its entity. A
+/// field the record sets empty (null) stays null, as Java puts the record's values over the defaults.
 pub(super) fn apply_default_values(facade: &EntityFacade, options: &LoadOptions, record: &mut Record) {
     if options.default_values.is_empty() {
         return;
@@ -652,7 +777,7 @@ pub(super) fn apply_default_values(facade: &EntityFacade, options: &LoadOptions,
         return;
     };
     for (name, text) in &options.default_values {
-        if shape.fields.contains_key(name) && record.fields.get(name).is_none_or(Value::is_null) {
+        if shape.fields.contains_key(name) && !record.fields.contains_key(name) {
             record.fields.insert(name.clone(), Value::string(text));
         }
     }
@@ -746,7 +871,9 @@ pub(super) fn skip_type(file_type: Option<&str>, data_types: &[String]) -> bool 
     }
 }
 
-fn component_allowed(location: &str, components: &[String]) -> bool {
+/// True when `components` is empty or names the component of `location`; a location that is not `component://` is
+/// always in. Java's `componentNameList` narrows only the locations a load gathers itself, not one it is given.
+pub fn location_in_components(location: &str, components: &[String]) -> bool {
     if components.is_empty() {
         return true;
     }

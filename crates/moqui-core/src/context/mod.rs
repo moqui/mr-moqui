@@ -21,7 +21,7 @@ mod conf;
 mod confcache;
 mod error;
 mod factory;
-mod hits;
+pub(crate) mod hits;
 mod locate;
 mod message;
 mod resource;

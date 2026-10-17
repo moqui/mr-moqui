@@ -182,6 +182,44 @@ mod cluster {
         pub fn superuser(&self) -> (String, String) {
             (BOOTSTRAP_SUPERUSER.to_string(), self.server.settings().password.clone())
         }
+
+        /// Connection and binary paths for `pg_dump` and `pg_basebackup`. `prefix` is `moqui` or `search`.
+        #[must_use]
+        pub fn tool_connect(&self, prefix: &str) -> ToolTarget {
+            let settings = self.server.settings();
+            #[cfg(unix)]
+            let host = settings
+                .socket_dir
+                .clone()
+                .unwrap_or_else(|| settings.data_dir.clone())
+                .display()
+                .to_string();
+            #[cfg(not(unix))]
+            let host = settings.host.clone();
+            ToolTarget {
+                prefix: prefix.to_string(),
+                bin_dir: settings.binary_dir(),
+                username: BOOTSTRAP_SUPERUSER.to_string(),
+                password: settings.password.clone(),
+                port: settings.port,
+                host,
+                database: DATABASE.to_string(),
+                data_dir: self.data_dir.clone(),
+            }
+        }
+    }
+
+    /// How a backup reaches one embedded postmaster without holding the cluster handle.
+    #[derive(Clone, Debug)]
+    pub struct ToolTarget {
+        pub prefix: String,
+        pub bin_dir: PathBuf,
+        pub username: String,
+        pub password: String,
+        pub port: u16,
+        pub host: String,
+        pub database: String,
+        pub data_dir: PathBuf,
     }
 
     impl Drop for EmbeddedCluster {
@@ -404,6 +442,12 @@ mod cluster {
             settings
                 .configuration
                 .insert("synchronous_commit".to_string(), "off".to_string());
+        } else {
+            // Block incrementals (Postgres 17+) read WAL summaries. The setting is postmaster-level,
+            // so a cluster that is already up picks it up the next time this process starts it.
+            settings
+                .configuration
+                .insert("summarize_wal".to_string(), "on".to_string());
         }
         settings
             .configuration
@@ -1297,7 +1341,7 @@ mod cluster {
 }
 
 #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
-pub use cluster::{load_save, save_db, shared_install_dir, ClusterRole, EmbeddedCluster, StartOptions};
+pub use cluster::{load_save, save_db, shared_install_dir, ClusterRole, EmbeddedCluster, StartOptions, ToolTarget};
 #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
 pub(crate) use cluster::{pg_ctl_path, postmaster_live, process_live};
 

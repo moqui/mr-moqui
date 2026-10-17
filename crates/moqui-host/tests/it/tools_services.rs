@@ -189,14 +189,14 @@ fn tools_services_run_on_postgres() {
         "org.moqui.impl.BasicServices.convert#Uom",
         &[("uomId", "GATE_A"), ("toUomId", "GATE_B"), ("amount", "4")],
     );
-    assert!(converted.contains("\"convertedAmount\": 11"), "{converted}");
+    assert!(converted.contains("\"convertedAmount\" : 11"), "{converted}");
     let (_, back) = run(
         address,
         &john,
         "org.moqui.impl.BasicServices.convert#Uom",
         &[("uomId", "GATE_B"), ("toUomId", "GATE_A"), ("amount", "11")],
     );
-    assert!(back.contains("\"convertedAmount\": 4"), "{back}");
+    assert!(back.contains("\"convertedAmount\" : 4"), "{back}");
 
     // An entity data snapshot out to a zip in runtime/db/snapshot, then back in.
     let (status, exported) = run(
@@ -210,7 +210,7 @@ fn tools_services_run_on_postgres() {
     );
     assert_eq!(status, 200, "{exported}");
     assert!(
-        exported.contains("\"recordsWritten\"") && !exported.contains("\"recordsWritten\": 0"),
+        exported.contains("\"recordsWritten\"") && !exported.contains("\"recordsWritten\" : 0"),
         "{exported}"
     );
     let snapshots = page(address, &john, "/Tools/Entity/DataSnapshot.html");
@@ -223,7 +223,7 @@ fn tools_services_run_on_postgres() {
     );
     assert_eq!(status, 200, "{imported}");
     assert!(
-        imported.contains("\"recordsLoaded\"") && !imported.contains("\"recordsLoaded\": 0"),
+        imported.contains("\"recordsLoaded\"") && !imported.contains("\"recordsLoaded\" : 0"),
         "{imported}"
     );
 

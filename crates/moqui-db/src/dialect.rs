@@ -34,8 +34,8 @@ pub struct NameReplace {
 ///
 /// String fields are `None` when the attribute is absent. XSD defaults are not filled in.
 /// `never_nulls`, `never_try_insert`, and `use_binary_type_for_blob` are false when absent.
-/// `use_foreign_key_indexes`, `use_pk_constraint_names`, `use_foreign_keys`, `use_indexes` and `use_indexes_unique` are
-/// true unless the attribute is `false`.
+/// `use_foreign_key_indexes`, `use_pk_constraint_names`, `use_foreign_keys`, `use_indexes`, `use_indexes_unique` and
+/// `fts_ddl` are true unless the attribute is `false`.
 /// `sql_types` holds only that database's `<database-type>` entries.
 /// `placeholder` is always [`PLACEHOLDER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +46,8 @@ pub struct Dialect {
     pub placeholder: &'static str,
     pub fts_style: Option<String>,
     pub fts_config: Option<String>,
+    /// `fts-ddl`: false leaves the full-text column and index of a `text-fts` field to a DBA.
+    pub fts_ddl: bool,
     pub join_style: Option<String>,
     pub offset_style: Option<String>,
     pub from_lateral_style: Option<String>,
@@ -58,6 +60,10 @@ pub struct Dialect {
     pub character_set: Option<String>,
     pub collate: Option<String>,
     pub fk_style: Option<String>,
+    /// `use-fk-initially-deferred`: a foreign key is created `INITIALLY DEFERRED`.
+    pub use_fk_initially_deferred: bool,
+    /// `always-use-constraint-keyword`: a `NOT NULL` column in a create table is `CONSTRAINT NOT NULL`.
+    pub always_use_constraint_keyword: bool,
     pub default_test_query: Option<String>,
     pub result_fetch_size: Option<i32>,
     /// Text written in place of `FOR UPDATE`. Empty writes nothing.
@@ -184,6 +190,7 @@ fn parse_database(node: &MNode) -> Result<Dialect, Error> {
         placeholder: PLACEHOLDER,
         fts_style: optional(node, "fts-style"),
         fts_config: optional(node, "fts-config"),
+        fts_ddl: !matches!(optional(node, "fts-ddl").as_deref(), Some("false")),
         join_style: optional(node, "join-style"),
         offset_style: optional(node, "offset-style"),
         from_lateral_style: optional(node, "from-lateral-style"),
@@ -196,6 +203,11 @@ fn parse_database(node: &MNode) -> Result<Dialect, Error> {
         character_set: optional(node, "character-set"),
         collate: optional(node, "collate"),
         fk_style: optional(node, "fk-style"),
+        use_fk_initially_deferred: matches!(optional(node, "use-fk-initially-deferred").as_deref(), Some("true")),
+        always_use_constraint_keyword: matches!(
+            optional(node, "always-use-constraint-keyword").as_deref(),
+            Some("true")
+        ),
         default_test_query: optional(node, "default-test-query"),
         result_fetch_size: optional_int(node, "result-fetch-size")?,
         // Present and empty means no row lock text at all (SQLite). Absent means `FOR UPDATE`.

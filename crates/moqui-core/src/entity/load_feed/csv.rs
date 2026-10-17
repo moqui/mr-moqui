@@ -20,7 +20,10 @@ use std::io::Read;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
-use super::loader::{call_data_file_service, entity_defined, skip_type, store_record, Record};
+use super::loader::{
+    call_data_file_service, complete_csv_pk, data_service_name, decode_base64, entity_defined, shape_of, skip_type,
+    store_value, Record,
+};
 use super::{DataFileService, LoadOptions};
 use crate::entity::facade::EntityFacade;
 
@@ -75,8 +78,7 @@ pub(super) fn load_csv_reader(
     if skip_type(file_type.as_deref(), &options.data_types) {
         return Ok(0);
     }
-    let mut headers: Vec<(String, usize)> = Vec::new();
-    if options.csv_field_names.is_empty() {
+    let names: Vec<String> = if options.csv_field_names.is_empty() {
         let header = loop {
             match records.next() {
                 Some(Ok(record)) if !record_blank(&record) => break record,
@@ -85,50 +87,95 @@ pub(super) fn load_csv_reader(
                 None => return Err(Error::new(format!("csv {location} has no header"))),
             }
         };
-        for (index, field) in header.iter().enumerate() {
-            if field.is_empty() || headers.iter().any(|(name, _)| name == field) {
-                continue;
-            }
-            headers.push((field.to_string(), index));
-        }
+        header.iter().map(str::to_string).collect()
     } else {
-        for (index, field) in options.csv_field_names.iter().enumerate() {
-            if !field.is_empty() && !headers.iter().any(|(name, _)| name == field) {
-                headers.push((field.clone(), index));
-            }
+        options.csv_field_names.clone()
+    };
+    // Java's header map: a name given twice reads the later column. An empty header cell (a trailing delimiter) is
+    // no column here; Java's field lookup fails the file on it.
+    let mut headers: Vec<(String, usize)> = Vec::new();
+    for (index, field) in names.into_iter().enumerate() {
+        if field.is_empty() {
+            continue;
+        }
+        match headers.iter_mut().find(|(name, _)| *name == field) {
+            Some(header) => header.1 = index,
+            None => headers.push((field, index)),
         }
     }
-    let is_entity = entity_defined(facade, &entity_name);
-    if !is_entity && !entity_name.contains('#') {
-        return Err(Error::new(format!(
-            "csv {location} names {entity_name}, which is not an entity or a service"
-        )));
-    }
+    // As Java: the entity, else a service `isServiceDefined` takes, else the file fails.
+    let service_name = if entity_defined(facade, &entity_name) {
+        None
+    } else {
+        Some(data_service_name(&entity_name).ok_or_else(|| {
+            Error::new(format!(
+                "csv {location} names {entity_name}, which is not an entity or a service"
+            ))
+        })?)
+    };
+    let shape = if service_name.is_some() {
+        None
+    } else {
+        let shape = shape_of(facade, &entity_name)?;
+        // Java looks each column's field up and fails on one that is not a field of the entity.
+        if let Some((name, _)) = headers.iter().find(|(name, _)| !shape.fields.contains_key(name)) {
+            return Err(Error::new(format!(
+                "csv {location} column {name} is not a field of {}",
+                shape.full_name
+            )));
+        }
+        Some(shape)
+    };
     let mut total = 0_u64;
-    for record in records {
+    for (line, record) in records.enumerate() {
         let record = record.map_err(|err| Error::new(format!("could not read csv {location}")).with_source(err))?;
         if record_blank(&record) {
             continue;
         }
-        if is_entity {
+        if let Some(shape) = &shape {
             let mut fields = BTreeMap::new();
             for (name, text) in &options.default_values {
-                fields.insert(name.clone(), Value::string(text));
+                if shape.fields.contains_key(name) {
+                    fields.insert(name.clone(), Value::string(text));
+                }
             }
             for (name, index) in &headers {
+                // Java reads every column of the header, so a short row fails the file.
                 let Some(text) = record.get(*index) else {
-                    continue;
+                    return Err(Error::new(format!(
+                        "csv {location} data row {} has no column {} ({name})",
+                        line + 1,
+                        index + 1
+                    )));
                 };
+                // An empty cell is null, so an update clears the field.
                 if text.is_empty() {
+                    fields.insert(name.clone(), Value::Null);
+                    continue;
+                }
+                // A BLOB cell is Base64, which Java decodes, failing the file when it is not.
+                if shape
+                    .fields
+                    .get(name)
+                    .is_some_and(|field_type| field_type == "binary-very-long")
+                {
+                    let bytes = decode_base64(text).ok_or_else(|| {
+                        Error::new(format!(
+                            "csv {location} field {name} of {} is not Base64",
+                            shape.full_name
+                        ))
+                    })?;
+                    fields.insert(name.clone(), Value::Bytes(bytes));
                     continue;
                 }
                 fields.insert(name.clone(), Value::string(text));
             }
-            let stored = store_record(
+            complete_csv_pk(facade, &shape.full_name, &mut fields)?;
+            let stored = store_value(
                 facade,
                 options,
                 &Record {
-                    entity: entity_name.clone(),
+                    entity: shape.full_name.clone(),
                     fields,
                     children: Vec::new(),
                 },
@@ -148,7 +195,7 @@ pub(super) fn load_csv_reader(
                 facade,
                 options,
                 DataFileService {
-                    name: entity_name.clone(),
+                    name: service_name.clone().unwrap_or_default(),
                     location: location.to_string(),
                     parameters,
                 },

@@ -77,7 +77,7 @@ impl ErrorInfo {
         let path_from_last_screen = error.missing_path().unwrap_or_default().to_string();
         Self {
             status,
-            trace: message.lines().map(str::to_string).collect(),
+            trace: error.diagnostic().lines().map(str::to_string).collect(),
             message,
             artifact,
             path_from_last_screen,
@@ -140,6 +140,21 @@ mod tests {
         // Message text alone is not a missing path.
         let text_only = Error::of_kind(ErrorKind::NotFound, "screen path not found: Nope under x");
         assert_eq!(ErrorInfo::new(404, &text_only, "/Nope").path_from_last_screen, "");
+    }
+
+    #[test]
+    fn details_include_the_rust_origin_without_changing_the_summary() {
+        let line = line!() + 1;
+        let error = Error::new("failed to render");
+        let info = ErrorInfo::new(500, &error, "/screen");
+        assert_eq!(info.message, "failed to render");
+        assert!(
+            info.trace
+                .iter()
+                .any(|line_text| line_text.contains(&format!("Rust: {}:{line}:", file!()))),
+            "{:?}",
+            info.trace
+        );
     }
 
     #[test]

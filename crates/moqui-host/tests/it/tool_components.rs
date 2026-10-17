@@ -16,7 +16,7 @@
 //!
 //! - `moqui-poi`: a framework screen requested as `.xlsx` is a workbook with a sheet for each form-list and typed
 //!   cells, and `read#Spreadsheet` reads it back;
-//! - `moqui-image`: `convert#Image` writes the original and the four widths of a png, a gif and a tiff;
+//! - `moqui-image`: `convert#Image` writes the original and the four widths of a png, a gif and a tiff as jpg;
 //! - `moqui-cups`: `get#ServerPrinters`, `print#Document`, `get#PrintJobDetailsFromServer` and `cancel#PrintJob` against
 //!   an IPP server in the test, and a send to a server that does not answer.
 
@@ -53,8 +53,8 @@ fn text(value: &str) -> Value {
     Value::string(value)
 }
 
-/// What the stub IPP server saw: the operation and the document of each request.
-type Seen = Arc<Mutex<Vec<(i16, Vec<u8>)>>>;
+/// What the stub IPP server saw: the operation, the job attributes (name and value) and the document of each request.
+type Seen = Arc<Mutex<Vec<(i16, Vec<(String, String)>, Vec<u8>)>>>;
 
 /// An IPP server with one printer, "stub", that takes every job as job 7 and reports it completed.
 fn ipp_stub() -> (u16, Seen) {
@@ -85,9 +85,15 @@ fn ipp_stub() -> (u16, Seen) {
                 .unwrap();
             let operation = request.header().operation_or_status;
             let id = request.header().request_id;
+            let job_attributes = request
+                .attributes()
+                .groups_of(DelimiterTag::JobAttributes)
+                .flat_map(|group| group.attributes().iter())
+                .map(|attr| (attr.name().as_str().to_string(), attr.value().to_string()))
+                .collect();
             let mut payload = Vec::new();
             request.into_payload().read_to_end(&mut payload).unwrap();
-            record.lock().unwrap().push((operation, payload));
+            record.lock().unwrap().push((operation, job_attributes, payload));
             let mut response =
                 IppRequestResponse::new_response(IppVersion::v1_1(), StatusCode::SuccessfulOk, id).unwrap();
             let mut add = |tag: DelimiterTag, name: &str, value: IppValue| {
@@ -216,7 +222,7 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
 
     // ---- moqui-image: the original and four widths of each fixture ----
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/images");
-    for (file, original) in [("barnstar.png", "png"), ("wolf.gif", "gif"), ("autumn.tif", "tiff")] {
+    for file in ["barnstar.png", "wolf.gif", "autumn.tif"] {
         let stem = file.split('.').next().unwrap();
         let bytes = std::fs::read(fixtures.join(file)).unwrap();
         let out = |size: &str, ext: &str| text(&format!("runtime://image-test/{stem}-{size}.{ext}"));
@@ -225,7 +231,7 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
             &params(&[
                 ("inputImageStream", Value::Bytes(bytes)),
                 ("outputImageFormat", text("jpg")),
-                ("outputResourceReferenceOriginal", out("original", original)),
+                ("outputResourceReferenceOriginal", out("original", "jpg")),
                 ("outputResourceReferenceLarge", out("large", "jpg")),
                 ("outputResourceReferenceMedium", out("medium", "jpg")),
                 ("outputResourceReferenceSmall", out("small", "jpg")),
@@ -233,23 +239,27 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
             ]),
         )
         .unwrap_or_else(|err| panic!("{file}: {err}"));
-        for (size, width) in [("Large", 2160), ("Medium", 1080), ("Small", 360), ("Thumbnail", 165)] {
+        // the original is written as outputImageFormat too, as its caller names the file
+        for (size, width) in [
+            ("Original", None),
+            ("Large", Some(2160)),
+            ("Medium", Some(1080)),
+            ("Small", Some(360)),
+            ("Thumbnail", Some(165)),
+        ] {
             let location = to_plain_string(converted.get(&format!("contentLocation{size}")).unwrap());
+            assert!(location.ends_with(".jpg"), "{location}");
             let written = factory.resource().get(&location).unwrap().read_bytes().unwrap();
             let image = image::load_from_memory(&written).unwrap_or_else(|err| panic!("{location}: {err}"));
-            assert_eq!(image.width(), width, "{location}");
+            if let Some(width) = width {
+                assert_eq!(image.width(), width, "{location}");
+            }
             assert_eq!(
                 image::guess_format(&written).unwrap(),
                 image::ImageFormat::Jpeg,
                 "{location}"
             );
         }
-        let original_location = to_plain_string(converted.get("contentLocationOriginal").unwrap());
-        assert!(
-            original_location.ends_with(&format!(".{original}")),
-            "{original_location}"
-        );
-        assert!(factory.resource().get(&original_location).unwrap().exists());
     }
 
     // ---- moqui-cups: a server that does not answer, then the stub ----
@@ -311,11 +321,22 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     );
     assert_eq!(job_field(&job, "statusId"), "PtjPending");
     assert_eq!(job_field(&job, "jobId"), "7");
-    assert!(seen
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|(operation, payload)| *operation == Operation::PrintJob as i16 && payload == b"%PDF-1.7 gate"));
+    {
+        let seen = seen.lock().unwrap();
+        let (_, job_attributes, _) = seen
+            .iter()
+            .find(|(operation, _, payload)| *operation == Operation::PrintJob as i16 && payload == b"%PDF-1.7 gate")
+            .expect("the Print-Job with the document");
+        // As cups4j's builder: the copies given, and `duplex` (`N` by default) one-sided.
+        let attribute = |name: &str| {
+            job_attributes
+                .iter()
+                .find(|(found, _)| found == name)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(attribute("copies"), Some("2"), "{job_attributes:?}");
+        assert_eq!(attribute("sides"), Some("one-sided"), "{job_attributes:?}");
+    }
 
     let details = moqui_core::service::sync(
         "org.moqui.impl.PrintServices.get#PrintJobDetailsFromServer",
@@ -323,6 +344,11 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     )
     .unwrap();
     assert_eq!(details.get("pagesPrinted"), Some(&Value::I32(2)));
+    // The job URL as cups4j gives it, `http://` for `ipp://`.
+    assert_eq!(
+        details.get("jobUrl").map(to_plain_string),
+        Some(format!("http://127.0.0.1:{port}/jobs/7"))
+    );
     assert_eq!(job_field(&job, "statusId"), "PtjCompleted");
 
     // The status flow has no Completed to Canceled transition, so the cancel is of a second, pending job.

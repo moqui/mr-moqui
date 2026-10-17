@@ -20,7 +20,7 @@
 //! - Inbound text: [`deliver_text`]. A `/notws` notification is published on the local
 //!   [`NOTIFICATION_MESSAGE`] topic, as the server's own publish would be.
 //! - Inbound binary: [`deliver_binary`] keeps the bytes behind a handle for the envelope reader
-//!   (`plans/Messaging.md`), which takes them with [`take_binary`].
+//!   (`plans/proposals/Messaging.md`), which takes them with [`take_binary`].
 //! - Outbound: [`send_text`] and [`send_bytes`] queue a frame; the worker drains the queue after
 //!   each request ([`take_outbox`]) and writes it to the named socket.
 //!

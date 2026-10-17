@@ -20,22 +20,9 @@ use rquickjs::{Array, Constructor};
 use moqui_lib::node::MNode;
 
 use super::*;
-use crate::context::ErrorKind;
 use crate::screen::generate::{self, Unit, UnitRequest};
 use crate::screen::sri::{self as logic, NodeLit, Runner};
 use crate::screen::{with_current_render, RenderState};
-
-/// The property of a thrown error that names its security kind, so a security error is still one after it has
-/// crossed the script and come back. It goes with that one error: one a script catches and goes on from does not
-/// mark a later failure, and a nested unit does not change the outer one's.
-const KIND_PROPERTY: &str = "moquiErrorKind";
-
-/// The kinds [`throw`] carries on the error, by name.
-const CARRIED_KINDS: [(ErrorKind, &str); 3] = [
-    (ErrorKind::AuthenticationRequired, "AuthenticationRequired"),
-    (ErrorKind::Unauthorized, "Unauthorized"),
-    (ErrorKind::Tarpit, "Tarpit"),
-];
 
 /// Run `body` on the script runtime with a [`Runner`] for the render in progress.
 pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, Error>) -> Result<R, Error> {
@@ -97,30 +84,14 @@ fn run_unit(ctx: &Ctx<'_>, unit: &Unit) -> Result<(), Error> {
 
 /// Throw an error to the script, carrying a security kind on the error object.
 fn throw(ctx: &Ctx<'_>, err: &Error) -> JsError {
-    let Some((_, name)) = CARRIED_KINDS.iter().find(|(kind, _)| *kind == err.kind()) else {
-        return Exception::throw_message(ctx, err.message());
-    };
     let exception = match Exception::from_message(ctx.clone(), err.message()) {
         Ok(exception) => exception,
         Err(thrown) => return thrown,
     };
-    match exception.as_object().set(KIND_PROPERTY, *name) {
+    match mark_kind(&exception, err.kind()) {
         Ok(()) => exception.throw(),
         Err(thrown) => thrown,
     }
-}
-
-/// The security kind [`throw`] put on the error the script ended with, else general.
-fn caught_kind(caught: &rquickjs::CaughtError<'_>) -> ErrorKind {
-    let object = match caught {
-        rquickjs::CaughtError::Exception(exception) => Some(exception.as_object()),
-        rquickjs::CaughtError::Value(value) => value.as_object(),
-        rquickjs::CaughtError::Error(_) => None,
-    };
-    object
-        .and_then(|object| object.get::<_, Option<String>>(KIND_PROPERTY).ok().flatten())
-        .and_then(|name| CARRIED_KINDS.iter().find(|(_, known)| *known == name))
-        .map_or(ErrorKind::General, |(kind, _)| *kind)
 }
 
 /// Run `body` with the render in progress, flushing script-held lists first so the stack is current.

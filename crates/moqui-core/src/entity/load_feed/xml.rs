@@ -35,8 +35,10 @@ pub(super) fn load_xml_text(
     load_xml_reader(facade, location, std::io::Cursor::new(text.as_bytes()), options)
 }
 
-/// An entity-definition document is type `seed`. Only `<seed-data>` children are records.
-fn load_definition_document<R: BufRead>(
+/// A document whose root is not `entity-facade-xml` or `seed-data`, such as an `<entities>` definition file. As Java's
+/// SAX handler, only the `<seed-data>` (type `seed`) and `<entity-facade-xml>` (its `type`) elements in it are data;
+/// everything else is ignored.
+fn load_embedded_document<R: BufRead>(
     facade: &EntityFacade,
     location: &str,
     input: &mut Pull<R>,
@@ -44,21 +46,26 @@ fn load_definition_document<R: BufRead>(
     empty: bool,
     options: &LoadOptions,
 ) -> Result<u64, Error> {
-    if skip_type(Some("seed"), &options.data_types) {
-        return Ok(0);
-    }
     if empty {
         return Ok(0);
     }
     input.read_to_end()?;
     let document = input.text_from(mark)?;
-    let root = MNode::parse_text(location, &document)?;
-    let mut seeds = Vec::new();
-    collect_named(&root, "seed-data", &mut seeds);
+    let root = MNode::parse_text_raw(location, &document)?;
+    let mut blocks = Vec::new();
+    collect_data_blocks(&root, &mut blocks);
     let mut total = 0_u64;
-    for seed in seeds {
-        for child in seed.children() {
-            if child.name() == "seed-data" {
+    for block in blocks {
+        let file_type = if block.name() == "seed-data" {
+            Some("seed".to_string())
+        } else {
+            block.attribute("type").filter(|value| !value.is_empty())
+        };
+        if skip_type(file_type.as_deref(), &options.data_types) {
+            continue;
+        }
+        for child in block.children() {
+            if is_data_root(&child.name()) {
                 continue;
             }
             match parse_top(facade, location, &child)? {
@@ -77,12 +84,18 @@ fn load_definition_document<R: BufRead>(
     Ok(total)
 }
 
-fn collect_named(node: &MNode, name: &str, out: &mut Vec<MNode>) {
-    if node.name() == name {
-        out.push(node.clone());
-    }
+fn is_data_root(name: &str) -> bool {
+    name == "seed-data" || name == "entity-facade-xml"
+}
+
+/// The data elements under `node`, outermost first; one inside another is not read again.
+fn collect_data_blocks(node: &MNode, out: &mut Vec<MNode>) {
     for child in node.children() {
-        collect_named(&child, name, out);
+        if is_data_root(&child.name()) {
+            out.push(child);
+        } else {
+            collect_data_blocks(&child, out);
+        }
     }
 }
 
@@ -99,15 +112,9 @@ pub(super) fn load_xml_reader(
     input.hold = true;
     let mark = input.pos;
     let start = input.take_with(xml_start_tag, "xml root")?;
-    if start.name != "seed-data" && start.name != "entity-facade-xml" {
-        // Entity definition files carry seed data under `<entities>`. Any other root is a typo.
-        if start.name != "entities" {
-            return Err(Error::new(format!(
-                "{location} root element {} is not entity-facade-xml, seed-data, or entities",
-                start.name
-            )));
-        }
-        return load_definition_document(facade, location, &mut input, mark, start.empty, options);
+    if !is_data_root(&start.name) {
+        // Entity definition files carry seed data under `<entities>`; any other root is read the same way.
+        return load_embedded_document(facade, location, &mut input, mark, start.empty, options);
     }
     input.release_hold();
     let file_type = if start.name == "seed-data" {
@@ -132,7 +139,7 @@ pub(super) fn load_xml_reader(
             return Err(Error::new(format!("{location} ended before the root was closed")));
         }
         let element = input.take_text(xml_element_end, "xml element")?;
-        let node = MNode::parse_text(location, &element)?;
+        let node = MNode::parse_text_raw(location, &element)?;
         match parse_top(facade, location, &node)? {
             Some(Top::Record(mut record)) => {
                 apply_default_values(facade, options, &mut record);

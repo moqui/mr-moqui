@@ -21,7 +21,8 @@ use indexmap::IndexMap;
 
 use super::*;
 
-/// The fields of a map or an entity value, an entity value's localized fields in the user's locale, as Java's `getMap`.
+/// The fields of a map or an entity value, an entity value's localized fields in the user's locale and a view's
+/// `pq-expression` aliases, as Java's `getMap`.
 pub(crate) fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
     match value {
         Value::Map(entries) => Some(entries.clone()),
@@ -37,7 +38,7 @@ pub(crate) fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
                         .collect(),
                 );
             }
-            // The lookups are finds, so they run with the value unlocked.
+            // The lookups are finds and an expression may read this value, so they run with the value unlocked.
             let copy = guard.clone();
             drop(guard);
             let fields = match entity_facade() {
@@ -69,8 +70,8 @@ pub(crate) fn value_map_stored(value: &Value) -> Option<IndexMap<String, Value>>
     }
 }
 
-/// One field of a map or entity value, an entity value's localized field in the user's locale. None when the field is
-/// not there.
+/// One field of a map or entity value, an entity value's localized field in the user's locale or `pq-expression`
+/// alias. None when the field is not there.
 pub(crate) fn value_field(value: &Value, field: &str) -> Option<Value> {
     match value {
         Value::Map(entries) => entries.get(field).cloned(),

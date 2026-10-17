@@ -19,6 +19,12 @@
 //!
 //! A server is `http://host:port`, as CUPS4J connected; port 443, or a host that names `https://`, is TLS. The
 //! requesting user is the job's username, else the process user, as CUPS4J used `user.name`.
+//!
+//! Where the wire differs from CUPS4J's: a job carries its `document-format`, the job's `contentType`, where CUPS4J
+//! sends none and the server types the document; the `printer-uri` is the one the server gave, posted to on this
+//! server, where CUPS4J writes this server's host with no port and the path; a hold, release or cancel names the job by
+//! `printer-uri` and `job-id`, where CUPS4J posts a `job-uri` to `/jobs/<id>`; and a CUPS-Get-Printers the server
+//! refuses for any reason but not-found is an error, where CUPS4J reads it as no printers (accepted, P8a-37).
 
 use std::io::{Cursor, Read};
 use std::sync::{Arc, OnceLock};
@@ -236,21 +242,36 @@ fn printers_of(response: &IppRequestResponse) -> Vec<PrinterInfo> {
         .collect()
 }
 
-/// `page-ranges` text (`1-3,5`) as the IPP ranges.
-fn page_ranges(text: &str) -> Option<IppValue> {
+/// `page-ranges` text (`1-3,5`) as the IPP ranges: none for empty text or `1-` (every page), as CUPS4J. Text that is
+/// not page numbers fails the send, as CUPS4J's `Integer.parseInt` does, rather than printing every page.
+fn page_ranges(text: &str) -> Result<Option<IppValue>, Error> {
+    let text = text.trim();
+    if text.is_empty() || text == "1-" {
+        return Ok(None);
+    }
+    let unreadable = || {
+        Error::new(format!(
+            "Could not read page ranges [{text}]: give pages and ranges such as 1-3,5"
+        ))
+    };
     let mut ranges = Vec::new();
     for part in text.split(',').map(str::trim).filter(|part| !part.is_empty()) {
         let (low, high) = part.split_once('-').unwrap_or((part, part));
         ranges.push(IppValue::RangeOfInteger {
-            min: low.trim().parse().ok()?,
-            max: high.trim().parse().ok()?,
+            min: low.trim().parse().map_err(|_| unreadable())?,
+            max: high.trim().parse().map_err(|_| unreadable())?,
         });
     }
-    match ranges.len() {
+    Ok(match ranges.len() {
         0 => None,
         1 => ranges.pop(),
         _ => Some(IppValue::Array(ranges)),
-    }
+    })
+}
+
+/// A job or printer URI as CUPS4J's `PrintJobAttributes` gives it, a URL with `ipp://` made `http://`.
+fn http_url(uri: String) -> String {
+    uri.replace("ipp://", "http://")
 }
 
 /// cups4j's `JobStateEnum` text of an IPP `job-state`.
@@ -308,6 +329,8 @@ impl PrintClient for IppPrintClient {
         if let Some(job_name) = document.job_name.as_deref().filter(|name| !name.is_empty()) {
             add_operation(&mut message, "job-name", name_value(job_name)?)?;
         }
+        // The job's type, which CUPS4J does not send (see the module doc); with none it is octet-stream, which the
+        // server types.
         let format = if document.content_type.is_empty() {
             "application/octet-stream"
         } else {
@@ -325,7 +348,7 @@ impl PrintClient for IppPrintClient {
             let sides = if duplex { "two-sided-long-edge" } else { "one-sided" };
             add_job(&mut message, "sides", keyword(sides)?)?;
         }
-        if let Some(ranges) = document.page_ranges.as_deref().and_then(page_ranges) {
+        if let Some(ranges) = document.page_ranges.as_deref().map(page_ranges).transpose()?.flatten() {
             add_job(&mut message, "page-ranges", ranges)?;
         }
         *message.payload_mut() = IppPayload::new(Cursor::new(document.bytes.clone()));
@@ -372,9 +395,9 @@ impl PrintClient for IppPrintClient {
             create_time: int_of(group, "time-at-creation")
                 .filter(|time| *time > 0)
                 .map(i64::from),
-            job_url: text_of(group, "job-uri"),
+            job_url: text_of(group, "job-uri").map(http_url),
             pages_printed: int_of(group, "job-media-sheets-completed"),
-            printer_url: text_of(group, "job-printer-uri"),
+            printer_url: text_of(group, "job-printer-uri").map(http_url),
             size: int_of(group, "job-k-octets"),
         })
     }
@@ -456,10 +479,29 @@ mod tests {
     fn page_ranges_are_ranges() {
         assert!(matches!(
             page_ranges("2"),
-            Some(IppValue::RangeOfInteger { min: 2, max: 2 })
+            Ok(Some(IppValue::RangeOfInteger { min: 2, max: 2 }))
         ));
-        assert!(matches!(page_ranges("1-3, 5"), Some(IppValue::Array(values)) if values.len() == 2));
-        assert!(page_ranges("x").is_none());
+        assert!(matches!(page_ranges("1-3, 5"), Ok(Some(IppValue::Array(values))) if values.len() == 2));
+        // Every page, as CUPS4J: no attribute.
+        assert!(matches!(page_ranges(" 1- "), Ok(None)));
+        assert!(matches!(page_ranges(""), Ok(None)));
+        // Not page numbers: the send fails, as CUPS4J's parse does, rather than printing every page.
+        for text in ["x", "3-", "1-z"] {
+            let err = page_ranges(text).unwrap_err();
+            assert!(err.message().contains(&format!("[{text}]")), "{}", err.message());
+        }
+    }
+
+    #[test]
+    fn job_and_printer_urls_are_http_as_cups4j_gives_them() {
+        assert_eq!(
+            http_url("ipp://cups.local:631/jobs/7".to_string()),
+            "http://cups.local:631/jobs/7"
+        );
+        assert_eq!(
+            http_url("https://cups.example/jobs/7".to_string()),
+            "https://cups.example/jobs/7"
+        );
     }
 
     #[test]

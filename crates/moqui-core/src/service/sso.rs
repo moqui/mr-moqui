@@ -201,6 +201,7 @@ fn load_flow(facade: &EntityFacade, auth_flow_id: &str) -> Result<(EntityValue, 
 fn login(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<(), LibError> {
     let auth_flow_id = param_text(parameters, "authFlowId");
     let (_, flow) = load_flow(facade, &auth_flow_id)?;
+    // Without a returnTo the one an earlier, unfinished login stored is cleared; Java keeps it for this login.
     match safe_return_to(&param_text(parameters, "returnTo")) {
         Some(url) => set_session_attribute(RETURN_TO, Some(&url)),
         None => set_session_attribute(RETURN_TO, None),
@@ -231,6 +232,8 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
         .unwrap_or("")
         .to_string();
     let (flow_row, flow) = load_flow(facade, &auth_flow_id)?;
+    // The OIDC and OAuth parameters only. `RelayState`, which Java takes as the return URL ahead of the session's, is
+    // SAML's (not in this port), so a return URL is never taken from the callback's query.
     let callback: BTreeMap<String, String> = crate::web::parameters()
         .into_iter()
         .filter(|(name, _)| {
@@ -261,7 +264,8 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
 }
 
 /// `logout#User`: end the local login, then send the browser to the provider's end-session URL when it has one,
-/// else to a same-origin `returnTo` or `/Login`.
+/// else to a same-origin `returnTo` or `/Login`. The local login ends even when the provider's URL cannot be had,
+/// where Java leaves the user logged in when its pac4j logout throws.
 fn logout(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<(), LibError> {
     let base = base();
     let after = safe_return_to(&param_text(parameters, "returnTo")).unwrap_or_else(|| format!("{base}/Login"));
@@ -275,8 +279,10 @@ fn logout(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result
     let provider_url = if auth_flow_id.is_empty() {
         None
     } else {
-        match load_flow(facade, &auth_flow_id) {
-            Ok((_, flow)) => crate::sso::client()?.logout_url(&flow, id_token.as_deref(), &after)?,
+        let url = load_flow(facade, &auth_flow_id)
+            .and_then(|(_, flow)| crate::sso::client()?.logout_url(&flow, id_token.as_deref(), &after));
+        match url {
+            Ok(url) => url,
             Err(err) => {
                 tracing::warn!("SSO logout: {}", err.message());
                 None
@@ -344,7 +350,8 @@ fn map_fields(
                 }
             }
         };
-        if is_empty(&value) || matches!(value, Value::Bool(false)) {
+        // Groovy truth, as `if (srcFieldValue)`: false and a zero number are no value too.
+        if is_empty(&value) || !groovy_truth(&value) {
             continue;
         }
         let destination = field(rule, "dstFieldName");
@@ -370,6 +377,18 @@ fn map_fields(
         }
     }
     Ok(out)
+}
+
+/// False for `false` and a zero number; the empty values are `is_empty`.
+fn groovy_truth(value: &Value) -> bool {
+    match value {
+        Value::Bool(flag) => *flag,
+        Value::I32(number) => *number != 0,
+        Value::I64(number) => *number != 0,
+        Value::F64(number) => *number != 0.0,
+        Value::Decimal(number) => !number.is_zero(),
+        _ => true,
+    }
 }
 
 fn now_value() -> Value {
@@ -539,7 +558,10 @@ mod tests {
 
     use moqui_lib::object::Value;
 
-    use super::{active_members, call, field, sync_account, ACCOUNT};
+    use super::{
+        active_members, call, field, logout, map_fields, session_attribute, set_session_attribute, sync_account,
+        ACCOUNT, FLOW_ID,
+    };
     use crate::context::ExecutionContextFactory;
     use crate::entity::{EntityFacade, EntityValue};
     use crate::service::eca_rules;
@@ -716,6 +738,78 @@ mod tests {
         let username = sync_account(&facade, &flow, &profile("sub-admin", "renamed", &[]), "renamed").unwrap();
         assert_eq!(username, "admin");
         assert_eq!(field(&account(&facade, "SSO_ADMIN"), "userFullName"), "New Name");
+    }
+
+    #[test]
+    fn a_zero_or_false_claim_is_not_mapped_as_groovy_truth_has_it() {
+        let (facade, context) = entered();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        crate::service::load_definitions().unwrap();
+        // The flow maps the `name` claim to `userFullName`.
+        flow(&facade);
+        let mapped = |value: Value| {
+            let mut attributes = BTreeMap::new();
+            attributes.insert("name".to_string(), value);
+            map_fields(&facade, "TEST_FLOW", &attributes)
+                .unwrap()
+                .get("userFullName")
+                .map(moqui_lib::object::to_plain_string)
+        };
+        for value in [
+            Value::I64(0),
+            Value::I32(0),
+            Value::F64(0.0),
+            Value::Decimal(moqui_lib::format::Decimal::ZERO),
+            Value::Bool(false),
+            Value::string(""),
+        ] {
+            assert_eq!(mapped(value.clone()), None, "{value:?}");
+        }
+        assert_eq!(mapped(Value::I64(7)).as_deref(), Some("7"));
+        assert_eq!(mapped(Value::string("0")).as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn logout_ends_the_local_login_when_the_provider_url_cannot_be_had() {
+        let (facade, context) = entered();
+        let _entered = context.enter();
+        crate::service::load_definitions().unwrap();
+        {
+            let _authz = context.disable_authz();
+            seed(
+                &facade,
+                "moqui.security.sso.AuthFlow",
+                &[
+                    ("authFlowId", Value::string("OIDC_FLOW")),
+                    ("authFlowTypeEnumId", Value::string("AftOidc")),
+                ],
+            );
+            seed(
+                &facade,
+                "moqui.security.sso.OidcFlow",
+                &[("authFlowId", Value::string("OIDC_FLOW"))],
+            );
+            seed(
+                &facade,
+                ACCOUNT,
+                &[
+                    ("userId", Value::string("SSO_OUT")),
+                    ("username", Value::string("sso.out")),
+                ],
+            );
+        }
+        crate::user::login_external_user("sso.out").unwrap();
+        assert_eq!(
+            crate::user::session::current_user_id().unwrap().as_deref(),
+            Some("SSO_OUT")
+        );
+        set_session_attribute(FLOW_ID, Some("OIDC_FLOW"));
+        // No SSO client is installed in this crate's tests, so the provider's end-session URL is an error.
+        assert!(crate::sso::client().is_err());
+        logout(&BTreeMap::new(), &facade).unwrap();
+        assert_eq!(crate::user::session::current_user_id().unwrap(), None);
+        assert_eq!(session_attribute(FLOW_ID), None);
     }
 
     #[test]

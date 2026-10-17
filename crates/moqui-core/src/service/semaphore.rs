@@ -49,18 +49,28 @@ pub(crate) fn take(
         def.semaphore_sleep
     };
     loop {
-        if try_lock(&plan, &name, &scope, def.semaphore_ignore, &owner)? {
-            return Ok(Some(Guard {
-                tx: plan.tx.clone(),
-                clear_sql: plan.clear_sql.clone(),
-                owner,
-                name,
-                scope,
-            }));
+        let (thread, time) = match try_lock(&plan, &name, &scope, def.semaphore_ignore, &owner)? {
+            None => {
+                return Ok(Some(Guard {
+                    tx: plan.tx.clone(),
+                    clear_sql: plan.clear_sql.clone(),
+                    owner,
+                    name,
+                    scope,
+                }))
+            }
+            Some(holder) => holder,
+        };
+        if def.semaphore == SemaphoreMode::Fail {
+            return Err(Error::new(format!(
+                "An instance of service semaphore {name} with parameter value [{scope}] is already running (thread [{thread}], locked at {time}) and it is setup to fail on semaphore conflict."
+            )));
         }
-        let timed_out = started.elapsed() >= def.semaphore_timeout;
-        if def.semaphore == SemaphoreMode::Fail || timed_out {
-            return Err(Error::new(format!("semaphore {name} is held for {scope}")));
+        if started.elapsed() >= def.semaphore_timeout {
+            return Err(Error::new(format!(
+                "An instance of service semaphore {name} with parameter value [{scope}] is already running (thread [{thread}], locked at {time}) and it is setup to wait on semaphore conflict, but the semaphore did not clear in {} seconds.",
+                def.semaphore_timeout.as_secs()
+            )));
         }
         std::thread::sleep(pause);
     }
@@ -134,39 +144,72 @@ fn plan(facade: &EntityFacade) -> Result<Plan, Error> {
         .map_err(Error::from)
 }
 
-/// True when this call owns the row.
+/// None when this call owns the row, else the `lockThread` and `lockTime` of the holder, as text.
 ///
 /// Every way to take the row is a conditional write, and one that changes no row means someone
 /// else got there first. Two callers cannot both win, and a lost insert race reads as held.
-fn try_lock(plan: &Plan, name: &str, scope: &str, ignore: Duration, owner: &Value) -> Result<bool, Error> {
+fn try_lock(
+    plan: &Plan,
+    name: &str,
+    scope: &str,
+    ignore: Duration,
+    owner: &Value,
+) -> Result<Option<(String, String)>, Error> {
     let name_value = Value::string(name);
     let scope_value = Value::string(scope);
+    // As Java's message prints them: the lock time as `Timestamp.toString` does, in the server zone.
+    let holder = |row: Option<&DbRow>| {
+        let text = |field: &str| match row.and_then(|row| row.get(field)) {
+            None | Some(Value::Null) => "null".to_string(),
+            Some(Value::Timestamp(stamp)) => moqui_lib::format::format_timestamp(
+                *stamp,
+                Some("yyyy-MM-dd HH:mm:ss.SSS"),
+                &jiff::tz::TimeZone::system(),
+            )
+            .unwrap_or_else(|_| stamp.to_string()),
+            Some(value) => to_plain_string(value),
+        };
+        Some((text("lockThread"), text("lockTime")))
+    };
     reserve(&plan.tx, |conn| {
         let rows = conn.query(&plan.select_sql, &[name_value.clone(), scope_value.clone()])?;
         let now = now_millis();
         if let Some(row) = rows.first() {
             if held(row, ignore, now) {
-                return Ok(false);
+                return Ok(holder(Some(row)));
             }
             let previous = row.get("lockThread").cloned().unwrap_or(Value::Null);
-            if previous.is_null() {
-                let params = vec![owner.clone(), now_stamp(), name_value, scope_value];
-                return Ok(conn.execute(&plan.claim_free_sql, &params)? > 0);
+            let claimed = if previous.is_null() {
+                let params = vec![owner.clone(), now_stamp(), name_value.clone(), scope_value.clone()];
+                conn.execute(&plan.claim_free_sql, &params)? > 0
+            } else {
+                let params = vec![
+                    owner.clone(),
+                    now_stamp(),
+                    name_value.clone(),
+                    scope_value.clone(),
+                    previous,
+                ];
+                conn.execute(&plan.claim_stale_sql, &params)? > 0
+            };
+            if claimed {
+                return Ok(None);
             }
-            let params = vec![owner.clone(), now_stamp(), name_value, scope_value, previous];
-            return Ok(conn.execute(&plan.claim_stale_sql, &params)? > 0);
+            let rows = conn.query(&plan.select_sql, &[name_value, scope_value])?;
+            return Ok(holder(rows.first()));
         }
         let params = vec![name_value.clone(), scope_value.clone(), owner.clone(), now_stamp()];
         match conn.execute(&plan.insert_sql, &params) {
-            Ok(_) => Ok(true),
+            Ok(_) => Ok(None),
             Err(err) => {
                 // A concurrent insert of the same key is a held lock. Anything else is a failure.
                 let _ = conn.rollback();
                 conn.begin()?;
-                if conn.query(&plan.select_sql, &[name_value, scope_value])?.is_empty() {
+                let rows = conn.query(&plan.select_sql, &[name_value, scope_value])?;
+                if rows.is_empty() {
                     return Err(err);
                 }
-                Ok(false)
+                Ok(holder(rows.first()))
             }
         }
     })
@@ -189,15 +232,15 @@ fn held(row: &DbRow, ignore: Duration, now: i64) -> bool {
     true
 }
 
+/// Java's `parameterValue`: `_NA_` with no (or an empty) `semaphore-parameter`, `_NULL_` when that parameter is
+/// missing or null, else its text, empty text included.
 fn scope_value(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> String {
-    let Some(name) = &def.semaphore_parameter else {
+    let Some(name) = def.semaphore_parameter.as_deref().filter(|name| !name.is_empty()) else {
         return "_NA_".to_string();
     };
-    let text = parameters.get(name).map(to_plain_string).unwrap_or_default();
-    if text.is_empty() {
-        "_NULL_".to_string()
-    } else {
-        text
+    match parameters.get(name) {
+        None | Some(Value::Null) => "_NULL_".to_string(),
+        Some(value) => to_plain_string(value),
     }
 }
 
@@ -219,4 +262,31 @@ fn stamp_millis(value: &Value) -> Option<i64> {
         return None;
     }
     to_plain_string(value).parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use moqui_lib::object::Value;
+
+    use super::scope_value;
+    use crate::service::define::ServiceDef;
+
+    /// Java's `parameterValue`: `_NA_` with no parameter named, `_NULL_` when it is missing or null, else its text.
+    #[test]
+    fn the_scope_is_the_parameter_text_and_empty_text_is_kept() {
+        let mut def = ServiceDef::implicit("lock#Row", "lock", "Row");
+        let parameters = |value: Option<Value>| -> BTreeMap<String, Value> {
+            value.map(|value| ("orderId".to_string(), value)).into_iter().collect()
+        };
+        assert_eq!(scope_value(&def, &parameters(None)), "_NA_");
+        def.semaphore_parameter = Some(String::new());
+        assert_eq!(scope_value(&def, &parameters(Some(Value::string("A")))), "_NA_");
+        def.semaphore_parameter = Some("orderId".to_string());
+        assert_eq!(scope_value(&def, &parameters(None)), "_NULL_");
+        assert_eq!(scope_value(&def, &parameters(Some(Value::Null))), "_NULL_");
+        assert_eq!(scope_value(&def, &parameters(Some(Value::string("")))), "");
+        assert_eq!(scope_value(&def, &parameters(Some(Value::string("A")))), "A");
+    }
 }

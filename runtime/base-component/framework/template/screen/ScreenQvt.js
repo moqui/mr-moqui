@@ -32,8 +32,7 @@
 //  - The background-message of a form is text. The Java client evaluated it as a JavaScript string.
 //  - An editor-type html or md text-area is an m-text-area (QEditor, or a textarea with a Marked preview).
 //  - lookup is a text line. The Java macros had it commented out.
-//  - The navigation bar sits above the table of a form-list and not in a table row. The saved finds are listed in the find dialog; the menu
-//    data has them and the screen documents.
+//  - The navigation bar sits above the table of a form-list and not in a table row.
 //  - The mask of a text-line is converted from the Inputmask patterns (9, a, *) to Quasar mask tokens.
 //  - In fields-initial a link does not replace the _display text of a display or display-entity before it in the same field.
 (function (T, S) {
@@ -1058,7 +1057,7 @@
             if (!(cfg.headerDialog || cfg.savedFinds || cfg.selectColumns || paginated) || ctx("hideNav") === "true") return;
             let out = '<div class="form-list-nav-row row items-center"><div class="col-xs-12 col-sm-6"><div class="row items-center">';
             const flush = () => { if (out) { w(out); out = ""; } };
-            if (cfg.headerDialog || cfg.savedFinds) {
+            if (cfg.headerDialog) {
                 out += '<m-container-dialog id="' + e(formId) + '_hdialog" title="' + e(L("Find Options")) + '"><template v-slot:button><q-btn dense outline no-caps icon="search" label="' + e(L("Find Options")) + '"></q-btn></template>';
                 flush();
                 findDialogBody(n, cols, cfg);
@@ -1068,6 +1067,12 @@
                 out += '<m-container-dialog id="' + e(formId) + '_SelColsDialog" title="' + e(L("Column Fields")) + '"><template v-slot:button><q-btn dense outline no-caps icon="table_chart" label="' + e(L("Columns")) + '"></q-btn></template>';
                 flush();
                 columnsDialogBody(n, cols, cfg);
+                w("</m-container-dialog>");
+            }
+            if (cfg.savedFinds) {
+                out += '<m-container-dialog id="' + e(formId) + '_sfdialog" title="' + e(L("Saved Finds")) + '"><template v-slot:button><q-btn dense outline no-caps icon="find_in_page" label="' + e(L("Saved Finds")) + '"></q-btn></template>';
+                flush();
+                savedFindsDialogBody(n, cfg);
                 w("</m-container-dialog>");
             }
             if (at(n, "show-csv-button") === "true") {
@@ -1099,12 +1104,23 @@
                 out += '<m-form-paginate :paginate="' + e(paginateProps(listName)) + '"></m-form-paginate></div></div>';
             }
             w(out + "</div>\n");
+            if (cfg.headerDialog) {
+                const summaries = (cfg.allFields || []).map((field) => {
+                    const value = field.summary ? field.summary() : "";
+                    return value ? '<span style="white-space:nowrap;"><strong>' + t(field.title()) + ':</strong> <span class="text-positive">' + t(value) + '</span></span>' : "";
+                }).filter(Boolean);
+                w('<div class="form-list-filter-summary text-center q-pa-sm" style="font-weight:normal;">' + summaries.join(" "));
+                if (summaries.length) {
+                    w("<m-form-link" + A({ name: cfg.headerFormId + "_clr", id: cfg.headerFormId + "_clr", action: sri.getCurrentScreenUrl().path, ":fields-initial": initial(hiddenParams(n)) }) +
+                        '><q-btn dense flat type="submit" icon="clear" color="negative"><q-tooltip>' + t(L("Reset to Default")) + '</q-tooltip></q-btn></m-form-link>');
+                }
+                w("</div>");
+            }
         };
 
-        // The dialog of find options: the header fields as an m-form-link, an order-by list, and the summary of the saved find form.
-        const findDialogBody = (n, cols, cfg) => {
+        // Saved finds have their own dialog, as in Java, separate from the search parameters.
+        const savedFindsDialogBody = (n, cfg) => {
             const formId = cfg.formId;
-            const headerId = cfg.headerFormId;
             if (cfg.savedFinds) {
                 const current = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("pageIndex").removeParameter("moquiFormName").removeParameter("moquiSessionToken").removeParameter("lastStandalone").removeParameter("formListFindId");
                 const params = current.getParameterMap();
@@ -1140,6 +1156,10 @@
                     }) + '></m-text-line></div><div class="on-right q-my-auto big-row-item"><q-btn dense outline no-caps type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></div></m-form>');
                 } else w("<div style=\"margin:12px 0;\"><strong>" + t(L("No find parameters (or default), choose some in Find Options to save a new find or update existing")) + "</strong></div>");
             }
+        };
+
+        const findDialogBody = (n, cols, cfg) => {
+            const headerId = cfg.headerFormId;
             if (!cfg.headerDialog) return;
             const orderable = cols.flat().filter((f) => f.orderBy);
             const orderOptions = [];
@@ -1754,6 +1774,13 @@
         return `() => {\n${body}}`;
     };
 
+    const summaryCode = (field) => {
+        const header = child(field, "header-field");
+        if (!header || !header.children.length || child(header, "hidden") || child(header, "ignored")) return "null";
+        const hide = attr(field, "hide");
+        return `() => { ${hide ? `if (${hide}) return "";` : ""} let $t = ""; sri.pushContext(); try { ${setCode(header)} ${header.children.filter((w) => w.name !== "set" && w.name !== "link").map((w) => `$t += $v.valueText(${wlit(w, true)});`).join(" ")} } finally { sri.popContext(); } return $t.trim(); }`;
+    };
+
     const columnField = (field) => {
         const header = S.headerSub(field);
         const headerField = child(field, "header-field");
@@ -1763,8 +1790,7 @@
         const first = sideCode(field, "first-row-field");
         const second = sideCode(field, "second-row-field");
         const last = sideCode(field, "last-row-field");
-        const summary = headerField && headerField.children.length && !child(headerField, "hidden") && !child(headerField, "ignored") ?
-            `() => { let $t = ""; sri.pushContext(); try { ${setCode(headerField)} ${headerField.children.filter((w) => w.name !== "set" && w.name !== "link").map((w) => `$t += $v.valueText(${wlit(w, true)});`).join(" ")} } finally { sri.popContext(); } return $t.trim(); }` : "null";
+        const summary = summaryCode(field);
         return js`
             {
                 "name": ${lit(attr(field, "name"))},
@@ -1817,7 +1843,7 @@
                     "last": ${valueDescs(fields, "last")}
                 },
                 "allFields": [
-                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}}`).join(",\n")}
+                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}, "summary": ${summaryCode(field)}}`).join(",\n")}
                 ]
             }
         `.replace(/\n$/, "");

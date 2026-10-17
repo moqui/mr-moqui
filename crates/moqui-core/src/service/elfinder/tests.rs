@@ -121,10 +121,15 @@ fn hashes_are_the_java_hashes() {
     assert_eq!(unhash("db_cm9vdA==").as_deref(), Some("root"));
     // Anything that is not a hash is no path at all, not the root.
     assert_eq!(unhash("db"), None);
-    assert_eq!(unhash("db_"), None);
     assert_eq!(unhash("db_!!!"), None);
     assert_eq!(unhash("db_gA"), None);
     assert_eq!(connector.location("").as_deref(), Some("dbresource://mantle/content"));
+    // The volume ID alone decodes to the empty path, the root, as in Java.
+    assert_eq!(unhash("db_").as_deref(), Some(""));
+    assert_eq!(
+        connector.location("db_").as_deref(),
+        Some("dbresource://mantle/content")
+    );
     assert_eq!(
         connector.location("db_cm9vdA").as_deref(),
         Some("dbresource://mantle/content")
@@ -248,7 +253,8 @@ fn commands_run_against_a_dbresource_volume() {
     // A garbled target or the root hash removes nothing, rather than the whole volume.
     for (target, error) in [
         ("garbage", "errFileNotFound"),
-        ("db_cm9vdA", "Not allowed on the volume root"),
+        ("db_cm9vdA", "Operation not allowed on the root"),
+        ("db_", "Operation not allowed on the root"),
     ] {
         let refused = response(&command(
             root,
@@ -382,7 +388,7 @@ fn a_target_outside_the_volume_is_an_error_and_a_name_stays_inside_it() {
             "",
             vec![("targets[]", Value::List(vec![Value::string(target)]))],
         ));
-        assert_eq!(removed["error"], "Not allowed on the volume root", "{removed}");
+        assert_eq!(removed["error"], "Operation not allowed on the root", "{removed}");
     }
     let renamed = response(&command(
         &root,
@@ -390,7 +396,7 @@ fn a_target_outside_the_volume_is_an_error_and_a_name_stays_inside_it() {
         "db_cm9vdA",
         vec![("name", Value::string("x"))],
     ));
-    assert_eq!(renamed["error"], "Not allowed on the volume root", "{renamed}");
+    assert_eq!(renamed["error"], "Operation not allowed on the root", "{renamed}");
     let renamed = response(&command(&root, "rename", "garbage", vec![("name", Value::string("x"))]));
     assert_eq!(renamed["error"], "errFileNotFound", "{renamed}");
     let put = response(&command(
@@ -399,7 +405,7 @@ fn a_target_outside_the_volume_is_an_error_and_a_name_stays_inside_it() {
         "db_cm9vdA",
         vec![("content", Value::string("x"))],
     ));
-    assert_eq!(put["error"], "Not allowed on the volume root", "{put}");
+    assert_eq!(put["error"], "Operation not allowed on the root", "{put}");
     let put = response(&command(&root, "put", "garbage", vec![("content", Value::string("x"))]));
     assert_eq!(put["error"], "errFileNotFound", "{put}");
     assert_eq!(
@@ -414,8 +420,9 @@ fn a_target_outside_the_volume_is_an_error_and_a_name_stays_inside_it() {
     parameters.insert("cmd".to_string(), Value::string("ls"));
     parameters.insert("target".to_string(), Value::string("db_cm9vdA"));
     parameters.insert("resourceRoot".to_string(), Value::string("content://main/files"));
-    let err = crate::service::sync(RUN_COMMAND, &parameters).unwrap_err();
-    assert!(err.message().contains("content://main/files"), "{err}");
+    assert!(crate::service::sync(RUN_COMMAND, &parameters).unwrap().is_empty());
+    let errors = setup.context.message().errors().join("\n");
+    assert!(errors.contains("content://main/files"), "{errors}");
     assert_eq!(std::fs::read_to_string(dir.0.join("secret.txt")).unwrap(), "outside");
 }
 

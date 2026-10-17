@@ -371,7 +371,9 @@ impl RenderEnv {
 }
 
 /// The html body and the text alternative. A part the caller passed wins; the other is rendered from
-/// `bodyScreenLocation` (html, and text when the screen has a text render). Blank output is no part.
+/// `bodyScreenLocation` (html, and text when the screen has a text render). Blank output is no part. Java renders
+/// text whatever `render-modes` says; the screen renderer here refuses a mode it does not list, which would fail the
+/// send.
 fn render_bodies(env: &RenderEnv, screen: &str, body: String, body_text: String) -> Result<(String, String), String> {
     if screen.is_empty() {
         return Ok((body, body_text));
@@ -779,6 +781,8 @@ fn render_attachment(
 ) -> Result<(), String> {
     let mut filename = screen.filename.to_string();
     if filename.is_empty() {
+        // The name less its extension; Java drops 4 characters, the same for a `.xml` screen, and fails on a
+        // `screenPath` attachment with no location.
         let extension = if screen.mode == "xsl-fo" { "pdf" } else { screen.mode };
         let source = if screen.location.is_empty() {
             screen.screen_path
@@ -978,6 +982,7 @@ fn build_lettre(letter: &Letter) -> Result<lettre::Message, String> {
     let mut builder = lettre::Message::builder()
         .from(from)
         .message_id(Some(letter.message_id.clone()));
+    // As commons-email, which sets the header only for a subject that is not empty.
     if !letter.subject.is_empty() {
         builder = builder.subject(letter.subject.clone());
     }
@@ -1660,6 +1665,8 @@ impl Mailbox for ImapBox {
             return Ok(());
         }
         self.closed = true;
+        // Only when this poll flagged a message: Java's close(true) also expunges what another client flagged and
+        // could still undelete, on a server that is not set to delete.
         if self.deleted {
             self.session.expunge().map_err(|err| err.to_string())?;
         }
@@ -2070,6 +2077,8 @@ fn merge_lists(given: &str, template: &str) -> String {
     }
 }
 
+/// The addresses of a comma separated list. A comma inside quotes or `<>` does not split, where Java splits on
+/// every comma and so breaks `"Doe, Jane" <jane@example.com>` in two; an empty item is left out.
 fn split_addresses(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();

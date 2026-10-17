@@ -62,6 +62,8 @@ pub enum Method {
     Put,
     Patch,
     Delete,
+    Head,
+    Options,
 }
 
 impl Method {
@@ -73,6 +75,8 @@ impl Method {
             "PUT" => Some(Self::Put),
             "PATCH" => Some(Self::Patch),
             "DELETE" => Some(Self::Delete),
+            "HEAD" => Some(Self::Head),
+            "OPTIONS" => Some(Self::Options),
             _ => None,
         }
     }
@@ -84,6 +88,8 @@ impl Method {
             Self::Put => "PUT",
             Self::Patch => "PATCH",
             Self::Delete => "DELETE",
+            Self::Head => "HEAD",
+            Self::Options => "OPTIONS",
         }
     }
 
@@ -94,6 +100,8 @@ impl Method {
             Self::Put => reqwest::Method::PUT,
             Self::Patch => reqwest::Method::PATCH,
             Self::Delete => reqwest::Method::DELETE,
+            Self::Head => reqwest::Method::HEAD,
+            Self::Options => reqwest::Method::OPTIONS,
         }
     }
 }

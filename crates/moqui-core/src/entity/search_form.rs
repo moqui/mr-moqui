@@ -63,6 +63,10 @@ impl EntityFind {
         default_order_by: &str,
         always_paginate: bool,
     ) -> Result<SearchFormResult, Error> {
+        // As Java: a find that did not choose is not read from the cache, which would ignore paging.
+        if self.use_cache.is_none() {
+            self.use_cache = Some(false);
+        }
         let skip: BTreeSet<String> = skip_fields
             .split(',')
             .map(str::trim)
@@ -90,7 +94,8 @@ impl EntityFind {
             self = self.order_by_list(&order_by);
         }
         let given = |name: &str| input.get(name).is_some_and(|value| !is_empty(value));
-        if always_paginate || given("pageIndex") || given("pageSize") {
+        // A find that asked for the cache is not paged, as Java's `!shouldCache()`, so the cached list answers it.
+        if (always_paginate || given("pageIndex") || given("pageSize")) && !self.should_cache()? {
             let index = whole(input.get("pageIndex")).unwrap_or(0).max(0);
             let size = whole(input.get("pageSize"))
                 .or(self.limit)
@@ -98,7 +103,11 @@ impl EntityFind {
                 .max(0);
             self = self.offset(index.saturating_mul(size)).limit(size);
         }
-        if input.get("pageNoLimit").is_some_and(truthy) {
+        // Java reads only `true` or the text "true" here.
+        if input
+            .get("pageNoLimit")
+            .is_some_and(|value| matches!(value, Value::Bool(true)) || to_plain_string(value) == "true")
+        {
             self.offset = None;
             self.limit = None;
         }
@@ -147,11 +156,26 @@ impl EntityFind {
         })
     }
 
+    /// Java's `shouldCache` once `search_form_map` has set `useCache`: `useCache(true)` on an entity not marked
+    /// `cache="never"`, with no having condition, paging or lock.
+    fn should_cache(&self) -> Result<bool, Error> {
+        if self.use_cache != Some(true)
+            || !self.having.is_empty()
+            || self.limit.is_some()
+            || self.offset.is_some()
+            || self.for_update
+        {
+            return Ok(false);
+        }
+        self.facade
+            .with_entity(self.entity_name(), |entity, _, _| Ok(entity.cache != "never"))
+    }
+
     fn add(&mut self, field: &SearchField, condition: Condition) {
         if field.aggregate {
             self.having.push(condition);
         } else {
-            self.conditions.push(condition);
+            super::find::add_condition(&mut self.conditions, condition);
         }
     }
 
@@ -227,6 +251,14 @@ fn text_condition(name: &str, field: &SearchField, input: &BTreeMap<String, Valu
             .is_some_and(|text| text == "Y" || text == "true")
     };
     let (not, ignore_case) = (flag("not"), flag("ic"));
+    // Java attaches `_ic` to `equals`, `like`, `contains` and `begins` only.
+    let case = |condition: Condition| {
+        if ignore_case {
+            Condition::ignore_case(condition)
+        } else {
+            condition
+        }
+    };
     let text = to_plain_string(&value);
     let condition = match op.as_str() {
         "equals" if !value_empty => {
@@ -235,14 +267,16 @@ fn text_condition(name: &str, field: &SearchField, input: &BTreeMap<String, Valu
                 other => other.clone(),
             };
             if not {
-                Condition::not_equals(name, typed)
+                // Java's `orNull`: "not" also finds the rows with no value. Java throws on `_ic` here (ignore case on
+                // the OR); this compares the value ignoring case.
+                or_null(name, case(Condition::not_equals(name, typed)))
             } else {
-                Condition::equals(name, typed)
+                case(Condition::equals(name, typed))
             }
         }
-        "like" if !value_empty => like(name, Value::string(&text), not),
-        "contains" if !value_empty => like(name, Value::string(format!("%{text}%")), not),
-        "begins" if !value_empty => like(name, Value::string(format!("{text}%")), not),
+        "like" if !value_empty => case(like(name, Value::string(&text), not)),
+        "contains" if !value_empty => case(like(name, Value::string(format!("%{text}%")), not)),
+        "begins" if !value_empty => case(like(name, Value::string(format!("{text}%")), not)),
         "empty" => {
             // Null or the empty string; "not" is neither.
             if not {
@@ -266,18 +300,19 @@ fn text_condition(name: &str, field: &SearchField, input: &BTreeMap<String, Valu
                 return None;
             }
             if not {
-                Condition::not_in(name, items)
+                or_null(name, Condition::not_in(name, items))
             } else {
                 Condition::is_in(name, items)
             }
         }
         _ => return None,
     };
-    Some(if ignore_case {
-        Condition::ignore_case(condition)
-    } else {
-        condition
-    })
+    Some(condition)
+}
+
+/// `condition OR name IS NULL`, Java's `makeCondition(field, operator, value, orNull)`.
+fn or_null(name: &str, condition: Condition) -> Condition {
+    Condition::or(vec![condition, Condition::is_null(name)])
 }
 
 fn like(name: &str, pattern: Value, not: bool) -> Condition {
@@ -397,6 +432,72 @@ mod tests {
         let empty = search(&[("testMedium", ""), ("other", "x")]);
         assert!(conditions(&empty).is_empty());
         assert!(!empty.find.has_search_parameters);
+    }
+
+    #[test]
+    fn ignore_case_is_not_for_in_and_not_also_finds_the_empty_rows() {
+        // Java attaches `_ic` to equals, like, contains and begins only.
+        assert_eq!(
+            conditions(&search(&[
+                ("testId", "A,B"),
+                ("testId_op", "in"),
+                ("testId_ic", "true")
+            ])),
+            [Condition::is_in("testId", vec![Value::string("A"), Value::string("B")])]
+        );
+        assert_eq!(
+            conditions(&search(&[
+                ("testMedium", "alp"),
+                ("testMedium_op", "begins"),
+                ("testMedium_ic", "Y")
+            ])),
+            [Condition::ignore_case(Condition::like(
+                "testMedium",
+                Value::string("alp%")
+            ))]
+        );
+        // Java's `orNull`: "not" on equals and in also finds the rows with no value.
+        assert_eq!(
+            conditions(&search(&[("testId", "A"), ("testId_not", "Y")])),
+            [Condition::or(vec![
+                Condition::not_equals("testId", Value::string("A")),
+                Condition::is_null("testId")
+            ])]
+        );
+        assert_eq!(
+            conditions(&search(&[
+                ("testId", "A,B"),
+                ("testId_op", "in"),
+                ("testId_not", "true")
+            ])),
+            [Condition::or(vec![
+                Condition::not_in("testId", vec![Value::string("A"), Value::string("B")]),
+                Condition::is_null("testId")
+            ])]
+        );
+    }
+
+    #[test]
+    fn a_form_value_replaces_the_finds_own_and_the_cache_is_off_unless_asked_for() {
+        let replaced = find()
+            .eq("testId", Value::string("A"))
+            .search_form_map(&input(&[("testId", "B")]), &BTreeMap::new(), "", "", false)
+            .unwrap();
+        assert_eq!(conditions(&replaced), [Condition::equals("testId", Value::string("B"))]);
+        // Java's `useCache(false)` when the find did not choose, so a paged form never reads a cached list.
+        assert_eq!(replaced.find.use_cache, Some(false));
+        // A find that asked for the cache is not paged, so the cached list answers it.
+        let cached = find()
+            .use_cache(true)
+            .search_form_map(&input(&[("pageIndex", "1")]), &BTreeMap::new(), "", "", true)
+            .unwrap();
+        assert_eq!((cached.find.offset, cached.find.limit), (None, None));
+        assert_eq!(cached.find.use_cache, Some(true));
+        // Only `true` removes paging, as Java.
+        let paged = find()
+            .search_form_map(&input(&[("pageNoLimit", "Y")]), &BTreeMap::new(), "", "", true)
+            .unwrap();
+        assert_eq!((paged.find.offset, paged.find.limit), (Some(0), Some(20)));
     }
 
     #[test]

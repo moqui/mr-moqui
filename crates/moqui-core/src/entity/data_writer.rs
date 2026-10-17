@@ -251,7 +251,8 @@ impl EntityDataWriter {
             add_error("Cannot write to single CSV file with multiple entity names");
             return Ok(0);
         }
-        let written = match write_new(Path::new(filename), |out| self.write_document(&names, out)) {
+        // As Java's `createNewFile`, the parent directory must be there.
+        let written = match write_new(Path::new(filename), false, |out| self.write_document(&names, out)) {
             Ok(written) => written,
             Err(err) => return Ok(write_failed(filename, &err)),
         };
@@ -276,7 +277,7 @@ impl EntityDataWriter {
             add_error("Cannot write to single CSV file with multiple entity names");
             return Ok(0);
         }
-        let written = write_new(Path::new(zip_filename), |out| {
+        let written = write_new(Path::new(zip_filename), true, |out| {
             let mut zip = ZipWriter::new(out);
             zip.start_file(filename_within_zip, entry_options())
                 .map_err(|err| zip_error(zip_filename, err))?;
@@ -296,15 +297,17 @@ impl EntityDataWriter {
     /// skipped with a message error.
     ///
     /// An entity whose file cannot be written is logged and a message error, and the other entities are still written.
+    /// As Java's `mkdir`, only the last directory of the path is created; when that fails it is a message error.
     ///
     /// # Errors
     ///
-    /// Returns an error when the directory cannot be created.
+    /// None: as in Java, each failure is a message error and the count is of what was written.
     pub fn directory(&self, path: &str) -> Result<u64, Error> {
         let dir = Path::new(path);
         if !dir.exists() {
-            std::fs::create_dir_all(dir)
-                .map_err(|err| Error::new(format!("could not create {path}")).with_source(err))?;
+            if let Err(err) = std::fs::create_dir(dir) {
+                tracing::warn!(error = %err, "could not create data directory {path}");
+            }
         }
         if !dir.is_dir() {
             add_error(format!("Path {path} is not a directory."));
@@ -326,7 +329,7 @@ impl EntityDataWriter {
                 add_error(format!("File {filename} already exists, skipping entity {name}."));
                 continue;
             }
-            match write_new(Path::new(&filename), |out| self.write_entity_file(&name, out)) {
+            match write_new(Path::new(&filename), false, |out| self.write_entity_file(&name, out)) {
                 Ok(count) => {
                     add_message(format!("Wrote {count} records to file {filename}"));
                     written += count;
@@ -349,7 +352,7 @@ impl EntityDataWriter {
             add_error(format!("File {zip_filename} already exists."));
             return Ok(0);
         }
-        let written = write_new(Path::new(zip_filename), |out| {
+        let written = write_new(Path::new(zip_filename), true, |out| {
             let mut zip = ZipWriter::new(out);
             let mut written = 0;
             for name in self.active_names() {
@@ -451,24 +454,41 @@ impl EntityDataWriter {
             let mut rows = Vec::new();
             let mut count = 0_u64;
             while let Some(value) = cursor.next_value()? {
-                count += 1;
                 rows.push(value.fields().clone());
                 if !dependents && rows.len() >= CHUNK {
-                    write_text(out, &self.render(&full_name, &rows, master)?)?;
+                    count += self.write_rows(&full_name, &rows, master, out)?;
                     rows.clear();
                 }
             }
             cursor.close()?;
             for chunk in rows.chunks(CHUNK) {
-                write_text(out, &self.render(&full_name, chunk, master)?)?;
+                count += self.write_rows(&full_name, chunk, master, out)?;
             }
             Ok(count)
         })
     }
 
-    fn render(&self, full_name: &str, rows: &[BTreeMap<String, Value>], master: Option<&str>) -> Result<String, Error> {
+    /// Write `rows` and return how many records that was, the nested XML records included, as Java counts them.
+    fn write_rows(
+        &self,
+        full_name: &str,
+        rows: &[BTreeMap<String, Value>],
+        master: Option<&str>,
+        out: &mut impl Write,
+    ) -> Result<u64, Error> {
+        let (text, count) = self.render(full_name, rows, master)?;
+        write_text(out, &text)?;
+        Ok(count)
+    }
+
+    fn render(
+        &self,
+        full_name: &str,
+        rows: &[BTreeMap<String, Value>],
+        master: Option<&str>,
+    ) -> Result<(String, u64), Error> {
         if self.file_type == DataFileType::Csv {
-            return self.csv_rows(full_name, rows);
+            return Ok((self.csv_rows(full_name, rows)?, rows.len() as u64));
         }
         data_body(
             &self.facade,
@@ -550,9 +570,17 @@ fn write_text(out: &mut impl Write, text: &str) -> Result<(), Error> {
 }
 
 /// Create the new file `path` and write it with `body`. When `body` fails the file is removed, so a failed write
-/// leaves no partial file.
-fn write_new<T>(path: &Path, body: impl FnOnce(&mut BufWriter<File>) -> Result<T, Error>) -> Result<T, Error> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+/// leaves no partial file. With `make_parents` the missing parent directories are created first, as Java's zip
+/// writes do; a plain file needs its directory there.
+fn write_new<T>(
+    path: &Path,
+    make_parents: bool,
+    body: impl FnOnce(&mut BufWriter<File>) -> Result<T, Error>,
+) -> Result<T, Error> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| make_parents && !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)
             .map_err(|err| Error::new(format!("could not create {}", parent.display())).with_source(err))?;
     }
@@ -745,5 +773,39 @@ mod tests {
         let target = crate::testing::open();
         let loaded = load_entity_data(&target, zip_path.to_str().unwrap(), &LoadOptions::default()).unwrap();
         assert_eq!(loaded.records, 600);
+    }
+
+    /// As Java's writer, an XML record count takes in the nested dependent records, and JSON counts each top record
+    /// once; a file or directory whose parent is not there is not written, as Java's `createNewFile` and `mkdir`.
+    #[test]
+    fn xml_counts_dependents_and_a_missing_parent_is_not_made() {
+        let source = crate::testing::open();
+        let create = |entity: &str, pairs: &[(&str, &str)]| {
+            let mut row = source.make_value(entity).unwrap();
+            for (name, value) in pairs {
+                row.set(*name, Value::string(*value));
+            }
+            row.create(&source).unwrap();
+        };
+        create("moqui.basic.EnumerationType", &[("enumTypeId", "T1")]);
+        create("moqui.basic.Enumeration", &[("enumId", "E1"), ("enumTypeId", "T1")]);
+        create("moqui.basic.Enumeration", &[("enumId", "E2"), ("enumTypeId", "T1")]);
+        let mut writer = EntityDataWriter::new(&source);
+        writer.entity_name("moqui.basic.EnumerationType").dependent_levels(1);
+        let (xml, written) = writer.text().unwrap();
+        assert!(xml.contains("E2"), "{xml}");
+        assert_eq!(written, 3);
+        writer.file_type(DataFileType::Json);
+        assert_eq!(writer.text().unwrap().1, 1);
+
+        let (dir, _guard) = temp_dir();
+        let nested = dir.join("missing/rows.xml");
+        assert_eq!(writer.file(nested.to_str().unwrap()).unwrap(), 0);
+        assert!(!dir.join("missing").exists());
+        let deep = dir.join("missing/tables");
+        assert_eq!(writer.directory(deep.to_str().unwrap()).unwrap(), 0);
+        assert!(!dir.join("missing").exists());
+        let zip = dir.join("made/rows.zip");
+        assert_eq!(writer.zip_file("rows.json", zip.to_str().unwrap()).unwrap(), 1);
     }
 }

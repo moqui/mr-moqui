@@ -1021,8 +1021,9 @@ impl HostEntity {
             .ok()
     }
 
-    /// A field as a script reads it, in the user's locale when it is a localized field, as Java's `get`. A lookup runs
-    /// with the value unlocked, since it is a find.
+    /// A field as a script reads it, in the user's locale when it is a localized field, and a view's `pq-expression`
+    /// alias evaluated, as Java's `get`. A lookup or an expression runs with the value unlocked: a lookup is a find, and
+    /// an expression may read this same value.
     fn field_value(&self, name: &str) -> Option<Value> {
         let value = self.val();
         if !value.localizes(name) {
@@ -1039,7 +1040,18 @@ impl HostEntity {
         }
     }
 
-    /// The fields as a plain map, the localized ones in the user's locale, as Java's `getMap`.
+    /// [`Self::field_value`], except for a `pq-expression` alias with the name of a relationship: as Java's `get`, the
+    /// relationship comes first, so that is None.
+    fn held_value(&self, name: &str) -> Option<Value> {
+        let pq_alias = self.val().is_pq_alias(name);
+        if pq_alias && matches!(self.member(name), Some(Member::One | Member::Many)) {
+            return None;
+        }
+        self.field_value(name)
+    }
+
+    /// The fields as a plain map, the localized ones in the user's locale, with a view's `pq-expression` aliases, as
+    /// Java's `getMap`.
     fn field_map(&self) -> std::collections::BTreeMap<String, Value> {
         let value = self.val();
         if !value.has_l10n() {
@@ -1081,7 +1093,7 @@ impl HostEntity {
     /// A field value, null for a field the value does not hold, or the related value or list for a relationship
     /// name, as Java `EntityValueBase.get` resolves a name. Undefined for any other name.
     fn read_member<'js>(&self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<JsValue<'js>> {
-        let held = self.field_value(name);
+        let held = self.held_value(name);
         if let Some(value) = held {
             return host_to_js(ctx, value);
         }
@@ -1195,7 +1207,7 @@ impl HostEntity {
     fn get<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
             // the held value is cloned so the value is not locked while a relationship find runs
-            let held = self.field_value(&field);
+            let held = self.held_value(&field);
             if let Some(value) = held {
                 return value_to_js(&ctx, &value);
             }

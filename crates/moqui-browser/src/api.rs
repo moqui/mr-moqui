@@ -14,7 +14,7 @@
 
 //! The JSON request surface. One request object in, one response object out.
 //!
-//! The first cut is JSON for every call; the binary forms in `plans/Messaging.md` replace it where
+//! The first cut is JSON for every call; the binary forms in `plans/proposals/Messaging.md` replace it where
 //! they exist. A response is `{"ok":true,"result":...}` or `{"ok":false,"error":"..."}`.
 //!
 //! | `op` | Fields | Result |

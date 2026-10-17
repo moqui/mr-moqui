@@ -139,7 +139,11 @@ fn without_authz<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error>
     result
 }
 
-fn user_in_group(facade: &EntityFacade, group_id: &str) -> Result<bool, Error> {
+/// As Java's `isInGroupById`: everyone is in `ALL_USERS`, with no lookup and no user needed.
+pub(super) fn user_in_group(facade: &EntityFacade, group_id: &str) -> Result<bool, Error> {
+    if group_id == "ALL_USERS" {
+        return Ok(true);
+    }
     let Some(user_id) = current_account_id(facade)? else {
         return Ok(false);
     };
@@ -155,7 +159,9 @@ fn user_in_group(facade: &EntityFacade, group_id: &str) -> Result<bool, Error> {
         .any(|row| membership_open(row.get("fromDate"), row.get("thruDate"), &now)))
 }
 
-fn user_has_permission(facade: &EntityFacade, permission_id: &str) -> Result<bool, Error> {
+/// As Java's `hasPermissionById`, which reads the `UserPermissionCheck` view of the user's own memberships: a permission
+/// granted to `ALL_USERS` counts only for a user with a `UserGroupMember` row for it.
+pub(super) fn user_has_permission(facade: &EntityFacade, permission_id: &str) -> Result<bool, Error> {
     let Some(user_id) = current_account_id(facade)? else {
         return Ok(false);
     };
@@ -210,7 +216,8 @@ fn current_account_id(facade: &EntityFacade) -> Result<Option<String>, Error> {
     }
 }
 
-/// As Java's `filterByDate`: a missing date leaves that end open. A date that does not compare is not open.
+/// As Java's `filterByDate`: a missing date leaves that end open, and both ends are inclusive. A date that does not
+/// compare is not open.
 fn membership_open(from: Option<&Value>, thru: Option<&Value>, now: &Value) -> bool {
     if let Some(from) = from.filter(|from| !from.is_null()) {
         let Ok(order) = moqui_lib::object::compare_obj(from, now) else {
@@ -222,7 +229,7 @@ fn membership_open(from: Option<&Value>, thru: Option<&Value>, now: &Value) -> b
     }
     match thru {
         None | Some(Value::Null) => true,
-        Some(thru) => moqui_lib::object::compare_obj(thru, now).ok() == Some(std::cmp::Ordering::Greater),
+        Some(thru) => moqui_lib::object::compare_obj(thru, now).is_ok_and(std::cmp::Ordering::is_ge),
     }
 }
 
@@ -248,5 +255,6 @@ mod tests {
         assert!(membership_open(Some(&at(1_000)), Some(&at(3_000)), &now));
         assert!(!membership_open(Some(&at(3_000)), None, &now), "not started");
         assert!(!membership_open(None, Some(&at(1_000)), &now), "ended");
+        assert!(membership_open(Some(&now), Some(&now), &now), "both ends are inclusive");
     }
 }

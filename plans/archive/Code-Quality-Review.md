@@ -1,5 +1,7 @@
 # Code Quality and Problematic-Pattern Review of `crates/`
 
+> Archived 2026-10-16: resolved on 2026-10-15 (the six fix phases under [Resolution](#resolution-2026-10-15)). What was left open is listed in [Remaining-Work, Code quality review leftovers](../Remaining-Work.md#code-quality-review-leftovers); the behaviour changes that differ from Java on purpose are in [Parity-Diffs](../Parity-Diffs.md#code-quality-review-2026-10-15).
+
 Date: 2026-10-14. Scope: all non-test Rust in `crates/` (about 138k lines across 6 crates). This review checks the code on its own terms, not for parity with Moqui Java. `../moqui` was used only to understand intent. Where an issue also exists in Java, it is marked **(inherited)**.
 
 ## Verdict

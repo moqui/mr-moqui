@@ -64,7 +64,6 @@ pub struct DbResourceVersion {
 struct Node {
     id: String,
     is_file: bool,
-    filename: String,
 }
 
 impl EntityFacade {
@@ -116,23 +115,25 @@ impl EntityFacade {
         })
     }
 
-    /// Create or replace a `dbresource://` file. Missing parent directories are created.
+    /// Create or replace a `dbresource://` file. Missing parent directories are created. A file in the path, or a
+    /// directory at the location, is an error, as `DbResourceReference.putObject`.
     pub fn write_db_resource(&self, location: &str, bytes: &[u8]) -> Result<(), Error> {
         self.ensure_db_tables()?;
-        let parts = db_parts(location)?;
-        if parts.is_empty() {
+        let mut parts = db_parts(location)?;
+        let Some(filename) = parts.pop() else {
             return Err(Error::new(format!("cannot write the dbresource root: {location}")));
-        }
-        let mut parent: Option<String> = None;
-        for (index, segment) in parts.iter().enumerate() {
-            let last = index + 1 == parts.len();
-            let id = self.ensure_node(parent.as_deref(), segment, last)?;
-            if last {
-                self.write_bytes(&id, bytes)?;
+        };
+        let parent = self.directory_id(&parts)?;
+        let id = match self.find_node(parent.as_deref(), &filename)? {
+            Some(node) if !node.is_file => {
+                return Err(Error::new(format!(
+                    "Cannot write a file at {location}, it is a directory"
+                )))
             }
-            parent = Some(id);
-        }
-        Ok(())
+            Some(node) => node.id,
+            None => self.create_node(parent.as_deref(), &filename, true)?,
+        };
+        self.write_bytes(&id, &filename, bytes)
     }
 
     /// The kind, time, and size of a `dbresource://` location, or `None` when a segment has no row. The root is a
@@ -261,7 +262,7 @@ impl EntityFacade {
                 }
                 parent = Some(node.id);
             } else {
-                parent = Some(self.ensure_node(parent.as_deref(), segment, false)?);
+                parent = Some(self.create_node(parent.as_deref(), segment, false)?);
             }
         }
         Ok(parent)
@@ -300,16 +301,7 @@ impl EntityFacade {
             .get("isFile")
             .and_then(Value::as_str)
             .is_some_and(|flag| flag.eq_ignore_ascii_case("Y"));
-        let name = row
-            .get("filename")
-            .and_then(Value::as_str)
-            .unwrap_or(filename)
-            .to_string();
-        Ok(Some(Node {
-            id,
-            is_file,
-            filename: name,
-        }))
+        Ok(Some(Node { id, is_file }))
     }
 
     fn list_children(&self, parent: Option<&str>) -> Result<Vec<DbResourceChild>, Error> {
@@ -318,7 +310,7 @@ impl EntityFacade {
             Some(parent) => find.eq("parentResourceId", Value::string(parent)),
             None => find.condition(Condition::is_null("parentResourceId")),
         };
-        let rows = find.list()?;
+        let rows = find.order_by("filename", false).list()?;
         let mut children = Vec::new();
         for row in rows.iter() {
             let Some(name) = row.get("filename").and_then(Value::as_str) else {
@@ -344,20 +336,8 @@ impl EntityFacade {
         Ok(blob_bytes(row.get("fileData"), resource_id)?.unwrap_or_default())
     }
 
-    fn ensure_node(&self, parent: Option<&str>, filename: &str, is_file: bool) -> Result<String, Error> {
-        if let Some(node) = self.find_node(parent, filename)? {
-            if is_file && !node.is_file {
-                let mut value = EntityValue::make(self, DB_RESOURCE)?;
-                value.set("resourceId", Value::string(&node.id));
-                value.set("filename", Value::string(&node.filename));
-                if let Some(parent) = parent {
-                    value.set("parentResourceId", Value::string(parent));
-                }
-                value.set("isFile", Value::string("Y"));
-                value.update(self)?;
-            }
-            return Ok(node.id);
-        }
+    /// A new `DbResource` row under `parent`, its id.
+    fn create_node(&self, parent: Option<&str>, filename: &str, is_file: bool) -> Result<String, Error> {
         let mut value = EntityValue::make(self, DB_RESOURCE)?;
         value.set_sequenced_id_primary(self)?;
         let id = value
@@ -374,13 +354,17 @@ impl EntityFacade {
         Ok(id)
     }
 
-    /// Write a file's bytes as `DbResourceReference.putObject`: the first write is version "01" with its history row;
-    /// a later write keeps the replaced bytes in the current version's history row and adds the next version.
-    fn write_bytes(&self, resource_id: &str, bytes: &[u8]) -> Result<(), Error> {
+    /// Write a file's bytes as `DbResourceReference.putObject`: the first write is version "01" with its history row
+    /// and the MIME type of `filename`; a later write keeps the replaced bytes in the current version's history row and
+    /// adds the next version.
+    fn write_bytes(&self, resource_id: &str, filename: &str, bytes: &[u8]) -> Result<(), Error> {
         let existing = self.find(DB_FILE)?.eq("resourceId", Value::string(resource_id)).one()?;
         let Some(existing) = existing else {
             let mut value = EntityValue::make(self, DB_FILE)?;
             value.set("resourceId", Value::string(resource_id));
+            if let Some(mime_type) = moqui_lib::resource::content_type_for_name(filename) {
+                value.set("mimeType", Value::string(mime_type));
+            }
             value.set("fileData", Value::Bytes(bytes.to_vec()));
             value.set("versionName", Value::string(FIRST_VERSION));
             value.set("rootVersionName", Value::string(FIRST_VERSION));
@@ -476,6 +460,23 @@ impl EntityFacade {
             Some(name) => self.db_resource_version(location, &name),
             None => Ok(None),
         }
+    }
+
+    /// The versions of the file at `location` made from `version_name`, `getNextVersions`.
+    pub fn db_resource_next_versions(
+        &self,
+        location: &str,
+        version_name: &str,
+    ) -> Result<Vec<DbResourceVersion>, Error> {
+        let Some((resource_id, _)) = self.file_row(location)? else {
+            return Ok(Vec::new());
+        };
+        let rows = self
+            .find(DB_HISTORY)?
+            .eq("resourceId", Value::string(&resource_id))
+            .eq("previousVersionName", Value::string(version_name))
+            .list()?;
+        Ok(rows.iter().map(version_of).collect())
     }
 
     /// Every version of the file at `location`, newest first, `getVersionHistory`.
@@ -659,6 +660,75 @@ mod tests {
                 .as_deref(),
             Some("01")
         );
+    }
+
+    #[test]
+    fn a_write_across_a_file_or_onto_a_directory_fails() {
+        let (facade, context) = facade();
+        let _entered = context.enter();
+        facade.write_db_resource("dbresource://tree/file.txt", b"one").unwrap();
+        let err = facade
+            .write_db_resource("dbresource://tree/file.txt/below.txt", b"x")
+            .unwrap_err();
+        assert!(err.to_string().contains("found file instead"), "{err}");
+        let err = facade.write_db_resource("dbresource://tree", b"x").unwrap_err();
+        assert!(err.to_string().contains("is a directory"), "{err}");
+        let tree = facade.read_db_resource("dbresource://tree").unwrap();
+        assert!(tree.exists && !tree.is_file);
+        assert_eq!(tree.children.len(), 1);
+        let file = facade.read_db_resource("dbresource://tree/file.txt").unwrap();
+        assert!(file.is_file && file.children.is_empty());
+        assert_eq!(file.bytes, b"one".to_vec());
+    }
+
+    #[test]
+    fn the_first_write_sets_the_mime_type_and_children_are_in_filename_order() {
+        let (facade, context) = facade();
+        let _entered = context.enter();
+        for name in ["c.md", "a.json", "b.bin"] {
+            facade
+                .write_db_resource(&format!("dbresource://order/{name}"), b"x")
+                .unwrap();
+        }
+        let names: Vec<String> = facade
+            .read_db_resource("dbresource://order")
+            .unwrap()
+            .children
+            .into_iter()
+            .map(|child| child.name)
+            .collect();
+        assert_eq!(names, ["a.json", "b.bin", "c.md"]);
+        let mime = |name: &str| {
+            let (id, row) = facade.file_row(&format!("dbresource://order/{name}")).unwrap().unwrap();
+            assert!(!id.is_empty());
+            row.get("mimeType")
+                .and_then(moqui_lib::object::Value::as_str)
+                .map(str::to_string)
+        };
+        assert_eq!(mime("a.json").as_deref(), Some("application/json"));
+        assert_eq!(mime("c.md").as_deref(), Some("text/plain"));
+        assert_eq!(mime("b.bin"), None);
+    }
+
+    #[test]
+    fn next_versions_are_the_versions_made_from_one() {
+        let (facade, context) = facade();
+        let _entered = context.enter();
+        let location = "dbresource://wiki/n.md";
+        facade.write_db_resource(location, b"one").unwrap();
+        facade.write_db_resource(location, b"two").unwrap();
+        let next: Vec<String> = facade
+            .db_resource_next_versions(location, "01")
+            .unwrap()
+            .into_iter()
+            .map(|version| version.version_name)
+            .collect();
+        assert_eq!(next, ["02"]);
+        assert!(facade.db_resource_next_versions(location, "02").unwrap().is_empty());
+        assert!(facade
+            .db_resource_next_versions("dbresource://wiki/none.md", "01")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -175,11 +175,18 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .first_named("inline-jdbc")
         .or_else(|| database_node.first_named("inline-jdbc"));
     let pool = pool_config(inline.as_ref(), &database_node)?;
+    // As Java's `EntityInfo`: `use-schemas="false"` puts no schema in front of the tables, so they are wherever the
+    // connection puts them.
+    let schema = if expanded(&database_node, "use-schemas") == "false" {
+        String::new()
+    } else {
+        expanded(&datasource, "schema-name")
+    };
     let mut conf = DatasourceConf {
         group: group.to_string(),
         kind,
         dialect,
-        schema: expanded(&datasource, "schema-name"),
+        schema,
         host: String::new(),
         port: None,
         database: String::new(),
@@ -211,6 +218,14 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
                 conf.dialect
             )));
         }
+    }
+    // Java writes `schema.TABLE`, which on MySQL is a table of another database. The Postgres driver sets the
+    // session's search path instead (`moqui-host` `entity_db`); MySQL has nothing for it here.
+    if kind == DatasourceKind::Mysql && !conf.schema.is_empty() {
+        tracing::warn!(
+            "Datasource {group} schema-name {} is not used on MySQL; name that database in the jdbc-uri or xa-properties",
+            conf.schema
+        );
     }
     Ok(conf)
 }
@@ -273,7 +288,10 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
     Ok(())
 }
 
-/// `jdbc:postgresql://host[:port]/db[?k=v&...]` or the `jdbc:mysql:` form.
+/// `jdbc:postgresql://host[:port]/db[?k=v&...]` or the `jdbc:mysql:` form. Java hands every parameter to the JDBC
+/// driver. Those with an equivalent in this port's drivers are read: `sslmode`/`sslMode` and MySQL's `useSSL` for TLS,
+/// and Postgres `currentSchema` (one plain name) as the schema when the datasource has no `schema-name`. Any other is
+/// logged and left out.
 fn jdbc_uri(conf: &mut DatasourceConf, uri: &str) -> Result<(), Error> {
     let rest = uri
         .strip_prefix("jdbc:postgresql://")
@@ -290,11 +308,23 @@ fn jdbc_uri(conf: &mut DatasourceConf, uri: &str) -> Result<(), Error> {
     conf.host = host.trim_start_matches('[').trim_end_matches(']').to_string();
     conf.port = port(port_text)?;
     conf.database = database.to_string();
-    for pair in query.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            if key.eq_ignore_ascii_case("sslmode") {
-                conf.tls = tls_wanted(value);
-            }
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key.eq_ignore_ascii_case("sslmode") {
+            conf.tls = tls_wanted(value);
+        } else if key.eq_ignore_ascii_case("useSSL") {
+            conf.tls = !value.eq_ignore_ascii_case("false");
+        } else if key == "currentSchema"
+            && conf.schema.is_empty()
+            && !value.is_empty()
+            && value.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            conf.schema = value.to_string();
+        } else {
+            tracing::warn!(
+                "Datasource {} jdbc-uri parameter {key} has no equivalent in this port's driver, ignoring it",
+                conf.group
+            );
         }
     }
     Ok(())
@@ -406,6 +436,45 @@ mod tests {
         assert_eq!(ds.pool.acquire_timeout, Duration::ZERO);
         assert_eq!(ds.pool.idle_timeout, Some(Duration::from_secs(5)));
         assert_eq!(ds.pool.test_query.as_deref(), Some("SELECT 42"));
+    }
+
+    #[test]
+    fn jdbc_uri_parameters_with_a_driver_equivalent_are_read() {
+        let node = conf(
+            r#"<datasource group-name="transactional" database-conf-name="postgres">
+                <inline-jdbc jdbc-uri="jdbc:postgresql://h:5432/db?ApplicationName=moqui&amp;currentSchema=app&amp;sslmode=disable"/>
+            </datasource>"#,
+        );
+        let ds = datasource_conf(&node, "transactional").unwrap();
+        assert_eq!((ds.schema.as_str(), ds.tls), ("app", false));
+        // The datasource's own schema-name wins.
+        let node = conf(
+            r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="own">
+                <inline-jdbc jdbc-uri="jdbc:postgresql://h/db?currentSchema=app"/>
+            </datasource>"#,
+        );
+        assert_eq!(datasource_conf(&node, "transactional").unwrap().schema, "own");
+        let node = conf(
+            r#"<datasource group-name="transactional" database-conf-name="mysql8">
+                <inline-jdbc jdbc-uri="jdbc:mysql://h:3306/db?useSSL=false&amp;serverTimezone=UTC"/>
+            </datasource>"#,
+        );
+        let ds = datasource_conf(&node, "transactional").unwrap();
+        assert!(!ds.tls);
+        assert_eq!(ds.database, "db");
+    }
+
+    #[test]
+    fn use_schemas_false_leaves_the_schema_out() {
+        let node = conf(r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="app"/>"#);
+        node.first_named("database-list")
+            .unwrap()
+            .children_named("database")
+            .into_iter()
+            .find(|database| database.attribute("name").as_deref() == Some("postgres"))
+            .unwrap()
+            .set_attribute("use-schemas", "false");
+        assert_eq!(datasource_conf(&node, "transactional").unwrap().schema, "");
     }
 
     #[test]

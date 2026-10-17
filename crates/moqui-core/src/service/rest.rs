@@ -25,6 +25,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::call;
+use super::define::{ParamDef, Required};
 use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
 use crate::entity::{sensitive, EntityFacade};
 
@@ -69,7 +70,8 @@ pub fn run(path: &[&str], method: &str, parameters: &BTreeMap<String, Value>) ->
 }
 
 /// `RestApi.getFreshRootResources` for the tools dashboard: each root resource with its `name`, `displayName`,
-/// `description`, the count of methods under it (`childMethods`), and its child resources by name (`resourceMap`).
+/// `description`, the counts of paths and methods under it (`childPaths`, `childMethods`), and its child resources by
+/// name (`resourceMap`). Java's `methodMap` of handler objects, read only by its LLM browse tool, is not here.
 ///
 /// # Errors
 ///
@@ -136,6 +138,10 @@ fn resource_info(node: &Node, with_children: bool) -> Value {
     map.insert("displayName".to_string(), text(&node.display_name));
     map.insert("description".to_string(), text(&node.description));
     map.insert(
+        "childPaths".to_string(),
+        Value::I64(i64::try_from(node.path_count()).unwrap_or(i64::MAX)),
+    );
+    map.insert(
         "childMethods".to_string(),
         Value::I64(i64::try_from(node.method_count()).unwrap_or(i64::MAX)),
     );
@@ -154,6 +160,15 @@ fn resource_info(node: &Node, with_children: bool) -> Value {
 }
 
 impl Node {
+    /// Java's `childPaths`: each child resource and id, and the paths under them.
+    fn path_count(&self) -> usize {
+        self.resources
+            .values()
+            .map(|child| 1 + child.path_count())
+            .sum::<usize>()
+            + self.id.as_ref().map_or(0, |id| 1 + id.path_count())
+    }
+
     fn method_count(&self) -> usize {
         self.methods.len()
             + self.resources.values().map(Node::method_count).sum::<usize>()
@@ -293,8 +308,10 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
     if name.is_empty() {
         return Err(Error::new("REST resource is missing a name"));
     }
+    // An empty value inherits, as Java's `?:`.
     let auth = node
         .attribute("require-authentication")
+        .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| parent_auth.to_string());
     let full_path = if is_id {
         format!("{parent_path}/{{{name}}}")
@@ -307,11 +324,23 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
     for child in node.children() {
         match child.name().as_str() {
             "method" => {
-                let verb = child.attribute("type").unwrap_or_default().to_ascii_lowercase();
-                if verb.is_empty() {
-                    return Err(Error::new(format!("REST method on {name} is missing a type")));
+                // Keyed by `type` as written, as Java's `methodMap`, so a `type="GET"` is never matched. A method
+                // that does not load is logged and left out and the rest of the file served (Java skips an unknown
+                // operation, keys a missing type by null, keeps a missing name, fails the file with no operation).
+                let verb = child.attribute("type").unwrap_or_default();
+                let operation = if verb.is_empty() {
+                    Err(Error::new("REST method is missing a type"))
+                } else {
+                    operation_from(&child, &auth)
+                };
+                match operation {
+                    Ok(operation) => {
+                        methods.insert(verb, operation);
+                    }
+                    Err(err) => {
+                        tracing::error!(resource = %full_path, method = %verb, error = %err, "REST method left out")
+                    }
                 }
-                methods.insert(verb, operation_from(&child, &auth)?);
             }
             "resource" => {
                 let child_node = node_from(&child, &auth, &full_path, false)?;
@@ -324,11 +353,7 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
     Ok(Node {
         name,
         display_name: node.attribute("displayName").filter(|text| !text.is_empty()),
-        description: node
-            .first_named("description")
-            .and_then(|child| child.text())
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty()),
+        description: node.attribute("description").filter(|text| !text.is_empty()),
         is_id,
         allow_extra_path: is_id && node.attribute("allow-extra-path").as_deref() == Some("true"),
         full_path,
@@ -342,6 +367,7 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
 fn operation_from(method: &MNode, parent_auth: &str) -> Result<Operation, Error> {
     let auth = method
         .attribute("require-authentication")
+        .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| parent_auth.to_string());
     let body = method
         .children()
@@ -561,7 +587,31 @@ fn run_service(name: &str, auth: &str, params: &BTreeMap<String, Value>) -> Resu
     // The method's own `anonymous-*` marks the last path frame, as Java `MethodService.run`.
     let mut anonymous = PathFrame::default();
     anonymous.apply_anonymous(auth)?;
-    Ok(value_map(call::sync(name, params)?))
+    let mut result = call::sync(name, params)?;
+    remove_result_nulls(&mut result);
+    // As Java's `RestResult`, the password fields of a `UserAccount` are left out wherever they are in the result.
+    Ok(sensitive::strip_user_account_secrets(value_map(result)))
+}
+
+/// Java's `nestedRemoveNullsFromResultMap`: the null out-parameters are left out, and the null fields of an entity
+/// value and of the maps that lead a list. Entity values are maps here, so a plain map out-parameter loses its null
+/// entries too, where Java keeps them.
+fn remove_result_nulls(result: &mut BTreeMap<String, Value>) {
+    result.retain(|_, value| !value.is_null());
+    for value in result.values_mut() {
+        match value {
+            Value::Map(map) => map.retain(|_, field| !field.is_null()),
+            Value::List(items) => {
+                for item in items {
+                    let Value::Map(map) = item else {
+                        break;
+                    };
+                    map.retain(|_, field| !field.is_null());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn run_entity(
@@ -723,6 +773,11 @@ fn unwrap_frame(frame: moqui_lib::context_stack::Frame) -> Value {
 
 /// OpenAPI 3.1 for one service REST root. The caller strips `.json` and rejects YAML.
 ///
+/// As Java's Swagger for a service method, the path parameters, then the other in-parameters as query parameters for
+/// a method with no body (not those that are objects or arrays) or the in-parameters as the JSON body of a `post`,
+/// `put` or `patch`, and the out-parameters as the response. A parameter with `entity-name` and `field-name` lists the
+/// ids of that field's `Enumeration` or `StatusItem` type in `enum`, as `RestSchemaUtil.addParameterEnums`.
+///
 /// # Errors
 ///
 /// Returns an error when the root name is missing or that root is not loaded.
@@ -740,8 +795,13 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
             format!("Service REST API root resource not found with name {}", segments[0]),
         )
     })?;
+    let facade = current_facade().ok();
+    let mut schemas = Schemas {
+        facade: facade.as_ref(),
+        enums: facade.as_ref().map(crate::entity::FieldEnums::new),
+    };
     let mut paths = IndexMap::new();
-    collect_paths(root, "", &segments[1..], &mut paths);
+    collect_paths(root, "", &segments[1..], &[], &mut schemas, &mut paths);
     let mut info = IndexMap::new();
     info.insert("title".to_string(), Value::string(&segments[0]));
     info.insert("version".to_string(), Value::string("1.0"));
@@ -755,26 +815,43 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
     Ok(Value::Map(doc))
 }
 
-fn collect_paths(node: &Node, prefix: &str, descend: &[String], paths: &mut IndexMap<String, Value>) {
+/// What the parameter schemas of one document read: the entity model and the enumeration ids.
+struct Schemas<'a> {
+    facade: Option<&'a EntityFacade>,
+    enums: Option<crate::entity::FieldEnums<'a>>,
+}
+
+fn collect_paths(
+    node: &Node,
+    prefix: &str,
+    descend: &[String],
+    path_params: &[String],
+    schemas: &mut Schemas<'_>,
+    paths: &mut IndexMap<String, Value>,
+) {
     let here = join_path(prefix, node);
+    let mut path_params = path_params.to_vec();
+    if node.is_id {
+        path_params.push(node.name.clone());
+    }
     if let Some((next, rest)) = descend.split_first() {
         if let Some(child) = node.resources.get(next) {
-            collect_paths(child, &here, rest, paths);
+            collect_paths(child, &here, rest, &path_params, schemas, paths);
             return;
         }
         if let Some(id) = &node.id {
-            collect_paths(id, &here, rest, paths);
+            collect_paths(id, &here, rest, &path_params, schemas, paths);
         }
         return;
     }
     if !node.methods.is_empty() {
-        paths.insert(here.clone(), method_object(&node.methods));
+        paths.insert(here.clone(), method_object(&node.methods, &path_params, schemas));
     }
     if let Some(id) = &node.id {
-        collect_paths(id, &here, &[], paths);
+        collect_paths(id, &here, &[], &path_params, schemas, paths);
     }
     for child in node.resources.values() {
-        collect_paths(child, &here, &[], paths);
+        collect_paths(child, &here, &[], &path_params, schemas, paths);
     }
 }
 
@@ -791,15 +868,15 @@ fn join_path(prefix: &str, node: &Node) -> String {
     }
 }
 
-fn method_object(methods: &BTreeMap<String, Operation>) -> Value {
+fn method_object(methods: &BTreeMap<String, Operation>, path_params: &[String], schemas: &mut Schemas<'_>) -> Value {
     let mut map = IndexMap::new();
     for (verb, operation) in methods {
-        map.insert(verb.clone(), operation_object(operation));
+        map.insert(verb.clone(), operation_object(verb, operation, path_params, schemas));
     }
     Value::Map(map)
 }
 
-fn operation_object(operation: &Operation) -> Value {
+fn operation_object(verb: &str, operation: &Operation, path_params: &[String], schemas: &mut Schemas<'_>) -> Value {
     let summary = match operation {
         Operation::Service { name, .. } => name.clone(),
         Operation::Entity { name, operation, .. } => format!("{operation} {name}"),
@@ -808,13 +885,219 @@ fn operation_object(operation: &Operation) -> Value {
     success.insert("description".to_string(), Value::string("Success"));
     let mut denied = IndexMap::new();
     denied.insert("description".to_string(), Value::string("Authentication required"));
+    let mut map = IndexMap::new();
+    map.insert("summary".to_string(), Value::string(summary));
+    if let Operation::Service { name, .. } = operation {
+        service_parameters(name, verb, path_params, schemas, &mut map, &mut success);
+    }
     let mut responses = IndexMap::new();
     responses.insert("200".to_string(), Value::Map(success));
     responses.insert("401".to_string(), Value::Map(denied));
-    let mut map = IndexMap::new();
-    map.insert("summary".to_string(), Value::string(summary));
     map.insert("responses".to_string(), Value::Map(responses));
     Value::Map(map)
+}
+
+/// The `parameters`, `requestBody` and response `content` of a service method. A service that is not defined, or
+/// whose parameters do not expand, is logged and documented without them; Java's Swagger fails for it.
+fn service_parameters(
+    name: &str,
+    verb: &str,
+    path_params: &[String],
+    schemas: &mut Schemas<'_>,
+    operation: &mut IndexMap<String, Value>,
+    success: &mut IndexMap<String, Value>,
+) {
+    let Some(def) = super::define::find(name) else {
+        tracing::error!(
+            service = name,
+            "REST service not found, its parameters are left out of the OpenAPI"
+        );
+        return;
+    };
+    let in_params = match super::validate::declared_in(&def, schemas.facade) {
+        Ok(params) => params,
+        Err(err) => {
+            tracing::error!(service = name, error = %err, "REST service parameters left out of the OpenAPI");
+            return;
+        }
+    };
+    let in_params: Vec<&ParamDef> = in_params
+        .iter()
+        .filter(|param| !param.name.is_empty() && param.required != Required::Disabled)
+        .collect();
+    let mut parameters = Vec::new();
+    for path_param in path_params {
+        let found = in_params.iter().find(|param| &param.name == path_param);
+        let mut schema = IndexMap::new();
+        schema.insert(
+            "type".to_string(),
+            Value::string(json_type(found.map_or("", |param| param.java_type.as_str()))),
+        );
+        if let Some(description) = found.and_then(|param| param.description.as_deref()) {
+            schema.insert("description".to_string(), Value::string(description));
+        }
+        parameters.push(parameter_object(path_param, "path", true, schema));
+    }
+    let remaining: Vec<&ParamDef> = in_params
+        .iter()
+        .copied()
+        .filter(|param| !path_params.contains(&param.name))
+        .collect();
+    if !remaining.is_empty() {
+        if matches!(verb, "post" | "put" | "patch") {
+            let mut json = IndexMap::new();
+            json.insert("schema".to_string(), params_schema(&in_params, schemas));
+            let mut content = IndexMap::new();
+            content.insert("application/json".to_string(), Value::Map(json));
+            let mut body = IndexMap::new();
+            body.insert("required".to_string(), Value::Bool(true));
+            body.insert("content".to_string(), Value::Map(content));
+            operation.insert("requestBody".to_string(), Value::Map(body));
+        } else {
+            for param in remaining {
+                // Query parameters, so no objects or arrays, as Java.
+                if matches!(json_type(&param.java_type), "object" | "array") {
+                    continue;
+                }
+                let schema = param_schema(param, schemas);
+                parameters.push(parameter_object(&param.name, "query", false, schema));
+            }
+        }
+    }
+    if !parameters.is_empty() {
+        operation.insert("parameters".to_string(), Value::List(parameters));
+    }
+    let out_params: Vec<&ParamDef> = def
+        .out_params
+        .iter()
+        .filter(|param| !param.name.is_empty() && param.required != Required::Disabled)
+        .collect();
+    if !out_params.is_empty() {
+        let mut json = IndexMap::new();
+        json.insert("schema".to_string(), params_schema(&out_params, schemas));
+        let mut content = IndexMap::new();
+        content.insert("application/json".to_string(), Value::Map(json));
+        success.insert("content".to_string(), Value::Map(content));
+    }
+}
+
+fn parameter_object(name: &str, location: &str, required: bool, schema: IndexMap<String, Value>) -> Value {
+    let mut map = IndexMap::new();
+    map.insert("name".to_string(), Value::string(name));
+    map.insert("in".to_string(), Value::string(location));
+    map.insert("required".to_string(), Value::Bool(required));
+    map.insert("schema".to_string(), Value::Map(schema));
+    Value::Map(map)
+}
+
+/// Java's `getJsonSchemaMapIn` and `getJsonSchemaMapOut`.
+fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> Value {
+    let mut properties = IndexMap::new();
+    let mut required = Vec::new();
+    for param in params {
+        if param.required == Required::True {
+            required.push(Value::string(&param.name));
+        }
+        properties.insert(param.name.clone(), Value::Map(param_schema(param, schemas)));
+    }
+    let mut map = IndexMap::new();
+    map.insert("type".to_string(), Value::string("object"));
+    map.insert("properties".to_string(), Value::Map(properties));
+    if !required.is_empty() {
+        map.insert("required".to_string(), Value::List(required));
+    }
+    Value::Map(map)
+}
+
+/// Java's `getJsonSchemaPropMap`: the type and format, the description, the default, the first nested parameter as an
+/// array's items or the nested parameters as an object's properties, and otherwise the enumeration ids.
+fn param_schema(param: &ParamDef, schemas: &mut Schemas<'_>) -> IndexMap<String, Value> {
+    let json_type = json_type(&param.java_type);
+    let mut map = IndexMap::new();
+    map.insert("type".to_string(), Value::string(json_type));
+    if let Some(format) = json_format(&param.java_type) {
+        map.insert("format".to_string(), Value::string(format));
+    }
+    if let Some(description) = param.description.as_deref() {
+        map.insert("description".to_string(), Value::string(description));
+    }
+    if let Some(default) = param.default_value.as_deref().filter(|text| !text.is_empty()) {
+        map.insert("default".to_string(), Value::string(default));
+    }
+    if let Some(default) = param.default_expr.as_deref().filter(|text| !text.is_empty()) {
+        map.insert("default".to_string(), Value::string(format!("{{{default}}}")));
+    }
+    match json_type {
+        "array" => {
+            if let Some(child) = param.children.first() {
+                map.insert("items".to_string(), Value::Map(param_schema(child, schemas)));
+            }
+        }
+        "object" => {
+            if !param.children.is_empty() {
+                let properties = param
+                    .children
+                    .iter()
+                    .map(|child| (child.name.clone(), Value::Map(param_schema(child, schemas))))
+                    .collect();
+                map.insert("properties".to_string(), Value::Map(properties));
+            }
+        }
+        _ => {
+            if let Some(ids) = parameter_enums(param, schemas) {
+                map.insert("enum".to_string(), Value::List(ids));
+            }
+        }
+    }
+    map
+}
+
+/// Java's `addParameterEnums`. An entity or field that is not defined is logged and the parameter has no `enum`; Java
+/// fails the document.
+fn parameter_enums(param: &ParamDef, schemas: &mut Schemas<'_>) -> Option<Vec<Value>> {
+    let entity_name = param.entity_name.as_deref().filter(|name| !name.is_empty())?;
+    let field_name = param.field_name.as_deref().filter(|name| !name.is_empty())?;
+    let (Some(facade), Some(enums)) = (schemas.facade, schemas.enums.as_mut()) else {
+        return None;
+    };
+    let found = facade.with_entity(entity_name, |entity, _, _| {
+        Ok(entity.has_field(field_name).then(|| enums.of(entity, field_name)))
+    });
+    match found {
+        Ok(Some(ids)) => ids,
+        _ => {
+            tracing::error!(
+                parameter = %param.name,
+                "Field {field_name} of entity {entity_name} not found, the parameter has no enum in the OpenAPI"
+            );
+            None
+        }
+    }
+}
+
+/// Java's `RestApi.getJsonType`, by the class name after the last `.`.
+fn json_type(java_type: &str) -> &'static str {
+    match java_type.rsplit('.').next().unwrap_or("") {
+        "Integer" | "Long" | "Short" | "BigInteger" => "integer",
+        "Float" | "Double" | "BigDecimal" => "number",
+        "Boolean" => "boolean",
+        "List" | "Set" | "Collection" | "EntityList" => "array",
+        "Map" | "EntityValue" => "object",
+        _ => "string",
+    }
+}
+
+/// Java's `RestApi.getJsonFormat`.
+fn json_format(java_type: &str) -> Option<&'static str> {
+    match java_type.rsplit('.').next().unwrap_or("") {
+        "Integer" | "Short" => Some("int32"),
+        "Long" | "BigInteger" => Some("int64"),
+        "Float" => Some("float"),
+        "Double" => Some("double"),
+        "Date" => Some("date"),
+        "Timestamp" => Some("date-time"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1153,6 +1436,236 @@ mod tests {
             assert!(err.message().contains("AT_REST_PATH"), "{leaf}: {err}");
         }
         crate::user::logout().unwrap();
+    }
+
+    /// As Java's `RestResult` and `nestedRemoveNullsFromResultMap`: a service's out-parameters lose the `UserAccount`
+    /// password fields at any depth, the null out-parameters, and the null fields one map down.
+    #[test]
+    fn service_results_lose_user_account_secrets_and_nulls() {
+        let dir = std::env::temp_dir().join(format!("moqui-rest-secrets-{}", std::process::id()));
+        let _guard = DirGuard(dir.clone());
+        std::fs::create_dir_all(dir.join("service")).unwrap();
+        std::fs::write(
+            dir.join("service/acct.rest.xml"),
+            r#"<resource name="acct" require-authentication="false">
+                <resource name="accounts"><method type="get"><service name="acct.get#Accounts"/></method></resource>
+            </resource>"#,
+        )
+        .unwrap();
+        let service_path = dir.join("service/acct.xml");
+        std::fs::write(
+            &service_path,
+            r#"<services>
+                <service verb="get" noun="Accounts" authenticate="false">
+                    <out-parameters>
+                        <parameter name="account" type="Map"/>
+                        <parameter name="accounts" type="List"/>
+                        <parameter name="nested" type="Map"/>
+                        <parameter name="nothing"/>
+                    </out-parameters>
+                    <actions><script>
+                        account = {userId: "U1", currentPassword: "hash", passwordSalt: "salt", note: null};
+                        accounts = [{userId: "U2", resetPassword: "reset", passwordHashType: "SHA", note: null}];
+                        nested = {party: {users: [{userId: "U3", passwordBase64: "b64"}], kept: null}, gone: null};
+                        nothing = null;
+                    </script></actions>
+                </service>
+            </services>"#,
+        )
+        .unwrap();
+        let ctx = ExecutionContextFactory::test_context();
+        install(ctx.factory(), &[dir.join("service/acct.rest.xml")]);
+        ctx.factory().set_entity(crate::testing::open());
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&service_path)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+
+        let result = run(&["acct", "accounts"], "get", &BTreeMap::new()).unwrap();
+        let Value::Map(result) = &result else {
+            panic!("service result {result:?}")
+        };
+        assert!(!result.contains_key("nothing"), "{result:?}");
+        let Some(Value::Map(account)) = result.get("account") else {
+            panic!("account {result:?}")
+        };
+        assert_eq!(account.keys().collect::<Vec<_>>(), ["userId"], "{account:?}");
+        let Some(Value::List(accounts)) = result.get("accounts") else {
+            panic!("accounts {result:?}")
+        };
+        let Value::Map(listed) = &accounts[0] else {
+            panic!("listed {accounts:?}")
+        };
+        assert_eq!(listed.keys().collect::<Vec<_>>(), ["userId"], "{listed:?}");
+        let Some(Value::Map(nested)) = result.get("nested") else {
+            panic!("nested {result:?}")
+        };
+        assert!(!nested.contains_key("gone"), "{nested:?}");
+        let Some(Value::Map(party)) = nested.get("party") else {
+            panic!("party {nested:?}")
+        };
+        // Only one map down, as Java: a null deeper in stays.
+        assert_eq!(party.get("kept"), Some(&Value::Null), "{party:?}");
+        let Some(Value::List(users)) = party.get("users") else {
+            panic!("users {party:?}")
+        };
+        let Value::Map(user) = &users[0] else {
+            panic!("user {users:?}")
+        };
+        assert_eq!(user.keys().collect::<Vec<_>>(), ["userId"], "{user:?}");
+    }
+
+    /// As Java's `PathNode`: `description` is an attribute, `childPaths` counts the resources and ids under a node, an
+    /// empty `require-authentication` inherits, a method is keyed by `type` as written, and a method that does not load
+    /// is left out of a file that is otherwise served.
+    #[test]
+    fn rest_files_read_as_java_reads_them() {
+        let dir = std::env::temp_dir().join(format!("moqui-rest-read-{}", std::process::id()));
+        let _guard = DirGuard(dir.clone());
+        std::fs::create_dir_all(dir.join("service")).unwrap();
+        std::fs::write(
+            dir.join("service/read.rest.xml"),
+            r#"<resource name="read" displayName="Read API" description="Reads things" require-authentication="false">
+                <resource name="types" require-authentication="">
+                    <method type="get"><entity name="moqui.basic.EnumerationType" operation="list"/></method>
+                    <method type="post"><other name="nothing"/></method>
+                    <method><entity name="moqui.basic.EnumerationType" operation="list"/></method>
+                    <id name="enumTypeId"><resource name="detail"/></id>
+                </resource>
+                <resource name="shout"><method type="GET"><entity name="moqui.basic.EnumerationType" operation="list"/></method></resource>
+            </resource>"#,
+        )
+        .unwrap();
+        let ctx = ExecutionContextFactory::test_context();
+        ctx.factory().set_entity(crate::testing::open());
+        let mut loaded = BTreeMap::new();
+        super::load_dir(&mut loaded, &dir.join("service"));
+        let Value::Map(info) = super::resource_info(&loaded["read"], true) else {
+            panic!("info")
+        };
+        assert_eq!(info["description"], Value::string("Reads things"));
+        assert_eq!(info["displayName"], Value::string("Read API"));
+        assert_eq!(info["childPaths"], Value::I64(4), "types, its id and detail, and shout");
+        assert_eq!(info["childMethods"], Value::I64(2), "{info:?}");
+        install(ctx.factory(), &[dir.join("service/read.rest.xml")]);
+        let _entered = ctx.enter();
+        let kind = |err: &crate::context::Error| crate::context::ErrorKind::of(err);
+        // No login: the empty value took the root's `false`.
+        assert!(run(&["read", "types"], "get", &BTreeMap::new()).is_ok());
+        let err = run(&["read", "types"], "post", &BTreeMap::new()).unwrap_err();
+        assert_eq!(kind(&err), crate::context::ErrorKind::MethodNotAllowed, "{err}");
+        // The request's method is lower case, so `type="GET"` is never matched.
+        let err = run(&["read", "shout"], "GET", &BTreeMap::new()).unwrap_err();
+        assert_eq!(kind(&err), crate::context::ErrorKind::MethodNotAllowed, "{err}");
+    }
+
+    /// The OpenAPI of a service method: its path parameter, its other in-parameters as the query of a `get` or the
+    /// JSON body of a `post`, its out-parameters as the response, and the `enum` of a parameter on an `Enumeration`
+    /// field, as Java's Swagger.
+    #[test]
+    fn openapi_lists_service_parameters_with_their_descriptions_and_enumeration_ids() {
+        let dir = std::env::temp_dir().join(format!("moqui-rest-openapi-{}", std::process::id()));
+        let _guard = DirGuard(dir.clone());
+        std::fs::create_dir_all(dir.join("service")).unwrap();
+        std::fs::write(
+            dir.join("service/feeds.rest.xml"),
+            r#"<resource name="feeds"><id name="dataFeedId">
+                <method type="get"><service name="feeds.get#Feed"/></method>
+                <method type="post"><service name="feeds.get#Feed"/></method>
+            </id></resource>"#,
+        )
+        .unwrap();
+        let service_path = dir.join("service/feeds.xml");
+        std::fs::write(
+            &service_path,
+            r#"<services>
+                <service verb="get" noun="Feed" authenticate="false">
+                    <in-parameters>
+                        <parameter name="dataFeedId" required="true"><description> The feed </description></parameter>
+                        <parameter name="dataFeedTypeEnumId" entity-name="moqui.entity.feed.DataFeed" field-name="dataFeedTypeEnumId"/>
+                        <parameter name="count" type="Integer" default-value="10"><description>How many</description></parameter>
+                        <parameter name="options" type="Map"/>
+                    </in-parameters>
+                    <out-parameters><parameter name="feed" type="Map"/></out-parameters>
+                    <actions><script>feed = {};</script></actions>
+                </service>
+            </services>"#,
+        )
+        .unwrap();
+        let facade = crate::testing::open();
+        for (id, sequence) in [("DTFDTP_MAN_PULL", 2), ("DTFDTP_RT_PUSH", 1)] {
+            let mut row = facade.make_value("moqui.basic.Enumeration").unwrap();
+            row.set("enumId", Value::string(id));
+            row.set("enumTypeId", Value::string("DataFeedType"));
+            row.set("sequenceNum", Value::I64(sequence));
+            row.create(&facade).unwrap();
+        }
+        let ctx = ExecutionContextFactory::test_context();
+        install(ctx.factory(), &[dir.join("service/feeds.rest.xml")]);
+        ctx.factory().set_entity(facade);
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&service_path)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+
+        let doc = super::openapi_document(&["feeds".to_string()]).unwrap();
+        let at = |value: &Value, path: &[&str]| -> Value {
+            path.iter().fold(value.clone(), |current, key| match current {
+                Value::Map(map) => map.get(*key).cloned().unwrap_or_else(|| panic!("no {key} in {map:?}")),
+                other => panic!("not a map at {key}: {other:?}"),
+            })
+        };
+        let ids = Value::List(vec![Value::string("DTFDTP_RT_PUSH"), Value::string("DTFDTP_MAN_PULL")]);
+        let get = at(&doc, &["paths", "/feeds/{dataFeedId}", "get"]);
+        let Value::List(parameters) = at(&get, &["parameters"]) else {
+            panic!("parameters {get:?}")
+        };
+        let named = |name: &str| {
+            parameters
+                .iter()
+                .find(|item| matches!(item, Value::Map(map) if map["name"] == Value::string(name)))
+                .cloned()
+        };
+        let path = named("dataFeedId").expect("path parameter");
+        assert_eq!(at(&path, &["in"]), Value::string("path"));
+        assert_eq!(at(&path, &["required"]), Value::Bool(true));
+        assert_eq!(at(&path, &["schema", "description"]), Value::string("The feed"));
+        let feed_type = named("dataFeedTypeEnumId").expect("query parameter");
+        assert_eq!(at(&feed_type, &["in"]), Value::string("query"));
+        assert_eq!(at(&feed_type, &["schema", "enum"]), ids);
+        let count = named("count").expect("count");
+        assert_eq!(at(&count, &["schema", "type"]), Value::string("integer"));
+        assert_eq!(at(&count, &["schema", "format"]), Value::string("int32"));
+        assert_eq!(at(&count, &["schema", "default"]), Value::string("10"));
+        assert_eq!(at(&count, &["schema", "description"]), Value::string("How many"));
+        assert!(
+            !matches!(at(&feed_type, &["schema"]), Value::Map(map) if map.contains_key("description")),
+            "no description, none in the schema"
+        );
+        assert!(named("options").is_none(), "an object is no query parameter");
+        assert_eq!(
+            at(
+                &get,
+                &[
+                    "responses",
+                    "200",
+                    "content",
+                    "application/json",
+                    "schema",
+                    "properties",
+                    "feed",
+                    "type"
+                ]
+            ),
+            Value::string("object")
+        );
+
+        let post = at(&doc, &["paths", "/feeds/{dataFeedId}", "post"]);
+        let body = at(&post, &["requestBody", "content", "application/json", "schema"]);
+        assert_eq!(at(&body, &["properties", "dataFeedTypeEnumId", "enum"]), ids);
+        assert_eq!(
+            at(&body, &["properties", "count", "description"]),
+            Value::string("How many")
+        );
+        assert_eq!(at(&body, &["required"]), Value::List(vec![Value::string("dataFeedId")]));
     }
 
     fn create(facade: &EntityFacade, entity: &str, pairs: &[(&str, &str)]) {

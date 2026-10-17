@@ -19,6 +19,8 @@ use std::sync::Arc;
 use moqui_core::driver::{ConfDb, DbDriver};
 use moqui_lib::error::Error;
 
+#[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
+pub mod backup;
 pub mod embedded;
 pub mod entity_db;
 pub mod entity_facade;

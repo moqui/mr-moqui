@@ -18,6 +18,6 @@ component's XML picks it:
 
 Scripts get a tool with `ec.factory.getTool("Name")` and call the methods it exposes.
 
-The full guide is `plans/Native-Components-Usage.md`. `runtime/base-component/example` has an example of each part,
+The full guide is `docs/Native-Components.md`. `runtime/base-component/example` has an example of each part,
 with specs (`./moq test example -D example_disabled=false`); its `src/` works as a template, and its `README.md` has
 the `Cargo.toml` for a crate here, which is not a member of the repository's workspace.

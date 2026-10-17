@@ -1,5 +1,7 @@
 # Mantle USL flow tests
 
+> Archived 2026-10-16: a status snapshot of the mantle-usl specs on that date. The live summary (specs, coverage, the services never called) is [Remaining-Work, Mantle conversion follow-up](../Remaining-Work.md#mantle-conversion-follow-up); the run commands below still apply.
+
 The ten Spock specs of mantle-usl (`runtime/component/mr-mantle-usl/src/test/groovy`, kept as the oracle) are ported to JavaScript specs in `runtime/component/mr-mantle-usl/test/`, run by `moqui test` (design: [TestHarness](TestHarness.md)). The earlier Rust port (`mantle_flows.rs`, `mantle_support`) is deleted.
 
 ```sh

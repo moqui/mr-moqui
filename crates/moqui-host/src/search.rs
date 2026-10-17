@@ -49,6 +49,13 @@ impl SearchStore {
         self.opensearch.is_some()
     }
 
+    /// `pg_dump` / `pg_basebackup` coordinates when this store runs its own postmaster.
+    #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
+    #[must_use]
+    pub fn tool_target(&self) -> Option<crate::db::embedded::ToolTarget> {
+        self.cluster.as_ref().map(|cluster| cluster.tool_connect("search"))
+    }
+
     /// True when this store started its own embedded postmaster.
     pub fn has_own_cluster(&self) -> bool {
         #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]

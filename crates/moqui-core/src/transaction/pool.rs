@@ -27,7 +27,7 @@ use moqui_lib::object::Value;
 
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 
-/// The checkout test when the conf names none.
+/// The idle-connection checkout test when the conf names none.
 pub const DEFAULT_TEST_QUERY: &str = "SELECT 1";
 
 /// Datasource pool settings. `reserve` sits inside `max`.
@@ -41,7 +41,8 @@ pub struct PoolConfig {
     /// `pool-time-idle`: an idle connection past this is closed at the next checkout or return,
     /// while more than `min` are open. `None` keeps idle connections.
     pub idle_timeout: Option<Duration>,
-    /// `pool-test-query`, else the database's `default-test-query`. `None` is [`DEFAULT_TEST_QUERY`].
+    /// Idle-connection test: `pool-test-query`, else the database's `default-test-query`.
+    /// `None` is [`DEFAULT_TEST_QUERY`]. Newly connected clients need no test.
     pub test_query: Option<String>,
 }
 
@@ -357,7 +358,7 @@ impl Pool {
                 },
                 Step::Connect => {
                     let connected = self.inner.driver.connect();
-                    let mut tracked = match connected {
+                    let tracked = match connected {
                         Ok(conn) => Tracked::new(conn),
                         Err(err) => {
                             self.mark_creating(class, false);
@@ -365,18 +366,10 @@ impl Pool {
                             return Err(err);
                         }
                     };
-                    match tracked.query_once(self.inner.config.test_sql(), &[]) {
-                        Ok(_) => {
-                            self.finish_create(class);
-                            return Ok(self.wrap(tracked, class));
-                        }
-                        Err(err) => {
-                            self.mark_creating(class, false);
-                            self.inner.available.notify_all();
-                            drop(tracked);
-                            return Err(Error::new("connection test failed").with_source(err));
-                        }
-                    }
+                    // A successful connect already established a live session. Let the caller's
+                    // metadata query or application work be its first SQL, as on Java startup.
+                    self.finish_create(class);
+                    return Ok(self.wrap(tracked, class));
                 }
                 Step::Wait => {
                     if !self.wait_for_return(started)? {

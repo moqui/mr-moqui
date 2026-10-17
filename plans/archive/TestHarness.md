@@ -1,5 +1,7 @@
 # Test harness: `moqui test`, a Spock replacement for JavaScript
 
+> Archived 2026-10-16: built. Kept as the design record; the spec format, script API and runner sections below are the only description of `moqui test` outside the code and `runtime/component/mr-mantle-usl/test/README.md` until a `docs/Testing.md` is written from them (listed in [Remaining-Work](../Remaining-Work.md)). The build-order paths below are as they were.
+
 Status 2026-10-15: all steps built. The eight mantle-usl specs are ported and pass (84 features) and the Rust flow tests are deleted; see [MantleFlowTests](MantleFlowTests.md). First user: mantle-usl (replaces [MantleFlowTests](MantleFlowTests.md) when the port passes). Porting guide: `runtime/component/mr-mantle-usl/test/README.md`.
 
 ## Built (steps 1–4)

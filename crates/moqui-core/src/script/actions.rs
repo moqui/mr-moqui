@@ -49,13 +49,29 @@ fn generated_scripts() -> &'static Generated {
 }
 
 pub fn run_actions(actions: &str) -> Result<(), Error> {
+    run_actions_at(actions, None)
+}
+
+/// Name generated JavaScript after its owning actions, without pretending generated lines are XML lines.
+pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::SourceLocation>) -> Result<(), Error> {
     if actions.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
     let script = generated(actions)?;
+    let file_name = source.and_then(|source| {
+        source
+            .file
+            .as_ref()
+            .map(|file| format!("{file}#actions-{}-{}.generated.js", source.line, source.column))
+    });
+    let script = match &file_name {
+        Some(file_name) => script.with_file_name(file_name),
+        None => script,
+    };
+    let file_name = file_name.as_deref().unwrap_or("eval_script");
     // Data preparation may do what a browser cannot, so a widget check in progress stands down while the actions run.
     let _unchecked = super::runtime::WidgetWrap::set(false);
-    super::runtime::eval_script_text(&script).map_err(|err| with_source_line(err, script.text()))
+    super::runtime::eval_script_text(&script).map_err(|err| with_source_line(err, script.text(), file_name))
 }
 
 /// Evaluate a `<condition>` element as `<if>` does. Its children are xml-actions conditions
@@ -94,15 +110,12 @@ pub fn eval_condition_group(and_xml: &str) -> Result<bool, Error> {
 
 /// An error at `eval_script:LINE:COL` with that line of the generated script after it, so a failure in actions points at
 /// the statement. With `MOQUI_ACTIONS_DEBUG` set, the element comment above it is shown too.
-fn with_source_line(err: Error, source: &str) -> Error {
+fn with_source_line(err: Error, source: &str, file_name: &str) -> Error {
     let message = err.message();
-    let Some(at) = message.find("eval_script:") else {
-        return err;
-    };
-    let line: Option<usize> = message[at + "eval_script:".len()..]
-        .split(':')
-        .next()
-        .and_then(|number| number.parse().ok());
+    let prefix = format!("{file_name}:");
+    let line = message
+        .find(&prefix)
+        .and_then(|at| message[at + prefix.len()..].split(':').next()?.parse::<usize>().ok());
     let Some(line) = line.filter(|line| *line > 0) else {
         return err;
     };
@@ -119,7 +132,8 @@ fn with_source_line(err: Error, source: &str) -> Error {
     {
         detail.push_str(&format!("\n    after {comment}"));
     }
-    Error::new(format!("{}{detail}", message.trim_end()))
+    let message = format!("{}{detail}", message.trim_end());
+    err.with_message(message)
 }
 
 /// Generate the script for `xml` and parse it, without running anything. Definition load calls
@@ -738,6 +752,55 @@ mod tests {
         );
         clear_context_stack();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn script_diagnostics_name_files_and_keep_rust_origins() {
+        let ctx = ExecutionContextFactory::test_context();
+        let _entered = ctx.enter();
+        clear_context_stack();
+        let dir = std::env::temp_dir().join(format!("moqui-script-diagnostics-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Identical text at different locations must not reuse bytecode with the first file's name.
+        let text = "const x = 1;\nthrow new Error('file failed');\n";
+        for name in ["First.js", "Second.js"] {
+            let path = dir.join(name).to_string_lossy().into_owned();
+            std::fs::write(&path, text).unwrap();
+            set_context_name("where", Value::string(&path)).unwrap();
+            for _ in 0..2 {
+                let err = run_actions("<actions><script>ec.resource.script(where)</script></actions>").unwrap_err();
+                assert!(err.message().contains(&format!("{path}:2:")), "{}", err.diagnostic());
+                assert!(!err.diagnostic().contains("Rust:"), "{}", err.diagnostic());
+            }
+        }
+        let path = dir.join("Resource.js").to_string_lossy().into_owned();
+        std::fs::write(
+            &path,
+            "const x = 1;\nec.resource.getLocationText('component://MissingDiagnostics/screen/A.xml');\n",
+        )
+        .unwrap();
+        let err = crate::script::run_script_location(&path).unwrap_err();
+        let diagnostic = err.diagnostic();
+        assert!(diagnostic.contains(&format!("{path}:2:")), "{diagnostic}");
+        assert!(
+            diagnostic.contains("Rust: crates/moqui-core/src/context/resource.rs:"),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("component://MissingDiagnostics/screen/A.xml"),
+            "{diagnostic}"
+        );
+        assert!(crate::script::eval_condition("(function () { try { ec.resource.getLocationText('component://MissingDiagnostics/screen/A.xml'); } catch (e) { return e.message === 'component MissingDiagnostics is not registered for location component://MissingDiagnostics/screen/A.xml' && e.stack.includes('Rust: crates/moqui-core/src/context/resource.rs:'); } return false; })()").unwrap());
+        let syntax_path = dir.join("Syntax.js").to_string_lossy().into_owned();
+        std::fs::write(&syntax_path, "const x = 1;\nconst broken = ;\n").unwrap();
+        let err = crate::script::run_script_location(&syntax_path).unwrap_err();
+        assert!(
+            err.diagnostic().contains(&format!("{syntax_path}:2:")),
+            "{}",
+            err.diagnostic()
+        );
+        clear_context_stack();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

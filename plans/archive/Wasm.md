@@ -2,7 +2,7 @@
 
 Browser build of the portable framework: `wasm32-unknown-emscripten`, run in one dedicated Web Worker.
 
-This reverses the earlier "no WASM target" decision in `plans/archive/Crate-Layout.md` and `plans/archive/Architecture-Proposal.md`. The goal is the browser-local runtime in `plans/Usability.md`. The server stays the authority, as `plans/Messaging.md` §8 describes. Local state is a cache plus pending requests. A local commit never grants authority to a server write.
+This reverses the earlier "no WASM target" decision in `plans/archive/Crate-Layout.md` and `plans/archive/Architecture-Proposal.md`. The goal is the browser-local runtime in `plans/proposals/Usability.md`. The server stays the authority, as `plans/proposals/Messaging.md` §8 describes. Local state is a cache plus pending requests. A local commit never grants authority to a server write.
 
 Emscripten is chosen over `wasm32-unknown-unknown` for three reasons. QuickJS (`rquickjs-sys`) and SQLite are C, and emcc builds both. `std::fs` maps onto the Emscripten filesystem, so conf and component loading need no change. Emscripten generates the JavaScript bindings, Asyncify/JSPI, and the OPFS integration, the same way SQLite WASM does ([sqlite.org/wasm](https://sqlite.org/wasm)).
 
@@ -69,7 +69,7 @@ CI checks the boundary. `cargo tree -p moqui-core --no-default-features -e norma
 `moqui-browser` supplies what `moqui-host` supplies on the server:
 
 - An `HttpClient` over `fetch`, for `remote-rest` services and http resource locations.
-- WebSocket transport for `plans/Messaging.md`, with the same envelopes, schema ids, request ids, and revision rules as native callers.
+- WebSocket transport for `plans/proposals/Messaging.md`, with the same envelopes, schema ids, request ids, and revision rules as native callers.
 - Timers, and `tracing` output to the console.
 - Unsupported-operation errors for server-only facades: mail, SSH, PDF, the cluster, and SSO callbacks.
 
@@ -79,7 +79,7 @@ CI checks the boundary. `cargo tree -p moqui-core --no-default-features -e norma
 
 - `crates/moqui-browser`, a bin target built only for `wasm32-unknown-emscripten`. It is a workspace member. Native `cargo check --workspace` builds it as an empty stub.
 - Link flags live in `.cargo/config.toml` under `[target.wasm32-unknown-emscripten]`: `-sMODULARIZE`, `-sEXPORT_ES6`, `-sALLOW_MEMORY_GROWTH`, the Asyncify or JSPI flags, and the FS options.
-- Exports are `extern "C"`: `init` (conf location and properties), `call_service`, `render_screen`, `entity_find`, and `free_handle`. Results cross as handles or byte buffers, not JSON strings, where `plans/Messaging.md` defines a binary form.
+- Exports are `extern "C"`: `init` (conf location and properties), `call_service`, `render_screen`, `entity_find`, and `free_handle`. Results cross as handles or byte buffers, not JSON strings, where `plans/proposals/Messaging.md` defines a binary form.
 - A small JavaScript worker wrapper lives in the browser source tree. It owns the call queue, transfers `ArrayBuffer`s, and refreshes typed-array views after memory growth.
 - The emsdk version is pinned next to the Rust 1.94 MSRV note in `Cargo.toml`.
 
@@ -101,7 +101,7 @@ Each phase ends with a check that must pass.
 
 **W6. WebSocket transport.** Done: sockets in the worker (`js/moqui-ws.js`) with reconnect, backoff, and bounded queues. Frames enter the module between requests through ordinary exports, so the socket needs no JSPI. A `/notws` notification is published on the local `notification-message` topic, then posted to the UI. A binary frame waits behind a handle (`moqui_browser::ws::take_binary`) for the envelope reader. Local code queues outbound frames (`ws::send_text`, `ws::send_bytes`), and the worker sends them after each request. Check: `node scripts/wasm-ws-smoke.mjs <pkg>` (headless Chrome against a same-origin `/notws` mock).
 
-**W6b. Messaging.** Wire the browser side of `plans/Messaging.md` §8 onto this transport: verified buffers behind handles, schema cache in OPFS, and offline mutations as pending requests submitted on reconnect. The binary frame handles are where its reader starts.
+**W6b. Messaging.** Wire the browser side of `plans/proposals/Messaging.md` §8 onto this transport: verified buffers behind handles, schema cache in OPFS, and offline mutations as pending requests submitted on reconnect. The binary frame handles are where its reader starts.
 
 **W7 (optional). pthreads.** Serve COOP and COEP headers and run the `threads` executor on Emscripten pthreads. The non-pthread build stays.
 

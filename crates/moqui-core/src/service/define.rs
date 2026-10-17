@@ -151,8 +151,60 @@ pub(crate) struct ParamDef {
     pub field_name: Option<String>,
     /// `format`, for the date and number widgets of a form.
     pub format: Option<String>,
+    /// The `<description>` text, trimmed; none when absent or empty. The service OpenAPI documents it.
+    pub description: Option<String>,
     /// Nested `<parameter>` elements: the entries of a `Map` parameter, cleaned and checked the same way.
     pub children: Vec<ParamDef>,
+    /// The attributes the element sets, of [`MERGED_ATTRIBUTES`]: what a parameter of the same name takes from it in
+    /// [`merge_param`], as Java's `mergeParameter` copies the element's attributes.
+    pub given: BTreeSet<&'static str>,
+}
+
+/// The parameter attributes [`merge_param`] copies onto a parameter of the same name.
+const MERGED_ATTRIBUTES: [&str; 8] = [
+    "type",
+    "required",
+    "default-value",
+    "default",
+    "allow-html",
+    "entity-name",
+    "field-name",
+    "format",
+];
+
+/// Java's `mergeParameter`: a parameter already in `params` with the same name takes the attributes `param` sets, its
+/// checks and its nested parameters, and keeps its place, so one that sets only `required` keeps the earlier `type`;
+/// any other is added at the end. `auto-parameters` are added as they are, to be expanded and merged at the call. As
+/// Java replaces the `<description>` child, one that `param` has replaces the earlier one, and one it lacks keeps it.
+pub(crate) fn merge_param(params: &mut Vec<ParamDef>, param: ParamDef) {
+    let found = (!param.name.is_empty())
+        .then(|| params.iter_mut().find(|have| have.name == param.name))
+        .flatten();
+    let Some(base) = found else {
+        params.push(param);
+        return;
+    };
+    for attribute in &param.given {
+        match *attribute {
+            "type" => base.java_type.clone_from(&param.java_type),
+            "required" => base.required = param.required,
+            "default-value" => base.default_value.clone_from(&param.default_value),
+            "default" => base.default_expr.clone_from(&param.default_expr),
+            "allow-html" => base.allow_html = param.allow_html,
+            "entity-name" => base.entity_name.clone_from(&param.entity_name),
+            "field-name" => base.field_name.clone_from(&param.field_name),
+            "format" => base.format.clone_from(&param.format),
+            _ => {}
+        }
+    }
+    if param.description.is_some() {
+        base.description = param.description;
+    }
+    base.given.extend(param.given.iter().copied());
+    base.checks.extend(param.checks);
+    for child in param.children {
+        merge_param(&mut base.children, child);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -178,6 +230,7 @@ pub(crate) struct ServiceDef {
     pub method: String,
     /// `<actions>` XML, or empty when the service has none.
     pub actions: String,
+    pub action_source: Option<moqui_lib::error::SourceLocation>,
     pub authenticate: Authenticate,
     pub authz_action: Option<String>,
     pub validate_input: bool,
@@ -212,11 +265,14 @@ impl ServiceDef {
             native_fn: None,
             method: String::new(),
             actions: String::new(),
+            action_source: None,
             // As Java's `runImplicitEntityAuto`: no login is needed and the service itself is not authorized; each
             // entity operation it makes is.
             authenticate: Authenticate::Off,
             authz_action: None,
-            validate_input: true,
+            // As Java's `runImplicitEntityAuto`, the parameters go to the entity-auto runner as they came: it reads the
+            // entity's fields and the records nested under a relationship name, and nothing else.
+            validate_input: false,
             transaction: TransactionAttribute::UseOrBegin,
             no_tx_cache: false,
             timeout: None,
@@ -259,6 +315,9 @@ struct Loaded {
     includes: Vec<(String, Result<String, String>)>,
     /// The files read, normalized.
     files: BTreeSet<PathBuf>,
+    /// For a service defined in a file under a `service` directory of [`service_roots`], the position of that
+    /// directory: a later component's definition overrides an earlier one, as Java's lookup does.
+    ranks: BTreeMap<String, usize>,
 }
 
 struct ServiceInclude {
@@ -550,18 +609,102 @@ fn load_by_name(shared: &Shared, name: &str) -> Option<Arc<ServiceDef>> {
     found
 }
 
-/// The file that defines `name`, `service/a/b/C.xml` for `a.b.C.verb#noun`, in the framework or the first component with it.
+/// A file that defines `name`, `service/a/b/C.xml` for `a.b.C.verb#noun`, in the framework or the first component with
+/// it. Reading it reads the files of the same path in the other components too (see [`load_file`]).
 fn service_file_of(name: &str) -> Option<PathBuf> {
     let path_name = name.split('#').next()?;
     let (file, _) = path_name.rsplit_once('.')?;
     let relative = format!("{}.xml", file.replace('.', "/"));
-    let factory = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory()))?;
-    let mut roots = vec![factory.framework_dir().to_path_buf()];
-    roots.extend(factory.components().iter().map(|info| info.location.clone()));
-    roots
+    service_roots()
         .iter()
-        .map(|root| root.join("service").join(&relative))
+        .map(|root| root.join(&relative))
         .find(|candidate| candidate.is_file())
+}
+
+/// The `service` directories of the framework and then each component, in Java's search order: the classpath first,
+/// then the components, a later one overriding an earlier. Normalized, each once.
+fn service_roots() -> Vec<PathBuf> {
+    let Some(factory) = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory())) else {
+        return Vec::new();
+    };
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let dirs = std::iter::once(factory.framework_dir().to_path_buf())
+        .chain(factory.components().iter().map(|info| info.location.clone()));
+    for dir in dirs {
+        let root = normalize(&dir.join("service"));
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+/// Java's `getKnownServiceNames`: the services of the `service-file` locations and of every `.xml` file under each
+/// component's `service` directory (not `.secas.xml`, `.emecas.xml` or `.rest.xml`), read but not registered. A file
+/// that does not parse is logged and skipped.
+pub(crate) fn service_names_in_files() -> Vec<String> {
+    let mut names = BTreeSet::new();
+    let roots = service_roots();
+    if let Ok(paths) = configured_paths() {
+        for path in paths {
+            let path = normalize(&path);
+            match roots.iter().find_map(|root| path.strip_prefix(root).ok()) {
+                Some(relative) => names_in_file(&path, relative, &mut names),
+                None => tracing::warn!(
+                    "Service file {} is not in a service directory, its services are not listed",
+                    path.display()
+                ),
+            }
+        }
+    }
+    for root in roots.iter().skip(1) {
+        names_in_dir(root, root, &mut names);
+    }
+    names.into_iter().collect()
+}
+
+fn names_in_dir(root: &Path, dir: &Path, names: &mut BTreeSet<String>) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = read.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+    paths.sort();
+    for path in paths {
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        if path.is_dir() {
+            names_in_dir(root, &path, names);
+        } else if file_name.ends_with(".xml")
+            && ![".secas.xml", ".emecas.xml", ".rest.xml"]
+                .iter()
+                .any(|suffix| file_name.ends_with(suffix))
+        {
+            if let Ok(relative) = path.strip_prefix(root) {
+                names_in_file(&path, relative, names);
+            }
+        }
+    }
+}
+
+/// The names of the `service` and `service-include` elements of the file at `relative` in a `service` directory.
+fn names_in_file(path: &Path, relative: &Path, names: &mut BTreeSet<String>) {
+    let root = match MNode::parse_file(path) {
+        Ok(root) => root,
+        Err(err) => {
+            tracing::error!(error = %err, "Could not read service file {} for the known service names", path.display());
+            return;
+        }
+    };
+    if root.name() != "services" {
+        return;
+    }
+    let prefix = relative.with_extension("").to_string_lossy().replace(['/', '\\'], ".");
+    for child in root.children() {
+        if matches!(child.name().as_str(), "service" | "service-include") {
+            let verb = child.attribute("verb").unwrap_or_default();
+            let noun = child.attribute("noun").unwrap_or_default();
+            names.insert(service_name(&prefix, &verb, &noun));
+        }
+    }
 }
 
 /// Every service registered with the entered context's factory, by name. Type generation reads these.
@@ -654,8 +797,9 @@ impl Registry {
         let mut includes = Vec::new();
         let mut added = Vec::new();
         let mut pending: Vec<PathBuf> = paths.to_vec();
+        let roots = service_roots();
         while let Some(path) = pending.pop() {
-            load_file(&path, &mut self.loaded, &mut includes, &mut pending, &mut added)?;
+            load_file(&path, &roots, &mut self.loaded, &mut includes, &mut pending, &mut added)?;
         }
         for include in includes {
             let local = service_name(&include.prefix, &include.verb, &include.noun);
@@ -700,8 +844,12 @@ thread_local! {
     static PARSED: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Read one service file. A file in a `service` directory of `roots` also queues the files of the same path in the
+/// other directories, and a service it defines replaces one of the same name only from a later directory, so a
+/// component overrides the framework and the components before it, as Java's `findServiceNode`.
 fn load_file(
     path: &Path,
+    roots: &[PathBuf],
     loaded: &mut Loaded,
     includes: &mut Vec<ServiceInclude>,
     pending: &mut Vec<PathBuf>,
@@ -730,11 +878,38 @@ fn load_file(
         failures.push(format!("{} root is {} and not services", path.display(), root.name()));
         return Ok(());
     }
+    let place = roots.iter().enumerate().find_map(|(rank, root)| {
+        path.strip_prefix(root)
+            .ok()
+            .map(|relative| (rank, relative.to_path_buf()))
+    });
+    if let Some((_, relative)) = &place {
+        for root in roots {
+            let other = root.join(relative);
+            if other != path && other.is_file() {
+                pending.push(other);
+            }
+        }
+    }
+    let rank = place.map(|(rank, _)| rank);
     let prefix = service_prefix(&path);
     for child in root.children() {
         match child.name().as_str() {
             "service" => {
                 if let Some(def) = load_service(&prefix, &child, failures) {
+                    if let (Some(rank), Some(&have)) = (rank, loaded.ranks.get(&def.name)) {
+                        if have > rank {
+                            continue;
+                        }
+                        tracing::info!(
+                            "Found service {} at {} which overrides an earlier one",
+                            def.name,
+                            path.display()
+                        );
+                    }
+                    if let Some(rank) = rank {
+                        loaded.ranks.insert(def.name.clone(), rank);
+                    }
                     added.push(def.name.clone());
                     loaded.defined.insert(def.name.clone(), Arc::new(def));
                 }
@@ -834,6 +1009,22 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
             return None;
         }
     }
+    // As Java's `Integer.valueOf` and `Long.parseLong` of these attributes, text that is not a number fails the service.
+    let numbers = (|| {
+        Ok::<_, String>((
+            timeout_of(node)?,
+            seconds_attr(node, "semaphore-timeout", 120)?,
+            seconds_attr(node, "semaphore-sleep", 5)?,
+            seconds_attr(node, "semaphore-ignore", 3600)?,
+        ))
+    })();
+    let (timeout, semaphore_timeout, semaphore_sleep, semaphore_ignore) = match numbers {
+        Ok(numbers) => numbers,
+        Err(err) => {
+            failures.push(format!("service {name} {err}"));
+            return None;
+        }
+    };
     let location = node.attribute("location").unwrap_or_default();
     let rust_fn = if type_name == "rust" && native_fn.is_none() {
         if location.is_empty() {
@@ -872,17 +1063,24 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
             .first_named("actions")
             .map(|node| node.write_string())
             .unwrap_or_default(),
+        action_source: node
+            .first_named("actions")
+            .map(|actions| moqui_lib::error::SourceLocation {
+                file: actions.file_location(),
+                line: actions.line(),
+                column: actions.column(),
+            }),
         authenticate: authenticate_of(node),
         authz_action: node.attribute("authz-action"),
         validate_input: bool_attr(node, "validate", true),
         transaction: transaction_of(node),
         no_tx_cache: bool_attr(node, "no-tx-cache", false),
-        timeout: timeout_of(node),
+        timeout,
         semaphore: semaphore_of(node),
         semaphore_name: node.attribute("semaphore-name"),
-        semaphore_timeout: seconds_attr(node, "semaphore-timeout", 120),
-        semaphore_sleep: seconds_attr(node, "semaphore-sleep", 5),
-        semaphore_ignore: seconds_attr(node, "semaphore-ignore", 3600),
+        semaphore_timeout,
+        semaphore_sleep,
+        semaphore_ignore,
         semaphore_parameter: node.attribute("semaphore-parameter"),
         in_params: node
             .first_named("in-parameters")
@@ -946,14 +1144,18 @@ fn transaction_of(node: &MNode) -> TransactionAttribute {
     }
 }
 
-fn timeout_of(node: &MNode) -> Option<Duration> {
-    let text = node.attribute("transaction-timeout")?;
-    let seconds = text.parse::<u64>().ok()?;
-    if seconds == 0 {
-        None
-    } else {
-        Some(Duration::from_secs(seconds))
-    }
+/// `transaction-timeout` in seconds; none when absent or not above zero. Text that is not a whole number is an error.
+fn timeout_of(node: &MNode) -> Result<Option<Duration>, String> {
+    let Some(text) = node.attribute("transaction-timeout").filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    let seconds = text
+        .parse::<i32>()
+        .map_err(|_| format!("transaction-timeout {text} is not a whole number"))?;
+    Ok(u64::try_from(seconds)
+        .ok()
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs))
 }
 
 fn semaphore_of(node: &MNode) -> SemaphoreMode {
@@ -964,12 +1166,15 @@ fn semaphore_of(node: &MNode) -> SemaphoreMode {
     }
 }
 
-fn seconds_attr(node: &MNode, name: &str, default: u64) -> Duration {
-    let seconds = node
-        .attribute(name)
-        .and_then(|text| text.parse::<u64>().ok())
-        .unwrap_or(default);
-    Duration::from_secs(seconds)
+/// A seconds attribute, `default` when absent or empty. Text that is not a whole number is an error.
+fn seconds_attr(node: &MNode, name: &str, default: u64) -> Result<Duration, String> {
+    let Some(text) = node.attribute(name).filter(|text| !text.is_empty()) else {
+        return Ok(Duration::from_secs(default));
+    };
+    let seconds = text
+        .parse::<i64>()
+        .map_err(|_| format!("{name} {text} is not a whole number"))?;
+    Ok(Duration::from_secs(u64::try_from(seconds).unwrap_or(0)))
 }
 
 fn bool_attr(node: &MNode, name: &str, default: bool) -> bool {
@@ -1029,9 +1234,13 @@ fn parse_param_list(node: &MNode) -> Vec<ParamDef> {
 fn parse_parameter(node: &MNode) -> ParamDef {
     ParamDef {
         name: node.attribute("name").unwrap_or_default(),
-        java_type: node.attribute("type").unwrap_or_else(|| "String".to_string()),
+        java_type: node
+            .attribute("type")
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| "String".to_string()),
         required: required_of(node, Required::False),
-        default_value: node.attribute("default-value"),
+        // As Java's `ParameterInfo`, an empty `default-value` is no default.
+        default_value: node.attribute("default-value").filter(|text| !text.is_empty()),
         default_expr: node.attribute("default").filter(|text| !text.is_empty()),
         allow_html: allow_html_of(node),
         checks: parse_checks(node),
@@ -1039,7 +1248,16 @@ fn parse_parameter(node: &MNode) -> ParamDef {
         entity_name: node.attribute("entity-name").filter(|text| !text.is_empty()),
         field_name: node.attribute("field-name").filter(|text| !text.is_empty()),
         format: node.attribute("format").filter(|text| !text.is_empty()),
+        description: node
+            .first_named("description")
+            .and_then(|child| child.text())
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty()),
         children: node.children_named("parameter").iter().map(parse_parameter).collect(),
+        given: MERGED_ATTRIBUTES
+            .into_iter()
+            .filter(|name| node.attribute(name).is_some())
+            .collect(),
     }
 }
 
@@ -1073,7 +1291,9 @@ fn parse_auto(node: &MNode) -> ParamDef {
         entity_name: None,
         field_name: None,
         format: None,
+        description: None,
         children: Vec::new(),
+        given: BTreeSet::new(),
     }
 }
 
@@ -1169,6 +1389,7 @@ fn resolve_one(
     }
     stack.push(name.to_string());
     let implements = services.get(name).map(|def| def.implements.clone()).unwrap_or_default();
+    let mut targets = Vec::new();
     for implement in implements {
         if !services.contains_key(&implement.service) {
             failures.push(format!(
@@ -1195,31 +1416,51 @@ fn resolve_one(
             stack.pop();
             return;
         };
-        let Some(def) = services.get_mut(name) else {
-            stack.pop();
-            return;
-        };
-        let def = Arc::make_mut(def);
-        def.no_remember_parameters |= target.no_remember_parameters;
-        merge_params(&mut def.in_params, &target.in_params, implement.required);
-        merge_params(&mut def.out_params, &target.out_params, implement.required);
+        targets.push((target, implement.required));
+    }
+    if !targets.is_empty() {
+        if let Some(def) = services.get_mut(name) {
+            let def = Arc::make_mut(def);
+            // As Java: the implemented services' parameters first, then the service's own merged into them by name.
+            let (mut in_params, mut out_params) = (Vec::new(), Vec::new());
+            for (target, required) in &targets {
+                def.no_remember_parameters |= target.no_remember_parameters;
+                implemented(&mut in_params, &target.in_params, *required);
+                implemented(&mut out_params, &target.out_params, *required);
+            }
+            for param in std::mem::take(&mut def.in_params) {
+                merge_param(&mut in_params, param);
+            }
+            for param in std::mem::take(&mut def.out_params) {
+                merge_param(&mut out_params, param);
+            }
+            def.in_params = in_params;
+            def.out_params = out_params;
+        }
     }
     done.insert(name.to_string());
     stack.pop();
 }
 
-fn merge_params(dest: &mut Vec<ParamDef>, extra: &[ParamDef], required: Option<bool>) {
+/// The parameters of an implemented service, added before the service's own, with `required` set on each when the
+/// `implements` element has it. A `required="disabled"` parameter is left out: it behaves as if it did not exist. When
+/// two implemented services have a parameter of the same name the first one's is kept.
+fn implemented(dest: &mut Vec<ParamDef>, extra: &[ParamDef], required: Option<bool>) {
     for param in extra {
         if param.required == Required::Disabled {
             continue;
         }
-        let present = !param.name.is_empty() && dest.iter().any(|have| have.name == param.name);
-        if present {
+        if !param.name.is_empty() && dest.iter().any(|have| have.name == param.name) {
             continue;
         }
         let mut param = param.clone();
         if let Some(flag) = required {
-            param.required = if flag { Required::True } else { Required::False };
+            let flag = if flag { Required::True } else { Required::False };
+            param.required = flag;
+            param.given.insert("required");
+            if let Some(auto) = param.auto.as_mut() {
+                auto.required = flag;
+            }
         }
         dest.push(param);
     }
@@ -1671,6 +1912,97 @@ mod tests {
                 "T{index} kept"
             );
         }
+    }
+
+    /// A framework directory and two components, each with `service/test/ovr/Same.xml` holding `files`, with a context
+    /// whose components are those two, in that order.
+    fn override_context(name: &str, files: [&str; 3]) -> crate::context::ExecutionContext {
+        let root = std::env::temp_dir().join(format!("moqui-svc-override-{name}-{}", std::process::id()));
+        let mut components = Vec::new();
+        for (index, body) in files.iter().enumerate() {
+            let dir = root.join(["framework", "first", "second"][index]);
+            std::fs::create_dir_all(dir.join("service/test/ovr")).unwrap();
+            std::fs::write(dir.join("service/test/ovr/Same.xml"), body).unwrap();
+            if index > 0 {
+                components.push(crate::context::ComponentInfo {
+                    name: ["framework", "first", "second"][index].to_string(),
+                    version: String::new(),
+                    location: dir,
+                    depends_on: Vec::new(),
+                });
+            }
+        }
+        crate::context::ExecutionContextFactory::test_context_with_components(
+            "",
+            crate::service::ServicePools::idle(),
+            root.join("framework"),
+            components,
+        )
+    }
+
+    fn service_with(verb: &str, location: &str) -> String {
+        format!(
+            r#"<service verb="{verb}" noun="Thing"><actions><set field="from" value="{location}"/></actions></service>"#
+        )
+    }
+
+    /// Java's `findServiceNode`: of the files with the same path, the framework's then each component's in order, the
+    /// last that has the service defines it, whichever file is read first.
+    #[test]
+    fn a_later_component_overrides_a_service_of_the_same_file_path() {
+        let ctx = override_context(
+            "lookup",
+            [
+                &format!(
+                    "<services>{}{}</services>",
+                    service_with("run", "framework"),
+                    service_with("keep", "framework")
+                ),
+                &format!("<services>{}</services>", service_with("run", "first")),
+                &format!("<services>{}</services>", service_with("other", "second")),
+            ],
+        );
+        let _entered = ctx.enter();
+        let defined_in = |name: &str| super::find(name).map(|def| def.actions.clone()).unwrap_or_default();
+        assert!(defined_in("test.ovr.Same.run#Thing").contains("first"));
+        assert!(defined_in("test.ovr.Same.keep#Thing").contains("framework"));
+        assert!(defined_in("test.ovr.Same.other#Thing").contains("second"));
+        // read as a configured file, the framework's, the component's still wins
+        let framework_file = ctx.factory().framework_dir().join("service/test/ovr/Same.xml");
+        assert!(super::lint(&[framework_file]).unwrap().is_empty());
+        assert!(defined_in("test.ovr.Same.run#Thing").contains("first"));
+        // and every component's service files are known names, read or not
+        let names = crate::service::info::known_service_names();
+        assert!(
+            names.iter().any(|name| name == "test.ovr.Same.other#Thing"),
+            "{names:?}"
+        );
+    }
+
+    /// As Java's `Integer.valueOf` and `Long.parseLong`, a numeric attribute that is not a number fails the service.
+    #[test]
+    fn a_timeout_that_is_not_a_number_fails_the_service() {
+        let ctx = crate::context::ExecutionContextFactory::test_context();
+        let _entered = ctx.enter();
+        let path = write_fixture(
+            "timeout",
+            r#"<services>
+                <service verb="slow" noun="Words" transaction-timeout="ten"/>
+                <service verb="slow" noun="Sleep" semaphore="wait" semaphore-sleep="1s"/>
+                <service verb="zero" noun="Timeout" transaction-timeout="0"/>
+            </services>"#,
+        );
+        let failures = super::lint(&[path]).unwrap().join("\n");
+        assert!(
+            failures.contains("slow#Words transaction-timeout ten is not a whole number"),
+            "{failures}"
+        );
+        assert!(
+            failures.contains("slow#Sleep semaphore-sleep 1s is not a whole number"),
+            "{failures}"
+        );
+        assert!(!super::is_registered("slow#Words"));
+        assert!(super::find("zero#Timeout").is_some_and(|def| def.timeout.is_none()));
     }
 
     fn write_fixture(name: &str, body: &str) -> PathBuf {

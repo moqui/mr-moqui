@@ -192,7 +192,9 @@
             box.setAttribute("data-bg-error", "");
             const widget = box.querySelector(".widget") || box;
             widget.appendChild(el("div", { class: "field-error", role: "alert", "data-bg-error": "" }, ve.message));
-            placed.push(ve.message);
+            // its line in errors is the message, or the message with its names as the server writes it (toStringPretty)
+            placed.push(ve.message, ve.message + "(" + (ve.fieldPretty ? "for field " + ve.fieldPretty : "") +
+                (ve.formPretty ? " on form " + ve.formPretty : "") + (ve.serviceNamePretty ? " of service " + ve.serviceNamePretty : ""));
         });
         return placed;
     };

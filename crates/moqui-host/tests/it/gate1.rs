@@ -110,7 +110,10 @@ fn framework_seed_and_fixture_load() {
     assert_eq!(extra.sealed_grant, 1, "sealed ElasticRemote grant");
     // BTC is in CurrencyData, which is seed-initial only.
     assert_eq!(extra.initial_uom, 1, "seed-initial Uom BTC");
-    assert!(extra.fts_indexes >= 1, "TestFts has a GIN index over to_tsvector");
+    assert!(
+        extra.fts_indexes >= 1,
+        "TestFts has a GIN index over its generated body_tsv column"
+    );
     assert_eq!(medium_e.as_deref(), Some("entity"));
     assert_eq!(medium_a.as_deref(), Some("auto"));
     // One row found by the list, and the seed row read back through entity-find-one.
@@ -149,7 +152,7 @@ fn read_extra(framework: &Path, cluster_dir: &Path) -> Extra {
     let indexes = conn
         .query(
             "SELECT indexdef FROM pg_indexes \
-             WHERE lower(tablename) IN ('test_fts', 'testfts') AND lower(indexdef) LIKE '%using gin%to_tsvector%'",
+             WHERE lower(tablename) IN ('test_fts', 'testfts') AND lower(indexdef) LIKE '%using gin%body_tsv%'",
             &[],
         )
         .unwrap();

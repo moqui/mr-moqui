@@ -1320,22 +1320,26 @@
             pop();
         };
 
-        // The tools above a form-list, as the server-merged nav row has them: the find dialog with the saved finds and the header fields,
+        // The tools above a form-list, as the server-merged nav row has them: separate find options and saved finds dialogs,
         // and the csv, xlsx, text and print exports. The component gives nv: the finds, the current parameters, and the URLs.
         const loc = (text) => "ec.l10n.localize(" + sq(text) + ")";
         const navSlot = (n, cols, headerFields, flags) => {
             if (!(flags.headerDialog || flags.savedFinds || flags.csv || flags.xlsx || flags.text || flags.pdf || flags.columns)) return;
             const name = at(n, "name");
             w('<template v-slot:nav="nv">');
-            if (flags.headerDialog || flags.savedFinds) {
+            if (flags.headerDialog) {
                 w("<m-container-dialog" + A({ id: name + "_hdialog", ":title": loc("Find Options") }) + '><template v-slot:button><q-btn dense outline no-caps icon="search"' + A({ ":label": loc("Find Options") }) + "></q-btn></template>");
-                if (flags.savedFinds) savedFindsBody(name);
-                if (flags.headerDialog) findDialogForm(n, cols, headerFields);
+                findDialogForm(n, cols, headerFields);
                 w("</m-container-dialog>");
             }
             if (flags.columns) {
                 w("<m-container-dialog" + A({ id: name + "_SelColsDialog", ":title": loc("Column Fields") }) + '><template v-slot:button><q-btn dense outline no-caps icon="table_chart"' + A({ ":label": loc("Columns") }) + "></q-btn></template>");
                 w("<m-form-column-config" + A({ id: name + "_SelColsForm", ":action": "nv.columnsAction", ":find-parameters": "nv.params", ":columns-initial": "nv.columnsTree", "form-location": name }) + "></m-form-column-config>");
+                w("</m-container-dialog>");
+            }
+            if (flags.savedFinds) {
+                w("<m-container-dialog" + A({ id: name + "_sfdialog", ":title": loc("Saved Finds") }) + '><template v-slot:button><q-btn dense outline no-caps icon="find_in_page"' + A({ ":label": loc("Saved Finds") }) + "></q-btn></template>");
+                savedFindsBody(name);
                 w("</m-container-dialog>");
             }
             if (flags.csv) w('<q-btn dense outline type="a"' + A({ ":href": "nv.exportUrl('csv')", ":label": loc("CSV") }) + "></q-btn>");

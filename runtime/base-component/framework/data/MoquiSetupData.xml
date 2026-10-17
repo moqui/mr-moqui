@@ -64,6 +64,26 @@ along with this software (see the LICENSE.md file). If not, see
         <parameters parameterName="daysToKeep" parameterValue="30"/>
     </moqui.service.job.ServiceJob>
 
+    <!-- Paused. Set paused to N to run. The counts are how many archives to keep. With this nightly cron, 7 dailies
+         is 7 nights. Yearly stays unlimited until yearlyCount is set. plans/PostgresBackup.md -->
+    <moqui.service.message.SystemMessageType systemMessageTypeId="EmbeddedDbBackup"
+            description="Embedded database backup mirror" sendPath="moqui-backup"/>
+    <moqui.service.message.SystemMessageRemote systemMessageRemoteId="EmbeddedDbBackup"
+            description="Embedded database backup mirror. Set sendUrl, username, and a password or keys to enable."
+            systemMessageTypeId="EmbeddedDbBackup"/>
+    <moqui.service.job.ServiceJob jobName="backup_EmbeddedDatabase_daily"
+            description="Back up the embedded database and rotate the archives"
+            serviceName="org.moqui.impl.ServerServices.backup#EmbeddedDatabase"
+            cronExpression="0 0 2 * * ?" paused="Y" transactionTimeout="7200">
+        <parameters parameterName="dailyCount" parameterValue="7"/>
+        <parameters parameterName="weeklyCount" parameterValue="5"/>
+        <parameters parameterName="monthlyCount" parameterValue="12"/>
+        <parameters parameterName="backupMode" parameterValue="dump"/>
+        <parameters parameterName="fullEvery" parameterValue="7"/>
+        <parameters parameterName="timeoutMinutes" parameterValue="120"/>
+        <parameters parameterName="systemMessageRemoteId" parameterValue="EmbeddedDbBackup"/>
+    </moqui.service.job.ServiceJob>
+
     <!-- Change paused to 'N' to run the EntitySync job -->
     <moqui.service.job.ServiceJob jobName="run_EntitySyncAll_frequent" description="Run All EntitySync"
             serviceName="org.moqui.impl.EntitySyncServices.run#EntitySyncAll" cronExpression="0 0/15 * * * ?" paused="Y"/>

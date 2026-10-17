@@ -57,4 +57,4 @@ tracing = "0.1"
 - **Rust services.** They take `(&ExecutionContext, &ServiceInfo, &Parameters)` and run in the caller's execution
   context and transaction. `moqui_core::user` and the other facades work as they do in the framework's own services.
 
-The full guide is `plans/Native-Components-Usage.md`.
+The full guide is `docs/Native-Components.md`.

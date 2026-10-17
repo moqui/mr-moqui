@@ -31,10 +31,7 @@ pub(super) struct EmailRule {
 
 pub(super) fn email_rule_from(node: &MNode) -> EmailRule {
     EmailRule {
-        condition: node
-            .first_named("condition")
-            .map(|child| child.write_string())
-            .unwrap_or_default(),
+        condition: super::rule_actions::first_condition(node),
         actions: node
             .first_named("actions")
             .map(|child| child.write_string())

@@ -16,6 +16,7 @@
 
 #[macro_use]
 pub(crate) mod rust_services;
+mod backup;
 pub(crate) mod call;
 pub mod coverage;
 pub(crate) mod define;
@@ -33,7 +34,7 @@ mod pool;
 mod remote;
 mod request_pool;
 mod rest;
-mod rule_actions;
+pub(crate) mod rule_actions;
 mod schedule;
 #[cfg(test)]
 mod script_ports_tests;
@@ -53,7 +54,7 @@ pub use call::{
 };
 pub use define::load_definitions;
 pub use define::{check, configured_service_files, lint};
-pub(crate) use define::{input_hints, input_js_rules, VALIDATE_NUMBER, VALIDATE_NUMBER_INT};
+pub(crate) use define::{input_hints, input_js_rules, merge_param, VALIDATE_NUMBER, VALIDATE_NUMBER_INT};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 pub use email_eca::run_email_rules;
 #[cfg(test)]

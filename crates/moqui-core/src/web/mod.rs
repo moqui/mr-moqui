@@ -776,7 +776,8 @@ pub(crate) fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
 }
 
 fn message_errors() -> Vec<String> {
-    ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default()
+    // Java's `errorsString`: a validation error written with its field, form and service.
+    ExecutionContext::with_current(|ec| ec.message().errors_text()).unwrap_or_default()
 }
 
 /// Parsed inputs for one request. A JSON list stays beside the parameter map.
@@ -1305,7 +1306,7 @@ pub(crate) fn is_production() -> bool {
 /// instances get the message.
 pub(crate) fn error_text(status: u16, err: &Error) -> String {
     if status == 500 && is_production() {
-        format!("internal error, id {}", log_error_id(err))
+        format!("internal error, id {}", log_error_id(&err.diagnostic()))
     } else {
         err.message().to_string()
     }

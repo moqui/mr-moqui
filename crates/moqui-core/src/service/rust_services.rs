@@ -55,6 +55,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
     let mut map = BTreeMap::new();
     let mut errors = Vec::new();
     for result in [
+        super::backup::register(&mut map),
         super::mail::register(&mut map),
         super::system_sync::register(&mut map),
         super::elfinder::register(&mut map),
@@ -81,6 +82,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
+                "moqui_core::service::backup::backup_embedded_database",
                 "moqui_core::service::elfinder::run_command",
                 "moqui_core::service::images::convert_image",
                 "moqui_core::service::images::image_reader_file_suffixes",

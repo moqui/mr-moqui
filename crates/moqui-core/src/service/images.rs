@@ -27,8 +27,9 @@
 //!
 //! Differences from Java: each width is resampled from the original, where Java resampled each from the one before;
 //! the input and output sizes are limited (see [`MAX_INPUT_SIDE`], [`MAX_OUTPUT_SIDE`] and [`MAX_OUTPUT_PIXELS`]), where
-//! Java had none; the writes run in the call, where Java started a service for each; and `write#Image` takes the image
-//! as encoded bytes in `image`, where Java took an `IIOImage`.
+//! Java had none; the writes run in the call, where Java started a service for each; the original is written as
+//! `outputImageFormat` when that format can be written, where Java kept a png, gif, bmp or tiff original in its own
+//! format; and `write#Image` takes the image as encoded bytes in `image`, where Java took an `IIOImage`.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -314,12 +315,13 @@ fn convert_image(
     let (image, input_format) = decode(&bytes)?;
     for (suffix, width, location) in targets {
         let written = match width {
-            // the original keeps its format when it can be written
+            // the original is written as outputImageFormat, as its caller names the file, when that format can be
+            // written, and in the input's format otherwise
             None => {
-                let format = if format_of(&input_format).is_some() {
-                    input_format.as_str()
-                } else {
+                let format = if format_of(&output_format).is_some() {
                     output_format.as_str()
+                } else {
+                    input_format.as_str()
                 };
                 write_image(&image, &location, format, &input_format, true)?
             }
@@ -426,6 +428,28 @@ mod tests {
             .unwrap_err()
             .message()
             .contains("No writer for: wbmp"));
+    }
+
+    /// The original is written as `outputImageFormat` when that format can be written, and in the input's otherwise.
+    #[test]
+    fn the_original_is_written_as_the_output_format_when_it_can_be() {
+        let dir = std::env::temp_dir().join(format!("moqui-image-original-{}", std::process::id()));
+        let facade = crate::testing::open();
+        let ctx = crate::context::ExecutionContextFactory::test_context();
+        let _entered = ctx.enter();
+        let convert = |output_format: &str, name: &str| {
+            let location = format!("file:{}", dir.join(name).display());
+            let mut parameters = BTreeMap::new();
+            parameters.insert("inputImageStream".to_string(), Value::Bytes(png_with_alpha()));
+            parameters.insert("outputImageFormat".to_string(), Value::string(output_format));
+            parameters.insert("outputResourceReferenceOriginal".to_string(), Value::string(&location));
+            let out = convert_image(&parameters, &facade).unwrap();
+            assert_eq!(out.get("contentLocationOriginal"), Some(&Value::String(location)));
+            ::image::guess_format(&std::fs::read(dir.join(name)).unwrap()).unwrap()
+        };
+        assert_eq!(convert("jpg", "a_Original.jpg"), ImageFormat::Jpeg);
+        assert_eq!(convert("wbmp", "b_Original.wbmp"), ImageFormat::Png, "no wbmp writer");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

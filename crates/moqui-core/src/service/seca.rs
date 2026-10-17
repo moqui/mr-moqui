@@ -47,12 +47,14 @@ pub(super) struct SecaRule {
 /// Run SECA actions whose service and `when` match. A false condition skips the rule.
 ///
 /// Each rule runs in its own context frame holding the parameters, `parameters`, and, for the
-/// rules that run after the service, the results and `results`.
+/// rules that run after the service, the results and `results`. As Java's, `parameters` and `results` are the call's
+/// own maps: what a rule sets in them is in `parameters` and `results` when it ends, so a pre-* rule changes the
+/// service's input and a post-* rule its results.
 pub fn run_seca_rules(
     service: &str,
     when: &str,
-    parameters: &BTreeMap<String, Value>,
-    results: Option<&BTreeMap<String, Value>>,
+    parameters: &mut BTreeMap<String, Value>,
+    mut results: Option<&mut BTreeMap<String, Value>>,
 ) -> Result<(), Error> {
     let Some(rules) = eca_rules::current() else {
         return Ok(());
@@ -64,7 +66,7 @@ pub fn run_seca_rules(
         }
         let _frame = super::rule_actions::publish_names(parameters)?;
         crate::script::set_context_name("parameters", Value::Map(to_index_map(parameters)))?;
-        if let Some(results) = results {
+        if let Some(results) = results.as_deref() {
             for (name, value) in results {
                 crate::script::set_context_name(name, value.clone())?;
             }
@@ -77,14 +79,26 @@ pub fn run_seca_rules(
                 err.message()
             ))
         };
-        if let Some(check) = &rule.condition_check {
-            if !crate::script::eval_condition_group(check).map_err(in_rule)? {
-                continue;
-            }
+        let passed = match &rule.condition_check {
+            Some(check) => crate::script::eval_condition_group(check).map_err(in_rule)?,
+            None => true,
+        };
+        if passed {
+            super::rule_actions::run_stored_actions(&rule.actions).map_err(in_rule)?;
         }
-        super::rule_actions::run_stored_actions(&rule.actions).map_err(in_rule)?;
+        read_back("parameters", parameters);
+        if let Some(results) = results.as_deref_mut() {
+            read_back("results", results);
+        }
     }
     Ok(())
+}
+
+/// The map a rule left under `name` in its frame, in place of `map`. Anything but a map leaves `map` as it was.
+fn read_back(name: &str, map: &mut BTreeMap<String, Value>) {
+    if let Some(Value::Map(values)) = crate::script::context_value(name) {
+        *map = values.into_iter().collect();
+    }
 }
 
 /// Whether any rule runs for `service` at `when`, so a transaction hook is registered only when one does.
@@ -101,7 +115,9 @@ type PatternHits = HashMap<(String, String), Arc<[usize]>>;
 pub(super) struct SecaIndex {
     /// By `when`, then by the service name without `#`.
     exact: HashMap<String, HashMap<String, Vec<usize>>>,
-    /// The rules whose name is a pattern, by `when`.
+    /// The rules whose name is a pattern, by `when`. A pattern is matched against the name a call has, the first time a
+    /// service is called (`pattern_hits`); Java expands it at load to the known services, so there it never runs for a
+    /// service it did not know then, as an implicit entity-auto one (an accepted difference, P7a-08).
     patterns: HashMap<String, Vec<usize>>,
     /// The pattern rules that matched, by `when` and service name, so each pattern runs once for a service.
     pattern_hits: std::sync::RwLock<PatternHits>,
@@ -263,8 +279,13 @@ fn pattern_matches(rule: &SecaRule, plain: &str) -> bool {
 }
 
 impl SecaRule {
-    /// Java's load check: a named service that is defined, or a pattern that matches a known service.
-    pub(super) fn service_defined(&self, facade: Option<&crate::entity::EntityFacade>) -> bool {
+    /// Java's load check: a named service that is defined, or a pattern that matches a known service. `known` is
+    /// filled with the known service names when a pattern first needs them, so a load reads the service files once.
+    pub(super) fn service_defined(
+        &self,
+        facade: Option<&crate::entity::EntityFacade>,
+        known: &mut Option<Vec<String>>,
+    ) -> bool {
         if !self.name_is_pattern {
             return super::call::is_service_defined(&self.service_name, facade)
                 || super::define::registered()
@@ -272,9 +293,20 @@ impl SecaRule {
                     .iter()
                     .any(|def| def.name.replace('#', "") == self.service_plain);
         }
-        super::info::known_service_names()
+        self.service_count(known) > 0
+    }
+
+    /// How many services the rule runs for, as Java's `getSecaRuleCount` counts it: one for a named service, and for a
+    /// pattern each known service it matches. `known` is filled as for [`Self::service_defined`].
+    pub(super) fn service_count(&self, known: &mut Option<Vec<String>>) -> usize {
+        if !self.name_is_pattern {
+            return 1;
+        }
+        known
+            .get_or_insert_with(super::info::known_service_names)
             .iter()
-            .any(|name| pattern_matches(self, &name.replace('#', "")) || pattern_matches(self, name))
+            .filter(|name| pattern_matches(self, &name.replace('#', "")) || pattern_matches(self, name))
+            .count()
     }
 }
 
@@ -305,7 +337,7 @@ mod tests {
             ),
         );
         let _entered = context.enter();
-        run_seca_rules("test.example#First", "pre-service", &BTreeMap::new(), None).unwrap();
+        run_seca_rules("test.example#First", "pre-service", &mut BTreeMap::new(), None).unwrap();
         assert_eq!(context.message().messages(), ["first"]);
         let node = moqui_lib::node::MNode::parse_text(
             "seca",
@@ -328,9 +360,9 @@ mod tests {
             .unwrap();
             super::seca_rule_from(&node).unwrap()
         };
-        assert!(rule("update#moqui.basic.Enumeration").service_defined(Some(&facade)));
-        assert!(!rule("update#moqui.basic.NoSuchEntity").service_defined(Some(&facade)));
-        assert!(!rule("no.such.Services.do#Nothing").service_defined(Some(&facade)));
+        assert!(rule("update#moqui.basic.Enumeration").service_defined(Some(&facade), &mut None));
+        assert!(!rule("update#moqui.basic.NoSuchEntity").service_defined(Some(&facade), &mut None));
+        assert!(!rule("no.such.Services.do#Nothing").service_defined(Some(&facade), &mut None));
     }
 
     #[test]
@@ -357,11 +389,45 @@ mod tests {
         let _entered = context.enter();
         let mut parameters = BTreeMap::new();
         parameters.insert("note".to_string(), Value::string("go"));
-        run_seca_rules("test.example#Run", "pre-service", &parameters, None).unwrap();
+        run_seca_rules("test.example#Run", "pre-service", &mut parameters, None).unwrap();
         // Priority order, and the false condition skips its rule.
         assert_eq!(context.message().messages(), ["early", "late"]);
-        run_seca_rules("test.example#Run", "post-service", &parameters, None).unwrap();
+        run_seca_rules("test.example#Run", "post-service", &mut parameters, None).unwrap();
         assert_eq!(context.message().messages(), ["early", "late"]);
+    }
+
+    /// Java writes each entity audit row with `create#moqui.entity.EntityAuditLog`, so that service's SECA rules run.
+    #[test]
+    fn an_entity_audit_row_is_created_through_its_service() {
+        let facade = crate::testing::open();
+        facade.set_disable_audit_log(false);
+        let context = crate::context::ExecutionContextFactory::test_context();
+        context.factory().set_entity(facade.clone());
+        eca_rules::install(
+            context.factory(),
+            eca_rules::from_xml(
+                r#"<secas><seca service="create#moqui.entity.EntityAuditLog" when="pre-service">
+                    <actions><script>ec.message.addMessage("audited " + changedFieldName);</script></actions>
+                </seca></secas>"#,
+                "",
+            ),
+        );
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let mut user = facade.make_value("moqui.security.UserAccount").unwrap();
+        user.set("userId", Value::string("AUDIT_SECA"));
+        user.set("username", Value::string("bob"));
+        user.create(&facade).unwrap();
+        user.set("username", Value::string("bob2"));
+        user.update(&facade).unwrap();
+        let audits = facade
+            .find("moqui.entity.EntityAuditLog")
+            .unwrap()
+            .eq("changedFieldName", Value::string("username"))
+            .list()
+            .unwrap();
+        assert_eq!(audits.len(), 2);
+        assert_eq!(context.message().messages(), ["audited username", "audited username"]);
     }
 
     #[test]
@@ -391,10 +457,9 @@ mod tests {
             ),
         );
         let _entered = context.enter();
-        let parameters = BTreeMap::new();
         let run = |service: &str, when: &str| {
             context.message().clear();
-            run_seca_rules(service, when, &parameters, None).unwrap();
+            run_seca_rules(service, when, &mut BTreeMap::new(), None).unwrap();
             context.message().messages().to_vec()
         };
         assert_eq!(
@@ -445,7 +510,7 @@ mod tests {
             let mut parameters = BTreeMap::new();
             parameters.insert("note".to_string(), Value::string(note));
             parameters.insert("count".to_string(), Value::I64(count));
-            run_seca_rules("test.example#Cond", "pre-service", &parameters, None).unwrap();
+            run_seca_rules("test.example#Cond", "pre-service", &mut parameters, None).unwrap();
             context.message().messages().to_vec()
         };
         assert_eq!(run("go", 5), ["compare", "and"]);
@@ -470,8 +535,34 @@ mod tests {
             ),
         );
         let _entered = context.enter();
-        let parameters = BTreeMap::new();
-        assert!(run_seca_rules("test.example#Odd", "pre-service", &parameters, None).is_err());
+        assert!(run_seca_rules("test.example#Odd", "pre-service", &mut BTreeMap::new(), None).is_err());
         assert!(context.message().messages().is_empty(), "the rule did not run");
+    }
+
+    /// Java's `getSecaRuleCount` counts a pattern rule once for each known service it matches; the rules loaded are
+    /// counted once each.
+    #[test]
+    fn the_rule_count_counts_a_pattern_once_per_matching_service() {
+        let context = crate::context::ExecutionContextFactory::test_context();
+        eca_rules::install(
+            context.factory(),
+            eca_rules::from_xml(
+                r#"<secas>
+                <seca service="count#One" when="pre-service"/>
+                <seca service="count.*" name-is-pattern="true" when="post-service"/>
+            </secas>"#,
+                "",
+            ),
+        );
+        let _entered = context.enter();
+        let path = std::env::temp_dir().join(format!("moqui-svc-seca-count-{}.xml", std::process::id()));
+        std::fs::write(
+            &path,
+            r#"<services><service verb="count" noun="One"/><service verb="count" noun="Two"/><service verb="other" noun="Three"/></services>"#,
+        )
+        .unwrap();
+        crate::service::lint(&[path]).unwrap();
+        assert_eq!(crate::service::info::seca_rules_active(), 2);
+        assert_eq!(crate::service::info::seca_rule_count(), 3);
     }
 }

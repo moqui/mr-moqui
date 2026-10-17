@@ -42,7 +42,7 @@ const RUN_COMMAND: &str = "org.moqui.impl.ElFinderServices.run#Command";
 /// The error for a target that does not decode or that leaves the volume.
 const INVALID_TARGET: &str = "errFileNotFound";
 /// The error for a destructive command on the volume root.
-const ROOT_REFUSED: &str = "Not allowed on the volume root";
+const ROOT_REFUSED: &str = "Operation not allowed on the root";
 
 /// Decodes a hash with or without its padding.
 const HASH_DECODE: GeneralPurpose = GeneralPurpose::new(
@@ -316,6 +316,7 @@ impl Connector<'_> {
         let dirs = if self.has_child_directories(entry)? { 1 } else { 0 };
         info.insert("dirs".to_string(), Value::I64(dirs));
         info.insert("read".to_string(), Value::I64(1));
+        // Java also asks `supportsWrite()`, which is true for every location an entry can be: a `DbResource` or a file.
         info.insert(
             "write".to_string(),
             Value::I64(if self.writes_restricted() { 0 } else { 1 }),
@@ -632,6 +633,7 @@ impl Connector<'_> {
                     fail(&mut response, &format!("No name specified for new {what}"));
                     break 'make;
                 };
+                // Java's `supportsWrite()` refusal never applies: an entry is a `DbResource` or a file.
                 let dir = self.entry(&location)?;
                 let made = if cmd == "mkdir" {
                     self.make_directory(&dir, &name)?
@@ -749,10 +751,11 @@ fn writes_restricted(production: bool, resource_root: &str) -> bool {
     production && !(resource_root.starts_with("dbresource://") || resource_root.starts_with("content://"))
 }
 
-/// The path a hash names, or `None` for anything that is not a hash of a UTF-8 path.
+/// The path a hash names, or `None` for anything that is not a hash of a UTF-8 path. The volume ID alone is the empty
+/// path, the root, as Java decodes it.
 fn unhash(hashed: &str) -> Option<String> {
     // NOTE: assumes a volume ID prefix with 3 characters
-    let encoded = hashed.get(3..).filter(|encoded| !encoded.is_empty())?;
+    let encoded = hashed.get(3..)?;
     let encoded = encoded.replace('.', "=").replace('+', "-").replace('/', "_");
     let bytes = HASH_DECODE.decode(encoded.as_bytes()).ok()?;
     String::from_utf8(bytes).ok()
