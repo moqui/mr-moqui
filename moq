@@ -816,13 +816,36 @@ parse_run_opts() {
     done
 }
 
+target_dir() {
+    local target=${CARGO_TARGET_DIR:-$ROOT/target}
+    case $target in
+        /*) printf '%s\n' "$target" ;;
+        *) printf '%s\n' "$ROOT/$target" ;;
+    esac
+}
+
 binary_path() {
-    printf '%s\n' "$ROOT/target/$1/moqui"
+    if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+        printf '%s/target/moq-bin/%s/moqui\n' "$ROOT" "$1"
+    else
+        printf '%s/%s/moqui\n' "$(target_dir)" "$1"
+    fi
+}
+
+cargo_build() {
+    local profile=$1
+    shift
+    if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+        need_tool python3
+        run_cmd python3 "$ROOT/scripts/cargo_cache.py" "$(binary_path "$profile")" cargo build "$@"
+    else
+        run_cmd cargo build "$@"
+    fi
 }
 
 # cargo build for a profile ($1: release or debug), with any more cargo arguments after it. With component crates in
 # runtime/component (a Cargo.toml beside a component.xml) the binary is the generated crate in target/moqui-app, which
-# links them with the framework; without, it is crates/moqui. Either way it lands in target/$profile/moqui.
+# links them with the framework; without, it is crates/moqui. Shared-cache builds copy the result to binary_path.
 build_binary() {
     local profile=$1
     shift
@@ -833,12 +856,12 @@ build_binary() {
     local -a addons
     mapfile -t addons < <(component_crate_dirs "$RUNTIME_DIR/component" "$RUNTIME_DIR/ecomponent")
     if [ ${#addons[@]} -eq 0 ]; then
-        run_cmd cargo build "${release_arg[@]}" -p moqui "$@" >&2 || die "cargo build failed"
+        cargo_build "$profile" "${release_arg[@]}" -p moqui "$@" >&2 || die "cargo build failed"
         return
     fi
     local app=$ROOT/target/moqui-app
     write_app_crate "$app" "${addons[@]}"
-    run_cmd cargo build "${release_arg[@]}" --manifest-path "$app/Cargo.toml" --target-dir "$ROOT/target" "$@" >&2 \
+    cargo_build "$profile" "${release_arg[@]}" --manifest-path "$app/Cargo.toml" --target-dir "$(target_dir)" "$@" >&2 \
         || die "cargo build failed"
 }
 
@@ -929,11 +952,12 @@ fn main() {
     fi
 }
 
-# The binary for a profile. It is built first when asked (--build), and when it is not there.
+# Shared targets may contain another checkout's binary: let cargo check freshness before using it.
+# Local targets retain the existing explicit --build / missing-binary behavior.
 moqui_binary() {
     local profile=$1 bin
     bin=$(binary_path "$profile")
-    if [ -n "$OPT_BUILD" ]; then
+    if [ -n "$OPT_BUILD" ] || [ -n "${CARGO_TARGET_DIR:-}" ]; then
         build_binary "$profile"
     elif [ ! -x "$bin" ]; then
         info "$(rel "$bin") is not built, building it" >&2
