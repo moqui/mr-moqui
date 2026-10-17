@@ -69,8 +69,7 @@ incremental. Generated add-on source and runtimes remain local. No processes are
 stopped or restarted, and existing checkout caches are not migrated or removed.
 Use guarded `moq`/controller builds only: bare Cargo bypasses these safeguards.
 `moq clean-all` cleans only checkout-local `target/`, never the shared cache.
-Do not run bare `cargo clean` on a shared cache in use. Verify reuse and running-process
-safety with `python3 scripts/cargo-cache-test.py` (offline Rust fixtures).
+Do not run bare `cargo clean` on a shared cache in use.
 
 Run from the repo root (paths default to `MOQUI_RUNTIME=runtime`,
 `MOQUI_FRAMEWORK=<runtime>/base-component/framework`, embedded cluster in `runtime/db/embedded`).

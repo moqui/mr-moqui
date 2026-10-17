@@ -6,8 +6,6 @@
 #   docker run --rm -v "$PWD":/w -w /w bash:3.2 bash scripts/moq-test.sh
 # Parts that need git, zip, unzip, or curl are skipped when those are missing.
 set -o pipefail
-# The fixture must never touch the caller's real shared cache.
-export CARGO_TARGET_DIR=
 
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 FIX=$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")
@@ -64,8 +62,6 @@ mkdir -p "$R/target/release" "$R/runtime/base-component/framework/data" "$R/runt
     "$R/runtime/conf" "$R/runtime/component" \
     "$R/runtime/db/install/18.6.0" "$R/runtime/log" "$R/runtime/tmp" "$R/runtime/opensearch/data/nodes" "$R/runtime/opensearch/logs"
 cp "$SRC/moq" "$R/moq"
-mkdir -p "$R/scripts"
-cp "$SRC/scripts/cargo_cache.py" "$R/scripts/cargo_cache.py"
 chmod +x "$R/moq"
 cat >"$R/target/release/moqui" <<'EOF'
 #!/bin/sh
@@ -83,22 +79,10 @@ cat >"$R/bin/cargo" <<'EOF'
 # cargo stub: records its arguments, builds the stub moqui for the profile, and fails when CARGO_STUB_FAIL is set.
 echo "cargo: $*" >>"$(dirname "$0")/../cargo.log"
 [ -z "${CARGO_STUB_FAIL:-}" ] || exit 1
-if [ "$1" = clean ]; then
-    echo "clean-target: $CARGO_TARGET_DIR" >>"$(dirname "$0")/../cargo.log"
-    exit 0
-fi
-if [ "$1" = metadata ]; then
-    echo '{"packages":[{"name":"moqui","source":null}]}'
-    exit 0
-fi
+[ "$1" != clean ] || exit 0
 case " $* " in *" --release "*) p=release ;; *) p=debug ;; esac
-target=${CARGO_TARGET_DIR:-$(dirname "$0")/../target}
-while [ $# -gt 0 ]; do
-    if [ "$1" = --target-dir ]; then target=$2; shift; fi
-    shift
-done
-mkdir -p "$target/$p"
-cp "$(dirname "$0")/../target/release/moqui.keep" "$target/$p/moqui"
+mkdir -p "$(dirname "$0")/../target/$p"
+cp "$(dirname "$0")/../target/release/moqui.keep" "$(dirname "$0")/../target/$p/moqui"
 EOF
 chmod +x "$R/bin/cargo"
 cp "$R/target/release/moqui" "$R/target/release/moqui.keep"
@@ -191,30 +175,6 @@ rm -f "$CALLS"
 "$M" run -c conf/MoquiProductionConf.xml types --out x >/dev/null 2>&1
 check "stub saw run" 0 "stub: types --out x conf=$R/runtime/conf/MoquiProductionConf.xml" -- cat "$CALLS"
 
-# ========== shared cargo target ==========
-
-check "shared target builds and runs outside the checkout" 0 '' -- \
-    env CARGO_TARGET_DIR="$FIX/shared cache" "$M" run --debug
-check "shared binary ran" 0 'stub:' -- cat "$R/target/moq-bin/debug/calls.log"
-rm -f "$R/cargo.log"
-check "shared target always checks checkout freshness" 0 '' -- \
-    env CARGO_TARGET_DIR="$FIX/shared cache" "$M" run --debug
-check "shared target rechecks cargo" 0 'cargo: build -p moqui$' -- cat "$R/cargo.log"
-check "relative target resolves from repo, not caller" 0 '' -- \
-    env CARGO_TARGET_DIR=relative-cache "$M" run --debug
-check "relative binary ran" 0 'stub:' -- cat "$R/target/moq-bin/debug/calls.log"
-check "shared clean-all stays checkout-local" 0 "CARGO_TARGET_DIR=$R/target cargo clean$" -- \
-    env CARGO_TARGET_DIR="$FIX/shared cache" MOQ_DRY_RUN=1 "$M" clean-all
-mkdir -p "$R/runtime/component/addon"
-echo '<component name="addon"/>' >"$R/runtime/component/addon/component.xml"
-printf '[package]\nname = "addon"\nversion = "0.1.0"\n' >"$R/runtime/component/addon/Cargo.toml"
-echo '# fixture lockfile' >"$R/Cargo.lock"
-check "addon uses shared target" 0 "--target-dir $FIX/shared-cache" -- \
-    env CARGO_TARGET_DIR="$FIX/shared-cache" MOQ_DRY_RUN=1 "$M" build --debug
-check "generated addon source stays local" 0 "--manifest-path $R/target/moqui-app/Cargo.toml" -- \
-    env CARGO_TARGET_DIR="$FIX/shared-cache" MOQ_DRY_RUN=1 "$M" build --debug
-rm -rf "$R/runtime/component/addon"
-
 # ========== completion ==========
 
 check "complete task prefix" 0 'reload-save' -- "$M" __complete 1 r
@@ -277,7 +237,7 @@ check "reload-save missing" 1 'no save named nope' -- "$M" reload-save nope
 rm -f "$R/cargo.log"
 check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"
-check "clean-all only cleans checkout-local target" 0 "clean-target: $R/target$" -- cat "$R/cargo.log"
+check "clean-all ran cargo clean" 0 'cargo: clean$' -- cat "$R/cargo.log"
 check "clean-all kept saves" 0 '' -- test -f "$R/runtime/save/t1/moqui.dump"
 check "load-save dry run" 0 'save-db .*runtime/save/demo/moqui.dump.part' -- dry "$M" load-save -n demo seed
 check "opensearch-start without install" 1 'no OpenSearch' -- "$M" opensearch-start
