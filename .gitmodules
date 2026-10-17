@@ -1,0 +1,12 @@
+[submodule "runtime/component/MrMarbleERP"]
+	path = runtime/component/MrMarbleERP
+	url = https://github.com/moqui/MrMarbleERP.git
+[submodule "runtime/component/MrSimpleScreens"]
+	path = runtime/component/MrSimpleScreens
+	url = https://github.com/moqui/MrSimpleScreens.git
+[submodule "runtime/component/mantle-usl"]
+	path = runtime/component/mantle-usl
+	url = https://github.com/moqui/mr-mantle-usl.git
+[submodule "runtime/component/mantle-udm"]
+	path = runtime/component/mantle-udm
+	url = https://github.com/moqui/mr-mantle-udm.git
