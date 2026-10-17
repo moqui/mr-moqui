@@ -1180,6 +1180,58 @@ mod tests {
     }
 
     #[test]
+    fn audit_writes_count_the_implicit_create_service_as_java_does() {
+        let world = world();
+        let _entered = world.context.enter();
+        let _authz = world.context.disable_authz();
+        world.facade.set_disable_audit_log(false);
+        let mut user = world.facade.make_value("moqui.security.UserAccount").unwrap();
+        user.set("userId", Value::string("AUDIT_HITS"));
+        user.set("username", Value::string("alice"));
+        user.create(&world.facade).unwrap();
+        user.set("username", Value::string("alice2"));
+        user.update(&world.facade).unwrap();
+        // An unchanged field or disabled auditing must not call the audit service.
+        user.update(&world.facade).unwrap();
+        world.facade.set_disable_audit_log(true);
+        user.set("username", Value::string("alice3"));
+        user.update(&world.facade).unwrap();
+        let audits = world
+            .facade
+            .find("moqui.entity.EntityAuditLog")
+            .unwrap()
+            .list()
+            .unwrap();
+        assert_eq!(audits.len(), 2);
+        for audit in audits.iter() {
+            assert_eq!(text(audit, "changedEntityName"), "moqui.security.UserAccount");
+            assert_eq!(text(audit, "changedFieldName"), "username");
+            assert_eq!(text(audit, "pkPrimaryValue"), "AUDIT_HITS");
+            // Java captures the caller's stack before invoking the audit service.
+            assert_eq!(text(audit, "artifactStack"), "moqui.security.UserAccount");
+        }
+        world.context.factory().flush_artifact_hits().unwrap();
+        let name = "create#moqui.entity.EntityAuditLog";
+        let bins = rows(&world, "moqui.server.ArtifactHitBin", "AT_SERVICE");
+        let bins: Vec<_> = bins.iter().filter(|bin| text(bin, "artifactName") == name).collect();
+        assert_eq!(bins.len(), 1);
+        assert_eq!(text(bins[0], "artifactSubType"), "entity-implicit");
+        assert_eq!(text(bins[0], "hitCount"), "2");
+        let hits = rows(&world, "moqui.server.ArtifactHit", "AT_SERVICE");
+        // Java treats the entity-implicit subtype as an entity: bin it, but do not persist individual hits.
+        assert!(hits.iter().all(|hit| text(hit, "artifactName") != name));
+        let entity_bins = rows(&world, "moqui.server.ArtifactHitBin", "AT_ENTITY");
+        let audit_creates: Vec<_> = entity_bins
+            .iter()
+            .filter(|bin| {
+                text(bin, "artifactName") == "moqui.entity.EntityAuditLog" && text(bin, "artifactSubType") == "create"
+            })
+            .collect();
+        assert_eq!(audit_creates.len(), 1);
+        assert_eq!(text(audit_creates[0], "hitCount"), "2");
+    }
+
+    #[test]
     fn fk_reads_are_counted_apart_when_a_load_makes_dummy_parents() {
         let world = world();
         let _entered = world.context.enter();
