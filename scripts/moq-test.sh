@@ -7,7 +7,7 @@
 # Parts that need git, zip, unzip, or curl are skipped when those are missing.
 set -o pipefail
 # The fixture must never touch the caller's real shared cache.
-unset CARGO_TARGET_DIR
+export CARGO_TARGET_DIR=
 
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 FIX=$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")
@@ -83,7 +83,10 @@ cat >"$R/bin/cargo" <<'EOF'
 # cargo stub: records its arguments, builds the stub moqui for the profile, and fails when CARGO_STUB_FAIL is set.
 echo "cargo: $*" >>"$(dirname "$0")/../cargo.log"
 [ -z "${CARGO_STUB_FAIL:-}" ] || exit 1
-[ "$1" != clean ] || exit 0
+if [ "$1" = clean ]; then
+    echo "clean-target: $CARGO_TARGET_DIR" >>"$(dirname "$0")/../cargo.log"
+    exit 0
+fi
 if [ "$1" = metadata ]; then
     echo '{"packages":[{"name":"moqui","source":null}]}'
     exit 0
@@ -200,6 +203,8 @@ check "shared target rechecks cargo" 0 'cargo: build -p moqui$' -- cat "$R/cargo
 check "relative target resolves from repo, not caller" 0 '' -- \
     env CARGO_TARGET_DIR=relative-cache "$M" run --debug
 check "relative binary ran" 0 'stub:' -- cat "$R/target/moq-bin/debug/calls.log"
+check "shared clean-all stays checkout-local" 0 "CARGO_TARGET_DIR=$R/target cargo clean$" -- \
+    env CARGO_TARGET_DIR="$FIX/shared cache" MOQ_DRY_RUN=1 "$M" clean-all
 mkdir -p "$R/runtime/component/addon"
 echo '<component name="addon"/>' >"$R/runtime/component/addon/component.xml"
 printf '[package]\nname = "addon"\nversion = "0.1.0"\n' >"$R/runtime/component/addon/Cargo.toml"
@@ -272,7 +277,7 @@ check "reload-save missing" 1 'no save named nope' -- "$M" reload-save nope
 rm -f "$R/cargo.log"
 check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"
-check "clean-all ran cargo clean" 0 'cargo: clean$' -- cat "$R/cargo.log"
+check "clean-all only cleans checkout-local target" 0 "clean-target: $R/target$" -- cat "$R/cargo.log"
 check "clean-all kept saves" 0 '' -- test -f "$R/runtime/save/t1/moqui.dump"
 check "load-save dry run" 0 'save-db .*runtime/save/demo/moqui.dump.part' -- dry "$M" load-save -n demo seed
 check "opensearch-start without install" 1 'no OpenSearch' -- "$M" opensearch-start

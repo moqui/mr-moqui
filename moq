@@ -10,6 +10,8 @@ set -o pipefail
 # ========== globals ==========
 
 MOQ_CWD=$(pwd)
+# An explicitly empty CARGO_TARGET_DIR opts out of shared builds.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR-${XDG_CACHE_HOME:-$HOME/.cache}/moqui/target}"
 
 moq_script=$0
 while [ -h "$moq_script" ]; do
@@ -551,7 +553,7 @@ help_clean_log() {
 
 help_clean_all() {
     cat <<'EOF'
-clean-db, clean-log, runtime/tmp, and cargo clean, which removes target/ with the release and debug
+clean-db, clean-log, runtime/tmp, and checkout-local release and debug
 binaries (the next task that runs moqui builds it again). Saves in runtime/save are kept; delete those
 by hand. load-save cleans the runtime data only, not the binaries.
 EOF
@@ -831,7 +833,7 @@ cargo_build() {
         need_tool python3
         run_cmd python3 "$ROOT/scripts/cargo_cache.py" "$(binary_path "$profile")" cargo build "$@"
     else
-        run_cmd cargo build "$@"
+        run_cmd env -u CARGO_TARGET_DIR cargo build "$@"
     fi
 }
 
@@ -1305,8 +1307,8 @@ task_clean_all() {
     need_tool cargo
     clean_all
     # load-save uses clean_all alone: it must not throw away the binary it is about to run
-    info "Running cargo clean (removes target/)"
-    run_cmd cargo clean >&2 || die "cargo clean failed"
+    info "Cleaning checkout-local binaries (shared dependencies are preserved)"
+    run_cmd env CARGO_TARGET_DIR="$ROOT/target" cargo clean >&2 || die "cargo clean failed"
 }
 
 # The runtime data: database, logs, and runtime/tmp.

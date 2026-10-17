@@ -31,8 +31,9 @@ with tempfile.TemporaryDirectory(prefix="moqui-shared-cache-") as temporary:
     run(["git", "-C", str(dependency), "add", "."])
     run(["git", "-C", str(dependency), "-c", "user.name=Test", "-c",
          "user.email=test@example.com", "commit", "-qm", "fixture"])
-    environment = {**os.environ, "CARGO_TARGET_DIR": str(root / "shared target"),
+    environment = {**os.environ, "XDG_CACHE_HOME": str(root / "cache"),
                    "CARGO_HOME": str(root / "cargo-home"), "CARGO_TERM_VERBOSE": "true"}
+    environment.pop("CARGO_TARGET_DIR", None)  # Exercise default sharing, not opt-in.
     for name in ("a", "b"):
         checkout = root / name
         for directory in ("src", "local/src", "runtime/conf", "scripts"):
@@ -69,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix="moqui-shared-cache-") as temporary:
         assert not (root / name / "target/debug").exists()
         if index == 0:
             # Keep the original shared executable running while B invalidates it.
-            running = subprocess.Popen([str(root / "shared target/debug/moqui"), "--wait"],
+            running = subprocess.Popen([str(root / "cache/moqui/target/debug/moqui"), "--wait"],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, text=True)
             assert running.stdout.readline().strip() == "ready"
@@ -88,5 +89,13 @@ with tempfile.TemporaryDirectory(prefix="moqui-shared-cache-") as temporary:
         assert process.returncode == 0 and stdout.strip() == f"{name}: 42", stdout + stderr
         private = root / name / "target/moq-bin/debug/moqui"
         assert run([str(private)]).stdout.strip() == f"{name}: 42"
+    result = run([str(root / "a/moq"), "run", "--debug"],
+                 env={**environment, "CARGO_TARGET_DIR": ""}, cwd=root)
+    assert result.stdout.strip() == "a: 42" and (root / "a/target/debug/moqui").exists()
+    run([str(root / "a/moq"), "clean-all"], env=environment, cwd=root)
+    assert not (root / "a/target/moq-bin").exists()
+    assert not (root / "a/target/debug/moqui").exists()
+    assert (root / "cache/moqui/target/.moqui-checkout").exists()
+    assert (root / "cache/moqui/target/debug/deps").is_dir()
 
 print("PASS: dependency reuse, A -> B -> A, incremental builds, existing process survives, parallel private binaries")
