@@ -58,26 +58,21 @@ cargo lint
 cargo test -p moqui-host --test gate3 --test gate3_browser
 ```
 
-To reuse compatible Cargo artifacts across checkouts, export one absolute target path
-in the shell or agent environment, for example:
+Optional shared cache (requires Python 3; unset means unchanged local build/run):
 
 ```sh
 export CARGO_TARGET_DIR=/home/user/moqui/mr-moqui/target
 ./moq run --debug
 ```
 
-Shared-cache mode additionally requires Python 3. `moq` serializes build-and-copy
-and runs a private executable at `target/moq-bin/<profile>/moqui`. On checkout
-changes it invalidates local/path packages only: Cargo can otherwise incorrectly
-report another checkout's outputs fresh. Registry/git dependencies stay cached;
-incremental builds remain enabled within the same checkout. Generated add-on source
-(`target/moqui-app`) and runtimes stay checkout-local.
-
-Use `moq` or the regression controller for every build into this shared target;
-bare `cargo build` bypasses the checkout guard and build-and-copy lock. Keep compiler
-versions and build flags consistent for best reuse. Existing local caches are not
-removed automatically; `cargo clean` also clears the shared cache. Verify with
-`python3 scripts/cargo-cache-test.py` (small, offline Rust fixtures).
+Build-and-copy is locked; runs use private `target/moq-bin/<profile>/moqui` copies.
+Checkout switches invalidate local/path packages to avoid Cargo's false-fresh
+outputs; registry/git dependencies stay cached, and same-checkout builds remain
+incremental. Generated add-on source and runtimes remain local. No processes are
+stopped or restarted, and existing checkout caches are not migrated or removed.
+Use guarded `moq`/controller builds only: bare Cargo bypasses these safeguards.
+Do not run `cargo clean` on a shared cache in use. Verify reuse and running-process
+safety with `python3 scripts/cargo-cache-test.py` (offline Rust fixtures).
 
 Run from the repo root (paths default to `MOQUI_RUNTIME=runtime`,
 `MOQUI_FRAMEWORK=<runtime>/base-component/framework`, embedded cluster in `runtime/db/embedded`).

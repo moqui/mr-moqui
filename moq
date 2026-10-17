@@ -816,19 +816,11 @@ parse_run_opts() {
     done
 }
 
-target_dir() {
-    local target=${CARGO_TARGET_DIR:-$ROOT/target}
-    case $target in
-        /*) printf '%s\n' "$target" ;;
-        *) printf '%s\n' "$ROOT/$target" ;;
-    esac
-}
-
 binary_path() {
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
         printf '%s/target/moq-bin/%s/moqui\n' "$ROOT" "$1"
     else
-        printf '%s/%s/moqui\n' "$(target_dir)" "$1"
+        printf '%s\n' "$ROOT/target/$1/moqui"
     fi
 }
 
@@ -861,7 +853,7 @@ build_binary() {
     fi
     local app=$ROOT/target/moqui-app
     write_app_crate "$app" "${addons[@]}"
-    cargo_build "$profile" "${release_arg[@]}" --manifest-path "$app/Cargo.toml" --target-dir "$(target_dir)" "$@" >&2 \
+    cargo_build "$profile" "${release_arg[@]}" --manifest-path "$app/Cargo.toml" --target-dir "${CARGO_TARGET_DIR:-$ROOT/target}" "$@" >&2 \
         || die "cargo build failed"
 }
 
