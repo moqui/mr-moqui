@@ -72,6 +72,19 @@ cargo lint
 cargo test -p moqui-host --test gate3 --test gate3_browser
 ```
 
+Builds share `${XDG_CACHE_HOME:-$HOME/.cache}/moqui/target` by default (requires
+Python 3). Set `CARGO_TARGET_DIR=/path` to override, or `CARGO_TARGET_DIR=` to opt
+out and use the original checkout-local build/run paths.
+
+Build-and-copy is locked; runs use private `target/moq-bin/<profile>/moqui` copies.
+Checkout switches invalidate local/path packages to avoid Cargo's false-fresh
+outputs; registry/git dependencies stay cached, and same-checkout builds remain
+incremental. Generated add-on source and runtimes remain local. No processes are
+stopped or restarted, and existing checkout caches are not migrated or removed.
+Use guarded `moq`/controller builds only: bare Cargo bypasses these safeguards.
+`moq clean-all` cleans only checkout-local `target/`, never the shared cache.
+Do not run bare `cargo clean` on a shared cache in use.
+
 Run from the repo root (paths default to `MOQUI_RUNTIME=runtime`,
 `MOQUI_FRAMEWORK=<runtime>/base-component/framework`, embedded cluster in `runtime/db/embedded`).
 Setting `entity_ds_db_conf` to `postgres`, `mysql` or `mysql8`, with the other `entity_ds_*`
