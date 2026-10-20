@@ -14,10 +14,18 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
             <div class="big-item"><div class="field"><div class="widget"><input size="40"></div></div></div>
             <div class="big-item"><div class="field"><div class="widget"><button>Text Search</button></div></div></div>
         </div></div></div>`;
-    const html = `<!DOCTYPE html><html data-theme="light"><style>${css}</style>${row('wide', 690)}${row('titled', 690, 'Title')}${row('narrow', 250)}
+    const html = `<!DOCTYPE html><html data-theme="light"><style>${css}</style>
+        <div class="field" id="text-field"><label>Text</label><div class="widget"><input id="text-control"></div></div>
+        <div class="field" id="select-field"><label>Select</label><div class="widget"><select id="select-control"><option>One</option></select></div></div>
+        <div class="field" id="static-field"><label>Static</label><div class="widget"><span class="display" id="static-control">Value</span></div></div>
+        <div class="field"><label>Paragraph</label><div class="widget"><p id="plain-static-control">Value</p></div></div>
+        <div class="field"><label>Inline</label><div class="widget"><span class="text-inline" id="inline-static-control">Value</span></div></div>
+        <div class="field" id="link-field"><label>Link</label><div class="widget"><a id="link-control" href="#">Related value</a></div></div>
+        ${row('wide', 690)}${row('titled', 690, 'Title')}${row('narrow', 250)}
         <table class="form-list"><thead><tr id="heading"><th><div class="title">ID <span class="order-by"><a href="#">▲</a><a class="active" href="#">▼</a></span></div><div class="title">Name</div></th></tr></thead>
         <tbody><tr id="product"><td id="cell"><div><a href="#">DEMO_1_1</a></div><div><a href="#">Demo Product One-One</a></div></td>
         <td><div><span class="display">Inventory</span></div><div><span class="display">Inventory - Finished Good</span></div></td></tr></tbody></table>
+        <table class="form-list"><tbody><tr><td id="compact-cell"><div class="field" id="table-field"><label>Compact</label><div class="widget"><input id="table-control"><span class="display" id="table-display">Compact</span></div></div></td></tr></tbody></table>
         <button id="button">Find Options</button><button id="NewProductDialog-button" data-dialog="NewProductDialog">New Product</button><strong id="strong">Label</strong>
         <div id="invoice-status"><span class="shaded-area condensed"><ul class="float-plain condensed"><li><div><strong>Status</strong></div><div><strong>In-Process</strong></div></li><li><button>Finalize</button></li><li><button>Cancel</button></li></ul></span></div>
         <table class="form-list"><thead><tr class="nav-row"><th><nav><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
@@ -51,6 +59,22 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         document.documentElement.dataset.theme = 'light';
         document.getElementById('result').textContent = JSON.stringify({
             wide:measure('wide'), titled:measure('titled'), narrow:measure('narrow'),
+            formMetrics: {
+                textHeight:document.getElementById('text-control').getBoundingClientRect().height,
+                selectHeight:document.getElementById('select-control').getBoundingClientRect().height,
+                staticHeight:document.getElementById('static-control').getBoundingClientRect().height,
+                plainStaticHeight:document.getElementById('plain-static-control').getBoundingClientRect().height,
+                inlineStaticHeight:document.getElementById('inline-static-control').getBoundingClientRect().height,
+                linkHeight:document.getElementById('link-control').getBoundingClientRect().height,
+                fieldGap:getComputedStyle(document.getElementById('text-field')).marginBottom,
+                labelPadding:getComputedStyle(document.querySelector('#text-field > label')).paddingTop,
+                tableControlPadding:getComputedStyle(document.getElementById('table-control')).padding,
+                tableControlHeight:document.getElementById('table-control').getBoundingClientRect().height,
+                tableDisplayHeight:document.getElementById('table-display').getBoundingClientRect().height,
+                tableFieldGap:getComputedStyle(document.getElementById('table-field')).marginBottom,
+                bigRowGap:getComputedStyle(document.querySelector('#wide')).marginBottom,
+                bigItemGap:getComputedStyle(document.querySelector('#wide .big-item .field')).marginBottom
+            },
             lightStatus, darkStatus,
             javaMetrics: {
                 font:getComputedStyle(document.body).fontFamily, fontSize:getComputedStyle(document.body).fontSize,
@@ -83,7 +107,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics, lightStatus, darkStatus } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     // Java webroot-layout.css/table-condensed and webroot-theme.css flattening, with Bootstrap typography.
     assert.deepEqual(javaMetrics, {
         font: '"Helvetica Neue", Helvetica, Arial, sans-serif', fontSize: '14px', lineHeight: '20px',
@@ -101,6 +125,13 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     assert.equal(narrow.widget.width, narrow.width);
     assert.ok(narrow.input.width <= narrow.width, 'inputs stay constrained at narrow widths');
     assert.ok(narrow.button.y > narrow.input.y + 20, 'controls may wrap when space is genuinely limited');
+    assert.deepEqual(formMetrics, {
+        textHeight: 34, selectHeight: 34, staticHeight: 34, plainStaticHeight: 34,
+        inlineStaticHeight: 34, linkHeight: 34,
+        fieldGap: '15px', labelPadding: '7px', tableControlPadding: '4px 8px', tableControlHeight: 30,
+        tableDisplayHeight: 20, tableFieldGap: '0px',
+        bigRowGap: '8px', bigItemGap: '0px'
+    });
     for (const status of [lightStatus, darkStatus]) {
         assert.equal(status.listStyle, 'none');
         assert.equal(status.listDisplay, 'inline-block');
