@@ -13,6 +13,7 @@
     --bg: #fff; --panel: #fff; --fg: #222; --muted: #777; --line: #ddd; --stripe: transparent; --hover: #f0f0f0;
     --link: #337ab7; --nav-bg: #0c1b29; --nav-fg: #9d9d9d; --nav-line: #222;
     --primary: #337ab7; --success: #5cb85c; --danger: #d9534f; --warning: #f0ad4e; --info: #5bc0de; --default: #777;
+    --shaded-bg: #f8f8f8; --shaded-inset: #f8f8f8; --shaded-shadow: #ccc;
     --radius: 4px; --gap: 8px;
     --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
@@ -21,6 +22,7 @@
         --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
         --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
         --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
+        --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
     }
 }
 :root[data-theme="dark"] {
@@ -28,6 +30,7 @@
     --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
     --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
     --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
+    --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
 }
 :root[data-theme="light"] { color-scheme: light; }
 
@@ -78,6 +81,15 @@ main, section { display: block; }
 .text-right { text-align: right; } .text-center, .center { text-align: center; } .text-nowrap { white-space: nowrap; }
 .pull-right { float: right; }
 .hidden { display: none; }
+
+/* StatusWidgets.xml compact status/action rows (Java webroot-layout.css). */
+ul.float-plain { display: inline-block; list-style: none outside none; margin: 0 0 -8px; padding: 0; }
+ul.float-plain > li { display: inline-block; line-height: 18px; margin: 0 8px 8px 0; padding: 8px; float: left; }
+ul.float-plain.condensed { margin: 0; }
+ul.float-plain.condensed > li { margin: 0 4px 0 0; padding: 4px; }
+.shaded-area { padding: 8px; margin-bottom: 8px; line-height: 18px; background: var(--shaded-bg); box-shadow: 0 0 0 1px var(--shaded-inset) inset, 0 0 0 1px var(--shaded-shadow); }
+span.shaded-area { display: inline-block; white-space: normal; }
+.shaded-area.condensed { padding: 4px; margin-bottom: 4px; }
 
 /* ---------- navbar ---------- */
 

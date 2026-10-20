@@ -19,6 +19,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         <tbody><tr id="product"><td id="cell"><div><a href="#">DEMO_1_1</a></div><div><a href="#">Demo Product One-One</a></div></td>
         <td><div><span class="display">Inventory</span></div><div><span class="display">Inventory - Finished Good</span></div></td></tr></tbody></table>
         <button id="button">Find Options</button><button id="NewProductDialog-button" data-dialog="NewProductDialog">New Product</button><strong id="strong">Label</strong>
+        <div id="invoice-status"><span class="shaded-area condensed"><ul class="float-plain condensed"><li><div><strong>Status</strong></div><div><strong>In-Process</strong></div></li><li><button>Finalize</button></li><li><button>Cancel</button></li></ul></span></div>
         <table class="form-list"><thead><tr class="nav-row"><th><nav><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
         <pre id="result"></pre><script>
         const measure = id => {
@@ -30,8 +31,27 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
             return { width:row.getBoundingClientRect().width, widget:rect(':scope > .widget'),
                 input:rect('input'), button:rect('button') };
         };
+        const statusMetrics = () => {
+            const ul = document.querySelector('#invoice-status ul');
+            const items = [...ul.querySelectorAll('li')];
+            const rects = items.map(item => item.getBoundingClientRect());
+            const ulStyle = getComputedStyle(ul);
+            const itemStyle = getComputedStyle(items[0]);
+            const shadeStyle = getComputedStyle(document.querySelector('#invoice-status span'));
+            return { listStyle:ulStyle.listStyleType, listDisplay:ulStyle.display, listMargin:ulStyle.margin,
+                listPadding:ulStyle.padding, itemPadding:itemStyle.padding, itemMargin:itemStyle.margin,
+                itemDisplay:itemStyle.display, itemFloat:itemStyle.cssFloat,
+                horizontal:rects.every((r, i) => i === 0 || (r.x > rects[i - 1].x && Math.abs(r.y - rects[0].y) < 1)),
+                spanDisplay:shadeStyle.display, spanWhitespace:shadeStyle.whiteSpace, spanPadding:shadeStyle.padding,
+                shadeBackground:shadeStyle.backgroundColor, shadeShadow:shadeStyle.boxShadow };
+        };
+        const lightStatus = statusMetrics();
+        document.documentElement.dataset.theme = 'dark';
+        const darkStatus = statusMetrics();
+        document.documentElement.dataset.theme = 'light';
         document.getElementById('result').textContent = JSON.stringify({
             wide:measure('wide'), titled:measure('titled'), narrow:measure('narrow'),
+            lightStatus, darkStatus,
             javaMetrics: {
                 font:getComputedStyle(document.body).fontFamily, fontSize:getComputedStyle(document.body).fontSize,
                 lineHeight:getComputedStyle(document.body).lineHeight, background:getComputedStyle(document.body).backgroundColor,
@@ -63,7 +83,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { wide, titled, narrow, javaMetrics, lightStatus, darkStatus } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     // Java webroot-layout.css/table-condensed and webroot-theme.css flattening, with Bootstrap typography.
     assert.deepEqual(javaMetrics, {
         font: '"Helvetica Neue", Helvetica, Arial, sans-serif', fontSize: '14px', lineHeight: '20px',
@@ -81,4 +101,25 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     assert.equal(narrow.widget.width, narrow.width);
     assert.ok(narrow.input.width <= narrow.width, 'inputs stay constrained at narrow widths');
     assert.ok(narrow.button.y > narrow.input.y + 20, 'controls may wrap when space is genuinely limited');
+    for (const status of [lightStatus, darkStatus]) {
+        assert.equal(status.listStyle, 'none');
+        assert.equal(status.listDisplay, 'inline-block');
+        assert.equal(status.listMargin, '0px');
+        assert.equal(status.listPadding, '0px');
+        assert.equal(status.itemPadding, '4px');
+        assert.equal(status.itemMargin, '0px 4px 0px 0px');
+        // CSSOM reports block after float:left computes the declared inline-block display.
+        assert.equal(status.itemDisplay, 'block');
+        assert.equal(status.itemFloat, 'left');
+        assert.equal(status.horizontal, true, 'status actions occupy one horizontal row');
+        assert.equal(status.spanDisplay, 'inline-block');
+        assert.equal(status.spanWhitespace, 'normal');
+        assert.equal(status.spanPadding, '4px');
+    }
+    assert.equal(lightStatus.shadeBackground, 'rgb(248, 248, 248)');
+    assert.equal(lightStatus.shadeShadow, 'rgb(248, 248, 248) 0px 0px 0px 1px inset, rgb(204, 204, 204) 0px 0px 0px 1px');
+    assert.match(lightStatus.shadeShadow, /rgb\(204, 204, 204\)/);
+    assert.equal(darkStatus.shadeBackground, 'rgb(63, 63, 63)');
+    assert.equal(darkStatus.shadeShadow, 'rgb(8, 8, 8) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
+    assert.match(darkStatus.shadeShadow, /rgb\(51, 51, 51\)/);
 });
