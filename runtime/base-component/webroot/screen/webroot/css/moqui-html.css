@@ -150,8 +150,8 @@ details.menu li.active > a { font-weight: 600; }
 
 /* ---------- containers ---------- */
 
-.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
-.row > .col { --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 8px; }
+.row { display: flex; flex-wrap: wrap; margin: 0 -15px; }
+.row > .col { --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 15px; }
 @media (min-width: 768px) { .row > .col { --c: var(--sm, var(--xs, 12)); } }
 @media (min-width: 992px) { .row > .col { --c: var(--md, var(--sm, var(--xs, 12))); } }
 @media (min-width: 1200px) { .row > .col { --c: var(--lg, var(--md, var(--sm, var(--xs, 12)))); } }
@@ -222,7 +222,7 @@ section.box[data-type="danger"] > header { background: var(--danger); color: #ff
 .stack-crumbs { margin: 0 0 var(--gap); }
 
 .tabs ul { display: flex; flex-wrap: wrap; gap: 2px; list-style: none; margin: 0 0 var(--gap); padding: 0; border-bottom: 1px solid var(--line); }
-.tabs li > a, .tabs li > span { display: block; padding: 6px 14px; border: 1px solid transparent; border-radius: var(--radius) var(--radius) 0 0; color: var(--link); }
+.tabs li > a, .tabs li > span { display: block; padding: 10px 6px; border: 1px solid transparent; border-radius: var(--radius) var(--radius) 0 0; color: var(--link); }
 .tabs li > a:hover { background: var(--hover); text-decoration: none; }
 .tabs li.active > a { color: var(--fg); background: var(--panel); border-color: var(--line); border-bottom-color: var(--panel); margin-bottom: -1px; }
 .tabs li.disabled { color: var(--muted); }
@@ -387,3 +387,17 @@ ul.pagination li.current > a { font-weight: 600; background: var(--stripe); }
 .hide-nav button, .hide-nav [data-btn], .hide-nav tr.nav-row, .hide-nav .tabs { display: none; }
 @media (prefers-reduced-motion: no-preference) { details.menu > ul, dialog { animation: moqui-fade .12s ease-out; } }
 @keyframes moqui-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Bootstrap's 30px gutters and form-group offsets, as used by Java's HTML macros. */
+@media (min-width: 768px) {
+    .field:not(.big-row) { margin-left: -15px; margin-right: -15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
+    .field:not(.big-row) > label, .field:not(.big-row) > .label { padding-left: 15px; padding-right: 15px; }
+    .field:not(.big-row) > .widget { padding-left: 15px; padding-right: 15px; }
+    .field-row { margin: 0 -15px; column-gap: 0; }
+    .field-row > div { padding: 0 15px; }
+    .field-row > div > .field { grid-template-columns: calc(100% / 3) minmax(0, 1fr); }
+    .big-item .field { grid-template-columns: 1fr; }
+    .big-item .field > label { padding-left: 0; padding-right: 0; }
+    .big-item .field, table.form-list .field { margin-left: 0; margin-right: 0; }
+    .big-item .field > .widget, table.form-list .field > .widget { padding-left: 0; padding-right: 0; }
+}

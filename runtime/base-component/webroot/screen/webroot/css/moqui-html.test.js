@@ -31,6 +31,14 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         <table class="form-list"><thead><tr class="nav-row"><th><nav><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
         <section class="box" id="panel"><header id="panel-heading"><h5 id="panel-title">Payment Applications</h5><div class="toolbar" id="panel-toolbar"><button data-btn="primary" id="panel-action">New Payment</button></div></header><div class="body" id="panel-body">Applied Payments</div></section>
         <a data-btn="primary" id="small-action">Current PDF</a><a data-btn="plain" id="plain-action">Account</a><a data-btn="primary" data-size="lg" id="large-action">Large</a>
+        <div id="grid" style="width:1440px;padding:0 15px"><div class="row">
+            <div class="col" style="--lg:6" id="grid-left">
+                <div class="field"><label>Invoice Date</label><div class="widget"><input id="grid-normal"></div></div>
+                <div class="field-row"><div><div class="field"><label>Invoice ID</label><div class="widget"><input id="grid-pair"></div></div></div>
+                    <div><div class="field"><label>Type</label><div class="widget"><select><option>Sale</option></select></div></div></div></div>
+            </div><div class="col" style="--lg:6" id="grid-right"><section class="box" id="grid-panel"></section></div>
+        </div></div>
+        <nav class="tabs"><ul><li class="active"><a href="#" id="grid-tab">Invoice</a></li></ul></nav>
         <pre id="result"></pre><script>
         const measure = id => {
             const row = document.getElementById(id);
@@ -78,6 +86,15 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
                 bigItemGap:getComputedStyle(document.querySelector('#wide .big-item .field')).marginBottom
             },
             lightStatus, darkStatus,
+            gridMetrics: {
+                columnWidth:document.getElementById('grid-left').getBoundingClientRect().width,
+                columnPadding:getComputedStyle(document.getElementById('grid-left')).padding,
+                normalInput:document.getElementById('grid-normal').getBoundingClientRect().left - document.getElementById('grid').getBoundingClientRect().left,
+                pairInput:document.getElementById('grid-pair').getBoundingClientRect().left - document.getElementById('grid').getBoundingClientRect().left,
+                rightPanel:document.getElementById('grid-panel').getBoundingClientRect().left - document.getElementById('grid').getBoundingClientRect().left,
+                tabHeight:document.getElementById('grid-tab').getBoundingClientRect().height,
+                tabPadding:getComputedStyle(document.getElementById('grid-tab')).padding
+            },
             widgetMetrics: {
                 actionHeight:document.getElementById('small-action').getBoundingClientRect().height,
                 actionFont:getComputedStyle(document.getElementById('small-action')).fontSize,
@@ -122,8 +139,13 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     // Java webroot-layout.css/table-condensed and webroot-theme.css flattening, with Bootstrap typography.
+    // Java Bootstrap 15px column padding/negative row margins and webroot-layout.css nav padding.
+    assert.deepEqual(gridMetrics, {
+        columnWidth:720, columnPadding:'0px 15px', normalInput:135, pairInput:135,
+        rightPanel:735, tabHeight:42, tabPadding:'10px 6px'
+    });
     assert.deepEqual(widgetMetrics, {
         actionHeight:30, actionFont:'12px', plainFont:'14px', largeFont:'15.4px',
         headingPadding:'10px 15px', headingFont:'16px', headingWeight:'500',
