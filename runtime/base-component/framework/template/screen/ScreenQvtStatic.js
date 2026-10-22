@@ -1157,7 +1157,7 @@
             // a row action of a form-list with row-selection posts the selected rows: the checkbox set is the selection slot's mqSelSet
             if (st.selectedForm && isForm) attrs[":parent-checkbox-set"] = "mqSelSet";
             w('<m-scope :value="' + e(X(map, n, "map")) + '" :extra="' + e("$scope[" + sq("mqExtra_" + at(n, "name")) + "]") + '" v-slot="_ctx">');
-            w(skipStart ? "" : '<div class="q-mb-md"><' + tag + A(attrs) + ">");
+            w(skipStart ? "" : '<div class="q-my-md"><' + tag + A(attrs) + ">");
             return { skipStart, tag };
         };
         const formSingleClose = (opened) => {
@@ -1172,9 +1172,9 @@
                 const value = at(when, "from") ? X(at(when, "from"), when, "from") : exp(at(when, "value"), when, "value", false);
                 style = "$mq.shown(" + value + "," + target + ")";
             }
-            const box = big ? "big-row-item" : cls("q-pa-xs", containerStyle || null);
+            const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
             const attrs = { class: box, ":style": style };
-            if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-pa-xs '+" + exp(containerStyle, null, "container-style", false); }
+            if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-ma-sm '+" + exp(containerStyle, null, "container-style", false); }
             w("<div" + A(attrs) + ">");
         };
         const rowOpen = (kind, style) => w("<div" + A({ class: cls(kind, style || null) }) + ">");

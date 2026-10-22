@@ -12,9 +12,9 @@
     </actions>
     <widgets>
         <form-single name="Everything" map="fv" transition="save">
-            <field name="firstName"><default-field title="First"><text-line size="20" maxlength="40"/></default-field></field>
+            <field name="firstName"><default-field title="First" container-style="invoice-field"><text-line size="20" maxlength="40"/></default-field></field>
             <field name="ac"><default-field><text-line ac-transition="find" ac-min-length="2" ac-show-value="true"><depends-on field="firstName" parameter="fn"/></text-line></default-field></field>
-            <field name="bio"><default-field tooltip="About you"><text-area rows="4" editor-type="html"/></default-field></field>
+            <field name="bio"><default-field tooltip="About you" container-style="${fv.mode == 'a' ? 'invoice-active' : 'invoice-idle'}"><text-area rows="4" editor-type="html"/></default-field></field>
             <field name="find"><default-field><text-find default-operator="begins"/></default-field></field>
             <field name="status"><default-field><drop-down allow-empty="true" show-not="true"><option key="A" text="Active"/><option key="${k}"/></drop-down></default-field></field>
             <field name="multi"><default-field><drop-down allow-multiple="true"><option key="A"/><option key="B"/></drop-down></default-field></field>

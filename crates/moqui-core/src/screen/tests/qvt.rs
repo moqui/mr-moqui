@@ -102,6 +102,10 @@ fn form_single_with_every_field_type() {
     let out = check("fields", &[("_openDialog", "none")]);
     assert!(out.contains("v-slot:default=\"formProps\""), "{out}");
     assert!(out.contains(":fields-initial=\""), "{out}");
+    assert!(out.contains(r#"<div class="q-my-md"><m-form name="Everything""#), "{out}");
+    assert!(out.contains(r#"<div class="q-ma-sm invoice-field"><m-text-line id="Everything_firstName""#), "{out}");
+    assert!(out.contains(r#"<div class="q-ma-sm invoice-idle"><m-text-area name="bio""#), "{out}");
+    assert!(out.contains(r#"<div class="q-my-sm big-row"><div class="big-row-item">Big</div><div class="big-row-item"><m-radio"#), "{out}");
     for wrapper in [
         "m-text-line",
         "m-text-area",
@@ -685,6 +689,8 @@ fn a_section_in_a_list_cell_keeps_the_list_and_link_styles_are_expanded() {
     ] {
         assert!(out.contains(expected), "{expected} in {out}");
     }
+    assert!(out.contains(r#"<div class="q-my-md"><m-form name="RefuseForm""#), "{out}");
+    assert!(out.contains(r#"<div class="q-ma-sm"><m-text-area name="reason""#), "{out}");
     // the open link of each row is in the list, never the tonal button of a link outside a list
     assert!(
         !out.contains(r#"class="m-btn-tonal text-primary m-link">Open"#),
