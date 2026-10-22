@@ -13,6 +13,7 @@
     --bg: #fff; --panel: #fff; --fg: #222; --muted: #777; --line: #ddd; --stripe: transparent; --hover: #f0f0f0;
     --link: #337ab7; --nav-bg: #0c1b29; --nav-fg: #9d9d9d; --nav-line: #222;
     --primary: #337ab7; --success: #5cb85c; --danger: #d9534f; --warning: #f0ad4e; --info: #5bc0de; --default: #777;
+    --shaded-bg: #f8f8f8; --shaded-inset: #f8f8f8; --shaded-shadow: #ccc;
     --radius: 4px; --gap: 8px;
     --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
@@ -21,6 +22,7 @@
         --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
         --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
         --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
+        --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
     }
 }
 :root[data-theme="dark"] {
@@ -28,6 +30,7 @@
     --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
     --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
     --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
+    --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
 }
 :root[data-theme="light"] { color-scheme: light; }
 
@@ -79,6 +82,15 @@ main, section { display: block; }
 .pull-right { float: right; }
 .hidden { display: none; }
 
+/* StatusWidgets.xml compact status/action rows (Java webroot-layout.css). */
+ul.float-plain { display: inline-block; list-style: none outside none; margin: 0 0 -8px; padding: 0; }
+ul.float-plain > li { display: inline-block; line-height: 18px; margin: 0 8px 8px 0; padding: 8px; float: left; }
+ul.float-plain.condensed { margin: 0; }
+ul.float-plain.condensed > li { margin: 0 4px 0 0; padding: 4px; }
+.shaded-area { padding: 8px; margin-bottom: 8px; line-height: 18px; background: var(--shaded-bg); box-shadow: 0 0 0 1px var(--shaded-inset) inset, 0 0 0 1px var(--shaded-shadow); }
+span.shaded-area { display: inline-block; white-space: normal; }
+.shaded-area.condensed { padding: 4px; margin-bottom: 4px; }
+
 /* ---------- navbar ---------- */
 
 #top { position: sticky; top: 0; z-index: 30; flex: none; }
@@ -110,6 +122,8 @@ button, input[type="submit"], input[type="reset"], input[type="button"], summary
 }
 /* Java container-dialog buttons use Bootstrap btn-sm. */
 button[id$="-button"][data-dialog] { padding: 5px 10px; font-size: 12px; line-height: 1.5; border-radius: 3px; }
+/* Java's screen links and submit widgets also default to Bootstrap btn-sm. */
+[data-btn]:not([data-btn="plain"]):not([data-size]) { padding: 5px 10px; font-size: 12px; line-height: 1.5; border-radius: 3px; }
 button:hover, [data-btn]:hover, summary:hover { filter: brightness(.96); text-decoration: none; }
 [data-btn="primary"] { background: var(--primary); border-color: var(--primary); color: #fff; }
 [data-btn="success"] { background: var(--success); border-color: var(--success); color: #fff; }
@@ -136,17 +150,18 @@ details.menu li.active > a { font-weight: 600; }
 
 /* ---------- containers ---------- */
 
-.row { display: flex; flex-wrap: wrap; margin: 0 -8px; }
-.row > .col { --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 8px; }
+.row { display: flex; flex-wrap: wrap; margin: 0 -15px; }
+.row > .col { --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 15px; }
 @media (min-width: 768px) { .row > .col { --c: var(--sm, var(--xs, 12)); } }
 @media (min-width: 992px) { .row > .col { --c: var(--md, var(--sm, var(--xs, 12))); } }
 @media (min-width: 1200px) { .row > .col { --c: var(--lg, var(--md, var(--sm, var(--xs, 12)))); } }
 
 section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
-section.box > header { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap); padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--stripe); border-radius: var(--radius) var(--radius) 0 0; }
-section.box > header h5 { margin: 0; font-size: 1rem; }
-section.box > header .toolbar { margin-left: auto; }
-section.box > .body { padding: 8px 10px; }
+/* Java Bootstrap panel headings plus webroot-layout.css's toolbar/body rules. */
+section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: var(--stripe); border-radius: var(--radius) var(--radius) 0 0; }
+section.box > header h5 { display: inline-block; margin: 0; font-size: 16px; font-weight: 500; line-height: 1.1; }
+section.box > header .toolbar { position: absolute; top: 0; right: 0; }
+section.box > .body { padding: 8px; }
 section.box > .body-nopad > table { margin: 0; }
 /* status-bar: the stage chips (done checked, the current one filled in its color, the ones to come outlined) and the
    transition buttons, each in its own form */
@@ -207,7 +222,7 @@ section.box[data-type="danger"] > header { background: var(--danger); color: #ff
 .stack-crumbs { margin: 0 0 var(--gap); }
 
 .tabs ul { display: flex; flex-wrap: wrap; gap: 2px; list-style: none; margin: 0 0 var(--gap); padding: 0; border-bottom: 1px solid var(--line); }
-.tabs li > a, .tabs li > span { display: block; padding: 6px 14px; border: 1px solid transparent; border-radius: var(--radius) var(--radius) 0 0; color: var(--link); }
+.tabs li > a, .tabs li > span { display: block; padding: 10px 6px; border: 1px solid transparent; border-radius: var(--radius) var(--radius) 0 0; color: var(--link); }
 .tabs li > a:hover { background: var(--hover); text-decoration: none; }
 .tabs li.active > a { color: var(--fg); background: var(--panel); border-color: var(--line); border-bottom-color: var(--panel); margin-bottom: -1px; }
 .tabs li.disabled { color: var(--muted); }
@@ -251,8 +266,14 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .display.currency, .display.BigDecimal { text-align: right; }
 .display.Long, .display.Double, .display.Float, .display.Integer { text-align: center; }
 
-.field { display: grid; grid-template-columns: minmax(7em, calc(var(--lc, 2) * 100% / 12)) minmax(0, 1fr); gap: 2px 12px; align-items: start; margin-bottom: 8px; }
-.field > label, .field > .label { padding-top: 5px; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.field > .widget select { height: 34px; padding: 6px 12px; }
+.field > .widget textarea { min-height: 34px; padding: 6px 12px; }
+.field > .widget > .display { min-height: 34px; padding: 7px 0; }
+.field > .widget > p, .field > .widget > span.text-inline,
+.field > .widget > a:not(.btn):not([data-btn]) { display: inline-block; min-height: 34px; padding: 7px 0; margin-bottom: 0; }
+.field { display: grid; grid-template-columns: minmax(7em, calc(var(--lc, 2) * 100% / 12)) minmax(0, 1fr); gap: 2px 12px; align-items: start; margin-bottom: 15px; }
+.field > label, .field > .label { padding-top: 7px; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
 .field > .widget { min-width: 0; }
 .field .widget > span[id] { margin-right: 10px; display: inline-block; }
 .field[data-submit] > .label { visibility: hidden; }
@@ -262,7 +283,7 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .field.big-row { margin-bottom: 8px; }
 .big-row > .widget { display: flex; flex-wrap: wrap; gap: 0 20px; }
 .field.big-row > .widget:first-child { grid-column: 1 / -1; }
-.big-item .field { grid-template-columns: 1fr; }
+.big-item .field { grid-template-columns: 1fr; margin-bottom: 0; }
 .big-item .field > label { text-align: left; padding-top: 0; }
 .field-group > h5 { border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 details.panel { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 6px; background: var(--panel); }
@@ -294,7 +315,13 @@ table.form-list-sub { width: 100%; }
 table.form-list-sub th, table.form-list-sub td { padding: 2px 8px; text-align: left; vertical-align: top; }
 table.form-list tr[data-total] td { font-weight: bold; border-top: 2px solid var(--line); }
 table.form-list td > div { margin: 0; }
-table.form-list .display { padding: 0; }
+table.form-list .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+table.form-list .field > .widget select { height: auto; padding: 4px 8px; }
+table.form-list .field > .widget textarea { min-height: 0; padding: 4px 8px; }
+table.form-list .field { margin-bottom: 0; }
+table.form-list .display, table.form-list .field > .widget > .display { min-height: 0; padding: 0; }
+table.form-list .field > .widget > p, table.form-list .field > .widget > span.text-inline,
+table.form-list .field > .widget > a:not(.btn):not([data-btn]) { min-height: 10px; padding-top: 0; padding-bottom: 0; }
 table.form-list td [data-align], table.form-list th [data-align] { text-align: inherit; }
 table.form-list td[data-align="right"], td > [data-align="right"], th > [data-align="right"] { text-align: right; }
 td > [data-align="center"], th > [data-align="center"] { text-align: center; }
@@ -361,3 +388,17 @@ ul.pagination li.current > a { font-weight: 600; background: var(--stripe); }
 .hide-nav button, .hide-nav [data-btn], .hide-nav tr.nav-row, .hide-nav .tabs { display: none; }
 @media (prefers-reduced-motion: no-preference) { details.menu > ul, dialog { animation: moqui-fade .12s ease-out; } }
 @keyframes moqui-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Bootstrap's 30px gutters and form-group offsets, as used by Java's HTML macros. */
+@media (min-width: 768px) {
+    .field:not(.big-row) { margin-left: -15px; margin-right: -15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
+    .field:not(.big-row) > label, .field:not(.big-row) > .label { padding-left: 15px; padding-right: 15px; }
+    .field:not(.big-row) > .widget { padding-left: 15px; padding-right: 15px; }
+    .field-row { margin: 0 -15px; column-gap: 0; }
+    .field-row > div { padding: 0 15px; }
+    .field-row > div > .field { grid-template-columns: calc(100% / 3) minmax(0, 1fr); }
+    .big-item .field { grid-template-columns: 1fr; }
+    .big-item .field > label { padding-left: 0; padding-right: 0; }
+    .big-item .field, table.form-list .field { margin-left: 0; margin-right: 0; }
+    .big-item .field > .widget, table.form-list .field > .widget { padding-left: 0; padding-right: 0; }
+}
