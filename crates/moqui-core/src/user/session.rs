@@ -459,7 +459,32 @@ pub(crate) fn flush_dirty(factory: &ExecutionContextFactory) -> Result<(), Error
     Ok(())
 }
 
-/// Move the bound session onto a new id after a successful password check.
+/// Java's `makeNewSession` at the start of a password login, before the password is checked: invalidating the old
+/// session closes its visit, then the request moves to a new id and token that keep the attributes and the visit.
+pub(crate) fn renew_for_login() -> Result<(), Error> {
+    let (factory, visit_id) = with_session(|session| {
+        (session.bound_id.as_ref().and(session.factory.clone()), session.visit_id.clone())
+    });
+    let Some(factory) = factory else {
+        return Ok(());
+    };
+    if let Some(visit_id) = visit_id.filter(|id| !id.is_empty()) {
+        close_visit(&factory, &visit_id)?;
+    }
+    rotate_on_password_login()
+}
+
+/// Set `thruDate` on a visit whose session ended, as Java's `MoquiSessionListener.closeVisit`.
+fn close_visit(factory: &ExecutionContextFactory, visit_id: &str) -> Result<(), Error> {
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _authz = without_authz();
+    let mut visit = facade.make_value(VISIT).map_err(Error::from)?;
+    visit.set("visitId", Value::string(visit_id));
+    visit.set("thruDate", super::login::now_value());
+    visit.update(&facade).map_err(Error::from)
+}
+
+/// Move the bound session onto a new id and token, keeping its attributes.
 pub(crate) fn rotate_on_password_login() -> Result<(), Error> {
     let (factory, old_id) = with_session(|session| (session.factory.clone(), session.bound_id.clone()));
     let (Some(factory), Some(old_id)) = (factory, old_id) else {
@@ -2368,19 +2393,22 @@ mod tests {
     }
 
     #[test]
-    fn password_login_rotates_and_a_failed_password_keeps_the_id() {
+    fn password_login_renews_the_session_before_the_password_check() {
         let (_lock, ctx, facade, _key) = setup();
         let _entered = ctx.enter();
         let factory = Arc::clone(ctx.factory());
         create_user(&facade, "ada", "Secret1!");
         let guard = bind(&factory, None, None, false).unwrap();
         flush_dirty(&factory).unwrap();
-        let old_id = guard.session_id();
-        let old_csrf = csrf_token().unwrap();
+        let first_id = guard.session_id();
+        assert!(login::login_user("ada", "").is_err());
+        assert_eq!(guard.session_id(), first_id);
         assert!(login::login_user("ada", "wrong").is_err());
-        assert_eq!(guard.session_id(), old_id);
+        let old_id = guard.session_id();
+        assert_ne!(old_id, first_id);
         assert!(current_username().unwrap().is_none());
-        assert!(load_session_optional(&facade, &old_id).is_some());
+        assert!(load_session_optional(&facade, &first_id).is_none());
+        let old_csrf = csrf_token().unwrap();
 
         assert!(visit_id().unwrap().is_none());
         login::login_user("ada", "Secret1!").unwrap();
@@ -2410,6 +2438,20 @@ mod tests {
         let stayed = guard.session_id();
         login::internal_login_user("ada").unwrap();
         assert_eq!(guard.session_id(), stayed);
+
+        // A later password login closes the session's visit and keeps using it on the new id.
+        let visit_before = visit_id().unwrap().expect("visit");
+        login::login_user("ada", "Secret1!").unwrap();
+        assert_ne!(guard.session_id(), stayed);
+        assert_eq!(visit_id().unwrap().as_deref(), Some(visit_before.as_str()));
+        let closed = facade
+            .find(VISIT)
+            .unwrap()
+            .eq("visitId", Value::string(&visit_before))
+            .one()
+            .unwrap()
+            .unwrap();
+        assert!(closed.get("thruDate").is_some_and(|value| !value.is_null()));
         login::logout().unwrap();
     }
 
