@@ -375,7 +375,6 @@ fn insert_audit(
     old_text: Option<String>,
 ) -> Result<(), Error> {
     let mut row = facade.make_value(AUDIT_ENTITY)?;
-    row.set_sequenced_id_primary(facade)?;
     row.set("changedEntityName", Value::string(entity.full_name.as_str()));
     row.set("changedFieldName", Value::string(field_name));
     row.set("changedDate", changed_now());
@@ -390,6 +389,10 @@ fn insert_audit(
     if let Some(visit_id) = crate::user::visit_id().ok().flatten().filter(|id| !id.is_empty()) {
         row.set("changedInVisitId", Value::string(visit_id));
     }
+    // Java's getStackNameString, cut at 4000 characters.
+    if let Some(stack) = crate::context::ExecutionContext::with_current(|ctx| ctx.artifact_stack_names()) {
+        row.set("artifactStack", Value::string(stack.chars().take(4000).collect::<String>()));
+    }
     if let Some(text) = new_text {
         row.set("newValueText", Value::string(text));
     }
@@ -397,6 +400,19 @@ fn insert_audit(
         row.set("oldValueText", Value::string(text));
     }
     put_pk(&mut row, entity, values);
+    // Java creates audit rows through the implicit service, with authorization disabled.
+    let same_facade = crate::context::ExecutionContext::with_current(|ctx| ctx.factory().entity())
+        .flatten()
+        .is_some_and(|current| std::sync::Arc::ptr_eq(&current.inner, &facade.inner));
+    if same_facade {
+        let options = crate::service::call::CallOptions {
+            disable_authz: true,
+            ..Default::default()
+        };
+        crate::service::call::sync_with(&format!("create#{AUDIT_ENTITY}"), row.fields(), &options)?;
+        return Ok(());
+    }
+    row.set_sequenced_id_primary(facade)?;
     row.create(facade)
 }
 

@@ -350,7 +350,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="rewrite" noun="EntityEncryptedFields" type="rust"
             location="moqui_core::service::tools::rewrite_encrypted_fields" authenticate="anonymous-all"
             transaction-timeout="900">
-        <description>The body is Rust (crates/moqui-core/src/service/tools.rs). A value that does not decrypt fails the read instead of skipping the record.</description>
+        <description>The body is Rust (crates/moqui-core/src/service/tools.rs). A record with a value that does not decrypt is logged and skipped, as in Java.</description>
         <in-parameters>
             <parameter name="entityName" required="true"/>
         </in-parameters>

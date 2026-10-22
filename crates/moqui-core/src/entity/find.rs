@@ -243,14 +243,39 @@ impl EntityFind {
         // The view frame is what authorizes the read, and the filters come from its record.
         let _authz = self.authz_guard();
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", operation)?;
+        if crate::deterministic::enabled() {
+            let tx = self.facade.transactions_for(&self.entity_name)?;
+            return tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+                self.list_in_transaction()
+            });
+        }
+        self.list_in_transaction()
+    }
+
+    fn list_in_transaction(self) -> Result<EntityList, Error> {
+        // Java's listExtended returns an empty list when the physical table is absent.
+        // Keep the existence probe and the read in the same facade transaction.
+        if crate::deterministic::enabled()
+            && !self.facade.with_entity(&self.entity_name, |entity, _, _| Ok(entity.is_view))?
+            && !self.facade.table_exists(&self.entity_name)?
+        {
+            return Ok(EntityList::new(Vec::new()));
+        }
         let condition = self.combined();
         let lookup = self.lookup(&condition);
         let bypass = self.bypasses_cache();
         if !bypass {
             if let Some(cached) = cache::before_find(&self.facade, &lookup) {
+                crate::deterministic::trace("cache", "hit", &self.entity_name, "succeeded")?;
                 return self.localize_list(cached);
             }
         }
+        crate::deterministic::trace(
+            "cache",
+            if bypass { "bypass" } else { "miss" },
+            &self.entity_name,
+            "succeeded",
+        )?;
         self.require_transaction_for_lock()?;
         let plan = self.plan(false)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
@@ -338,8 +363,10 @@ impl EntityFind {
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", "count")?;
         let condition = self.combined();
         if let Some(count) = cache::before_count(&self.facade, &self.entity_name, condition.as_ref()) {
+            crate::deterministic::trace("cache", "hit", &self.entity_name, "succeeded")?;
             return Ok(count);
         }
+        crate::deterministic::trace("cache", "miss", &self.entity_name, "succeeded")?;
         let plan = self.plan(true)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         after_statement(&self.facade, &plan.tx, false);
@@ -373,9 +400,16 @@ impl EntityFind {
         let lookup = self.lookup(&condition);
         if !self.bypasses_cache() {
             if let Some(cached) = cache::before_find(&self.facade, &lookup) {
+                crate::deterministic::trace("cache", "hit", &self.entity_name, "succeeded")?;
                 return Ok(EntityListIterator::memory(self.facade, self.entity_name, cached));
             }
         }
+        crate::deterministic::trace(
+            "cache",
+            if self.bypasses_cache() { "bypass" } else { "miss" },
+            &self.entity_name,
+            "succeeded",
+        )?;
         self.require_transaction_for_lock()?;
         let plan = self.plan(false)?;
         plan.tx

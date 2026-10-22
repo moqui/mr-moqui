@@ -783,11 +783,15 @@
             const confirmAttr = {};
             if (confirmation) textAttr(confirmAttr, "data-confirm", confirmation, n, true);
             const noParam = at(n, "url-noparam") === "true";
+            // An alias transition's screenPath is the screen it names. A form still posts found.path.
+            const navPath = found && at(n, "expand-transition-url") !== "false" && found.screenPath ? found.screenPath : (found ? found.path : "");
             let out = "";
             if (anchor) {
-                const plain = !found;
-                const href = plain ? exp(at(n, "url"), n, "url", false) : noParam ? sq(found.path) : urlOf(n, found.path);
-                const tag = plain ? "a" : "m-link";
+                // A type=none or plain-response transition is not a screen URL, so the anchor is <a> and the client
+                // does not setUrl it. An unresolved ${} target stays an m-link.
+                const toScreen = !!(found && found.screenUrl);
+                const href = found ? (noParam ? sq(navPath) : urlOf(n, navPath)) : exp(at(n, "url"), n, "url", false);
+                const tag = toScreen ? "m-link" : "a";
                 const asButton = linkType !== "anchor";
                 const attrs = Object.assign({ ":href": href, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: asButton ? null : style }, confirmAttr);
                 plainAttr(attrs, "id", at(n, "id"), n);
@@ -842,7 +846,7 @@
 
         const dynamicDialog = (n) => {
             const found = sri.staticUrl(at(n, "transition"), "transition");
-            const out = { ":url": urlOf(n, found.path), color: quasarColor(at(n, "type") || "primary") || null, width: at(n, "width") || null, "button-class": at(n, "button-style") || null };
+            const out = { ":url": urlOf(n, found.screenPath || found.path), color: quasarColor(at(n, "type") || "primary") || null, width: at(n, "width") || null, "button-class": at(n, "button-style") || null };
             plainAttr(out, "id", at(n, "id"), n);
             textAttr(out, "button-text", at(n, "button-text"), n, true);
             if (at(n, "title")) textAttr(out, "title", at(n, "title"), n, true);
@@ -853,7 +857,7 @@
         const dynamicContainer = (n) => {
             const found = sri.staticUrl(at(n, "transition"), "transition");
             const id = at(n, "id");
-            const out = { ":url": urlOf(n, found.path, { _dynamic_container_id: sq(id) }) };
+            const out = { ":url": urlOf(n, found.screenPath || found.path, { _dynamic_container_id: sq(id) }) };
             plainAttr(out, "id", id, n);
             w("<m-dynamic-container" + A(out) + "></m-dynamic-container>\n");
         };

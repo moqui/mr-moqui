@@ -517,7 +517,7 @@ fn truncate(text: &str, max_chars: usize) -> String {
 }
 
 /// The host address and name, as Java's `InetAddress.getLocalHost()`, found once.
-fn server_address() -> &'static (String, String) {
+pub(crate) fn server_address() -> &'static (String, String) {
     static ADDRESS: OnceLock<(String, String)> = OnceLock::new();
     ADDRESS.get_or_init(|| {
         let name = std::fs::read_to_string("/proc/sys/kernel/hostname")
@@ -563,6 +563,19 @@ pub(crate) fn flush(factory: &ExecutionContextFactory, all: bool) -> Result<(), 
     }
     for hit in hits {
         rows.push((HIT, hit_fields(hit, ip, host)));
+    }
+    if crate::deterministic::enabled() {
+        // Java persists each queued hit/bin through its own facade transaction.
+        // Do not batch them into one commit or retry after a failed comparison.
+        for (entity, fields) in rows {
+            let mut value = facade.make_value(entity)?;
+            for (name, field) in fields {
+                value.set(name, field);
+            }
+            value.set_sequenced_id_primary(&facade)?;
+            value.create(&facade)?;
+        }
+        return Ok(());
     }
     let mut failed = None;
     for chunk in rows.chunks(MAX_CREATES) {
@@ -1183,6 +1196,69 @@ mod tests {
                 ("list".to_string(), 1.0),
             ])
         );
+    }
+
+    #[test]
+    fn audit_writes_count_the_implicit_create_service_as_java_does() {
+        let world = world();
+        let _entered = world.context.enter();
+        let _authz = world.context.disable_authz();
+        world.facade.set_disable_audit_log(false);
+        let mut user = world.facade.make_value("moqui.security.UserAccount").unwrap();
+        user.set("userId", Value::string("AUDIT_HITS"));
+        user.set("username", Value::string("alice"));
+        user.create(&world.facade).unwrap();
+        user.set("username", Value::string("alice2"));
+        user.update(&world.facade).unwrap();
+        world.context.factory().flush_artifact_hits().unwrap();
+        let bins = rows(&world, "moqui.server.ArtifactHitBin", "AT_SERVICE");
+        let bins: Vec<_> = bins.iter().filter(|bin|
+            text(bin, "artifactName") == "create#moqui.entity.EntityAuditLog"
+        ).collect();
+        assert_eq!(bins.len(), 1);
+        assert_eq!(text(bins[0], "artifactSubType"), "entity-implicit");
+        assert_eq!(text(bins[0], "hitCount"), "2");
+    }
+
+    #[test]
+    fn audit_services_reuse_the_users_authorization_list_across_seed_writes() {
+        let world = world_with_conf(r#"<moqui-conf>
+            <artifact-execution-facade>
+                <artifact-execution type="AT_SERVICE" authz-enabled="true"/>
+            </artifact-execution-facade>
+            <server-stats bin-length-seconds="600">
+                <artifact-stats type="AT_SERVICE" persist-bin="true"/>
+                <artifact-stats type="AT_ENTITY" persist-bin="true"/>
+            </server-stats>
+        </moqui-conf>"#);
+        let _entered = world.context.enter();
+        let _authz = world.context.disable_authz();
+        world.facade.set_disable_audit_log(false);
+        let mut user = world.facade.make_value("moqui.security.UserAccount").unwrap();
+        user.set("userId", Value::string("AUDIT_CACHE"));
+        user.set("username", Value::string("first"));
+        user.create(&world.facade).unwrap();
+        let mut authz = world.facade.make_value("moqui.security.ArtifactAuthz").unwrap();
+        authz.set("artifactAuthzId", Value::string("SEED_CACHE"));
+        authz.set("userGroupId", Value::string("ALL_USERS"));
+        authz.create(&world.facade).unwrap();
+        user.set("username", Value::string("second"));
+        user.update(&world.facade).unwrap();
+        world.context.factory().flush_artifact_hits().unwrap();
+        let bins = rows(&world, "moqui.server.ArtifactHitBin", "AT_ENTITY");
+        let checks: Vec<_> = bins.iter().filter(|bin|
+            text(bin, "artifactName") == "moqui.security.ArtifactAuthzCheckView"
+                && text(bin, "artifactSubType") == "list"
+        ).collect();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(text(checks[0], "hitCount"), "1");
+        let bins = rows(&world, "moqui.server.ArtifactHitBin", "AT_SERVICE");
+        let audit: Vec<_> = bins.iter().filter(|bin|
+            text(bin, "artifactName") == "create#moqui.entity.EntityAuditLog"
+        ).collect();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(text(audit[0], "artifactSubType"), "entity-implicit");
+        assert_eq!(text(audit[0], "hitCount"), "2");
     }
 
     #[test]

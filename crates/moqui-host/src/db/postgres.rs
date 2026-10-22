@@ -313,14 +313,18 @@ mod driver {
             let closed = if close { self.close_stream() } else { Ok(()) };
             self.clear_stream();
             closed?;
-            self.client.batch_execute(sql).map_err(|err| pg(sql, err))?;
+            moqui_core::deterministic::traced("jdbc", "transaction", sql, || {
+                self.client.batch_execute(sql).map_err(|err| pg(sql, err))
+            })?;
             self.in_transaction = false;
             Ok(())
         }
 
         fn fetch_stream(&mut self) -> Result<(), Error> {
             let sql = format!("FETCH {FETCH_BATCH} FROM {STREAM_CURSOR}");
-            let rows = self.client.query(&sql, &[]).map_err(|err| pg("fetch cursor", err))?;
+            let rows = moqui_core::deterministic::traced("jdbc", "fetch", &sql, || {
+                self.client.query(&sql, &[]).map_err(|err| pg("fetch cursor", err))
+            })?;
             if rows.len() < FETCH_BATCH {
                 self.stream_exhausted = true;
             }
@@ -339,26 +343,32 @@ mod driver {
 
     impl DbConnection for PostgresConn {
         fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let statement = self.prepared(sql)?;
-            self.client.execute(&statement, &refs).map_err(|err| pg("execute", err))
+            moqui_core::deterministic::traced("jdbc", "executeUpdate", sql, || {
+                let bound = bind(params)?;
+                let refs = param_refs(&bound);
+                let statement = self.prepared(sql)?;
+                self.client.execute(&statement, &refs).map_err(|err| pg("execute", err))
+            })
         }
 
         fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let statement = self.prepared(sql)?;
-            let rows = self.client.query(&statement, &refs).map_err(|err| pg("query", err))?;
-            rows.iter().map(map_row).collect()
+            moqui_core::deterministic::traced("jdbc", "executeQuery", sql, || {
+                let bound = bind(params)?;
+                let refs = param_refs(&bound);
+                let statement = self.prepared(sql)?;
+                let rows = self.client.query(&statement, &refs).map_err(|err| pg("query", err))?;
+                rows.iter().map(map_row).collect()
+            })
         }
 
         fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let rewritten = rewrite_placeholders(sql);
-            let rows = self.client.query(&rewritten, &refs).map_err(|err| pg("query", err))?;
-            rows.iter().map(map_row).collect()
+            moqui_core::deterministic::traced("jdbc", "executeQuery", sql, || {
+                let bound = bind(params)?;
+                let refs = param_refs(&bound);
+                let rewritten = rewrite_placeholders(sql);
+                let rows = self.client.query(&rewritten, &refs).map_err(|err| pg("query", err))?;
+                rows.iter().map(map_row).collect()
+            })
         }
 
         fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
@@ -372,9 +382,11 @@ mod driver {
             let refs = param_refs(&bound);
             let rewritten = rewrite_placeholders(sql);
             let declare = format!("DECLARE {STREAM_CURSOR} NO SCROLL CURSOR FOR {rewritten}");
-            self.client
-                .execute(&declare, &refs)
-                .map_err(|err| pg("declare cursor", err))?;
+            moqui_core::deterministic::traced("jdbc", "openStream", sql, || {
+                self.client
+                    .execute(&declare, &refs)
+                    .map_err(|err| pg("declare cursor", err))
+            })?;
             self.streaming = true;
             self.stream_exhausted = false;
             self.stream_buf.clear();
@@ -410,7 +422,9 @@ mod driver {
         }
 
         fn begin(&mut self) -> Result<(), Error> {
-            self.client.batch_execute("BEGIN").map_err(|err| pg("begin", err))?;
+            moqui_core::deterministic::traced("jdbc", "transaction", "BEGIN", || {
+                self.client.batch_execute("BEGIN").map_err(|err| pg("begin", err))
+            })?;
             self.in_transaction = true;
             Ok(())
         }
@@ -425,21 +439,27 @@ mod driver {
 
         fn savepoint(&mut self, name: &str) -> Result<(), Error> {
             let sql = format!("SAVEPOINT {}", quote_ident(name));
-            self.client.batch_execute(&sql).map_err(|err| pg("savepoint", err))
+            moqui_core::deterministic::traced("jdbc", "savepoint", &sql, || {
+                self.client.batch_execute(&sql).map_err(|err| pg("savepoint", err))
+            })
         }
 
         fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
             let sql = format!("ROLLBACK TO SAVEPOINT {}", quote_ident(name));
-            self.client
-                .batch_execute(&sql)
-                .map_err(|err| pg("rollback to savepoint", err))
+            moqui_core::deterministic::traced("jdbc", "savepoint", &sql, || {
+                self.client
+                    .batch_execute(&sql)
+                    .map_err(|err| pg("rollback to savepoint", err))
+            })
         }
 
         fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
             let sql = format!("RELEASE SAVEPOINT {}", quote_ident(name));
-            self.client
-                .batch_execute(&sql)
-                .map_err(|err| pg("release savepoint", err))
+            moqui_core::deterministic::traced("jdbc", "savepoint", &sql, || {
+                self.client
+                    .batch_execute(&sql)
+                    .map_err(|err| pg("release savepoint", err))
+            })
         }
 
         /// `SET LOCAL` lasts until the transaction ends, so clearing is a no-op.

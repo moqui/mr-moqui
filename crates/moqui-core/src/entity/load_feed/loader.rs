@@ -61,7 +61,16 @@ pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOpt
     }
     let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
     let path = resolve_location(facade, location)?;
-    let records = load_path(facade, location, &path, options)?;
+    let records = crate::deterministic::traced("data", "load", location, || {
+        // Java's loadSingleFile commits each file in one transaction; deterministic runs match its commits.
+        if crate::deterministic::enabled() && !path.is_dir() {
+            facade
+                .default_transactions()?
+                .run(TransactionAttribute::UseOrBegin, options.timeout, || load_path(facade, location, &path, options))
+        } else {
+            load_path(facade, location, &path, options)
+        }
+    })?;
     Ok(LoadResult { records })
 }
 
@@ -73,7 +82,9 @@ pub fn load_entity_xml_text(
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
     let _scope = FkScope::enter(options.dummy_fks, options.disable_fk_create);
-    let records = load_xml_text(facade, location, text, options)?;
+    let records = crate::deterministic::traced("data", "load", location, || {
+        load_xml_text(facade, location, text, options)
+    })?;
     Ok(LoadResult { records })
 }
 
@@ -117,7 +128,14 @@ fn load_directory(facade: &EntityFacade, path: &Path, options: &LoadOptions) -> 
     let mut total = 0_u64;
     for child in names {
         let location = child.display().to_string();
-        total = total.saturating_add(load_path(facade, &location, &child, options)?);
+        let records = if crate::deterministic::enabled() {
+            facade.default_transactions()?.run(TransactionAttribute::UseOrBegin, options.timeout, || {
+                load_path(facade, &location, &child, options)
+            })?
+        } else {
+            load_path(facade, &location, &child, options)?
+        };
+        total = total.saturating_add(records);
     }
     Ok(total)
 }
@@ -359,6 +377,7 @@ fn write_tree(
     record: &Record,
     ancestor: &BTreeMap<String, Value>,
 ) -> Result<u64, Error> {
+    crate::deterministic::trace("data", "record", &record.entity, "requested")?;
     let mut fields = record.fields.clone();
     inherit_pk_fields(facade, &record.entity, ancestor, &mut fields)?;
     prepare_fields(facade, &record.entity, &mut fields, options.only_create)?;
@@ -384,6 +403,12 @@ fn write_tree(
         }
         total = 1;
     }
+    crate::deterministic::trace(
+        "data",
+        "record",
+        &record.entity,
+        if total == 0 { "skipped" } else { "succeeded" },
+    )?;
     for child in &record.children {
         total = total.saturating_add(write_tree(facade, options, child, &shared)?);
     }

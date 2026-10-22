@@ -17,7 +17,7 @@
 //! The artifact stack carries each frame's [`AuthInfo`]. A new frame is decided against its
 //! parent frame: an inheritable allow on the parent covers it, an always-allow skips every
 //! check, and a deny anywhere on the stack stops a plain allow. The checks for a user's groups
-//! are read once and kept on the session until an authorization table changes.
+//! are read once and kept for the current user, as Java's UserInfo caches them.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,7 +36,8 @@ const AUTHZT_ALLOW: &str = "AUTHZT_ALLOW";
 const AUTHZA_ALL: &str = "AUTHZA_ALL";
 const AT_ENTITY: &str = "AT_ENTITY";
 
-/// Bumped when a table the cached checks come from changes, so sessions reload them.
+/// Bumped when authorization tables change, to refresh membership, tarpit and filter caches.
+/// The authorization-check list itself follows Java's current-user lifetime.
 static AUTHZ_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Entity writes call this. Only the authorization tables, the entity filter tables among them, change the generation.
@@ -552,13 +553,16 @@ pub(super) fn generation() -> u64 {
     AUTHZ_GENERATION.load(Ordering::Relaxed)
 }
 
-/// Run `body` on the session's cache, which is reset when the generation moved.
+/// Refresh generation-bound caches, retaining Java's current-user authorization-check list.
 fn with_cache<T>(body: impl FnOnce(&mut AuthzCache) -> T) -> T {
     let now = generation();
     with_session(|session| {
         if session.authz.generation != now {
             session.authz = AuthzCache {
                 generation: now,
+                // Java retains the current UserInfo's authorization list across entity writes.
+                // Login/logout reset it with the rest of the user's state.
+                checks: session.authz.checks.take(),
                 ..AuthzCache::default()
             };
         }
@@ -632,11 +636,12 @@ fn load_user_groups(facade: &EntityFacade) -> Result<Arc<HashSet<String>>, Error
 }
 
 fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
-    cached(
-        |cache| cache.checks.clone(),
-        || load_user_checks(facade),
-        |cache, checks| cache.checks = Some(checks),
-    )
+    if let Some(checks) = with_session(|session| session.authz.checks.clone()) {
+        return Ok(checks);
+    }
+    let checks = load_user_checks(facade)?;
+    with_session(|session| session.authz.checks = Some(checks.clone()));
+    Ok(checks)
 }
 
 /// One `ArtifactAuthzCheckView` read per group, as Java's `getArtifactAuthzCheckList`.
@@ -872,23 +877,23 @@ mod tests {
     }
 
     #[test]
-    fn checks_loaded_while_the_generation_moves_are_not_kept() {
+    fn groups_loaded_while_the_generation_moves_are_not_kept() {
         let context = ExecutionContextFactory::test_context();
         let _entered = context.enter();
         let loaded = super::cached(
-            |cache| cache.checks.clone(),
+            |cache| cache.groups.clone(),
             || {
-                // An authorization write lands while the checks are read.
+                // An authorization write lands while the groups are read.
                 super::note_entity_write("moqui.security.ArtifactAuthz");
-                Ok(std::sync::Arc::new(Vec::new()))
+                Ok(std::sync::Arc::new(std::collections::HashSet::new()))
             },
-            |cache, checks| cache.checks = Some(checks),
+            |cache, groups| cache.groups = Some(groups),
         )
         .unwrap();
         assert!(loaded.is_empty());
         assert!(
-            super::with_cache(|cache| cache.checks.is_none()),
-            "checks read under the old generation are not stored as current"
+            super::with_cache(|cache| cache.groups.is_none()),
+            "groups read under the old generation are not stored as current"
         );
     }
 
@@ -899,13 +904,13 @@ mod tests {
         let tx = world.facade.transactions_for("moqui.security.ArtifactAuthz").unwrap();
         assert!(tx.begin(None).unwrap());
         grant(&world, "GEN_COMMIT", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
-        // A session that reloads before the commit reads the old rows under the moved generation.
-        super::with_cache(|cache| cache.checks = Some(std::sync::Arc::new(Vec::new())));
+        // Membership caches still invalidate on commit, unlike Java's user authorization list.
+        super::with_cache(|cache| cache.groups = Some(std::sync::Arc::new(std::collections::HashSet::new())));
         let written = super::generation();
         tx.commit().unwrap();
         assert!(super::generation() > written);
         assert!(
-            super::with_cache(|cache| cache.checks.is_none()),
+            super::with_cache(|cache| cache.groups.is_none()),
             "the commit drops what was read before it"
         );
     }
@@ -918,12 +923,12 @@ mod tests {
         assert!(tx.begin(None).unwrap());
         grant(&world, "GEN_ROLLBACK", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
         // The writer reloads and reads its own row, which the rollback then undoes.
-        super::with_cache(|cache| cache.checks = Some(std::sync::Arc::new(Vec::new())));
+        super::with_cache(|cache| cache.groups = Some(std::sync::Arc::new(std::collections::HashSet::new())));
         let written = super::generation();
         tx.rollback().unwrap();
         assert!(super::generation() > written);
         assert!(
-            super::with_cache(|cache| cache.checks.is_none()),
+            super::with_cache(|cache| cache.groups.is_none()),
             "the rollback drops what was read before it"
         );
     }
@@ -950,6 +955,7 @@ mod tests {
         assert!(world.facade.find(ENTITY).unwrap().count().is_err());
 
         grant(&world, "READ_TEST", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
+        session::set_user("nobody", "nobody");
         world.facade.find(ENTITY).unwrap().list().expect("read after the allow");
         row.create(&world.facade).expect("the allow is for all actions");
 
@@ -1020,9 +1026,11 @@ mod tests {
         let err = view().expect_err("no member is allowed");
         assert!(err.to_string().contains("not authorized"), "{err}");
         grant(&world, "DV_FOO", "AT_ENTITY", "moqui.test.Foo", "AUTHZT_ALLOW", "N");
+        session::set_user("nobody", "nobody");
         let err = view().expect_err("the joined member is not allowed");
         assert!(err.to_string().contains("moqui.test.Bar"), "{err}");
         grant(&world, "DV_BAR", "AT_ENTITY", "moqui.test.Bar", "AUTHZT_ALLOW", "N");
+        session::set_user("nobody", "nobody");
         assert!(view().expect("both members are allowed").is_empty());
     }
 
@@ -1036,6 +1044,7 @@ mod tests {
         let err = world.facade.find(ENTITY).unwrap().list().expect_err("deny wins");
         assert!(err.to_string().contains("deny record"), "{err}");
         grant(&world, "ALWAYS_TEST", "AT_ENTITY", ENTITY, "AUTHZT_ALWAYS", "N");
+        session::set_user("nobody", "nobody");
         world.facade.find(ENTITY).unwrap().list().expect("always wins");
     }
 
@@ -1067,6 +1076,7 @@ mod tests {
             "AUTHZT_DENY",
             &[("filterMap", BAD_FILTER)],
         );
+        session::set_user("nobody", "nobody");
         let err = world
             .context
             .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
@@ -1124,6 +1134,7 @@ mod tests {
             "AUTHZT_ALLOW",
             &[("filterMap", "{orderId: 'O1'}")],
         );
+        session::set_user("nobody", "nobody");
         world
             .context
             .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
@@ -1159,6 +1170,7 @@ mod tests {
             "AUTHZT_ALLOW",
             "N",
         );
+        session::set_user("nobody", "nobody");
         world
             .context
             .push_checked("AT_SERVICE", "test.Other#Row", "all", true, false, None)
@@ -1186,6 +1198,7 @@ mod tests {
             .push_checked("AT_SERVICE", "test.Denied#Row", "all", false, false, None)
             .expect("pushed without needing authz");
         grant(&world, "ENT_ALLOW", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
+        session::set_user("nobody", "nobody");
         assert!(
             world.facade.find(ENTITY).unwrap().list().is_err(),
             "the allow does not apply under a deny frame"
@@ -1200,12 +1213,37 @@ mod tests {
     }
 
     #[test]
-    fn a_new_allow_is_seen_without_a_new_session() {
+    fn authorization_checks_stay_cached_until_the_user_changes_as_in_java() {
+        let world = world();
+        let _entered = world.context.enter();
+        session::set_user("nobody", "nobody");
+        let original = {
+            let _guard = world.context.disable_authz();
+            super::user_checks(&world.facade).unwrap()
+        };
+        assert!(original.is_empty());
+        grant(&world, "LATE_DENY", "AT_SERVICE", "test.Cached#Row", "AUTHZT_DENY", "N");
+        let retained = {
+            let _guard = world.context.disable_authz();
+            super::user_checks(&world.facade).unwrap()
+        };
+        assert!(std::sync::Arc::ptr_eq(&original, &retained), "seed writes must not reload the user's checks");
+        session::set_user("other", "other");
+        let err = world.context
+            .push_checked("AT_SERVICE", "test.Cached#Row", "all", true, false, None)
+            .expect_err("a new user loads and enforces the deny");
+        assert!(err.to_string().contains("deny record"), "{err}");
+    }
+
+    #[test]
+    fn a_new_allow_is_seen_after_refreshing_the_user() {
         let world = world();
         let _entered = world.context.enter();
         session::set_user("nobody", "nobody");
         assert!(world.facade.find(ENTITY).unwrap().list().is_err());
         grant(&world, "LATE_TEST", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
+        assert!(world.facade.find(ENTITY).unwrap().list().is_err(), "the current user's checks stay cached");
+        session::set_user("nobody", "nobody");
         world
             .facade
             .find(ENTITY)

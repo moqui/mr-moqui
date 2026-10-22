@@ -181,6 +181,18 @@ fn tools_services_run_on_postgres() {
     );
     assert_eq!(status, 200, "{cleaned}");
     assert!(cleaned.contains("artifactHitsRemoved"), "{cleaned}");
+    // Every query of the LLM clean runs: the OR/AND conversation find, the chunked IN deletes and the strip.
+    let (status, cleaned) = run(
+        address,
+        &john,
+        "org.moqui.impl.LlmServices.clean#LlmData",
+        &[("daysToKeep", "90"), ("contentDaysToKeep", "14")],
+    );
+    assert_eq!(status, 200, "{cleaned}");
+    assert!(
+        cleaned.contains("\"conversationsRemoved\"") && cleaned.contains("\"contentStripped\""),
+        "{cleaned}"
+    );
 
     // Decimal arithmetic, both directions.
     let (_, converted) = run(
