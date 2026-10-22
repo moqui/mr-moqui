@@ -81,6 +81,8 @@ impl ArtifactStack {
         let artifact_type = artifact_type.to_string();
         let name = name.to_string();
         let action = action.to_string();
+        crate::deterministic::trace(&artifact_type, &action, &name, "enter")
+            .expect("deterministic artifact trace failed");
         let entered = tracing::info_span!(
             "artifact",
             artifact_type = %artifact_type,
@@ -160,6 +162,12 @@ impl ArtifactStack {
     /// Pop the top frame and close its span. What the span recorded is returned for the hit counter.
     pub(super) fn pop(&mut self) -> Result<Popped, Error> {
         let frame = self.frames.pop().ok_or_else(|| Error::new("artifact stack is empty"))?;
+        crate::deterministic::trace(
+            &frame.artifact_type,
+            frame.hit.sub_type.as_deref().unwrap_or(&frame.action),
+            &frame.name,
+            "exit",
+        )?;
         let elapsed = frame.started.elapsed();
         let duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         frame.entered.record("duration_ms", duration_ms);

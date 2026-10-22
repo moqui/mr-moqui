@@ -48,6 +48,16 @@ impl EntityFacade {
         self.meta().check_all()
     }
 
+    /// Java's `checkAndAddAllTables` first pass; true when any table was created.
+    pub fn check_tables_startup(&self, names: &[&str]) -> Result<bool, Error> {
+        self.meta().check_startup(names)
+    }
+
+    /// Java's `checkAndAddAllTables` second pass: every missing foreign key, each group in its own transaction.
+    pub fn check_fks_startup(&self, names: &[&str]) -> Result<(), Error> {
+        self.meta().check_fks_startup(names)
+    }
+
     pub fn table_exists(&self, entity_name: &str) -> Result<bool, Error> {
         let (probe, tx) = self.with_group(entity_name, |entity, dialect, _, tx| {
             Ok((table_probe(dialect, &entity.table_name), tx.clone()))
@@ -79,7 +89,7 @@ impl EntityDbMeta<'_> {
         self.run(&refs, true)
     }
 
-    fn run(&self, names: &[&str], lenient_fk: bool) -> Result<(), Error> {
+    fn batches(&self, names: &[&str]) -> Result<HashMap<String, Batch>, Error> {
         let concrete = expand(self.facade, names)?;
         let default_group = self.facade.inner.default_group.clone();
         let mut batches: HashMap<String, Batch> = HashMap::new();
@@ -97,6 +107,63 @@ impl EntityDbMeta<'_> {
                 }
             }
         }
+        Ok(batches)
+    }
+
+    /// Groups in name order and, within each group, entities in full-name order (Java's TreeSets).
+    fn sorted_batches(&self, names: &[&str]) -> Result<Vec<(String, Batch)>, Error> {
+        let mut batches: Vec<_> = self.batches(names)?.into_iter().collect();
+        batches.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, batch) in &mut batches {
+            batch.names.sort();
+        }
+        Ok(batches)
+    }
+
+    fn check_startup(&self, names: &[&str]) -> Result<bool, Error> {
+        let skip_fk = super::fk::fk_create_disabled(self.facade);
+        let mut created = false;
+        for (group, batch) in self.sorted_batches(names)? {
+            let facade = self.facade;
+            let body = |conn: &mut dyn DbConnection| apply_startup(facade, conn, &batch.names, skip_fk);
+            let counts = if batch.tx.in_transaction() {
+                batch.tx.with_connection(body)?
+            } else {
+                batch.tx.with_reserve(body)?
+            };
+            tracing::info!(
+                "Checked {} entities in group {group}: {} tables created, {} columns added, {} indexes, {} full-text indexes, {} foreign keys",
+                batch.names.len(),
+                counts.tables_created,
+                counts.columns,
+                counts.indexes,
+                counts.fts,
+                counts.fks
+            );
+            created |= counts.tables_created > 0;
+        }
+        Ok(created)
+    }
+
+    fn check_fks_startup(&self, names: &[&str]) -> Result<(), Error> {
+        if super::fk::fk_create_disabled(self.facade) {
+            return Ok(());
+        }
+        for (group, batch) in self.sorted_batches(names)? {
+            tracing::info!("Tables were created, checking FKs for all entities in group {group}");
+            let facade = self.facade;
+            batch.tx.with_reserve(|conn| {
+                for name in &batch.names {
+                    ensure_fks(facade, conn, name, false)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn run(&self, names: &[&str], lenient_fk: bool) -> Result<(), Error> {
+        let batches = self.batches(names)?;
         let skip_fk = super::fk::fk_create_disabled(self.facade);
         let started = std::time::Instant::now();
         let mut totals = Counts::default();
@@ -111,9 +178,11 @@ impl EntityDbMeta<'_> {
             let facade = self.facade;
             let names = batch.names;
             let group_started = std::time::Instant::now();
-            let counts = batch
-                .tx
-                .with_reserve(|conn| apply(facade, conn, &group, &names, skip_fk, lenient_fk))?;
+            let counts = if crate::deterministic::enabled() && batch.tx.in_transaction() {
+                batch.tx.with_connection(|conn| apply(facade, conn, &group, &names, skip_fk, lenient_fk))?
+            } else {
+                batch.tx.with_reserve(|conn| apply(facade, conn, &group, &names, skip_fk, lenient_fk))?
+            };
             tracing::info!(
                 "Checked {} entities in group {group} in {:.3} seconds: {} tables created, {} already existed, {} columns added, {} indexes, {} full-text indexes, {} foreign keys",
                 names.len(),
@@ -280,6 +349,35 @@ fn apply(
         }
     } else {
         tracing::info!("Not checking foreign keys for group {group}, disable-fk-create is set");
+    }
+    Ok(counts)
+}
+
+// Mirrors Java's checkAndAddAllTables: an existing table only gets missing columns; a new table
+// gets its indexes and the foreign keys to tables that already exist, in entity-name order.
+fn apply_startup(facade: &EntityFacade, conn: &mut dyn DbConnection, names: &[String], skip_fk: bool) -> Result<Counts, Error> {
+    let mut counts = Counts::default();
+    for name in names {
+        let sql = facade.with_entity(name, |entity, dialect, model| {
+            if table_exists_conn(conn, dialect, &entity.table_name)? {
+                Ok(None)
+            } else {
+                Ok(Some(create_table(entity, model, dialect)?))
+            }
+        })?;
+        match sql {
+            None => counts.columns += ensure_columns(facade, conn, name)?,
+            Some(sql) => {
+                execute_script(conn, &sql)?;
+                counts.tables_created += 1;
+                tracing::info!("Created table for entity {name}");
+                counts.indexes += ensure_indexes(facade, conn, name)?;
+                if !skip_fk {
+                    counts.fks += ensure_fks(facade, conn, name, false)?;
+                }
+            }
+        }
+        counts.fts += ensure_fts(facade, conn, name)?;
     }
     Ok(counts)
 }

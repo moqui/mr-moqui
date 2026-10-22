@@ -6,7 +6,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::ThreadId;
 
 use moqui_lib::error::Error;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub trait Provider: Send + Sync {
     /// Returns an object containing a nonempty operation_id and an integer time_epoch_ms.
@@ -14,6 +14,9 @@ pub trait Provider: Send + Sync {
     fn complete(&self, request: Value) -> Result<(), Error>;
     fn random(&self, _domain: &str, _length: usize) -> Result<Vec<u8>, Error> {
         Err(Error::new("deterministic provider does not support random bytes"))
+    }
+    fn trace(&self, _request: Value) -> Result<(), Error> {
+        Err(Error::new("deterministic provider does not support operation tracing"))
     }
 }
 
@@ -160,6 +163,32 @@ pub fn bootstrap() -> Result<Option<Operation>, Error> {
         op.synthetic = true;
     }
     Ok(op)
+}
+
+/// Local evidence only: observations never acknowledge or skip a paired barrier.
+pub fn trace(kind: &str, action: &str, name: &str, outcome: &str) -> Result<(), Error> {
+    if !enabled() {
+        return Ok(());
+    }
+    let (parent, time) = OPERATIONS.with(|ops| {
+        let ops = ops.borrow();
+        (
+            ops.last().map(|op| op.0),
+            ops.iter().rev().find(|op| !op.2).map(|op| op.1),
+        )
+    });
+    provider()
+        .trace(json!({"event":"trace", "kind":kind, "action":action, "name":name,
+        "outcome":outcome, "parent_sequence":parent, "time_epoch_ms":time}))
+        .inspect_err(|_| fail())
+}
+
+/// Record both attempts and actual outcomes, including early errors in the closure.
+pub fn traced<T>(kind: &str, action: &str, name: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    trace(kind, action, name, "requested")?;
+    let result = body();
+    trace(kind, action, name, if result.is_ok() { "succeeded" } else { "failed" })?;
+    result
 }
 
 fn provider() -> &'static dyn Provider {

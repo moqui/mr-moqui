@@ -177,7 +177,9 @@ impl PostgresBackend {
     pub fn open(tx: TransactionManager, schema: Option<&str>) -> Result<Self, Error> {
         let schema = schema.unwrap_or(DEFAULT_SCHEMA).to_string();
         let quoted = ident(&schema);
-        let trigram = tx.with_reserve(|conn| {
+        // Deterministic startup joins the open schema transaction: the search tables have no
+        // Java counterpart, so they must not add a coordinated transaction of their own.
+        let setup = |conn: &mut dyn DbConnection| -> Result<bool, Error> {
             conn.execute(&format!("CREATE SCHEMA IF NOT EXISTS {quoted}"), &[])?;
             if crate::deterministic::enabled() {
                 conn.savepoint("moqui_search_extension")?;
@@ -210,7 +212,12 @@ impl PostgresBackend {
                 &[],
             )?;
             Ok(trigram)
-        })?;
+        };
+        let trigram = if crate::deterministic::enabled() && tx.in_transaction() {
+            tx.with_connection(setup)?
+        } else {
+            tx.with_reserve(setup)?
+        };
         Ok(Self {
             tx,
             read: None,
@@ -269,7 +276,7 @@ impl PostgresBackend {
         let base = config.unwrap_or(compile::TS_CONFIG).to_string();
         let quoted = ident(&self.schema);
         let schema = self.schema.clone();
-        let setup = self.tx.with_reserve(|conn| {
+        let setup = startup_connection(&self.tx, |conn| {
             let found = conn.query("SELECT 1 FROM pg_ts_config WHERE cfgname = ?", &[Value::string(&base)])?;
             if found.is_empty() {
                 return Err(Error::new(format!("text search configuration {base} does not exist")));
@@ -871,7 +878,7 @@ impl SearchBackend for PostgresBackend {
         let statements = self.create_statements(mapping);
         let advisory = format!("{}.{}", self.schema, mapping.physical_name);
         // True when this call made the table; false when another made it first.
-        self.tx.with_reserve(|conn| {
+        startup_connection(&self.tx, |conn| {
             ddl_transaction(conn, &table, |conn| {
                 // Another process may be making it: wait for it, then look again.
                 conn.query("SELECT pg_advisory_xact_lock(hashtext(?))", &[Value::string(&advisory)])?;
@@ -1110,6 +1117,14 @@ const DDL_LOCK_TIMEOUT: &str = "5s";
 
 /// Run `work` in a transaction on a reserve connection, with [`DDL_LOCK_TIMEOUT`]. A lock wait that
 /// runs out is an error that names the table.
+fn startup_connection<T>(tx: &TransactionManager, work: impl FnOnce(&mut dyn DbConnection) -> Result<T, Error>) -> Result<T, Error> {
+    if crate::deterministic::enabled() && tx.in_transaction() {
+        tx.with_connection(work)
+    } else {
+        tx.with_reserve(work)
+    }
+}
+
 fn ddl_transaction<T>(
     conn: &mut dyn DbConnection,
     table: &str,

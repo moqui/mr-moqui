@@ -994,6 +994,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:enumeration value="oracle-text"/>
                 </xs:restriction></xs:simpleType>
             </xs:attribute>
+            <xs:attribute name="fts-ddl" default="true" type="xs:boolean">
+                <xs:annotation><xs:documentation>
+                    When false Moqui does not create the generated tsvector column, GIN or FULLTEXT index for text-fts fields.
+                    Use it when a DBA manages them, because on PostgreSQL adding the stored column rewrites the table.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="fts-config" default="english" type="xs:token">
                 <xs:annotation><xs:documentation>
                     Postgres text search configuration passed to to_tsvector / plainto_tsquery. Other fts-style values ignore it.

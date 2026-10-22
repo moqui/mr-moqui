@@ -76,6 +76,8 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
 
             <set field="body" from="bodyPartList?.length ? bodyPartList[0].contentText : null"/>
+            <!-- The address lists are stored comma separated, as send#EmailTemplate stores them and send#EmailMessage
+                splits them; Java's List.toString() stores "[a, b]", which sends to "[a" and "b]". -->
             <service-call name="create#moqui.basic.email.EmailMessage" out-map="context"
                 in-map="{sentDate:fields.sentDate, receivedDate:fields.receivedDate, statusId:statusId,
                     subject:fields.subject, body:body,

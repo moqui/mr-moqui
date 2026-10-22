@@ -20,6 +20,8 @@ const BASE: i64 = 1760000000000;
 fn protocol_and_failure_cases() {
     for scenario in [
         "lifecycle",
+        "operations",
+        "postgres",
         "status",
         "json",
         "assignment",
@@ -32,6 +34,9 @@ fn protocol_and_failure_cases() {
         "random-invalid",
         "random-uninstalled",
     ] {
+        if scenario == "postgres" && !cfg!(all(feature = "postgres", feature = "embedded-postgres")) {
+            continue;
+        }
         let dir = std::env::temp_dir().join(format!("moqui-deterministic-{}-{scenario}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("deterministic.log");
@@ -89,7 +94,7 @@ fn protocol_and_failure_cases() {
                     "not json".to_string()
                 } else if scenario == "assignment" {
                     json!({"operation_id":"x", "time_epoch_ms":"wrong"}).to_string()
-                } else if request["event"] == "complete" {
+                } else if request["event"] == "complete" || request["event"] == "operation" {
                     json!({"ok": scenario != "complete"}).to_string()
                 } else {
                     json!({"operation_id":format!("op-{sequence:06}"), "time_epoch_ms":BASE + sequence as i64})
@@ -119,6 +124,10 @@ fn protocol_and_failure_cases() {
                 "MOQUI_DETERMINISTIC",
                 if scenario == "normal" { "false" } else { "true" },
             )
+            .env(
+                "MOQUI_DETERMINISTIC_OPERATIONS",
+                if scenario == "operations" { "true" } else { "false" },
+            )
             .env("MOQUI_DETERMINISTIC_OFFLINE", "true")
             .env("MOQUI_DETERMINISTIC_HOOK", format!("http://{address}/transaction"))
             .env("MOQUI_DETERMINISTIC_ENGINE", "rust")
@@ -143,6 +152,61 @@ fn protocol_and_failure_cases() {
             .unwrap()
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let traces: Vec<_> = records.iter().filter(|record| record["event"] == "trace").collect();
+        for (index, trace) in traces.iter().enumerate() {
+            assert_eq!(trace["trace_sequence"], index + 1);
+            assert!(!trace.to_string().contains("secret-parameter"));
+        }
+        if scenario == "lifecycle" {
+            assert!(
+                traces
+                    .iter()
+                    .any(|trace| trace["kind"] == "AT_SERVICE" && trace["outcome"] == "enter")
+            );
+            assert!(
+                traces
+                    .iter()
+                    .any(|trace| trace["kind"] == "AT_SERVICE" && trace["outcome"] == "exit")
+            );
+        }
+        if scenario == "operations" {
+            let requests = requests.lock().unwrap();
+            let operations: Vec<_> = requests
+                .iter()
+                .filter(|request| request["event"] == "operation")
+                .collect();
+            assert_eq!(operations.len(), 2);
+            assert_eq!(operations[0]["name"], "moqui.example.Thing");
+            assert_eq!(operations[0]["outcome"], "exit");
+            assert_eq!(operations[0]["transaction_sequence"], 1);
+        }
+        if scenario == "postgres" {
+            for sql in [
+                "CREATE TABLE deterministic_trace (id text)",
+                "INSERT INTO deterministic_trace VALUES (?)",
+            ] {
+                assert!(
+                    traces.iter().any(|trace| trace["kind"] == "jdbc"
+                        && trace["name"] == sql
+                        && trace["outcome"] == "succeeded")
+                );
+            }
+            assert!(
+                traces
+                    .iter()
+                    .any(|trace| trace["kind"] == "jdbc" && trace["outcome"] == "failed")
+            );
+            assert!(
+                traces
+                    .iter()
+                    .filter(|trace| trace["kind"] == "jdbc")
+                    .all(|trace| trace["time_epoch_ms"].is_i64())
+            );
+        }
+        let records: Vec<_> = records
+            .into_iter()
+            .filter(|record| record["event"] != "trace")
             .collect();
         assert_eq!(
             records[0],
@@ -266,15 +330,47 @@ fn deterministic_child() {
         return;
     }
     if scenario == "complete" {
-        assert!(moqui_core::deterministic::begin()
-            .unwrap()
-            .unwrap()
-            .finish("committed")
-            .is_err());
+        assert!(
+            moqui_core::deterministic::begin()
+                .unwrap()
+                .unwrap()
+                .finish("committed")
+                .is_err()
+        );
         assert!(moqui_core::deterministic::begin().is_err());
         return;
     }
     assert!(std::panic::catch_unwind(moqui_lib::clock::now_millis).is_err());
+    #[cfg(all(feature = "postgres", feature = "embedded-postgres"))]
+    if scenario == "postgres" {
+        let bootstrap = moqui_host::deterministic::bootstrap().unwrap().unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("DETERMINISTIC_TEST_DIR").unwrap());
+        let (mut cluster, driver) = moqui_host::db::embedded::EmbeddedCluster::start(dir.join("pg"), 8).unwrap();
+        let mut connection = driver.connect().unwrap();
+        connection.begin().unwrap();
+        connection
+            .execute("CREATE TABLE deterministic_trace (id text)", &[])
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO deterministic_trace VALUES (?)",
+                &[Value::string("secret-parameter")],
+            )
+            .unwrap();
+        connection.commit().unwrap();
+        assert_eq!(
+            connection
+                .query("SELECT id FROM deterministic_trace", &[])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(connection.query_once("SELECT * FROM missing_trace_table", &[]).is_err());
+        drop(connection);
+        cluster.stop().unwrap();
+        bootstrap.finish("committed").unwrap();
+        return;
+    }
     let fail = Arc::new(AtomicBool::new(false));
     let tx = TransactionManager::new(Arc::new(Driver(Arc::clone(&fail))), PoolConfig::default()).unwrap();
     if scenario == "uncertain" {
@@ -286,6 +382,12 @@ fn deterministic_child() {
         return;
     }
     let bootstrap = moqui_host::deterministic::bootstrap().unwrap().unwrap();
+    if scenario == "operations" {
+        moqui_core::deterministic::trace("AT_ENTITY", "list", "moqui.example.Thing", "exit").unwrap();
+        moqui_core::deterministic::traced("jdbc", "executeQuery", "SELECT 1", || Ok(())).unwrap();
+        bootstrap.finish("committed").unwrap();
+        return;
+    }
     let boot_time = moqui_lib::clock::now_millis();
     let outer = tx.scope(None).unwrap();
     let parent = moqui_lib::clock::now_millis();

@@ -700,12 +700,13 @@ fn load_with_factory(
         &db.conf.dialect,
     )?;
     crate::db::entity_facade::attach(factory, facade.clone());
+    crate::db::entity_facade::discover_db_views(factory, &facade)?;
     tracing::info!(
         "Entity Facade initialized in {:.3} seconds",
         entity_started.elapsed().as_secs_f64()
     );
     // Feeds index through search when it is up; a load still runs when it is not.
-    let _search = match crate::search::attach_search(factory, &facade, db.is_postgres()) {
+    let _search = match prepare_search(factory, &facade, db.is_postgres()) {
         Ok(store) => {
             tracing::info!("Search attached for this load, data feeds will index documents");
             logging::ship_to_search(factory);
@@ -961,6 +962,7 @@ fn boot_server(
         &db.conf.dialect,
     )?;
     crate::db::entity_facade::attach(&factory, facade.clone());
+    crate::db::entity_facade::discover_db_views(&factory, &facade)?;
     tracing::info!(
         "Entity Facade initialized in {:.3} seconds",
         entity_started.elapsed().as_secs_f64()
@@ -968,7 +970,7 @@ fn boot_server(
     // The overlay starts on the first enter_sim, inside the cluster directory, on the shared install.
     let sim = crate::db::sim::SimOverlay::install(&facade, &cluster_dir, Some(install));
     // Same policy as `load`: indexing runs when search is up, and the server still starts when it is not.
-    let search = match crate::search::attach_search(&factory, &facade, db.is_postgres()) {
+    let search = match prepare_search(&factory, &facade, db.is_postgres()) {
         Ok(store) => {
             tracing::info!("Search attached, data feeds and logs can index documents");
             logging::ship_to_search(&factory);
@@ -980,9 +982,14 @@ fn boot_server(
             None
         }
     };
+    // Java completes factory/schema initialization before checkEmptyDb enters its own scope.
+    if let Some(bootstrap) = _bootstrap {
+        bootstrap.finish("committed")?;
+    }
+    let _bootstrap = deterministic::bootstrap()?;
     // Log events and HTTP requests go to moqui_logs and moqui_http_log through the search backend (shipped above).
     factory.init_tools().map_err(moqui_lib::error::Error::from)?;
-    if search.is_some() {
+    if search.is_some() && !moqui_core::deterministic::enabled() {
         index_feeds_on_start_empty(&factory);
     }
     let load_started = std::time::Instant::now();
@@ -1002,6 +1009,11 @@ fn boot_server(
         drop(entered);
         drop(context);
         loaded?;
+    }
+    if moqui_core::deterministic::enabled() {
+        // Java restarts the factory after the empty-db load, persisting bootstrap
+        // statistics before serving requests. Flush here, not only at final shutdown.
+        factory.flush_artifact_hits().map_err(moqui_lib::error::Error::from)?;
     }
     tracing::info!(
         "Table check and empty-db load finished in {:.3} seconds",
@@ -1196,6 +1208,44 @@ fn should_load_data(existing: i64, flags: &LoadFlags, startup: bool) -> bool {
 }
 
 #[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
+#[derive(Default)]
+struct JavaStartupSchemaChecked(bool);
+
+// Java's postFacadeInit checks tables in one transaction, then (when tables were created)
+// checks all foreign keys in a second, before checkEmptyDb. Rust's search DDL is auxiliary
+// schema work and joins the first.
+#[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
+fn prepare_search(
+    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
+    facade: &moqui_core::entity::EntityFacade,
+    postgres: bool,
+) -> Result<crate::search::SearchStore, moqui_lib::error::Error> {
+    if !moqui_core::deterministic::enabled() {
+        return crate::search::attach_search(factory, facade, postgres);
+    }
+    let entities = entity_names(factory.framework_dir(), &facade.entity_dirs())?;
+    let refs: Vec<&str> = entities.iter().map(String::as_str).collect();
+    let tx = facade.transactions_for("moqui.basic.Enumeration")?;
+    let mut created = false;
+    let search = tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, Some(std::time::Duration::from_secs(300)), || {
+        created = facade.check_tables_startup(&refs)?;
+        if !facade.table_exists("moqui.test.TestFts")? {
+            return Err(moqui_lib::error::Error::new("TestFts was not created before seed loading"));
+        }
+        let search = crate::search::attach_search(factory, facade, postgres);
+        if search.is_ok() {
+            index_feeds_on_start_empty(factory);
+        }
+        Ok(search)
+    })?;
+    if created {
+        facade.check_fks_startup(&refs)?;
+    }
+    facade.with_slot(JavaStartupSchemaChecked::default, |ready| ready.0 = true);
+    search
+}
+
+#[cfg(all(feature = "embedded-postgres", feature = "postgres"))]
 fn load_in_context(
     framework_dir: &std::path::Path,
     facade: &moqui_core::entity::EntityFacade,
@@ -1229,8 +1279,12 @@ fn load_in_context(
         "Checking tables for {} framework entities in group transactional",
         refs.len()
     );
-    facade.check_tables(&refs)?;
-    let test_fts_before_load = facade.table_exists("moqui.test.TestFts")?;
+    let test_fts_before_load = if moqui_core::deterministic::enabled() {
+        facade.with_slot(JavaStartupSchemaChecked::default, |ready| ready.0)
+    } else {
+        facade.check_tables(&refs)?;
+        facade.table_exists("moqui.test.TestFts")?
+    };
     if !test_fts_before_load {
         return Err(moqui_lib::error::Error::new(
             "moqui.test.TestFts was not created before the seed load",

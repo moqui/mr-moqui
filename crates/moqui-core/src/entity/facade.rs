@@ -205,7 +205,12 @@ impl EntityFacade {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let model = EntityModel::load_directories(conf, &directories)?;
+        let model = crate::deterministic::traced("phase", "initialize", "entity-metadata", || {
+            EntityModel::load_directories(conf, &directories)
+        })?;
+        for entity in model.entities() {
+            crate::deterministic::trace("metadata", "load-definition", &entity.full_name, "succeeded")?;
+        }
         let dialects = Dialects::load(conf)?;
         let all = model.entities();
         let views = all.iter().filter(|entity| entity.is_view).count();
@@ -394,6 +399,16 @@ impl EntityFacade {
 
     pub fn set_dummy_fks(&self, value: bool) {
         self.edit_flags(|flags| flags.dummy_fks = value);
+    }
+
+    /// Transaction manager for the default entity group.
+    pub fn default_transactions(&self) -> Result<TransactionManager, Error> {
+        let group_name = self.inner.default_group.as_str();
+        self.inner
+            .groups
+            .get(group_name)
+            .map(|runtime| runtime.transactions.clone())
+            .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group_name}")))
     }
 
     /// Transaction manager for the entity's group. The group attribute falls back to the default group.

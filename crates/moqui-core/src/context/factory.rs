@@ -168,6 +168,7 @@ impl ExecutionContextFactory {
         mut options: BootOptions,
     ) -> Result<Arc<Self>, Error> {
         crate::deterministic::validate_startup().map_err(Error::from)?;
+        crate::deterministic::trace("phase", "initialize", "factory", "requested").map_err(Error::from)?;
         let _bootstrap = crate::deterministic::bootstrap().map_err(Error::from)?;
         if crate::deterministic::enabled() {
             options.executor = Executor::Inline;
@@ -254,6 +255,7 @@ impl ExecutionContextFactory {
         // The host calls cluster::start after the entity facade is installed.
         install_session_flush(&factory);
         install_hit_flush(&factory);
+        crate::deterministic::trace("phase", "initialize", "factory", "succeeded").map_err(Error::from)?;
         Ok(factory)
     }
 

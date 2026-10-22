@@ -35,7 +35,7 @@ pub use error::{DeniedArtifact, Error, ErrorKind};
 pub use factory::{
     default_framework_dir, BootOptions, ContextGuard, ExecutionContext, ExecutionContextFactory, Executor,
 };
-pub(crate) use hits::{secret_parameter, Hit};
+pub(crate) use hits::{secret_parameter, server_address, Hit};
 pub use locate::{framework_dir, locate};
 pub use message::{ErrorMark, MessageFacade, ValidationError};
 pub use resource::{ResourceEntry, ResourceFacade, ResourceRef, ResourceStat};

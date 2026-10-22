@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use moqui_core::deterministic::{self, Provider};
 use moqui_lib::error::Error;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Hook {
     client: reqwest::blocking::Client,
@@ -172,6 +172,12 @@ impl Provider for Hook {
 
     fn begin(&self, request: Value) -> Result<Value, Error> {
         let mut request = self.envelope(request);
+        moqui_core::deterministic::trace(
+            "coordinator",
+            "begin",
+            request["artifact"]["name"].as_str().unwrap_or(""),
+            "requested",
+        )?;
         let response = self.post(&request)?;
         let id = response
             .get("operation_id")
@@ -190,12 +196,39 @@ impl Provider for Hook {
         Ok(response)
     }
 
+    fn trace(&self, request: Value) -> Result<(), Error> {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        // Sequence allocation and append must be serialized together.
+        static SERIAL: Mutex<()> = Mutex::new(());
+        let _guard = SERIAL.lock().unwrap();
+        let mut request = self.envelope(request);
+        request["trace_sequence"] = json!(SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        self.append(&request)?;
+        let kind = request["kind"].as_str().unwrap_or("");
+        let action = request["action"].as_str().unwrap_or("");
+        let outcome = request["outcome"].as_str().unwrap_or("");
+        if std::env::var("MOQUI_DETERMINISTIC_OPERATIONS").as_deref() == Ok("true")
+            && ((kind.starts_with("AT_") && outcome == "exit")
+                || (kind == "jdbc" && matches!(outcome, "succeeded" | "failed"))
+                || (kind == "data" && outcome != "requested"))
+        {
+            let operation = self.envelope(json!({"event":"operation", "sequence":request["trace_sequence"],
+                "kind":kind, "action":action, "name":request["name"], "outcome":outcome,
+                "transaction_sequence":request["parent_sequence"]}));
+            if self.post(&operation)?.get("ok") != Some(&Value::Bool(true)) {
+                return Err(Error::new("operation database comparison rejected"));
+            }
+        }
+        Ok(())
+    }
+
     fn complete(&self, request: Value) -> Result<(), Error> {
         let request = self.envelope(request);
+        self.append(&request)?;
         let response = self.post(&request)?;
         if response.get("ok") != Some(&Value::Bool(true)) {
             return Err(Error::new("invalid deterministic completion response"));
         }
-        self.append(&request)
+        Ok(())
     }
 }

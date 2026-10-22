@@ -93,6 +93,23 @@ pub fn open_entity_facade_for_factory(
     Ok(facade)
 }
 
+/// Java discovers database-backed views before checking/creating the entity schema.
+/// Keep the real read in an execution context so its transaction has entity identity.
+pub fn discover_db_views(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade) -> Result<(), Error> {
+    if !moqui_core::deterministic::enabled() {
+        return Ok(());
+    }
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let views = facade.find("moqui.entity.view.DbViewEntity")?.list()?;
+    tracing::info!("Found {} view-entity definitions in database (DbViewEntity records)", views.len());
+    if !views.is_empty() {
+        return Err(Error::new("Database-backed view definitions require model registration before startup can continue"));
+    }
+    Ok(())
+}
+
 /// The `entity` directory of each component the factory found, in its load order, the framework
 /// left out (its directory is always read).
 pub fn component_entity_dirs(factory: &ExecutionContextFactory) -> Vec<std::path::PathBuf> {

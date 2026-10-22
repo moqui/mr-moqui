@@ -109,4 +109,34 @@ along with this software (see the LICENSE.md file). If not, see
             ec.logger.log("info", `Removed ${printJobsRemoved} PrintJob records more than ${daysToKeep} days old`)
         </script></actions>
     </service>
+
+    <service verb="backup" noun="EmbeddedDatabase" type="rust"
+            location="moqui_core::service::backup::backup_embedded_database"
+            authenticate="false" transaction="ignore">
+        <description>
+            Live backup of each embedded Postgres cluster this process runs, then the retention ladder, then an
+            optional SFTP mirror of the archives that remain. The schedule is the ServiceJob cron.
+            See plans/PostgresBackup.md.
+        </description>
+        <in-parameters>
+            <parameter name="dailyCount" type="Integer" default="7"/>
+            <parameter name="weeklyCount" type="Integer" default="5"/>
+            <parameter name="monthlyCount" type="Integer" default="12"/>
+            <parameter name="yearlyCount" type="Integer"/>
+            <parameter name="backupMode" type="String" default="dump"/>
+            <parameter name="backupDir" type="String"/>
+            <parameter name="fullEvery" type="Integer" default="7"/>
+            <parameter name="timeoutMinutes" type="Integer" default="120"/>
+            <parameter name="systemMessageRemoteId" type="String"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archivePath" type="String"/>
+            <parameter name="backupKind" type="String"/>
+            <parameter name="bytesWritten" type="Long"/>
+            <parameter name="promoted" type="String"/>
+            <parameter name="archivesRemoved" type="String"/>
+            <parameter name="mirrored" type="String"/>
+            <parameter name="skipped" type="String"/>
+        </out-parameters>
+    </service>
 </services>
