@@ -304,6 +304,26 @@ pub fn bind(
     visitor_cookie: Option<&str>,
     https: bool,
 ) -> Result<SessionGuard, Error> {
+    bind_impl(factory, session_cookie, visitor_cookie, https, true)
+}
+
+/// Bind a screen request without starting its visit until its resolved path is known.
+pub(crate) fn bind_for_screen(
+    factory: &Arc<ExecutionContextFactory>,
+    session_cookie: Option<&str>,
+    visitor_cookie: Option<&str>,
+    https: bool,
+) -> Result<SessionGuard, Error> {
+    bind_impl(factory, session_cookie, visitor_cookie, https, false)
+}
+
+fn bind_impl(
+    factory: &Arc<ExecutionContextFactory>,
+    session_cookie: Option<&str>,
+    visitor_cookie: Option<&str>,
+    https: bool,
+    track_visit: bool,
+) -> Result<SessionGuard, Error> {
     if !ExecutionContext::is_entered() {
         return Err(Error::new("no execution context"));
     }
@@ -314,13 +334,11 @@ pub fn bind(
     let (id, created) = resolve_id(factory, presented.as_deref())?;
     touch_session(factory, &id);
     install_thread(factory, &id)?;
-    // A request with no moqui cookie may come from a client that keeps none, such as a crawler, which
-    // would leave a Visitor and a Visit behind on every request. Its visit starts when the session
-    // cookie comes back or a user logs in.
+    // Screen requests resolve their path after binding before deciding whether to track.
     let keeps_cookies = [session_cookie, visitor_cookie]
         .iter()
         .any(|cookie| cookie.is_some_and(|value| !value.trim().is_empty()));
-    let visit = if keeps_cookies {
+    let visit = if track_visit && keeps_cookies {
         ensure_visit(factory, visitor_cookie)
     } else {
         Ok(())
@@ -522,6 +540,9 @@ pub fn remember_client_ip(address: &str) -> Result<(), Error> {
     else {
         return Ok(());
     };
+    if visit.get("clientIpAddress").and_then(Value::as_str) == Some(address) {
+        return Ok(());
+    }
     visit.set("clientIpAddress", Value::string(address));
     visit.update(&facade).map_err(Error::from)
 }
@@ -1278,7 +1299,7 @@ fn forget_user_logged_out_elsewhere() -> Result<(), Error> {
     Ok(())
 }
 
-fn ensure_visit(factory: &Arc<ExecutionContextFactory>, visitor_cookie: Option<&str>) -> Result<(), Error> {
+pub(crate) fn ensure_visit(factory: &Arc<ExecutionContextFactory>, visitor_cookie: Option<&str>) -> Result<(), Error> {
     if visit_id()?.is_some() {
         return Ok(());
     }
@@ -1320,6 +1341,21 @@ pub(crate) fn create_visit(facade: &EntityFacade, visitor_id: &str) -> Result<St
     let mut visit = facade.make_value(VISIT).map_err(Error::from)?;
     visit.set("visitorId", Value::string(visitor_id));
     visit.set("fromDate", super::login::now_value());
+    if crate::web::request_url().is_some() {
+        for (name, value) in crate::web::visit_fields() {
+            visit.set(&name, value);
+        }
+        if let Some(id) = with_session(|session| session.bound_id.clone()) {
+            visit.set("sessionId", Value::string(id));
+        }
+        let locale = locale()?
+            .or_else(crate::web::request_locale)
+            .unwrap_or_else(|| "en_US".to_string());
+        visit.set("initialLocale", Value::string(locale));
+        let (ip, host) = crate::context::server_address();
+        visit.set("serverIpAddress", Value::string(ip));
+        visit.set("serverHostName", Value::string(host));
+    }
     if let Some(user_id) = current_user_id()? {
         visit.set("userId", Value::string(user_id));
     }

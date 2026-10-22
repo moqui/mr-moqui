@@ -137,12 +137,21 @@ fn handle(
         .map(user::verify_session_cookie)
         .transpose()?
         .flatten();
-    let guard = user::bind(
+    // Capture the initial request before starting its Visit.
+    let _initial_web = web::install(parameters.clone());
+    web::set_host(request.header("host").unwrap_or(""));
+    web::set_request_info(request);
+    web::set_request_locale(request.header("accept-language"));
+    let guard = user::session::bind_for_screen(
         factory,
         session_cookie.as_deref(),
         visitor_cookie.as_deref(),
         request.https,
     )?;
+    let url_info = ScreenUrlInfo::parse(factory, root, &request.path, 0)?;
+    if url_info.file_resource.is_none() {
+        user::session::ensure_visit(factory, visitor_cookie.as_deref())?;
+    }
     let token_before = peek_token();
     if let Err(err) = user::session::remember_client_ip(&web::client_ip(request)) {
         return Ok(web::json_error(500, &web::error_text(500, &err)));

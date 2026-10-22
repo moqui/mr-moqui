@@ -128,6 +128,8 @@ struct WebSlot {
     query_names: Vec<String>,
     /// [`client_ip`] of the request, for the login `ipAllowed` check.
     client_ip: String,
+    peer_ip: String,
+    user_agent: String,
     /// The first locale of the request's `Accept-Language`, as Java's `request.getLocale()`.
     locale: Option<String>,
     /// Scheme, host, and context path that links start with. Empty for a path-only link.
@@ -172,6 +174,8 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             request_details: String::new(),
             query_names: Vec::new(),
             client_ip: String::new(),
+            peer_ip: String::new(),
+            user_agent: String::new(),
             locale: None,
             base_url,
             sent: false,
@@ -276,8 +280,31 @@ pub(crate) fn set_request_info(request: &WebRequest) {
             web.request_details = details;
             web.query_names = request.query.iter().map(|(name, _)| name.clone()).collect();
             web.client_ip = client_ip(request);
+            web.peer_ip = request.peer_ip.clone();
+            web.user_agent = request.header("user-agent").unwrap_or("").to_string();
         }
     });
+}
+
+/// Request metadata for Java's `moqui.server.Visit`; absent for renders without a socket.
+pub(crate) fn visit_fields() -> BTreeMap<String, Value> {
+    WEB.with(|slot| {
+        let slot = slot.borrow();
+        let Some(web) = slot.as_ref().filter(|web| !web.request_url.is_empty()) else {
+            return BTreeMap::new();
+        };
+        [
+            ("initialRequest", web.request_url.chars().take(255).collect()),
+            ("initialReferrer", web.referrer.clone()),
+            ("initialUserAgent", web.user_agent.chars().take(255).collect()),
+            ("clientIpAddress", web.client_ip.clone()),
+            ("clientHostName", web.peer_ip.clone()),
+        ]
+        .into_iter()
+        .filter(|(_, value): &(&str, String)| !value.is_empty())
+        .map(|(name, value)| (name.to_string(), Value::string(value)))
+        .collect()
+    })
 }
 
 /// Java `getClientIp`: the [`client_ip`] of the current request. Empty with no request.
@@ -1332,6 +1359,28 @@ mod tests {
         percent_decode,
     };
     use moqui_lib::object::Value;
+
+    #[test]
+    fn visit_metadata_comes_from_the_initial_request() {
+        let _web = super::install(Default::default());
+        assert!(super::visit_fields().is_empty());
+        let mut request = super::WebRequest::new("GET", "/Login");
+        request.peer_ip = "127.0.0.1".to_string();
+        request.set_header("host", "localhost:8081");
+        request.set_header("user-agent", "x".repeat(300));
+        request.set_header("referer", "http://localhost:8081/");
+        super::set_request_info(&request);
+        let fields = super::visit_fields();
+        for (name, expected) in [
+            ("initialRequest", "http://localhost:8081/Login"),
+            ("initialReferrer", "http://localhost:8081/"),
+            ("clientIpAddress", "127.0.0.1"),
+            ("clientHostName", "127.0.0.1"),
+        ] {
+            assert_eq!(fields.get(name).and_then(Value::as_str), Some(expected));
+        }
+        assert_eq!(fields["initialUserAgent"].as_str().unwrap().len(), 255);
+    }
 
     #[test]
     fn request_details_leave_out_credential_parameters() {
