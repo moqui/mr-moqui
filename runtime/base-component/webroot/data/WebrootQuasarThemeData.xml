@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Default Theme (note that DEFAULT ScreenTheme record defined in ScreenEntities.xml) -->
 
     <!-- Style sheets of the qvt shell, in order: Font Awesome 4 for the fa icons of the screens, Material Symbols (outlined) for the
-         sym_o_* names and Quasar's own icons, the Material Icons of the names without a prefix, Quasar, and the layout and widget styles
+         sym_o_* names and Quasar's own icons, the Material Icons of the names without a prefix, Quasar, Roboto, and the layout and widget styles
          loaded last to override. The icon fonts come before Quasar, whose icon rules set their size. The paths are the vendored
          libraries (webroot/README.md). -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="1" resourceTypeEnumId="STRT_STYLESHEET"
@@ -33,6 +33,10 @@ along with this software (see the LICENSE.md file). If not, see
             resourceValue="/libs/material-icons/material-icons.css"/>
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="4" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/libs/quasar/quasar.prod.css"/>
+
+    <!-- Match Java’s Roboto weights without replacing either vendored icon font. -->
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="5" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900"/>
 
     <!-- Add external theme(s) here  -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="10" resourceTypeEnumId="STRT_STYLESHEET" resourceValue=""/>
