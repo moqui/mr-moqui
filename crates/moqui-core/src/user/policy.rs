@@ -89,6 +89,16 @@ pub(crate) fn disable_minutes() -> i64 {
     conf_number("login", "disable-minutes", 5)
 }
 
+/// `login/@history-store`: unless `false`, each login leaves a `UserLoginHistory` row.
+pub(crate) fn login_history_store() -> bool {
+    conf_text("login", "history-store", "true") != "false"
+}
+
+/// `login/@history-incorrect-password`: unless `false`, a failed login's history row keeps the password tried.
+pub(crate) fn login_history_incorrect_password() -> bool {
+    conf_text("login", "history-incorrect-password", "true") != "false"
+}
+
 fn count_matching(password: &str, pred: impl Fn(char) -> bool) -> i64 {
     i64::try_from(password.chars().filter(|ch| pred(*ch)).count()).unwrap_or(i64::MAX)
 }
