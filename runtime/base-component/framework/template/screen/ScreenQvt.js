@@ -1087,7 +1087,7 @@
                 "v-slot:default": "formProps", ":fields-initial": initial(singleValues(n, formAttrs)),
                 ":validation-errors-initial": isForm ? savedErrors(at(n, "name")) : null
             };
-            w((skipStart ? "" : '<div class="q-mb-md"><' + tag + A(attrs) + ">"));
+            w((skipStart ? "" : '<div class="q-my-md"><' + tag + A(attrs) + ">"));
             return { skipStart, tag };
         };
 
@@ -1098,7 +1098,7 @@
 
         const fieldBox = (when, containerStyle, big) => {
             const style = visibleStyle(when);
-            const box = big ? "big-row-item" : cls("q-pa-xs", containerStyle || null);
+            const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
             w("<div" + A({ class: box, ":style": style }) + ">");
         };
 

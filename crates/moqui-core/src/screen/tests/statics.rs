@@ -338,6 +338,16 @@ fn the_qvt_fixture_screens_become_templates_that_compile() {
         "gated",
     ] {
         let (html, report) = static_fixture(name);
+        if name == "fields" {
+            assert!(html.contains(r#"<div class="q-ma-sm invoice-field"><m-text-line"#), "{html}");
+            assert!(html.contains(r#":class="'q-ma-sm '+ec.resource.expandNoL10n("#), "{html}");
+            assert!(html.contains(r#"class="q-my-sm big-row""#), "{html}");
+            assert!(html.contains(r#"class="big-row-item""#), "{html}");
+        }
+        if name == "cells" {
+            assert!(html.contains(r#"<div class="q-my-md"><m-form name="RefuseForm""#), "{html}");
+            assert!(html.contains(r#"<div class="q-ma-sm"><m-text-area name="reason""#), "{html}");
+        }
         golden(&format!("render/{name}.html"), &html);
         eprintln!("{}", report.render());
     }
