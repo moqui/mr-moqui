@@ -1,0 +1,48 @@
+{
+  "events": [
+    {
+      "id": "resp_cut01",
+      "model": "gpt-5.4-mini",
+      "type": "started"
+    },
+    {
+      "delta": "The report covers",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 300,
+      "output": 16,
+      "reasoning": 12,
+      "type": "usage"
+    },
+    {
+      "finish": "length",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "length",
+      "type": "finish"
+    },
+    "model": "gpt-5.4-mini",
+    "reasoning": "",
+    "replay": null,
+    "response_id": "resp_cut01",
+    "text": "The report covers",
+    "text_deltas": 1,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 300,
+      "output": 16,
+      "reasoning": 12
+    }
+  }
+}

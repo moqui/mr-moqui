@@ -85,7 +85,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
     let runtime = canonical(runtime)?;
     let framework = canonical(framework)?;
     // The first attach wins: the log files stay in the runtime's log directory, not a scratch runtime that goes.
-    let log_dir = crate::logging::attach_files(&runtime);
+    let log_dir = crate::logging::attach_files(&runtime, None);
     let (run_runtime, scratch) = match mode {
         DbMode::Existing => (runtime.clone(), None),
         DbMode::Fresh | DbMode::Snapshot => {

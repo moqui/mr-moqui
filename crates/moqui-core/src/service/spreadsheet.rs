@@ -18,6 +18,9 @@
 //! The file is `contentBytes` or the resource at `location`. The format is found from the content. A cell keeps its
 //! type: text, a number (a whole number is a `Long`), a boolean, or a date as a time stamp in the user's zone. An empty
 //! or error cell is null, and a row of only empty cells is skipped.
+//!
+//! Files previews read through [`preview_rows`] (the first rows of one sheet) and [`sheet_text`] (the text of every
+//! sheet, for search). Both stop reading an xlsx or xlsb sheet as soon as they have enough.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -233,6 +236,212 @@ fn excel_timestamp(serial: f64, zone: &jiff::tz::TimeZone) -> Option<Value> {
     Some(Value::Timestamp(stamp))
 }
 
+/// Visit the non-empty cells of sheet `name` in row order until `visit` returns false. An xlsx or xlsb sheet is read
+/// cell by cell, so a visit that stops early reads no more of it; an xls or ods sheet is read whole first.
+fn visit_cells(
+    book: &mut Sheets<Cursor<Vec<u8>>>,
+    name: &str,
+    mut visit: impl FnMut(u32, u32, Data) -> bool,
+) -> Result<(), LibError> {
+    let failed = |err: &dyn std::fmt::Display| LibError::new(format!("Could not read sheet {name}: {err}"));
+    match book {
+        Sheets::Xlsx(xlsx) => {
+            let mut reader = match xlsx.worksheet_cells_reader(name) {
+                Ok(reader) => reader,
+                Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(()),
+                Err(err) => return Err(failed(&err)),
+            };
+            while let Some(cell) = reader.next_cell().map_err(|err| failed(&err))? {
+                if matches!(cell.get_value(), DataRef::Empty) {
+                    continue;
+                }
+                let (row, column) = cell.get_position();
+                if !visit(row, column, Data::from(cell.get_value().clone())) {
+                    break;
+                }
+            }
+        }
+        Sheets::Xlsb(xlsb) => {
+            let mut reader = xlsb.worksheet_cells_reader(name).map_err(|err| failed(&err))?;
+            while let Some(cell) = reader.next_cell().map_err(|err| failed(&err))? {
+                if matches!(cell.get_value(), DataRef::Empty) {
+                    continue;
+                }
+                let (row, column) = cell.get_position();
+                if !visit(row, column, Data::from(cell.get_value().clone())) {
+                    break;
+                }
+            }
+        }
+        _ => {
+            let range = book.worksheet_range(name).map_err(|err| failed(&err))?;
+            let (top, left) = range.start().unwrap_or((0, 0));
+            for (row, column, data) in range.used_cells() {
+                let (row, column) = (
+                    top + u32::try_from(row).unwrap_or(u32::MAX - top),
+                    left + u32::try_from(column).unwrap_or(u32::MAX - left),
+                );
+                if !visit(row, column, data.clone()) {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A cell as a preview shows it: [`cell_value`], with a date as its text in `zone` (the time left off at midnight).
+fn preview_cell(cell: &Data, zone: &jiff::tz::TimeZone) -> Value {
+    match cell_value(cell, zone) {
+        Value::Timestamp(stamp) => {
+            let zoned = stamp.to_zoned(zone.clone());
+            let format = if zoned.hour() == 0 && zoned.minute() == 0 && zoned.second() == 0 {
+                "%Y-%m-%d"
+            } else {
+                "%Y-%m-%d %H:%M"
+            };
+            Value::string(zoned.strftime(format).to_string())
+        }
+        other => other,
+    }
+}
+
+fn open_book(bytes: &[u8]) -> Result<Sheets<Cursor<Vec<u8>>>, LibError> {
+    calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
+        .map_err(|err| LibError::new(format!("Could not read spreadsheet: {err}")))
+}
+
+/// The first rows of one sheet, for a preview.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct SheetPreview {
+    pub sheet_names: Vec<String>,
+    pub sheet_name: String,
+    /// From the first used row and column; an empty cell is null.
+    pub rows: Vec<Vec<Value>>,
+    /// Whether the sheet has rows or columns past those in `rows`.
+    pub truncated: bool,
+}
+
+/// The first `max_rows` rows and `max_cols` columns of sheet `sheet_name` (the first sheet when empty), from the first
+/// used row and column.
+///
+/// # Errors
+///
+/// Returns an error when the bytes are not a spreadsheet calamine reads, or it has no sheet of that name.
+pub(crate) fn preview_rows(
+    bytes: &[u8],
+    sheet_name: &str,
+    max_rows: usize,
+    max_cols: usize,
+) -> Result<SheetPreview, LibError> {
+    let mut book = open_book(bytes)?;
+    let names = book.sheet_names();
+    let chosen = if sheet_name.is_empty() {
+        match names.first() {
+            Some(first) => first.clone(),
+            None => return Ok(SheetPreview::default()),
+        }
+    } else if names.iter().any(|name| name == sheet_name) {
+        sheet_name.to_string()
+    } else {
+        return Err(LibError::new(format!(
+            "The spreadsheet has no sheet named {sheet_name}, it has {}",
+            names.join(", ")
+        )));
+    };
+    let zone = crate::l10n::time_zone();
+    let max_rows = u32::try_from(max_rows.max(1)).unwrap_or(u32::MAX);
+    let max_cols = u32::try_from(max_cols.max(1)).unwrap_or(u32::MAX);
+    // A very wide sheet: no more cells are kept than a square preview of the widest columns would hold.
+    let cap = usize::try_from(u64::from(max_rows) * u64::from(max_cols) * 4).unwrap_or(usize::MAX);
+    let mut cells = Vec::new();
+    let mut first_row = None;
+    let mut truncated = false;
+    visit_cells(&mut book, &chosen, |row, column, data| {
+        let first = *first_row.get_or_insert(row);
+        if row - first >= max_rows {
+            truncated = true;
+            return false;
+        }
+        if cells.len() < cap {
+            cells.push((row - first, column, preview_cell(&data, &zone)));
+        } else {
+            truncated = true;
+        }
+        true
+    })?;
+    let left = cells.iter().map(|(_, column, _)| *column).min().unwrap_or(0);
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    for (row, column, value) in cells {
+        let column = column - left;
+        if column >= max_cols {
+            truncated = true;
+            continue;
+        }
+        let (row, column) = (row as usize, column as usize);
+        if rows.len() <= row {
+            rows.resize_with(row + 1, Vec::new);
+        }
+        let cells = &mut rows[row];
+        if cells.len() <= column {
+            cells.resize(column + 1, Value::Null);
+        }
+        cells[column] = value;
+    }
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    for row in &mut rows {
+        row.resize(width, Value::Null);
+    }
+    Ok(SheetPreview {
+        sheet_names: names,
+        sheet_name: chosen,
+        rows,
+        truncated,
+    })
+}
+
+/// The text of every sheet, for search: each sheet's name on a line, then its rows, the cells of a row separated by a
+/// tab. At most `max_chars` characters; reading stops there.
+///
+/// # Errors
+///
+/// Returns an error when the bytes are not a spreadsheet calamine reads. A sheet that cannot be read is logged and
+/// left out.
+pub(crate) fn sheet_text(bytes: &[u8], max_chars: usize) -> Result<String, LibError> {
+    let mut book = open_book(bytes)?;
+    let zone = crate::l10n::time_zone();
+    let mut text = String::new();
+    let mut chars = 0;
+    for name in book.sheet_names() {
+        if chars >= max_chars {
+            break;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&name);
+        chars += name.chars().count() + 1;
+        let mut last_row = None;
+        let visited = visit_cells(&mut book, &name, |row, _column, data| {
+            text.push(if last_row == Some(row) { '\t' } else { '\n' });
+            last_row = Some(row);
+            let cell = to_plain_string(&preview_cell(&data, &zone));
+            chars += cell.chars().count() + 1;
+            text.push_str(&cell);
+            chars < max_chars
+        });
+        if let Err(err) = visited {
+            tracing::warn!("{}", err.message());
+        }
+    }
+    if chars > max_chars {
+        if let Some((cut, _)) = text.char_indices().nth(max_chars) {
+            text.truncate(cut);
+        }
+    }
+    Ok(text)
+}
+
 /// `read#Spreadsheet`: the sheet names and the rows of one sheet, each a map by header or, without a header row, a
 /// list of the cells.
 fn read_spreadsheet(
@@ -364,6 +573,68 @@ mod tests {
             read.rows,
             vec![vec![Value::Null, Value::Null, Value::Null, Value::string("last")]]
         );
+    }
+
+    fn preview_book() -> Vec<u8> {
+        let mut book = rust_xlsxwriter::Workbook::new();
+        let sheet = book.add_worksheet().set_name("Orders").unwrap();
+        // The used area starts at row 2, column B.
+        sheet.write_string(1, 1, "item").unwrap();
+        sheet.write_string(1, 2, "qty").unwrap();
+        sheet.write_string(1, 3, "note").unwrap();
+        for row in 0..50_u32 {
+            sheet.write_string(row + 2, 1, format!("W-{row}")).unwrap();
+            sheet.write_number(row + 2, 2, f64::from(row)).unwrap();
+        }
+        sheet.write_string(4, 3, "rush").unwrap();
+        let other = book.add_worksheet().set_name("Notes").unwrap();
+        other.write_string(0, 0, "Hello sheet").unwrap();
+        book.save_to_buffer().unwrap()
+    }
+
+    #[test]
+    fn a_preview_has_the_first_rows_from_the_used_area_and_stops_there() {
+        let bytes = preview_book();
+        let preview = preview_rows(&bytes, "", 5, 10).unwrap();
+        assert_eq!(preview.sheet_names, vec!["Orders", "Notes"]);
+        assert_eq!(preview.sheet_name, "Orders");
+        assert!(preview.truncated);
+        assert_eq!(preview.rows.len(), 5);
+        assert_eq!(
+            preview.rows[0],
+            vec![Value::string("item"), Value::string("qty"), Value::string("note")]
+        );
+        assert_eq!(preview.rows[1], vec![Value::string("W-0"), Value::I64(0), Value::Null]);
+        assert_eq!(preview.rows[3][2], Value::string("rush"));
+
+        // Two columns: the third is cut.
+        let narrow = preview_rows(&bytes, "Orders", 2, 2).unwrap();
+        assert_eq!(
+            narrow.rows,
+            vec![
+                vec![Value::string("item"), Value::string("qty")],
+                vec![Value::string("W-0"), Value::I64(0)],
+            ]
+        );
+        assert!(narrow.truncated);
+
+        let notes = preview_rows(&bytes, "Notes", 5, 5).unwrap();
+        assert_eq!(notes.rows, vec![vec![Value::string("Hello sheet")]]);
+        assert!(!notes.truncated);
+        assert!(preview_rows(&bytes, "Missing", 5, 5).is_err());
+        assert!(preview_rows(b"not a spreadsheet", "", 5, 5).is_err());
+    }
+
+    #[test]
+    fn sheet_text_has_every_sheet_and_stops_at_the_limit() {
+        let bytes = preview_book();
+        let text = sheet_text(&bytes, 100_000).unwrap();
+        assert!(text.starts_with("Orders\nitem\tqty\tnote\nW-0\t0\n"), "{text:?}");
+        assert!(text.contains("W-49\t49"));
+        assert!(text.ends_with("Notes\nHello sheet"), "{text:?}");
+        let short = sheet_text(&bytes, 12).unwrap();
+        assert_eq!(short, "Orders\nitem");
+        assert!(sheet_text(b"nope", 10).is_err());
     }
 
     #[test]

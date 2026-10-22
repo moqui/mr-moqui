@@ -65,23 +65,25 @@ impl UrlInstance {
     }
 
     /// The path with no host. A screen that does not exist is `#`, as Java's `getUrlWithBase`.
+    /// A plain URL has no screen path, so this is empty, as Java's `getPath`.
     pub fn path(&self) -> String {
         if self.missing() {
             return "#".to_string();
         }
         match &self.plain {
-            Some(plain) => plain.clone(),
+            Some(_) => String::new(),
             None => encode_path(&self.names),
         }
     }
 
+    /// The URL. A plain value is returned as written, including `mailto:` and a path that starts
+    /// with `/`. The base is not prefixed. A screen path is the base plus the encoded names.
     pub fn url(&self) -> String {
         if self.missing() {
             return "#".to_string();
         }
         match &self.plain {
-            Some(plain) if plain.contains("://") || plain.starts_with("//") => plain.clone(),
-            Some(plain) => format!("{}{plain}", self.base.trim_end_matches('/')),
+            Some(plain) => plain.clone(),
             None => format!("{}{}", self.base.trim_end_matches('/'), encode_path(&self.names)),
         }
     }
@@ -178,14 +180,16 @@ impl UrlInstance {
         Ok(!self.permitted())
     }
 
-    /// `isPermitted`: each screen of the path with its parents on the artifact stack, and the transition with its action.
+    /// `isPermitted`: each screen of the path with its parents on the artifact stack, the single service of a transition
+    /// that is not read-only, and the transition with its action. The frames are a check on a fresh stack, not artifact
+    /// hits ([`super::render::Frames::check`]).
     fn permitted(&self) -> bool {
         let path_defs = self.path_defs();
         let Some(last) = path_defs.len().checked_sub(1) else {
             return true;
         };
         let transition = self.transition();
-        let mut frames = super::render::Frames::default();
+        let mut frames = super::render::Frames::check();
         for (index, def) in path_defs.iter().enumerate() {
             if index == last && transition.is_none() {
                 return sri::screen_permitted(def);
@@ -201,6 +205,11 @@ impl UrlInstance {
         let required = target.authentication == super::definition::Authentication::Required;
         if required && crate::user::current_username().ok().flatten().is_none() {
             return false;
+        }
+        if let Some(service) = transition.single_service.as_deref().filter(|name| !name.is_empty()) {
+            if !transition.read_only && !service_permitted(target, service) {
+                return false;
+            }
         }
         frames
             .push(
@@ -238,6 +247,44 @@ impl UrlInstance {
         }
         map
     }
+}
+
+/// Whether the current user may use the screen or transition `info` resolves to, as its link would be enabled
+/// ([`UrlInstance::disable_link`] without the condition): the screens of its path with their parents on the artifact
+/// stack, the single service of a transition that is not read-only, and the transition with its action.
+pub(crate) fn path_permitted(info: Arc<ScreenUrlInfo>) -> bool {
+    UrlInstance {
+        exists: true,
+        info: Some(info),
+        ..UrlInstance::default()
+    }
+    .permitted()
+}
+
+/// Whether the user may call a transition's single service, as `ScreenUrlInfo.isPermitted` checks it: with the service's
+/// authorization action, inheriting from the last screen, and with no allow record needed when that screen or the
+/// service is anonymous for the action. The frame is popped before the transition's own is pushed, as Java does not
+/// stack the transition.
+fn service_permitted(target: &ScreenDef, service: &str) -> bool {
+    use super::definition::Authentication;
+    use crate::service::define::Authenticate;
+    let action = crate::service::call::service_authz_action(service);
+    let authenticate = crate::service::call::service_authenticate(service);
+    let allowed = match action.as_str() {
+        "view" => {
+            target.authentication == Authentication::AnonymousView
+                || matches!(
+                    authenticate,
+                    Some(Authenticate::AnonymousView | Authenticate::AnonymousAll)
+                )
+        }
+        "all" | "create" | "update" | "delete" => {
+            target.authentication == Authentication::AnonymousAll || authenticate == Some(Authenticate::AnonymousAll)
+        }
+        _ => false,
+    };
+    let mut frames = super::render::Frames::untracked();
+    frames.push("AT_SERVICE", service, &action, !allowed).is_ok()
 }
 
 fn join_query(mut base: String, query: &str) -> String {
@@ -668,6 +715,7 @@ pub fn make_url_by_type(
 fn is_transition_alias(transition: &TransitionDef) -> bool {
     let response = &transition.default_response;
     transition.condition.is_none()
+        && transition.service_actions.is_none()
         && transition.actions.is_none()
         && transition.actions_error.is_none()
         && transition.single_service.is_none()
@@ -786,6 +834,10 @@ fn resolve_path(state: &RenderState, from: &[String], url: &str) -> Result<super
 }
 
 /// `sri.isAnchorLink(linkNode, urlInstance)`.
+///
+/// `read-only="true"` overrides `hasActions()`: a transition that has actions and says it is
+/// read-only is a GET anchor. Java's html macros (`DefaultScreenMacros.html.ftl` `linkFormLink`
+/// and `linkFormForm`) follow `hasActions` and POST that transition. Parity-Diffs P3-03.
 pub fn is_anchor_link(link: &NodeLit, url: &UrlInstance) -> bool {
     let link_type = link.attr("link-type");
     let url_type = link.attr("url-type");

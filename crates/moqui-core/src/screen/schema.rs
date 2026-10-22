@@ -21,9 +21,13 @@ use crate::user;
 use crate::web;
 
 const SCHEMA_AUTH: &str = "Authentication required for REST schema";
+const SCHEMA_FORBIDDEN: &str = "Not authorized for REST schema";
+/// The permission the schema documents need: Java's `RestSchemaUtil.requireSchemaAccess` asks for
+/// `REST_SCHEMA`, and the port's seed data grants it to `ADMIN`.
+const SCHEMA_PERMISSION: &str = "REST_SCHEMA";
 
 pub(crate) fn entity_json(call: &Call<'_>, master: bool) -> Result<bool, Error> {
-    if !logged_in(call.login_error)? {
+    if !require_schema_access(call.login_error)? {
         return Ok(true);
     }
     if yaml(call.extra) {
@@ -32,15 +36,25 @@ pub(crate) fn entity_json(call: &Call<'_>, master: bool) -> Result<bool, Error> 
     }
     let facade = facade()?;
     match crate::entity::schema_document(&facade, &plain_names(call.extra), master).map_err(Error::from) {
-        Ok(value) => web::send_json_response(value),
+        Ok(value) => send_document(&value, "application/schema+json"),
         Err(err) if err.kind() == ErrorKind::BadRequest => web::send_json_error(400, err.message()),
         Err(err) => return Err(err),
     }
     Ok(true)
 }
 
+/// A schema document as Java's `RestSchemaUtil` sends it, `sendTextResponse` with its type: the JSON alone, with no
+/// `messages` merged in. It is shown inline; Java names an attachment (`<entity>.schema.json`).
+fn send_document(document: &moqui_lib::object::Value, content_type: &str) {
+    web::send_text_response_with(
+        &crate::entity::query_rest::encode_json(document),
+        Some(content_type),
+        None,
+    );
+}
+
 pub(crate) fn service_swagger(call: &Call<'_>) -> Result<bool, Error> {
-    if !logged_in(call.login_error)? {
+    if !require_schema_access(call.login_error)? {
         return Ok(true);
     }
     if yaml(call.extra) {
@@ -48,7 +62,7 @@ pub(crate) fn service_swagger(call: &Call<'_>) -> Result<bool, Error> {
         return Ok(true);
     }
     match crate::service::openapi_document(&plain_names(call.extra)) {
-        Ok(value) => web::send_json_response(value),
+        Ok(value) => send_document(&value, "application/json"),
         Err(err) if matches!(err.kind(), ErrorKind::BadRequest | ErrorKind::NotFound) => {
             web::send_json_error(web::status_for(&err), err.message());
         }
@@ -57,13 +71,19 @@ pub(crate) fn service_swagger(call: &Call<'_>) -> Result<bool, Error> {
     Ok(true)
 }
 
-fn logged_in(login_error: Option<&str>) -> Result<bool, Error> {
+/// Java's `RestSchemaUtil.requireSchemaAccess`: a user, and the `REST_SCHEMA` permission.
+/// `has_permission` asks even when artifact authorization is off, as Java always asks.
+fn require_schema_access(login_error: Option<&str>) -> Result<bool, Error> {
     if let Some(error) = login_error {
         web::send_json_error(401, error);
         return Ok(false);
     }
     if user::current_username()?.is_none() {
         web::send_json_error(401, SCHEMA_AUTH);
+        return Ok(false);
+    }
+    if !user::has_permission(SCHEMA_PERMISSION)? {
+        web::send_json_error(403, SCHEMA_FORBIDDEN);
         return Ok(false);
     }
     Ok(true)

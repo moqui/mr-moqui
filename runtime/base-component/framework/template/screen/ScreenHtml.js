@@ -29,10 +29,11 @@
 //    is not posted as name_ac.
 //  - A form-list with sub-list fields (aggregate="sub-list") draws them in a table under each main row, and its
 //    show-total row is the last row, with data-total. The saved finds and
-//    column dialogs post to the implicit formSaveFind and formSelectColumns transitions, with the form's name as
-//    formLocation (the server makes the full location of it).
+//    column dialogs post to the implicit formSaveFind and formSelectColumns transitions. Saved finds post
+//    sri.getSavedFindFullLocation (the form location, plus #entity or #service when the form is dynamic). The column
+//    dialog posts the form's name; the server strips a '#' and keeps columns on the bare location.
 //  - lookup is a text line. The Java macros had it commented out.
-//  - A show-pdf-button is a link to the html-print version of the page.
+//  - A show-pdf-button is a link to the page as a PDF, under /fop as Java's MoquiFopServlet, with no page-layout dialog.
 (function (T, S) {
     "use strict";
 
@@ -256,6 +257,19 @@
         };
 
         const textArea = (n) => {
+            const editor = at(n, "editor-type");
+            // rich and rich-light have no Tiptap here: the note is the cleaned HTML, edited in the div. moqui-html.js copies
+            // it into the hidden input. editor-type html and md, and a text-area with no editor type, stay a textarea.
+            if (editor === "rich" || editor === "rich-light") {
+                const html = StringUtilities.cleanHtml(String(sri.getFieldValueString(n) || ""));
+                const readOnly = at(n, "read-only") === "true";
+                w("<div" + A({
+                    id: fid(n), class: "m-rich-text-content", contenteditable: readOnly ? null : "true",
+                    "data-rich-text": readOnly ? null : "true"
+                }) + ">" + html + "</div>");
+                if (!readOnly) w("<input" + A({ type: "hidden", name: fnm(n), value: html, form: owner() }) + ">");
+                return;
+            }
             w("<textarea" + A({
                 name: fnm(n), id: fid(n), cols: at(n, "cols") || null, rows: at(n, "rows") || "3", "data-wide": at(n, "cols") ? null : true,
                 readonly: at(n, "read-only") === "true", maxlength: at(n, "maxlength") || null, title: tip(n), form: owner()
@@ -495,7 +509,8 @@
             } else value = sri.getFieldValueString(n);
             const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "";
             let out = "<span" + A({
-                class: cls("display", unit ? "currency" : null, xn(at(n, "style"))), title: tip(n), id: dyn ? id + "_display" : null
+                // the value's type (BigDecimal, Long...) as a class, as Java's html display writes sri.getFieldValueClass
+                class: cls("display", sri.getFieldValueClass(field), unit ? "currency" : null, xn(at(n, "style"))), title: tip(n), id: dyn ? id + "_display" : null
             }) + ">" + body + "</span>";
             if (alsoHidden) {
                 out += "<input" + A({ type: "hidden", id, name: fnm(n), value: dyn ? "" : sri.getFieldValuePlainString(field, ""), form: owner() }) + ">";
@@ -976,8 +991,9 @@
                 out += "<button" + A({ type: "button", "data-dialog": formId + "_TextDialog", title: L("Text") }) + '><i class="fa fa-share"></i> ' + e(L("Text")) + "</button>";
             }
             if (at(n, "show-pdf-button") === "true") {
-                const print = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "html-print").addParameter("pageNoLimit", "true");
-                out += '<a data-btn="default" target="_blank" href="' + e(print.getUrlWithParams()) + '">' + e(L("Print")) + "</a>";
+                // the page as a PDF: /fop renders the screen at the rest of the path as html-print and sends the PDF
+                const print = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("renderMode").removeParameter("lastStandalone").addParameter("pageNoLimit", "true");
+                out += '<a data-btn="default" target="_blank" href="' + e("/fop" + print.pathWithParams) + '">' + e(L("Print")) + "</a>";
             }
             w(out + "</nav></th></tr>\n");
         };
@@ -1007,7 +1023,7 @@
                         const id = find.formListFind.formListFindId;
                         const label = (find.description || id) + (id === defaultId ? " (" + L("Default") + ")" : "");
                         w("<li" + A({ "data-active": id === activeId ? "" : null }) + "><a" + A({ href: base + "?formListFindId=" + encodeURIComponent(id) }) + ">" + e(label) + "</a>" +
-                            "<form" + A({ method: "post", action: saveUrl }) + ">" + hiddenInput("moquiSessionToken", token()) + hiddenInput("formLocation", at(n, "name")) +
+                            "<form" + A({ method: "post", action: saveUrl }) + ">" + hiddenInput("moquiSessionToken", token()) + hiddenInput("formLocation", sri.getSavedFindFullLocation(at(n, "name"))) +
                             hiddenInput("formListFindId", id) + Object.keys(params).map((key) => hiddenInput(key, params[key])).join("") +
                             (find.isByUserId === "true" && Object.keys(params).length ? '<button type="submit" data-btn="default">' + e(L("Update to Current")) + "</button>" : "") +
                             (id === defaultId ? '<button type="submit" name="ClearDefault" value="Y" data-btn="default">' + e(L("Clear Default")) + "</button>"
@@ -1018,7 +1034,7 @@
                     w("</ul>");
                 }
                 if (Object.keys(params).length) {
-                    w("<form" + A({ id: formId + "_NewFind", method: "post", action: saveUrl }) + ">" + hiddenInput("moquiSessionToken", token()) + hiddenInput("formLocation", at(n, "name")) +
+                    w("<form" + A({ id: formId + "_NewFind", method: "post", action: saveUrl }) + ">" + hiddenInput("moquiSessionToken", token()) + hiddenInput("formLocation", sri.getSavedFindFullLocation(at(n, "name"))) +
                         Object.keys(params).map((key) => hiddenInput(key, params[key])).join("") +
                         "<input" + A({ type: "text", name: "_findDescription", size: 40, placeholder: L("Description"), "aria-label": L("Description") }) + "><button type=\"submit\" data-btn=\"primary\">" + e(L("Save New Find")) + "</button></form>");
                 } else w("<p>" + e(L("No find parameters, choose some to save a new find or update existing")) + "</p>");
@@ -1113,6 +1129,52 @@
 
         // Runs a field's hidden widgets: one chain per field.
         const hiddenRows = (fields) => fields.forEach((cell) => cell());
+
+        // view-tree when the tree is the view chosen (the view parameter, else the user's LIST_VIEW_ choice as qvt keeps it, else the first
+        // of the views): the page's rows depth first under their parents (a row whose parent is not on the page at the top) and each one's
+        // level from 0, a show-total row last; null otherwise
+        const treeOrder = (info, n, tree) => {
+            if (!tree) return null;
+            const key = String(sri.getScreenUrlInstance().path || "").replace(/^\/(apps|qapps)(?=\/|$)/, "") + "#" + at(n, "name");
+            const asked = String(ec.context.get("view") || "");
+            const kept = String(ec.user.getPreference("LIST_VIEW_" + key) || "");
+            const chosen = tree.views.includes(asked) ? asked : tree.views.includes(kept) ? kept : tree.views[0];
+            if (chosen !== "tree") return null;
+            const text = (value) => (value === null || value === undefined ? "" : String(value));
+            const keys = [];
+            const parents = [];
+            const totals = [];
+            for (let i = 0; i < info.count; i++) {
+                sri.startFormListRow(info, i);
+                try {
+                    if (ec.context.get("_moquiRowType") === "total") totals.push(i);
+                    keys.push(text(ec.context.get(tree.keyField)));
+                    parents.push(text(ec.context.get(tree.parentField)));
+                } finally {
+                    sri.endFormListRow();
+                }
+            }
+            const byKey = {};
+            keys.forEach((rowKey, i) => { if (rowKey && !totals.includes(i)) byKey[rowKey] = i; });
+            const kids = {};
+            keys.forEach((rowKey, i) => {
+                if (totals.includes(i)) return;
+                const parent = parents[i] && parents[i] !== rowKey && byKey[parents[i]] !== undefined ? parents[i] : "";
+                (kids[parent] = kids[parent] || []).push(i);
+            });
+            const order = [];
+            const depth = [];
+            const walk = (parent, level) => (kids[parent] || []).forEach((i) => {
+                if (depth[i] !== undefined) return;
+                order.push(i);
+                depth[i] = level;
+                if (keys[i]) walk(keys[i], level + 1);
+            });
+            walk("", 0);
+            // a row in a loop of parents, and the totals, last
+            keys.forEach((rowKey, i) => { if (depth[i] === undefined) { order.push(i); depth[i] = 0; } });
+            return { order, depth };
+        };
 
         const formList = (info, n, cols, cfg) => {
             const formId = xn(at(n, "name")) + sec();
@@ -1253,14 +1315,16 @@
             };
             if (cfg.hasFirst) cells("first", "first", at(n, "map-first-row"));
             if (cfg.hasSecond) cells("second", "second", at(n, "map-second-row"));
-            for (let i = 0; i < info.count; i++) {
+            const tree = treeOrder(info, n, cfg.tree);
+            for (let place = 0; place < info.count; place++) {
+                const i = tree ? tree.order[place] : place;
                 sri.startFormListRow(info, i);
                 try {
                     st.entry = String(i);
                     if (!(multi || skipForm)) st.owner = formId + "_" + i;
-                    w("<tr" + A({ "data-total": ec.context.get("_moquiRowType") === "total" ? "" : null }) + ">");
-                    visible.forEach((col) => {
-                        w("<td>");
+                    w("<tr" + A({ "data-total": ec.context.get("_moquiRowType") === "total" ? "" : null, "data-level": tree ? String(tree.depth[i] + 1) : null }) + ">");
+                    visible.forEach((col, c) => {
+                        w(tree && c === 0 && tree.depth[i] ? '<td style="padding-left:' + (tree.depth[i] * 20 + 4) + 'px">' : "<td>");
                         col.forEach((f) => f.cell(multi ? 1 : 0));
                         w("</td>");
                     });
@@ -1505,6 +1569,14 @@
             w("<div" + A({ id: nodeId(n) || null, class: cls("markdown-view", xn(at(n, "style")) || null), style: "white-space:pre-wrap" }) + ">" + e(text.trim()) + "</div>\n");
         };
 
+        // code-view: the page has no highlighter, so a pre of the code, escaped. Nothing for a false condition.
+        const codeView = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return;
+            const text = xn(at(n, "text"));
+            if (!text || text === "null") return;
+            w("<pre" + A({ id: nodeId(n) || null, class: cls("code-view", xn(at(n, "style")) || null) }) + "><code>" + e(text.replace(/\s+$/, "")) + "</code></pre>\n");
+        };
+
         const h = {
             reset, enter, leave, e, lib, fid, fnm,
             textLine, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
@@ -1516,7 +1588,8 @@
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
             labelCols: (value) => { st.labelCols = value || ""; },
-            numberCard, chatter, recordFiles, splitOpen, splitMain, htmlView, markdownView, statusBar
+            numberCard, chatter, recordFiles, splitOpen, splitMain, htmlView, markdownView, statusBar,
+            codeView
         };
         Object.defineProperty(globalThis, "$mqHtml", { value: h, configurable: true });
     };
@@ -1792,8 +1865,25 @@
             return `() => {\n${subWidgets(sub)}}`;
         };
         const hiddenDefault = fields.filter(S.listFieldHiddenWidget).map((field) => `() => {\nconst $m = 0;\n${cellCode(field)}}`);
+        // view-tree: the views offered (as qvt's m-list-views reads them), the parent field and the key field (key-fields, else the first
+        // field whose widget is hidden, else the row-selection id-field, else the first field shown)
+        const viewTree = child(node, "view-tree");
+        const treeCfg = (() => {
+            if (!viewTree) return "null";
+            const names = (text) => String(text || "").split(",").map((name) => name.trim()).filter((name) => name);
+            const known = { list: true, board: !!child(node, "view-board"), calendar: !!child(node, "view-calendar"), tree: true };
+            const named = names(attr(node, "views")).filter((kind, index, all) => known[kind] && all.indexOf(kind) === index);
+            const views = named.length ? named : ["list"].concat(known.board ? ["board"] : [], known.calendar ? ["calendar"] : [], ["tree"]);
+            const hiddenKey = fields.find((field) => { const dflt = child(field, "default-field"); return dflt && child(dflt, "hidden"); });
+            const selection = child(node, "row-selection");
+            const firstShown = fields.find((field) => !S.listFieldHiddenWidget(field));
+            const keyField = names(attr(viewTree, "key-fields"))[0] || (hiddenKey ? attr(hiddenKey, "name") : "") ||
+                (selection ? attr(selection, "id-field") : "") || (firstShown ? attr(firstShown, "name") : "");
+            return JSON.stringify({ views, parentField: attr(viewTree, "parent-field"), keyField });
+        })();
         const cfg = js`
             {
+                "tree": ${treeCfg},
                 "hasFirst": ${hasRow("first-row-field")},
                 "hasSecond": ${hasRow("second-row-field")},
                 "hasLast": ${hasRow("last-row-field")},
@@ -2014,6 +2104,7 @@
         "record-files": widget("recordFiles", false),
         "html-view": widget("htmlView", false),
         "markdown-view": widget("markdownView", false),
+        "code-view": widget("codeView", false),
 
         "form-single": formSingleMacro,
         "form-list": formListMacro,

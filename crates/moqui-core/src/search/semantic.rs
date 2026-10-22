@@ -12,12 +12,16 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Semantic retrieval: embeddings of document text, made locally, stored beside each document,
-//! and searched by nearest neighbor.
+//! Semantic retrieval: embeddings of document text, stored beside each document, and searched by
+//! nearest neighbor.
 //!
-//! The model runs in this process behind [`Embedder`]; nothing calls a hosted service. No model is
-//! built in yet. [`HashEmbedder`] is a deterministic bag-of-words hash for tests and development:
-//! it exercises storage, the worker, and the search path, and it has no semantic quality. The
+//! The model is behind [`Embedder`]. No model is built in; nothing calls a model server unless it is
+//! configured: `embedder="llm"` (or `llm:<modelId>`) is the LLM embedder
+//! (`crate::llm::embed::LlmEmbedder`, with the `llm` feature), which calls the `/v1/embeddings` of
+//! the model the `llm-facade` binds to the `embed` feature (or names), a local embedding model in
+//! LM Studio, Ollama or llama.cpp being the expected use. [`HashEmbedder`] (`embedder="hash"`) is a
+//! deterministic bag-of-words hash for tests and development: it exercises storage, the worker,
+//! and the search path, and it has no semantic quality. The
 //! Postgres backend stores vectors with the `pgvector` extension, which embedded Postgres does not
 //! bundle; without it, or without an embedder, the backend does not list
 //! [`super::Capability::Semantic`].
@@ -40,6 +44,21 @@ pub trait Embedder: Send + Sync {
     ///
     /// Returns an error when the model cannot run.
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, Error>;
+
+    /// [`Self::embed`] for texts a person waits on (a query): with a short limit where the model is remote.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model cannot run.
+    fn embed_quick(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, Error> {
+        self.embed(texts)
+    }
+
+    /// Whether a batch that failed with `error` is worth sending again a text at a time, to find the texts the model
+    /// fails on: not when the model's server is not answering.
+    fn retries_each(&self, _error: &Error) -> bool {
+        true
+    }
 }
 
 /// Feature hashing of lower-cased words into `dimensions` buckets, normalized. Documents that share
@@ -99,8 +118,9 @@ pub struct SemanticConf {
     pub representation: String,
     /// Characters of document text an embedding is made from.
     pub max_chars: usize,
-    /// The embedder to install: `hash` is [`HashEmbedder`], for development only. No model is
-    /// built in yet; an application installs one with `SearchFacade::set_embedder`.
+    /// The embedder to install: `llm` is the LLM embedder of the `embed` feature and
+    /// `llm:<modelId>` of that model; `hash` is [`HashEmbedder`], for development only. An
+    /// application may install another with `SearchFacade::set_embedder`.
     pub embedder: Option<String>,
 }
 

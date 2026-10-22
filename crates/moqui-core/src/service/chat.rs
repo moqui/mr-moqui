@@ -22,11 +22,23 @@
 //!   current user may see a record, so a user who is not a member may read and join the room bound to it. The framework
 //!   cannot read an app's records; IronStone BOSS points the theme value at Mantle's
 //!   `mantle.party.CommunicationServices.get#RecordLinkInfo`, which takes `checkOnly` and answers `recordVisible`.
-//!   `FileServices.check#RecordPaths` asks it too, for the record folders of a records drive.
+//!   `FileServices.check#RecordPaths` asks it too, for the record folders of a records drive. With `userId` (honored
+//!   only with authorization disabled, as `get#RoomAccess` has it) it asks for another user: the hook of that user's
+//!   theme runs as that user, with authorization on, in an execution context of its own on this thread (so in the
+//!   caller's transaction), and the caller's user is untouched. `send#Message` asks so for a mentioned user who is not a
+//!   member of a record room.
 //!
 //!   The hook is called in the caller's transaction (a record made earlier in it is seen), so with `checkOnly` it must
 //!   answer without adding an error: an error in a service call marks the transaction rollback-only even when its
 //!   errors are taken back (`call_tolerant`), and the caller's work would then roll back at its commit.
+//! - `get#ExternalUsers` names the users of a list who hold the framework permission `EXTERNAL_USER`
+//!   ([`crate::user::EXTERNAL_USER`]: a client contact and other outside users), whom the chat and drive services keep
+//!   out of record rooms, record folders and others' presence.
+//!
+//! An external user: `check#RecordVisible` answers false for them before any hook is asked (so no record room is read,
+//! joined or mentioned into, and no records drive folder is reached, whatever the app says), and `push#Signal` drops
+//! them from a record room's pushes and from the presence of other users. A failure to read whether a user is external
+//! counts as external.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
@@ -45,6 +57,7 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, push_signal)?;
     rust_service!(map, check_record_visible)?;
+    rust_service!(map, get_external_users)?;
     Ok(())
 }
 
@@ -96,6 +109,10 @@ fn push_signal(
         Some(Value::Map(map)) => map.clone(),
         _ => IndexMap::new(),
     };
+    let users = without_external(facade, &topic, &message, users);
+    if users.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let factory = ExecutionContext::with_current(|ec| Arc::downgrade(ec.factory()));
     let send = move || send_push(factory.as_ref(), &topic, &users, message);
     match facade.default_transactions() {
@@ -118,6 +135,88 @@ fn push_signal(
         _ => send(),
     }
     Ok(BTreeMap::new())
+}
+
+/// The recipients of a push less the external users ([`crate::user::is_external_user`]) who may not have it: on
+/// `userStatus` an external user hears only of themselves (no other user's presence), and on `chatRoom:<id>` of a room
+/// bound to a record (or that cannot be read) none of them hears anything. The services keep them out of such rooms;
+/// this holds for a member row made before, or by a path that did not ask.
+fn without_external(
+    facade: &EntityFacade,
+    topic: &str,
+    message: &IndexMap<String, Value>,
+    users: Vec<String>,
+) -> Vec<String> {
+    if topic == STATUS_TOPIC {
+        let about = message.get("userId").map(to_plain_string).unwrap_or_default();
+        return users
+            .into_iter()
+            .filter(|user| *user == about || !crate::user::is_external_user(user))
+            .collect();
+    }
+    let Some(room_id) = topic.strip_prefix(ROOM_TOPIC) else {
+        return users;
+    };
+    if !users.iter().any(|user| crate::user::is_external_user(user)) {
+        return users;
+    }
+    let record_room = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        match facade
+            .find("moqui.chat.ChatRoom")
+            .and_then(|find| find.eq("chatRoomId", Value::string(room_id)).one())
+        {
+            Ok(Some(room)) => record_room(&room),
+            Ok(None) => true,
+            Err(err) => {
+                tracing::error!(
+                    "Could not read chat room {room_id} for its push, leaving its external users out: {err}"
+                );
+                true
+            }
+        }
+    };
+    if !record_room {
+        return users;
+    }
+    users
+        .into_iter()
+        .filter(|user| !crate::user::is_external_user(user))
+        .collect()
+}
+
+/// Whether a chat room is bound to a record: a record room by type or visibility, or one with a record.
+fn record_room(room: &crate::entity::EntityValue) -> bool {
+    let field = |name: &str| room.get(name).map(to_plain_string).unwrap_or_default();
+    field("roomTypeEnumId") == "CrtRecord"
+        || field("visibilityEnumId") == "CrvRecord"
+        || !field("recordEntityName").is_empty()
+}
+
+/// `get#ExternalUsers`: the users of `userIdList` (the current user when empty) who hold `EXTERNAL_USER`, as
+/// `externalUserIdList`, and `anyExternal`. A user whose rows cannot be read is counted external.
+fn get_external_users(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut users = super::shell::user_ids(parameters.get("userIdList"));
+    if users.is_empty() {
+        users.extend(
+            crate::user::current_user_id()
+                .ok()
+                .flatten()
+                .filter(|id| !id.is_empty()),
+        );
+    }
+    let external: Vec<Value> = users
+        .iter()
+        .filter(|user| crate::user::is_external_user(user))
+        .map(Value::string)
+        .collect();
+    Ok(BTreeMap::from([
+        ("anyExternal".to_string(), Value::Bool(!external.is_empty())),
+        ("externalUserIdList".to_string(), Value::List(external)),
+    ]))
 }
 
 /// Send one push. Outside an execution context (a commit callback should have one) a context of the factory is made.
@@ -171,6 +270,10 @@ fn first_time(key: &str) -> bool {
 /// asked (null when the theme names none: then no record is visible this way, which is logged once). A service that
 /// fails or answers no `recordVisible` gives false and is logged once by name. It never adds an error, so it does not
 /// mark the caller's transaction for rollback.
+///
+/// `userId`, another user, is asked for only with authorization disabled (else false, logged): the hook of that user's
+/// theme runs as that user with authorization on ([`crate::user::as_user`]); a user who is not found sees nothing. An external user
+/// (`EXTERNAL_USER`), current or asked for, sees no record: false, with no hook asked.
 fn check_record_visible(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -185,10 +288,22 @@ fn check_record_visible(
     else {
         return Ok(answer(false, None));
     };
-    let user_id = crate::user::current_user_id()
+    let current = crate::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty());
+    let other = text(parameters, "userId").filter(|id| current.as_deref() != Some(id.as_str()));
+    if let Some(other) = &other {
+        if !ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
+            tracing::warn!("check#RecordVisible for user {other} refused: another user is asked for only with authorization disabled");
+            return Ok(answer(false, None));
+        }
+    }
+    let user_id = other.clone().or(current);
+    // an external user (EXTERNAL_USER) reaches no record this way, whatever the app's hook would say
+    if user_id.as_deref().is_some_and(crate::user::is_external_user) {
+        return Ok(answer(false, None));
+    }
     let theme = user_theme_id(user_id.as_deref(), QUASAR_THEME_TYPE, DEFAULT_QUASAR_THEME);
     let service = match theme_resource_values(&theme, RECORD_VISIBLE) {
         Ok(values) => values.into_iter().next(),
@@ -211,7 +326,14 @@ fn check_record_visible(
         ("recordId".to_string(), Value::string(&record_id)),
         ("checkOnly".to_string(), Value::Bool(true)),
     ]);
-    let visible = match super::shell::call_tolerant(&service, &call) {
+    let asked = match &other {
+        Some(other) => match crate::user::as_user(other, || super::shell::call_tolerant(&service, &call)) {
+            Some(asked) => asked,
+            None => return Ok(answer(false, Some(&service))),
+        },
+        None => super::shell::call_tolerant(&service, &call),
+    };
+    let visible = match asked {
         Ok(out) => match out.get("recordVisible") {
             Some(Value::Bool(visible)) => *visible,
             Some(other) if !is_empty(other) => matches!(to_plain_string(other).as_str(), "true" | "Y"),

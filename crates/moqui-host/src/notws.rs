@@ -14,9 +14,12 @@
 
 //! `GET /notws`. The socket is checked with the session cookie, then pushed notification JSON.
 //! No execution context is kept for the life of the socket. Each socket of a session (a page in
-//! each tab) is registered and receives the notifications of its topics.
+//! each tab) is registered and receives the notifications of its topics. When the last socket of a user closes and none
+//! comes back within [`OFFLINE_GRACE`], the user is marked offline (`ChatServices.disconnect#UserStatus`) rather than
+//! when the chat heartbeat runs out; per node, so in a cluster a page on another node keeps the user online with its
+//! next heartbeat.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -34,6 +37,8 @@ use moqui_lib::sync::lock;
 
 use crate::http::{plain, HttpState};
 
+pub(crate) mod collab;
+
 type CoreError = moqui_core::context::Error;
 
 static PUSH: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
@@ -49,8 +54,16 @@ fn sockets() -> &'static Mutex<HashMap<u64, Arc<Slot>>> {
 const SOCKET_QUEUE: usize = 256;
 /// A ping goes out this often, so a dead peer is noticed and proxies keep the connection.
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+/// Set to `/notws` while this server serves the socket; the html and qvt clients (`Header.html.fancy`, `qapps.xml`)
+/// connect when it is.
+pub(crate) const ENDPOINT_PROPERTY: &str = "webapp_notification_endpoint";
 /// Java's `/notws` endpoint timeout: an hour with nothing from the client closes the socket.
 const DEFAULT_IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
+/// How long after a user's last socket closed the user is marked offline, unless a socket of theirs came back: a page
+/// reload opens its socket again well within it, so presence does not flicker.
+const OFFLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+/// Marks a user offline at once and publishes it on the userStatus topic.
+const DISCONNECT_SERVICE: &str = "org.moqui.impl.ChatServices.disconnect#UserStatus";
 
 struct Slot {
     id: u64,
@@ -83,22 +96,38 @@ pub(crate) fn install_push() -> Result<(), CoreError> {
 }
 
 pub(crate) async fn upgrade(ws: WebSocketUpgrade, headers: HeaderMap, State(state): State<Arc<HttpState>>) -> Response {
-    // A page of another site cannot open a socket that carries this site's cookie, as Java's modifyHandshake.
-    let header = |name: axum::http::header::HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
-    if !moqui_core::web::origin_allowed_for(header(axum::http::header::ORIGIN), header(axum::http::header::HOST)) {
-        tracing::warn!(origin = ?header(axum::http::header::ORIGIN), "notification socket refused for its origin");
+    if !origin_allowed(&state.factory, &headers, "notification") {
         return plain(403, "origin not allowed");
     }
-    let Some(cookie) = session_cookie(&headers) else {
-        return plain(401, "unauthorized");
-    };
-    let session_id = match verify_session_cookie(&cookie) {
-        Ok(Some(id)) if !id.is_empty() => id,
-        Ok(_) | Err(_) => return plain(401, "unauthorized"),
-    };
-    let lookup_id = session_id.clone();
+    // A browser has its session cookie; the terminal client (`moqui tui --server`) has its login key, and no session.
     let factory = Arc::clone(&state.factory);
-    let loaded = tokio::task::spawn_blocking(move || session_user(factory, lookup_id)).await;
+    let (session_id, loaded) = match session_cookie(&headers) {
+        Some(cookie) => {
+            let session_id = match verify_session_cookie(&cookie) {
+                Ok(Some(id)) if !id.is_empty() => id,
+                Ok(_) | Err(_) => return plain(401, "unauthorized"),
+            };
+            let lookup_id = session_id.clone();
+            (
+                session_id,
+                tokio::task::spawn_blocking(move || session_user(factory, lookup_id)).await,
+            )
+        }
+        None => {
+            let Some(key) = headers
+                .get("login_key")
+                .and_then(|value| value.to_str().ok())
+                .filter(|key| !key.is_empty())
+                .map(str::to_string)
+            else {
+                return plain(401, "unauthorized");
+            };
+            (
+                "login-key".to_string(),
+                tokio::task::spawn_blocking(move || key_user(factory, key)).await,
+            )
+        }
+    };
     let user_id = match loaded {
         Ok(Ok(Some(user_id))) => user_id,
         Ok(Ok(None)) => return plain(401, "unauthorized"),
@@ -111,20 +140,55 @@ pub(crate) async fn upgrade(ws: WebSocketUpgrade, headers: HeaderMap, State(stat
     ws.on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, shutdown))
 }
 
-fn session_cookie(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(axum::http::header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|header| cookie_value(header, SESSION_COOKIE_NAME))
-        .filter(|value| !value.is_empty())
+/// A page of another site cannot open a socket that carries this site's cookie, as Java's modifyHandshake. `what` names
+/// the socket in the warning.
+pub(crate) fn origin_allowed(factory: &ExecutionContextFactory, headers: &HeaderMap, what: &str) -> bool {
+    let header = |name: axum::http::header::HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
+    let allowed = moqui_core::web::origin_allowed_by(
+        Some(factory),
+        header(axum::http::header::ORIGIN),
+        header(axum::http::header::HOST),
+    );
+    if !allowed {
+        tracing::warn!(origin = ?header(axum::http::header::ORIGIN), "{what} socket refused for its origin");
+    }
+    allowed
 }
 
-fn session_user(factory: Arc<ExecutionContextFactory>, session_id: String) -> Result<Option<String>, CoreError> {
+pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<String> {
+    let cookies: Vec<&str> = headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
+    cookie_value(&cookies.join("; "), SESSION_COOKIE_NAME).filter(|value| !value.is_empty())
+}
+
+/// The userId of an HTTP session, or none when no one is logged in to it. Blocks on the request pool.
+pub(crate) fn session_user(
+    factory: Arc<ExecutionContextFactory>,
+    session_id: String,
+) -> Result<Option<String>, CoreError> {
     let owner = Arc::clone(&factory);
     let looked = Arc::clone(&factory);
     let rx = factory
         .request_pool()
         .try_submit(owner, move || user_of(&looked, &session_id))?;
+    match rx.recv() {
+        Ok(result) => result,
+        Err(_) => Err(CoreError::new("request worker stopped")),
+    }
+}
+
+/// The user of a login key, or none for a key that is unknown, expired or revoked.
+pub(crate) fn key_user(factory: Arc<ExecutionContextFactory>, key: String) -> Result<Option<String>, CoreError> {
+    let owner = Arc::clone(&factory);
+    let rx = factory.request_pool().try_submit(owner, move || {
+        if moqui_core::user::login_user_key(&key).is_err() {
+            return Ok(None);
+        }
+        Ok(moqui_core::user::current_user_id()?.filter(|id| !id.is_empty()))
+    })?;
     match rx.recv() {
         Ok(result) => result,
         Err(_) => Err(CoreError::new("request worker stopped")),
@@ -176,7 +240,7 @@ async fn run_socket(
         unregister(id);
         return;
     }
-    let idle = idle_timeout();
+    let idle = idle_timeout(&factory);
     let mut last_heard = tokio::time::Instant::now();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
@@ -200,7 +264,7 @@ async fn run_socket(
             }
             incoming = socket.recv() => {
                 last_heard = tokio::time::Instant::now();
-                if !handle_incoming(&mut socket, &slot, incoming).await {
+                if !handle_incoming(&mut socket, &factory, &slot, incoming).await {
                     break;
                 }
             }
@@ -227,25 +291,32 @@ async fn run_socket(
     }
     tracing::debug!(session_id = %slot.session_id, user_id = %slot.user_id, "notification socket closed");
     unregister(id);
+    collab::socket_closed(&factory, id);
+    offline_when_gone(&factory, &slot.user_id);
 }
 
-/// `webapp_notification_idle_seconds`, else an hour.
-fn idle_timeout() -> std::time::Duration {
-    moqui_lib::env::get_prop_or_env("webapp_notification_idle_seconds")
-        .trim()
+/// The `webroot` webapp's `/notws` `endpoint` `timeout` in milliseconds, else an hour.
+fn idle_timeout(factory: &ExecutionContextFactory) -> std::time::Duration {
+    factory
+        .webapp_child_setting("webroot", "endpoint /notws", "timeout")
         .parse::<u64>()
         .ok()
-        .filter(|seconds| *seconds > 0)
-        .map_or(DEFAULT_IDLE, std::time::Duration::from_secs)
+        .filter(|millis| *millis > 0)
+        .map_or(DEFAULT_IDLE, std::time::Duration::from_millis)
 }
 
 async fn handle_incoming(
     socket: &mut WebSocket,
+    factory: &Arc<ExecutionContextFactory>,
     slot: &Arc<Slot>,
     incoming: Option<Result<Message, axum::Error>>,
 ) -> bool {
     match incoming {
         Some(Ok(Message::Text(text))) => {
+            // a co-editing frame (JSON with `collab`)
+            if collab::handle(factory, slot, &text) {
+                return true;
+            }
             // A topic change is a set update on this socket; it needs no execution context or worker.
             if let Some(command) = parse_command(&text) {
                 apply_command(slot, command);
@@ -312,11 +383,72 @@ fn mark_after_send(factory: &Arc<ExecutionContextFactory>, user_id: &str, messag
     });
 }
 
+/// After a socket of `user_id` closed: when no socket of the user is left, wait [`OFFLINE_GRACE`], check again, then mark
+/// the user offline on a service worker, as [`mark_after_send`] marks a notification sent.
+fn offline_when_gone(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
+    if has_socket(user_id) {
+        return;
+    }
+    let factory = Arc::clone(factory);
+    let user_id = user_id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(OFFLINE_GRACE).await;
+        if has_socket(&user_id) {
+            return;
+        }
+        let called = user_id.clone();
+        let ran =
+            tokio::task::spawn_blocking(move || factory.service_pools().call(move || disconnect_user(&called))).await;
+        if let Err(err) = flatten_call(ran) {
+            tracing::warn!(error = %err, user_id = %user_id, "could not mark the user offline");
+        }
+    });
+}
+
+fn has_socket(user_id: &str) -> bool {
+    lock(sockets()).values().any(|slot| slot.user_id == user_id)
+}
+
+/// `disconnect#UserStatus` of `user_id`, as internal work. Its errors are the call's error.
+fn disconnect_user(user_id: &str) -> Result<(), CoreError> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz)
+        .ok_or_else(|| CoreError::new("no execution context is entered"))?;
+    let parameters = BTreeMap::from([("userId".to_string(), Value::string(user_id))]);
+    let called = moqui_core::service::sync(DISCONNECT_SERVICE, &parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let errors = ec.message().errors().join("; ");
+        ec.message().clear_errors();
+        errors
+    })
+    .unwrap_or_default();
+    called?;
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CoreError::new(errors))
+    }
+}
+
 fn flatten_call(ran: Result<Result<(), CoreError>, tokio::task::JoinError>) -> Result<(), CoreError> {
     match ran {
         Ok(result) => result,
         Err(_) => Err(CoreError::new("service worker stopped")),
     }
+}
+
+/// Run `job` on a request worker in a fresh context, without blocking the async runtime.
+async fn on_pool<T, F>(factory: &Arc<ExecutionContextFactory>, job: F) -> Result<T, CoreError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, CoreError> + Send + 'static,
+{
+    let factory = Arc::clone(factory);
+    tokio::task::spawn_blocking(move || {
+        let rx = factory.request_pool().try_submit(Arc::clone(&factory), job)?;
+        rx.recv().map_err(|_| CoreError::new("request worker stopped"))?
+    })
+    .await
+    .map_err(|_| CoreError::new("request worker panicked"))?
 }
 
 fn deliver_notice(message: &TopicMessage) {

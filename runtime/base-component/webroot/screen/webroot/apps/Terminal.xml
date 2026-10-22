@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The browser terminal (plans/archive/Screen-TUI-Impl.md 4.4): the terminal client of `moqui tui` and SSH apps, in xterm.js on the
+    /termws socket, as the signed in user. The account menu's Terminal UI opens it, for every user, while the host serves the
+    socket (the /termws endpoint of the webapp in the conf). Terminal.qvue next to this file is the page. In the terminal client itself it says so. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="true" default-menu-title="Terminal UI" default-menu-include="false" render-modes="qvue,tui,html,qvt" server-static="qvue">
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://webroot/screen/webroot/apps/Terminal.qvue" template="false"/>
+            <text type="tui"><![CDATA[[{"t": "text", "id": "TerminalHere", "text": "This is the terminal already: the browser's Terminal opens these same applications."}]]]></text>
+            <text type="html,qvt"><![CDATA[<p>The terminal runs in the applications shell: open <a href="/qapps/Terminal">/qapps/Terminal</a>.</p>]]></text>
+        </render-mode>
+    </widgets>
+</screen>

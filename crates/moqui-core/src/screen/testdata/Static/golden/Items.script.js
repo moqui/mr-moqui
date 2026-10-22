@@ -175,66 +175,70 @@ return function render(_ctx, _cache) {
       "form-location": "ItemList"
     }, {
       nav: _withCtx((nv) => [
-        _createVNode(_component_m_container_dialog, {
-          id: "ItemList_SelColsDialog",
-          title: _ctx.ec.l10n.localize('Column Fields')
-        }, {
-          button: _withCtx(() => [
-            _createVNode(_component_q_btn, {
-              dense: "",
-              unelevated: "",
-              "no-caps": "",
-              class: "m-btn-tonal",
-              icon: "view_column",
-              label: _ctx.ec.l10n.localize('Columns')
-            }, null, 8, ["label"])
-          ]),
-          default: _withCtx(() => [
-            _createVNode(_component_m_form_column_config, {
-              id: "ItemList_SelColsForm",
-              action: nv.columnsAction,
-              "find-parameters": nv.params,
-              "columns-initial": nv.columnsTree,
-              "form-location": "ItemList"
-            }, null, 8, ["action", "find-parameters", "columns-initial"])
-          ]),
-          _: 2
-        }, 1032, ["title"]),
-        _createVNode(_component_q_btn_dropdown, {
-          dense: "",
-          flat: "",
-          "no-caps": "",
-          icon: "download",
-          label: _ctx.ec.l10n.localize('Export')
-        }, {
-          default: _withCtx(() => [
-            _createVNode(_component_q_list, { dense: "" }, {
-              default: _withCtx(() => [
-                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                  clickable: "",
-                  tag: "a",
-                  href: nv.exportUrl('csv')
-                }, {
-                  default: _withCtx(() => [
-                    _createVNode(_component_q_item_section, null, {
-                      default: _withCtx(() => [
-                        _createElementVNode("span", {
-                          textContent: _toDisplayString(_ctx.ec.l10n.localize('CSV'))
-                        }, null, 8, ["textContent"])
-                      ]),
-                      _: 1
-                    })
-                  ]),
-                  _: 1
-                }, 8, ["href"])), [
-                  [_directive_close_popup]
-                ])
-              ]),
-              _: 2
-            }, 1024)
-          ]),
-          _: 2
-        }, 1032, ["label"])
+        (_ctx.$scope['hideNav']!=='true')
+          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+              _createVNode(_component_m_container_dialog, {
+                id: "ItemList_SelColsDialog",
+                title: _ctx.ec.l10n.localize('Column Fields')
+              }, {
+                button: _withCtx(() => [
+                  _createVNode(_component_q_btn, {
+                    dense: "",
+                    unelevated: "",
+                    "no-caps": "",
+                    class: "m-btn-tonal",
+                    icon: "view_column",
+                    label: _ctx.ec.l10n.localize('Columns')
+                  }, null, 8, ["label"])
+                ]),
+                default: _withCtx(() => [
+                  _createVNode(_component_m_form_column_config, {
+                    id: "ItemList_SelColsForm",
+                    action: nv.columnsAction,
+                    "find-parameters": nv.params,
+                    "columns-initial": nv.columnsTree,
+                    "form-location": "ItemList"
+                  }, null, 8, ["action", "find-parameters", "columns-initial"])
+                ]),
+                _: 2
+              }, 1032, ["title"]),
+              _createVNode(_component_q_btn_dropdown, {
+                dense: "",
+                flat: "",
+                "no-caps": "",
+                icon: "download",
+                label: _ctx.ec.l10n.localize('Export')
+              }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_q_list, { dense: "" }, {
+                    default: _withCtx(() => [
+                      _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                        clickable: "",
+                        tag: "a",
+                        href: nv.exportUrl('csv')
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_item_section, null, {
+                            default: _withCtx(() => [
+                              _createElementVNode("span", {
+                                textContent: _toDisplayString(_ctx.ec.l10n.localize('CSV'))
+                              }, null, 8, ["textContent"])
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["href"])), [
+                        [_directive_close_popup]
+                      ])
+                    ]),
+                    _: 2
+                  }, 1024)
+                ]),
+                _: 2
+              }, 1032, ["label"])
+            ], 64))
+          : _createCommentVNode("", true)
       ]),
       hc_itemId: _withCtx(({hs, formProps}) => [
         _createElementVNode("div", null, [

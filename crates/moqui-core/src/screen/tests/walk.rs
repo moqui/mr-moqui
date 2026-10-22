@@ -22,6 +22,7 @@ use moqui_lib::object::Value;
 use super::{fixture_root, webroot};
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 use crate::entity::EntityFacade;
+use crate::screen::cache::OutputKind;
 use crate::screen::{ScreenFacade, ScreenUrlInfo};
 
 fn walk(factory: &ExecutionContextFactory, path: &str) -> Result<std::sync::Arc<ScreenUrlInfo>, Error> {
@@ -227,6 +228,11 @@ fn text_output_conf_has_the_modes_and_the_print_alias() {
         .unwrap()
         .macro_template_location
         .ends_with("ScreenQvt.js"));
+    assert_eq!(facade.mime_type("tui"), Some("application/json"));
+    assert!(facade.is_always_standalone("tui"));
+    assert_eq!(facade.output_kind("tui"), OutputKind::Json);
+    assert_eq!(facade.output_kind("qvt"), OutputKind::Vue);
+    assert_eq!(facade.output_kind("qvue"), OutputKind::Text);
 }
 
 #[test]
@@ -241,7 +247,18 @@ fn the_default_conf_parses_into_the_factory_conf() {
     modes.sort_unstable();
     assert_eq!(
         modes,
-        ["csv", "html", "html-print", "qjs", "qvt", "qvue", "text", "xlsx", "xml"]
+        [
+            "csv",
+            "html",
+            "html-print",
+            "qjs",
+            "qvt",
+            "qvue",
+            "text",
+            "tui",
+            "xlsx",
+            "xml"
+        ]
     );
     // xlsx is the one screen-output (binary) mode
     let xlsx = &parsed.text_output["xlsx"];
@@ -256,9 +273,46 @@ fn the_default_conf_parses_into_the_factory_conf() {
         "framework/template/screen/ScreenHtmlPrint.js"
     );
     assert!(!parsed.text_output["html"].always_standalone);
+    let tui = &parsed.text_output["tui"];
+    assert!(!tui.binary && tui.always_standalone);
+    assert_eq!(tui.mime_type, "application/json");
+    assert_eq!(tui.kind, OutputKind::Json);
+    assert_eq!(tui.macro_template_location, "framework/template/screen/ScreenTui.js");
+    assert_eq!(parsed.text_output["qvt"].kind, OutputKind::Vue);
+    assert_eq!(parsed.text_output["html"].kind, OutputKind::Html);
+    assert_eq!(parsed.text_output["qvue"].kind, OutputKind::Text);
     assert_eq!(parsed.default_paginate_rows, 20);
     for dropped in ["vuet", "js", "vue"] {
         assert!(!parsed.text_output.contains_key(dropped), "{dropped}");
+    }
+}
+
+#[test]
+fn output_kind_comes_from_the_attribute_or_the_mime_type() {
+    let parsed = super::super::cache::ScreenConf::parse(
+        r#"<moqui-conf><screen-facade>
+        <screen-text-output type="tui" mime-type="text/plain" always-standalone="true" output-kind="json"
+            macro-template-location="framework/template/screen/ScreenTui.js"/>
+        <screen-text-output type="extra" mime-type="application/json"
+            macro-template-location="framework/template/screen/ScreenPlain.js"/>
+        <screen-text-output type="page" mime-type="text/html"
+            macro-template-location="framework/template/screen/ScreenHtml.js"/>
+        <screen-text-output type="template" mime-type="text/html" output-kind="vue"
+            macro-template-location="framework/template/screen/ScreenQvt.js"/>
+        <screen-text-output type="odd" mime-type="text/html" output-kind="pdf"
+            macro-template-location="framework/template/screen/ScreenHtml.js"/>
+    </screen-facade></moqui-conf>"#,
+    );
+    assert_eq!(parsed.text_output["tui"].kind, OutputKind::Json);
+    assert_eq!(parsed.text_output["tui"].mime_type, "text/plain");
+    assert_eq!(parsed.text_output["extra"].kind, OutputKind::Json);
+    assert_eq!(parsed.text_output["page"].kind, OutputKind::Html);
+    assert_eq!(parsed.text_output["template"].kind, OutputKind::Vue);
+    // an unknown output-kind follows the mime type
+    assert_eq!(parsed.text_output["odd"].kind, OutputKind::Html);
+    // no mode is built in: one the conf does not name is not there
+    for absent in ["qvt", "qvue", "html", "xlsx"] {
+        assert!(!parsed.text_output.contains_key(absent), "{absent}");
     }
 }
 
@@ -510,6 +564,35 @@ fn a_missing_screen_url_is_a_hash() {
         ..crate::screen::urls::UrlInstance::default()
     };
     assert!(screen.is_screen_url());
+}
+
+/// A plain URL is the text as written. `path()` is empty. The base is not prefixed.
+#[test]
+fn a_plain_url_is_not_prefixed_and_has_no_path() {
+    let mailto = crate::screen::urls::UrlInstance {
+        plain: Some("mailto:someone@example.com".to_string()),
+        base: "http://host".to_string(),
+        exists: true,
+        ..crate::screen::urls::UrlInstance::default()
+    };
+    assert_eq!(mailto.url(), "mailto:someone@example.com");
+    assert_eq!(mailto.path(), "");
+    let path = crate::screen::urls::UrlInstance {
+        plain: Some("/some/path".to_string()),
+        base: "http://host/".to_string(),
+        exists: true,
+        ..crate::screen::urls::UrlInstance::default()
+    };
+    assert_eq!(path.url(), "/some/path");
+    assert_eq!(path.path(), "");
+    let screen = crate::screen::urls::UrlInstance {
+        names: vec!["Sub".to_string()],
+        base: "http://host".to_string(),
+        exists: true,
+        ..crate::screen::urls::UrlInstance::default()
+    };
+    assert_eq!(screen.url(), "http://host/Sub");
+    assert_eq!(screen.path(), "/Sub");
 }
 
 #[test]

@@ -15,6 +15,8 @@
 //! SSH on `russh` and SFTP on `russh-sftp` (`plans/archive/Ssh.md`): the SFTP client behind `moqui_core::sftp`, and the
 //! built-in server with its SFTP subsystem and admin shell.
 
+#[cfg(feature = "tui")]
+mod agent;
 pub mod client;
 pub mod cluster;
 #[cfg(feature = "git")]

@@ -448,13 +448,54 @@ test("a scope looks in the extra map, the map, then the scope around it, and $sc
     assert.equal(outer.a, 9);
 });
 
+test("a merged template calls $mq on the Vue app, not the page global", () => {
+    // The browser compiler resolves $mq through the render proxy. That proxy does not see the page
+    // global, so the assertion deletes it: a pass has to come from app.config.globalProperties.
+    moqui.thousandSeparator = ",";
+    moqui.decimalSeparator = ".";
+    const render = Vue.compile("<span>{{ $mq.isStringNumber(value) }}</span>");
+    const saved = globalThis.$mq;
+    delete globalThis.$mq;
+    const textFor = (value) => {
+        const app = renderer.createApp({ data: () => ({ value }), render });
+        app.config.globalProperties.$mq = moqui;
+        const container = nodeOps.createElement("root");
+        app.mount(container);
+        const text = html(container);
+        app.unmount();
+        return text;
+    };
+    try {
+        assert.match(textFor("1,234.50"), />true</);
+        assert.match(textFor("1a"), />false</);
+    } finally {
+        globalThis.$mq = saved;
+    }
+});
+
+test("a number field's rule runs over the scope, as the compiled template does", () => {
+    // The server compiles the template with Vue's prefixIdentifiers, so the rule is over _ctx, which is
+    // the scope: the scope's $mq has the number checks and the scope's ec localizes the message.
+    const scope = qvt.makeScope({}, null, { ec: qvt.ec(), $mq: qvt.helpers });
+    const rule = (value) => !value || scope.$mq.isStringNumber(value) || scope.ec.l10n.localize("Please enter a valid number");
+    // a rule returns true when the value is good, and the message when it is not
+    assert.equal(rule(""), true);
+    assert.equal(rule("12"), true);
+    assert.equal(rule("1,234.50"), true);
+    assert.equal(rule("1a"), "Please enter a valid number");
+});
+
 test("the helpers a template calls", () => {
     const mq = qvt.helpers;
     assert.equal(mq.str(null), "");
     assert.equal(mq.str(0), "0");
     assert.equal(mq.dflt("", "x"), "x");
     assert.equal(mq.dflt("v", "x"), "v");
-    assert.equal(mq.nul(""), null);
+    assert.equal(mq.nul(""), null);    // the number checks of the field rules the server writes, which a static template calls as $mq
+    assert.ok(mq.isStringNumber("1,234.50") && mq.isStringNumber("-5") && !mq.isStringNumber("1a") && !mq.isStringNumber(5));
+    assert.ok(mq.isStringInteger("1,234") && !mq.isStringInteger("1.5"));
+    assert.equal(mq.parseNumber("1,234.5"), 1234.5);
+    assert.equal(mq.parseNumber("1,234"), 1234);
     assert.deepEqual(mq.cur("A,B", true, ""), ["A", "B"]);
     assert.equal(mq.cur("A,B", false, ""), "A");
     assert.equal(mq.cur("[A, B]", false, ""), "A");

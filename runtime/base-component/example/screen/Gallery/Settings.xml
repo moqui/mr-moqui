@@ -18,10 +18,10 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Settings" default-menu-index="9">
 
     <transition name="saveGeneral"><actions>
-        <message message="General settings saved (gallery demo: nothing is written)" type="success"/>
+        <message type="success">General settings saved (gallery demo: nothing is written)</message>
     </actions><default-response url="."/></transition>
     <transition name="resetGeneral"><actions>
-        <message message="General settings reset to their defaults (gallery demo: nothing is written)" type="warning"/>
+        <message type="warning">General settings reset to their defaults (gallery demo: nothing is written)</message>
     </actions><default-response url="."/></transition>
 
     <actions>

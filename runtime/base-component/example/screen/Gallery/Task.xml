@@ -24,15 +24,15 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="stepLoad"><default-response url="."/></transition>
     <transition name="confirm"><actions>
-        <message message="Confirmed ${scanInput || ''} of ${productId || ''} at ${locationId || ''} (gallery demo: nothing is written)" type="success"/>
+        <message type="success">Confirmed ${scanInput || ''} of ${productId || ''} at ${locationId || ''} (gallery demo: nothing is written)</message>
     </actions><default-response type="none"/></transition>
     <transition name="short"><actions>
         <set field="nextIndex" from="(Number(lineIndex) || 0) + 1"/>
-        <message message="Short: line ${lineSeq || ''} marked short (gallery demo: nothing is written)" type="warning"/>
+        <message type="warning">Short: line ${lineSeq || ''} marked short (gallery demo: nothing is written)</message>
     </actions><default-response url="."><parameter name="lineIndex" from="nextIndex"/></default-response></transition>
     <transition name="skip"><actions>
         <set field="nextIndex" from="(Number(lineIndex) || 0) + 1"/>
-        <message message="Skipped line ${lineSeq || ''} (gallery demo: nothing is written)"/>
+        <message>Skipped line ${lineSeq || ''} (gallery demo: nothing is written)</message>
     </actions><default-response url="."><parameter name="lineIndex" from="nextIndex"/></default-response></transition>
 
     <actions>

@@ -287,6 +287,13 @@ const $formList = (name, cols) => {
             return condition ? `if (${condition}) {\n${line}}\n` : line;
         }),
 
+        // a code-view as its code
+        "code-view": stmt((node) => {
+            const line = `{ const $v = ((t) => (t && t !== "null" ? String(t).replace(/\\s+$/, "") : ""))(ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")})); if ($v) sri.write($v + "\\n"); }\n`;
+            const condition = attr(node, "condition");
+            return condition ? `if (${condition}) {\n${line}}\n` : line;
+        }),
+
         // a markdown-view as its markdown
         "markdown-view": stmt((node) => {
             const line = `{ const $v = ${S.markdownTextExpr(node)}; if ($v) sri.write($v + "\\n"); }\n`;

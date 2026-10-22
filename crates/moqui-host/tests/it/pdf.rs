@@ -28,7 +28,10 @@ use moqui_core::screen::PdfEngine;
 use moqui_host::pdf::ChromiumPdf;
 
 fn browser() -> Option<PathBuf> {
-    if let Ok(found) = moqui_host::pdf::find_chromium(&crate::common::repo_runtime()) {
+    if let Ok(found) = moqui_host::pdf::find_chromium(
+        &crate::common::repo_runtime(),
+        &moqui_lib::env::get_prop_or_env("pdf_chromium_path"),
+    ) {
         return Some(found);
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -94,5 +97,81 @@ fn an_html_print_document_becomes_pdf_and_reaches_no_network() {
 
     watcher.join().unwrap();
     assert_eq!(hits.load(Ordering::SeqCst), 0, "the document reached the network");
+    let _ = std::fs::remove_dir_all(&temp);
+}
+
+/// The vendored pdf.js, as `PdfRenderer::preview` reads it through the resource facade.
+fn pdf_library() -> moqui_core::screen::PdfLibrary {
+    let libs = crate::common::repo_runtime().join("base-component/webroot/screen/webroot/libs/pdfjs");
+    moqui_core::screen::PdfLibrary {
+        main: std::fs::read_to_string(libs.join("pdf.min.mjs")).expect("pdf.min.mjs"),
+        worker: std::fs::read_to_string(libs.join("pdf.worker.min.mjs")).expect("pdf.worker.min.mjs"),
+    }
+}
+
+#[test]
+fn a_pdf_previews_as_a_png_with_its_text_and_page_count() {
+    let Some(binary) = browser() else {
+        eprintln!("no Chromium binary; skipped the PDF preview test");
+        return;
+    };
+    let temp = std::env::temp_dir().join(format!("moqui-pdf-preview-test-{}", std::process::id()));
+    let engine = ChromiumPdf::new(binary, temp.clone());
+    let pdf = engine
+        .render(
+            "<!DOCTYPE html><html><head><style>@page { size: 8.5in 11in; margin: 0.5in }</style></head>\
+             <body><h1>Preview Invoice 100</h1><p>Widget, two each</p></body></html>",
+        )
+        .expect("PDF bytes");
+    let library = pdf_library();
+    let request = moqui_core::screen::PdfPreviewRequest {
+        pdf: &pdf,
+        library: &library,
+        image: true,
+        max_size: 400,
+        text_pages: 5,
+        max_chars: 10_000,
+    };
+    // The modules are imported from data: URLs while every request of the page is failed.
+    let preview = engine.preview(&request).expect("a preview");
+    assert!(
+        preview.png.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "{:?}",
+        &preview.png[..preview.png.len().min(8)]
+    );
+    assert_eq!(preview.pages, 1);
+    // A letter page is taller than wide, so the height fits the box.
+    assert_eq!(preview.height, 400, "{}x{}", preview.width, preview.height);
+    assert!(
+        preview.width > 250 && preview.width < 400,
+        "{}x{}",
+        preview.width,
+        preview.height
+    );
+    assert!(preview.text.contains("Preview Invoice 100"), "{:?}", preview.text);
+    assert!(preview.text.contains("Widget, two each"), "{:?}", preview.text);
+
+    // Text only, capped.
+    let text_only = engine
+        .preview(&moqui_core::screen::PdfPreviewRequest {
+            image: false,
+            max_chars: 7,
+            ..request
+        })
+        .expect("text");
+    assert!(text_only.png.is_empty());
+    assert_eq!(text_only.text, "Preview");
+
+    // Not a PDF: an error, and the engine goes on.
+    let bad = engine.preview(&moqui_core::screen::PdfPreviewRequest {
+        pdf: b"not a pdf",
+        ..request
+    });
+    assert!(bad.is_err());
+    // Larger than preview-max-size: refused before the browser sees it.
+    let small = ChromiumPdf::new(PathBuf::from("/nonexistent"), temp.clone()).with_preview_max_size(4);
+    let refused = small.preview(&request).unwrap_err();
+    assert!(refused.message().contains("preview-max-size"), "{}", refused.message());
+    engine.shutdown();
     let _ = std::fs::remove_dir_all(&temp);
 }

@@ -1,0 +1,9 @@
+<m-code id="Source" text="fn main() {
+    let t = &quot;{{x}} &lt;b&gt;&quot;;
+}
+" file-name="src/main.rs" highlight-lines="2" class="q-mt-sm"></m-code>
+<m-code text="fn main() {
+    let t = &quot;{{x}} &lt;b&gt;&quot;;
+}
+" language="rust" :line-numbers="false"></m-code>
+<span class="text-inline">the code is in its view</span>

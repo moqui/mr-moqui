@@ -1,0 +1,50 @@
+ gallery ▸ Settings                                                                                                                                             john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.9 Settings ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ An app's settings index as a row of cards, one per group with a line of description and the links into its pages, then one settings page: a form     │
+     List                │ ┃ over a read-only snapshot with a drop-down, a flag, Save and a confirmed danger action, and a plain configuration list that uses auto-fields-entity. │
+     Detail              │ ┃ No §8 fallbacks. The general settings are a static snapshot in the screen actions; the index links go to the Tools and System apps.                  │
+     360                 │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Task                │ ┌─ General ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Board               │ │ Organization, base currency, locale, time zone and sign-in rules.                                                                                    │
+     Calendar            │ │ General settings  Localization                                                                                                                       │
+     Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   ▶ Settings            │ ┌─ Users and groups ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Wizard              │ │ Who can sign in, which groups they are in and what each group may do.                                                                                │
+     Dialog              │ │ User accounts  User groups                                                                                                                           │
+     Report              │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Panel               │ ┌─ Enumerations ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Widgets             │ │ The coded lists the apps choose from: types, categories and reasons.                                                                                 │
+     Editor              │ │ Enumerations  Types                                                                                                                                  │
+     Message             │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Views               │ ┌─ Status flows ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ ▾ Home                  │ │ The statuses a record moves through and the transitions between them.                                                                                │
+                         │ │ Status flows  Status items                                                                                                                           │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │ General
+                         │ ┌─ Organization and defaults ─────────────────────────────────────────────┐ ┌─ Geo types (an enumeration, auto-fields-entity) ─────────────────────────┐
+                         │ │ Organization . . . . : IronStone Demo Co.                               │ │   Enum ID             Enum Type ID       Sequence Num Description        │
+                         │ │ Base currency  . . . : United States Dollar (USD)                       │ │ ─────────────────────────────────────────────────────────────────────    │
+                         │ │ Default locale . . . : en_US                                            │ │   GEOT_CITY           Geo Type [GeoType]              City               │
+                         │ │ Time zone  . . . . . : America/Denver                                   │ │   GEOT_COUNTRY        Geo Type [GeoType]              Country            │
+                         │ │ Default length unit  : [Meter (m)                         ▾]            │ │   GEOT_COUNTY         Geo Type [GeoType]              County             │
+                         │ │ Sign in  . . . . . . : [x] Require a second factor for every user       │ │   GEOT_COUNTY_CITY    Geo Type [GeoType]              County-City        │
+                         │ │ < Save >  [ Reset to defaults ]                                         │ │   GEOT_GROUP          Geo Type [GeoType]              Group              │
+                         │ └─────────────────────────────────────────────────────────────────────────┘ │   GEOT_MUNICIPALITY   Geo Type [GeoType]              Municipality       │
+                         │                                                                             │   GEOT_POSTAL_CODE    Geo Type [GeoType]              Postal Code        │
+                         │                                                                             │   GEOT_PROVINCE       Geo Type [GeoType]              Province           │
+                         │                                                                             │   GEOT_REGION         Geo Type [GeoType]              Region             │
+                         │                                                                             │   GEOT_SALES_REGION   Geo Type [GeoType]              Sales Region       │
+                         │                                                                             │   GEOT_SERVICE_REGION Geo Type [GeoType]              Service Region     │
+                         │                                                                             │   GEOT_STATE          Geo Type [GeoType]              State              │
+                         │                                                                             │   GEOT_TERRITORY      Geo Type [GeoType]              Territory          │
+                         │                                                                             │   Rows 1–13 of 13 · Page 1/1                                             │
+                         │                                                                             └──────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

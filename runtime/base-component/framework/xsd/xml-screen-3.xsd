@@ -108,7 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>
                 The render mode(s) this screen supports. Can be any valid render mode. The default value of "all" will allow all
                 render modes, so specify one or more specific render modes to limit how the screen may be rendered. Default supported
-                modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs and qvue. Values can be comma separated to apply to multiple render modes.
+                modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs, qvue and tui. Values can be comma separated to apply to multiple render modes.
             </xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="server-static" type="xs:string">
@@ -116,7 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
                 The render modes where the results of this screen are always the same and the screen render results may be cached (on server and/or client).
                 This applies to all screens that are designed for client rendering when the screen is written to fully support it (filling in data with additional requests).
                 Placeholder screens are automatically server static, ie with just subscreens-panel, subscreens-active, and subscreens-menu elements.
-                Can be any valid render mode. Default supported modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs and qvue.
+                Can be any valid render mode. Default supported modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs, qvue and tui.
                 Values can be comma separated to apply to multiple render modes. A value of "all" will apply to all render modes.
             </xs:documentation></xs:annotation>
         </xs:attribute>
@@ -515,6 +515,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="notification-topic"/>
             <xs:element ref="keymap"/>
             <xs:element ref="account-menu-item"/>
+            <xs:element ref="assist-prompt"/>
+            <xs:element ref="response-action"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="shell-link-attributes">
@@ -603,6 +605,30 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:sequence><xs:element ref="parameter" minOccurs="0" maxOccurs="unbounded"/></xs:sequence>
         <xs:attributeGroup ref="shell-link-attributes"/>
         <xs:attribute name="screen" type="xs:string" use="required"/>
+    </xs:complexType></xs:element>
+    <xs:element name="assist-prompt"><xs:annotation><xs:documentation>
+        A suggested prompt of the Assist drawer (docs/Assist.md GET prompts): a chip on the app's pages, or on screen and
+        the screens below it, for a record of entity when it is set. send="true" sends it at once; otherwise it fills
+        the composer. A prompt whose screen the user may not view is left out.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="label" type="xs:string" use="required"/>
+        <xs:attribute name="text" type="xs:string" use="required"/>
+        <xs:attribute name="send" type="boolean" default="false"/>
+        <xs:attribute name="entity" type="xs:string"/>
+        <xs:attribute name="screen" type="xs:string"/>
+        <xs:attribute name="sequence" type="xs:integer"/>
+    </xs:complexType></xs:element>
+    <xs:element name="response-action"><xs:annotation><xs:documentation>
+        An action on an Assist answer (docs/Assist.md GET prompts): the screen opens in the quick-create frame with the
+        answer's text in text-parameter, and with the page's record (entityName, recordId) when there is one; with
+        requires-record="true" it is offered only when the page has a record ("Send as message", "Log as note").
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="label" type="xs:string" use="required"/>
+        <xs:attribute name="icon" type="xs:string"/>
+        <xs:attribute name="screen" type="xs:string" use="required"/>
+        <xs:attribute name="text-parameter" type="xs:string" use="required"/>
+        <xs:attribute name="requires-record" type="boolean" default="false"/>
+        <xs:attribute name="sequence" type="xs:integer"/>
     </xs:complexType></xs:element>
 
     <!-- ================ Subscreens ================ -->
@@ -1152,6 +1178,28 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="style" type="xs:string"/>
     </xs:complexType></xs:element>
 
+    <xs:element name="code-view" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
+        Source code with line numbers, such as a file of a repository: in qvt an m-code, which highlights it with highlight.js
+        in the browser (Java, Groovy, Kotlin, XML and HTML, JavaScript, TypeScript, Rust, Python, SQL, YAML, JSON, Markdown,
+        CSS, shell and diff), marks the highlight-lines and scrolls to the first; bound over the screen's data in a
+        server-static screen. In html, print and tui a pre of the text; in the text modes the text as it is. The attributes
+        may hold ${} expressions.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="id" type="xs:string"/>
+        <xs:attribute name="text" type="xs:string" use="required"><xs:annotation><xs:documentation>The code, such as
+            ${blobText}. Nothing in it runs or is compiled.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="language" type="xs:string"><xs:annotation><xs:documentation>A highlight.js language (java,
+            groovy, kotlin, xml, javascript, typescript, rust, python, sql, yaml, json, markdown, css, bash, diff); from
+            file-name's extension when empty, else plain text (a language is never guessed).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="file-name" type="xs:string"><xs:annotation><xs:documentation>The file's name or path, whose
+            extension names the language when language is empty.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="line-numbers" type="boolean" default="true"/>
+        <xs:attribute name="highlight-lines" type="xs:string"><xs:annotation><xs:documentation>Lines to mark, as 3,5-7;
+            the first is scrolled to.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="condition" type="xs:string"/>
+        <xs:attribute name="style" type="xs:string"/>
+    </xs:complexType></xs:element>
+
     <!-- ================ Status ================ -->
     <xs:element name="status-bar" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
         The status of a record in its flow, for the title row of a detail screen (IronStone style-guide §3.3, §5.2, §8.2): a
@@ -1312,9 +1360,14 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:extension base="xs:string">
                 <xs:attribute name="type" type="xs:string" default="any">
                     <xs:annotation><xs:documentation>
-                        Can be any valid render mode. Default supported modes include: text, html, html-print (alias xsl-fo), xml, and csv.
+                        Can be any valid render mode. Default supported modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs, qvue, and tui.
                         Values can be comma separated to apply to multiple render modes.
                         A value of "any" will cause it to be used if no other element matches the current output type.
+                        A screen that goes custom in one render mode is written again for each other mode it should work in:
+                        a text of type qvt (or a qvue screen) gets a text of type tui beside it for the terminal client, whose
+                        content is the JSON of one node or an array of nodes of the tui screen model, every value through
+                        JSON.stringify. Without one the terminal shows a placeholder with the browser address
+                        (docs/TUI.md; moqui lint --screens lists them).
                     </xs:documentation></xs:annotation>
                 </xs:attribute>
                 <xs:attribute name="location" type="xs:string">

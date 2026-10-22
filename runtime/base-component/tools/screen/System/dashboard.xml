@@ -77,6 +77,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="../SystemMessage/Type" text="Message Types"/>
                 <link url="../EntitySync" text="Entity Data Sync"/>
             </box-body></container-box>
+            <container-box id="LlmAdmin"><box-header title="LLM and Agents"/><box-body>
+                <link url="../Llm/Dashboard" text="Dashboard"/>
+                <link url="../Llm/Models" text="Models"/>
+                <link url="../Llm/Usage" text="Usage"/>
+                <link url="../Llm/Calls" text="Calls"/>
+            </box-body></container-box>
         </row-col></container-row>
         <container-box id="SystemInformation"><box-header title="System Information"/><box-toolbar>
             <container-dialog id="RequestHeaders" button-text="Request Details">

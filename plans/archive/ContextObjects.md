@@ -308,6 +308,10 @@ The qvt mode, its shell and the menu data.
 - `screen::vue_check::compile_errors(compiler_source, templates)`: the vendored Vue compiler in a QuickJS runtime of its own, for tests and the compatibility report.
 - `sri.getFieldTransitionValue(transition, node, term, labelField, alwaysGet)` and `sri.getFieldValidationJsRules(sub)` (`[{expr, message}]`),
   added after Phase 11 for the `dynamic-options` label and the qvt field rules.
+- For the `tui` mode ([Screen-TUI-Impl](Screen-TUI-Impl.md)): `sri.renderTextValue(location, template)` (as `renderText`, the
+  text returned rather than written), `sri.uniqueId(id)` (an id no earlier node of the document has, `id~2` for a repeat),
+  `sri.htmlText(html)` (the JSON of HTML as text blocks and numbered links) and `sri.getFieldValidationRules(sub)` (the same
+  checks as `getFieldValidationJsRules`, as data: `[{kind, pattern, min, minEq, max, maxEq, message}]`).
 
 ### Added by phase 8 slice 7
 

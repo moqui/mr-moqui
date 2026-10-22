@@ -472,7 +472,7 @@ impl EntityDataWriter {
     fn write_rows(
         &self,
         full_name: &str,
-        rows: &[BTreeMap<String, Value>],
+        rows: &[crate::entity::FieldMap],
         master: Option<&str>,
         out: &mut impl Write,
     ) -> Result<u64, Error> {
@@ -484,7 +484,7 @@ impl EntityDataWriter {
     fn render(
         &self,
         full_name: &str,
-        rows: &[BTreeMap<String, Value>],
+        rows: &[crate::entity::FieldMap],
         master: Option<&str>,
     ) -> Result<(String, u64), Error> {
         if self.file_type == DataFileType::Csv {
@@ -534,7 +534,7 @@ impl EntityDataWriter {
         })
     }
 
-    fn csv_rows(&self, name: &str, rows: &[BTreeMap<String, Value>]) -> Result<String, Error> {
+    fn csv_rows(&self, name: &str, rows: &[crate::entity::FieldMap]) -> Result<String, Error> {
         let iso = self.iso_date_time;
         self.facade.with_entity(name, |entity, _, _| {
             let mut out = String::new();

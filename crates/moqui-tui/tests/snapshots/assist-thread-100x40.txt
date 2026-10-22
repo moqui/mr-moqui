@@ -1,0 +1,40 @@
+ ≡ apps ▸ tasks ▸ Tasks                                                                   Tue 14:32
+────────────────────────────────────────────────────┬───────────────────────────────────────────────
+ Open tasks                                         │ Assist · How many tasks are open?
+ Ship it                                            │ ─────────────────────────────────────────────
+                                                    │ > How many tasks are open?
+                                                    │ · screen /apps/tasks/Tasks ok
+                                                    │ One task is open: Ship it, due Friday.
+                                                    │
+                                                    │ I drew the open tasks by owner.
+                                                    │ ✓ Done · 1 step · 940 tokens
+                                                    │ This answer has a canvas "Open tasks" — o
+                                                    │ opens it in the browser
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │
+                                                    │ ▸
+────────────────────────────────────────────────────┴───────────────────────────────────────────────
+
+ Enter=Send  F4=Lines  Tab=Next  Alt+X=Stop  F10=Assist  F2=Close  Esc=Screen

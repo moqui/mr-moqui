@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Certificates for the public HTTPS listener, looked up by the domain a client asks for (SNI) in `runtime/cert`.
+//! Certificates for the public HTTPS listener, looked up by the domain a client asks for (SNI) in `runtime/cert`, and
+//! for the SMTP listener's STARTTLS ([`smtp_server_config`]).
 //!
 //! Layouts, per domain `example.com`:
 //! - nginx-proxy: `example.com.crt` (or `.pem`, `.cer`; extra certificates in the file are the chain) and
@@ -30,6 +31,13 @@
 //! restart. A pair whose files changed but do not load keeps serving the one loaded before.
 //!
 //! In dev (`instance_purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
+//!
+//! The SMTP listener looks up the name the gateway asks for, then its own `smtp-server` `hostname` (a gateway that
+//! connects by address sends no name), then `default`; or it serves the files `tls-cert-file` and `tls-key-file` name,
+//! read again when they change.
+
+// A host built with inbound-smtp but not axum has STARTTLS and no HTTPS listener.
+#![cfg_attr(not(feature = "axum"), allow(dead_code))]
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -96,6 +104,20 @@ pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Re
         bind: SocketAddr::new(ip, port),
         config: Arc::new(server_config(store)?),
     }))
+}
+
+/// The port [`plan`] would bind, without generating a certificate: an explicit port, or by default 8443 when a
+/// certificate exists or a dev instance will generate one. None when the listener stays off.
+pub(crate) fn planned_port(runtime_dir: &Path, use_default_port: bool) -> Result<Option<u16>, Error> {
+    let raw = moqui_lib::env::get_prop_or_env(LISTEN_PORT);
+    let raw = raw.trim();
+    let Some(port) = listen_port(raw, use_default_port)? else {
+        return Ok(None);
+    };
+    if !raw.is_empty() || moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+        return Ok(Some(port));
+    }
+    Ok((!CertStore::new(runtime_dir.join("cert")).is_empty()).then_some(port))
 }
 
 /// `webapp_https_listen_port`: empty is 8443 when `use_default_port` (tests bind their own HTTP address and leave it
@@ -180,6 +202,16 @@ impl CertStore {
             .find_map(|name| index.pairs.get(name)?.loaded.clone())
     }
 
+    /// The certificate for a requested name, else for `fallback`, else `default`.
+    #[cfg(feature = "inbound-smtp")]
+    fn lookup_or(&self, server_name: Option<&str>, fallback: &str) -> Option<Arc<CertifiedKey>> {
+        let index = self.index();
+        let mut names = candidates(server_name);
+        names.retain(|name| name != "default");
+        names.extend(candidates(Some(fallback)));
+        names.iter().find_map(|name| index.pairs.get(name)?.loaded.clone())
+    }
+
     fn index(&self) -> Arc<Index> {
         let index = Arc::clone(&sync::read(&self.index));
         if index.read.elapsed() < RECHECK {
@@ -225,6 +257,154 @@ impl ResolvesServerCert for CertStore {
             self.log_miss(name.unwrap_or("(no server name)"));
         }
         found
+    }
+}
+
+/// The SMTP listener's TLS (STARTTLS): the explicit `cert_file` and `key_file` (absolute, or under the runtime
+/// directory), or else `runtime/cert` by the name the client asks for or `hostname`. No ALPN. With no certificate it is
+/// an error, and the listener does not start: STARTTLS that cannot finish would leave the mail unprotected.
+#[cfg(feature = "inbound-smtp")]
+pub(crate) fn smtp_server_config(
+    runtime_dir: &Path,
+    hostname: &str,
+    cert_file: &str,
+    key_file: &str,
+) -> Result<rustls::ServerConfig, Error> {
+    let resolver: Arc<dyn ResolvesServerCert> = if cert_file.is_empty() && key_file.is_empty() {
+        let dir = runtime_dir.join("cert");
+        if moqui_lib::env::get_prop_or_env("instance_purpose") == "dev" {
+            if let Err(err) = ensure_dev_cert(&dir) {
+                tracing::warn!(
+                    "Could not generate a development certificate in {}: {err}",
+                    dir.display()
+                );
+            }
+        }
+        let store = CertStore::new(dir.clone());
+        if store.lookup_or(None, hostname).is_none() {
+            return Err(Error::new(format!(
+                "no certificate for {hostname} or default in {}; add {hostname}.crt and {hostname}.key there, or set \
+                 smtp-server tls-cert-file and tls-key-file",
+                dir.display()
+            )));
+        }
+        Arc::new(SmtpCerts {
+            store,
+            hostname: hostname.to_string(),
+        })
+    } else {
+        if cert_file.is_empty() || key_file.is_empty() {
+            return Err(Error::new(
+                "smtp-server tls-cert-file and tls-key-file are set together or not at all",
+            ));
+        }
+        let path = |file: &str| {
+            let file = file.strip_prefix("runtime://").unwrap_or(file);
+            let path = Path::new(file);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                runtime_dir.join(path)
+            }
+        };
+        Arc::new(FilePair::new(path(cert_file), path(key_file))?)
+    };
+    rustls::ServerConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|err| Error::new(format!("could not set up the SMTP listener's TLS: {err}")))
+        .map(|builder| builder.with_no_client_auth().with_cert_resolver(resolver))
+}
+
+/// `runtime/cert` for the SMTP listener: the name asked for, then the listener's hostname.
+#[cfg(feature = "inbound-smtp")]
+#[derive(Debug)]
+struct SmtpCerts {
+    store: CertStore,
+    hostname: String,
+}
+
+#[cfg(feature = "inbound-smtp")]
+impl ResolvesServerCert for SmtpCerts {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        let name = hello.server_name();
+        let found = self.store.lookup_or(name, &self.hostname);
+        if found.is_none() {
+            self.store.log_miss(name.unwrap_or(&self.hostname));
+        }
+        found
+    }
+}
+
+/// A certificate and key by path, read again (at most every [`RECHECK`]) when a file changed; a change that does not
+/// load keeps serving the pair loaded before.
+#[cfg(feature = "inbound-smtp")]
+#[derive(Debug)]
+struct FilePair {
+    cert: PathBuf,
+    key: PathBuf,
+    loaded: RwLock<Loaded>,
+}
+
+#[cfg(feature = "inbound-smtp")]
+#[derive(Debug)]
+struct Loaded {
+    stamp: Stamp,
+    checked: Instant,
+    key: Arc<CertifiedKey>,
+}
+
+#[cfg(feature = "inbound-smtp")]
+impl FilePair {
+    fn new(cert: PathBuf, key: PathBuf) -> Result<Self, Error> {
+        let stamp = [stamp(&cert), stamp(&key)];
+        let loaded = read_certified_key(&cert, &key)?;
+        Ok(Self {
+            cert,
+            key,
+            loaded: RwLock::new(Loaded {
+                stamp,
+                checked: Instant::now(),
+                key: Arc::new(loaded),
+            }),
+        })
+    }
+
+    fn current(&self) -> Arc<CertifiedKey> {
+        {
+            let loaded = sync::read(&self.loaded);
+            if loaded.checked.elapsed() < RECHECK {
+                return Arc::clone(&loaded.key);
+            }
+        }
+        let mut loaded = sync::write(&self.loaded);
+        if loaded.checked.elapsed() >= RECHECK {
+            loaded.checked = Instant::now();
+            let stamp = [stamp(&self.cert), stamp(&self.key)];
+            if stamp != loaded.stamp {
+                loaded.stamp = stamp;
+                match read_certified_key(&self.cert, &self.key) {
+                    Ok(key) => {
+                        tracing::info!(
+                            "The SMTP listener serves the changed certificate {}",
+                            self.cert.display()
+                        );
+                        loaded.key = Arc::new(key);
+                    }
+                    Err(err) => tracing::warn!(
+                        "Certificate {} is not usable: {err}; still serving the one loaded before",
+                        self.cert.display()
+                    ),
+                }
+            }
+        }
+        Arc::clone(&loaded.key)
+    }
+}
+
+#[cfg(feature = "inbound-smtp")]
+impl ResolvesServerCert for FilePair {
+    fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        Some(self.current())
     }
 }
 

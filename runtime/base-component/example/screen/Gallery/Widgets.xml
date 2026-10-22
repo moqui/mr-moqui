@@ -47,6 +47,16 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
         <default-response type="none"/>
     </transition>
+    <!-- the # record links of the rich editors: a fixed list, the shape a record search answers ({id, label, entity}) -->
+    <transition name="recordSearch" read-only="true">
+        <actions><script><![CDATA[
+            ec.web.sendJsonResponse([
+                {id: '100050', label: 'SO100050', entity: 'mantle.order.OrderHeader'},
+                {id: '100051', label: 'SO100051', entity: 'mantle.order.OrderHeader'}
+            ])
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the @ mentions of the rich editors: users whose name or username has the term, answered as [{id, label}] -->
     <transition name="mentionSearch" read-only="true">
         <actions>
@@ -70,6 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <set field="editableText" from="'Click this text to edit it in place'"/>
+        <set field="codeText" value="package org.example;&#10;&#10;/** A comment that runs&#10;    over two lines */&#10;public class Example {&#10;    public static void main(String[] args) {&#10;        System.out.println(&quot;Hello, &quot; + args.length);&#10;    }&#10;}&#10;"/>
         <set field="markdownText" value="## Markdown view&#10;&#10;Text from **markdown**, rendered by Marked and cleaned by DOMPurify: the heading has an id, [the List archetype](List) is a link of this app (from the base path), [moqui.org](https://moqui.org) opens in a new tab.&#10;&#10;| Element | Renders as |&#10;|---|---|&#10;| markdown-view | m-markdown |&#10;| html-view | m-html-view |&#10;&#10;```xml&#10;&lt;markdown-view text=&quot;pageText&quot; base-path=&quot;/qapps/wiki&quot;/&gt;&#10;```&#10;&#10;&gt; A quote, and `inline code` that keeps its tint in dark mode."/>
         <set field="editableKind" value="b"/>
         <set field="editableDue" value="2026-10-19"/>
@@ -107,9 +118,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="textArea"><default-field title="text-area"><text-area rows="2"/></default-field></field>
                 <field name="textMd"><default-field title="text-area editor-type=md"><text-area rows="3" editor-type="md"/></default-field></field>
                 <field name="textRich"><default-field title="text-area editor-type=rich mention-transition">
-                    <text-area rows="5" editor-type="rich" mention-transition="mentionSearch"/></default-field></field>
+                    <text-area rows="5" editor-type="rich" mention-transition="mentionSearch" record-transition="recordSearch"/></default-field></field>
                 <field name="textRichLight"><default-field title="text-area editor-type=rich-light">
-                    <text-area rows="2" editor-type="rich-light" mention-transition="mentionSearch"/></default-field></field>
+                    <text-area rows="2" editor-type="rich-light" mention-transition="mentionSearch" record-transition="recordSearch"/></default-field></field>
                 <field name="ddEntity"><default-field title="drop-down entity-options">
                     <drop-down allow-empty="true"><entity-options key="${enumTypeId}" text="${description} [${enumTypeId}]">
                         <entity-find entity-name="moqui.basic.EnumerationType" cache="true"><order-by field-name="description"/></entity-find>
@@ -192,7 +203,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="noop" link-type="hidden-form-link" icon="edit" text="" tooltip="Edit (Material name)"/>
                 <link url="noop" link-type="hidden-form-link" icon="fa fa-pencil" text="" tooltip="Edit (Font Awesome class)"/>
                 <link url="noop" link-type="hidden-form-link" icon="fa fa-refresh" text="Flat with text" tooltip="Flat with text"/>
-                <render-mode><text type="qvt"><![CDATA[<q-btn flat round dense icon="more_vert" size="sm"><q-tooltip>Raw q-btn flat round, Material name</q-tooltip></q-btn>]]></text></render-mode>
+                <render-mode><text type="qvt"><![CDATA[<q-btn flat round dense icon="more_vert" size="sm"><q-tooltip>Raw q-btn flat round, Material name</q-tooltip></q-btn>]]></text>
+                    <!-- the raw button does nothing: the terminal leaves it out -->
+                    <text type="tui" template="false">[]</text></render-mode>
             </container>
             <label type="p" text="Text links: link-type=anchor to a screen and to a transition that redirects." style="text-caption q-mt-sm q-mb-xs"/>
             <container style="row items-center q-gutter-md">
@@ -236,6 +249,11 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- markdown -->
         <container-box><box-header title="Markdown (markdown-view, m-markdown)"/><box-body>
             <markdown-view id="WidgetMarkdown" text="${markdownText}" base-path="/qapps/gallery"/>
+        </box-body></container-box>
+
+        <!-- code -->
+        <container-box><box-header title="Code (code-view, m-code)"/><box-body>
+            <code-view id="WidgetCode" text="${codeText}" file-name="Example.java" highlight-lines="4-5"/>
         </box-body></container-box>
 
         <!-- 4. list -->
@@ -336,7 +354,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box><box-header title="tree: EnumerationType, then Enumeration, lazy"/><box-body>
                     <!-- open-path opens the first type with its children in the first answer; the other types load on
                         click (and the client does not draw what it loads, see the gallery report) -->
-                    <tree name="EnumTree" open-path="A2APartType">
+                    <tree name="EnumTree" open-path="ChatRoomType">
                         <tree-node name="TypeNode">
                             <label text="${nodeList_entry.description} [${nodeList_entry.enumTypeId}]" id="${nodeList_entry.enumTypeId}"/>
                             <tree-sub-node node-name="EnumNode" list="childEnums"><actions>

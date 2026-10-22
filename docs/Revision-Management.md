@@ -48,7 +48,7 @@ Java writes every history row whole and reads an `isDiff="Y"` row as null, so a 
 the delta versions as missing (the current text is unaffected). Rows loaded from data files with `isDiff="N"` read as
 before.
 
-A file over `dbresource_blob_threshold` bytes (64 KiB) is a content blob (`moqui.resource.ContentBlob`, by its
+A file over `resource-facade` `dbresource-blob-threshold` bytes (64 KiB) is a content blob (`moqui.resource.ContentBlob`, by its
 SHA-256, in 1 MiB `ContentBlobChunk` rows; [Git-Hosting](Git-Hosting.md#content-blobs)) named by `DbResourceFile.blobId`,
 with `fileData` empty: the same bytes in two files are stored once, a response streams it (with `Range`), and a past
 version keeps its blob rather than a copy. `fileSize` gives its size without reading it. `migrate#DbResourceBlobs`
@@ -64,7 +64,9 @@ directory gets an empty `.gitkeep`, and a directory goes away with its last file
 commit (a [change set](#change-sets); `ResourceFacade::write_many` makes one of each repository, as `convert#Image`
 writes an image and its sizes). A large write (an upload) is stored as it is read, never all in memory. A file the
 `.gitattributes` keep in Git LFS is committed as its pointer, and its reads, size and versions are its content's
-([Git-Hosting](Git-Hosting.md#large-files-git-lfs)).
+([Git-Hosting](Git-Hosting.md#large-files-git-lfs)). An archived repository (`archive#GitRepository`) refuses writes. A
+write to a branch that has branch rules passes (the user had the update right where the write was reached) and is
+logged ([Git-Hosting](Git-Hosting.md#branch-rules)).
 
 A file's versions are the commits on the branch's first-parent line whose copy of the file differs from their parent's;
 a commit that deletes the file is not one. The history follows a move: a commit that adds the file with the blob another
@@ -84,6 +86,8 @@ indexed back that far. It serves:
 - `stat` and the last change of a path: a file's date and user are its own last commit's, not the head's.
 - The version history, a version's text (read at the path the file had then), `#version` reads and prefixes.
 - The log of the commits under a path, with the paths each changed there (`getChangeLog`).
+- The last commit of each entry of a directory in `get#GitTree`, for any branch (each branch its own index) or for a
+  tag or commit (an index of that commit's line).
 
 ### Repositories
 
@@ -134,9 +138,14 @@ disk; `remote` with a `remoteUrl` is a read-only mirror, for administrators), wh
 `WIKI_DOCS` and roots the space at `git://WIKI_DOCS/DOCS.md`; or put it under an existing repository,
 `create#WikiSpace(wikiSpaceId: "DOCS", rootPageDirectory: "git://docs")`, or point an existing
 `WikiSpace.rootPageLocation` at `git://<repositoryId>/<SPACE>.md`. Each page save is then a commit (its `versionNote`
-the message), and the page history, compare, publish and `#version` views work on commits. The gallery's Editor screen
-makes such a space (`EXGIT`, in the `db` repository `example-wiki`) with its "Create the git space" action. The wiki
-services are below, "Wiki pages".
+the message), and the page history, compare, publish and `#version` views work on commits. A space may also live in a
+subdirectory of a code repository, beside the code: `create#WikiSpace(wikiSpaceId: "DOCS", rootPageDirectory:
+"git://<repositoryId>/docs")` roots it at `docs/DOCS.md` with its pages under `docs/DOCS/`, each save a commit on the
+default branch that leaves the other files as they are. Such commits are `git://` writes, so a branch rule on that
+branch does not refuse them (they are logged; Git-Hosting, Branch rules); the space's own rights decide who edits it.
+A page's directory is listed with its page, so a child page goes under a parent page that exists. The gallery's Editor
+screen makes such a space (`EXGIT`, in the `db` repository `example-wiki`) with its "Create the git space" action. The
+wiki services are below, "Wiki pages".
 
 ### Limits
 
@@ -241,8 +250,11 @@ version and note, shared, favorite, tags, content and file type), `get#ResourceI
 search document when search is available, else a walk), `find#Recent`, `upload#Resource` (one change set, a version note,
 conflicts replace, keepBoth or skip, the quota), `save#Text`, `create#Folder`, `rename#Resource`, `move#Resource` and
 `copy#Resource` (within a drive one change set; a move across drives is a copy and a trash), `download#Zip`,
-`get#Activity` (versions or commits under the path, shares, trash), `get#Preview` (an image thumbnail made once under
-`runtime://tmp/preview`, a text excerpt; a PDF thumbnail through Chromium is later). Trash: `trash#Resource` (on the
+`get#Activity` (versions or commits under the path, shares, trash), `get#Preview` (made once per version under
+`runtime://tmp/preview`: an image thumbnail; a PDF's first page and page count, drawn by the vendored pdf.js in the PDF
+engine's Chromium page, nothing without an engine; a spreadsheet's first rows by sheet; a text excerpt), `extract#DriveFileText`
+(asynchronous: the text of PDFs, spreadsheets and text files into `runtime://tmp/file-text`, which `index#DriveFiles`
+reads for the search document's `extractedText`). Trash: `trash#Resource` (on the
 database tree the item moves with its history into the drive's hidden `.trash/<trashId>/`; on git it is deleted in one
 commit and `ResourceTrash.versionName` is the version before), `list#Trash`, `restore#Resource`,
 `delete#TrashForever`, `empty#Trash`. Versions: `get#Versions`, `get#VersionDiff`, `restore#Version`. Sharing:
@@ -298,6 +310,11 @@ value no record folder is reached (logged once), only the map. A path outside th
 `RdpManage`) and internal work reach every path. `get#DriveAccess` and `get#ResourceInfo` give `recordList`, the records
 of the path, innermost first.
 
+An external user, one holding the framework permission `EXTERNAL_USER` (an app grants it to its outside users' group, as
+IronStone does to its client contacts), reaches no records drive at all, at any level, whatever their membership, shares or
+ownership: `get#DriveAccess` answers level 0, so the drive is not among their drives in the screens, WebDAV or SFTP, and
+`check#RecordVisible` answers false for them before any hook is asked.
+
 The lists follow it: `list#Folder` lists the record folders of a mapped folder that the user may see, asking the newest
 `recordLimit` (200) and counting the rest in `moreRecordCount` (a folder of thousands of records is not a hook call for
 each; open a record's folder by its path, or search); `find#Resources` (the index's hits, or a walk that does not go into
@@ -343,6 +360,35 @@ space's tree for a file of that name: a new top-level page `Travel` would be wri
 | `request#WikiPageReview(versionName, reviewerUserIdList, dueDate, note, link)`, `decide#WikiPageReview(decision approve or changes, decisionNote, publish, link)`, `cancel#WikiPageReview`, `find#WikiPageReviews(filter toDo, requested or all, wikiSpaceId, statusId)` | `WikiPageReview` rows (`WprRequested`, then `WprApproved`, which publishes the version, `WprChangesRequested` or `WprCancelled`); the reviewer is told on topic `WikiPageReview`, an approval the tray decides (`approve#WikiPageReview`, `refuse#WikiPageReview` with the reason), the requester on `WikiPageReviewDecision`, whose notification opens the request's link unless the decision gives another |
 | `search#WikiPages(text, wikiSpaceId)` | Through any search document on `WikiPage` (its content, title and last change from `get#WikiPageManualDocumentData`) when search is available, else the page paths; never a page the user may not view |
 | `get#WikiSpacePages(includeDetail)` | The tree, without the restricted pages a user may not view; with the detail each page's title, snippet, last change, categories and pinned (the category `Pinned`), for a notes list |
+
+## Co-editing
+
+Several people edit a wiki page at once in `m-coedit` (Tiptap over Yjs in the browser; js/README.md, Collaborative editing),
+and the server keeps the document with `yrs`, the Rust Yjs (`crates/moqui-core/src/collab/`, the socket side
+`crates/moqui-host/src/notws/collab.rs`). A document is named by its record, `WikiPage:<wikiPageId>`, and stored as
+`moqui.resource.CollabDocument`: the Yjs state, the markdown it renders to, the hash of the page text it was made from or
+last saved as, and the users whose changes are in no version yet.
+
+- **Join.** A client sends `{"collab":"join"}` with its state vector on the notification socket; the server checks the
+  user's view access (`get#WikiPageAccess`; update access to change it), loads the document (from its row, or seeded from
+  the page's markdown when there is none or the page was changed outside co-editing with no changes open) and answers the
+  update the client lacks. Updates are applied in memory, acknowledged, sent to the other editors and, in a cluster,
+  published on the topic `collab-update` for the editors on the other servers; presence (Yjs awareness) goes the same way
+  and is not kept.
+- **Markdown.** The document is the editor's structure: the `default` XML fragment in y-prosemirror's encoding, with
+  Tiptap's node and mark names (`collab/markdown.rs`). The server writes it from the markdown and the markdown from it, so
+  nothing depends on a browser being open; HTML and wiki links stay as written, and the markdown is normalized once (`-`
+  bullets, `**` and `*`, fenced code).
+- **Versions.** The page's text is written only as a version (`update#WikiPage`, as an editor): on Save with a note
+  (`org.moqui.impl.CollabServices.save#CollabDocument`), after two minutes without an edit on database files, and when the
+  last editor leaves (a note names the editors). The state is written a second and a half after an edit, merged with what
+  another server wrote. A save tells the editors (`saved`).
+- **Outside changes.** A page saved with the markdown text area, restored or moved while no co-edited changes are open is
+  read again at the next join; with changes open, the co-edited text is kept (logged) and the next save writes over the
+  change, which stays in the page's history.
+
+IronStone's Knowledge and Notes use it when the page exists and the page has its notification socket, and the markdown
+text area otherwise or when the editor cannot start (`fallback`).
 
 ## Token routes and the public shell
 

@@ -14,7 +14,10 @@
 
 //! The JavaScript test harness, Moqui Java's Spock tests on the script engine: spec files of a component's `test`
 //! directory run in the same engine as its services. `moqui test` in the host drives it (`plans/archive/TestHarness.md`).
+//! [`agents`] is the evaluation harness of the agents (`moqui test --agents`, `test/agent/*.agent.js`).
 
+#[cfg(feature = "llm")]
+pub mod agents;
 mod lines;
 pub mod rewrite;
 pub mod run;

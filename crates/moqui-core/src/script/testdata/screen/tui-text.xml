@@ -1,0 +1,6 @@
+<widgets>
+    <text type="tui">this is not json</text>
+    <render-mode>
+        <text type="qvt">only qvt</text>
+    </render-mode>
+</widgets>

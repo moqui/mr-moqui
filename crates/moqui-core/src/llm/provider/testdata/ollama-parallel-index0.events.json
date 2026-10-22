@@ -1,0 +1,86 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-417",
+      "model": "qwen3:8b",
+      "type": "started"
+    },
+    {
+      "call_id": "call_q1n4z8kd",
+      "index": 0,
+      "name": "get_time",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{}",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "call_id": "call_w7d2m0vc",
+      "index": 1,
+      "name": "get_date",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"zone\":\"UTC\"}",
+      "index": 1,
+      "type": "tool_args"
+    },
+    {
+      "index": 0,
+      "type": "tool_end"
+    },
+    {
+      "index": 1,
+      "type": "tool_end"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 212,
+      "output": 31,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "finish": "stop",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "qwen3:8b",
+    "reasoning": "",
+    "replay": null,
+    "response_id": "chatcmpl-417",
+    "text": "",
+    "text_deltas": 0,
+    "tool_calls": [
+      {
+        "arguments": {},
+        "id": "call_q1n4z8kd",
+        "name": "get_time"
+      },
+      {
+        "arguments": {
+          "zone": "UTC"
+        },
+        "id": "call_w7d2m0vc",
+        "name": "get_date"
+      }
+    ],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 212,
+      "output": 31,
+      "reasoning": 0
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "events": [
+    {
+      "id": "7e1c4d2a-0b9f-4e55-9d21-5a3c8b7f6e10",
+      "model": "deepseek-reasoner",
+      "type": "started"
+    },
+    {
+      "delta": "Monday plus three days",
+      "type": "reasoning"
+    },
+    {
+      "delta": " is Thursday.",
+      "type": "reasoning"
+    },
+    {
+      "delta": "Thursday",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "item": {
+        "kind": "reasoning-content",
+        "text": "Monday plus three days is Thursday."
+      },
+      "type": "replay"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 512,
+      "input": 640,
+      "output": 27,
+      "reasoning": 19,
+      "type": "usage"
+    },
+    {
+      "finish": "stop",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "stop",
+      "type": "finish"
+    },
+    "model": "deepseek-reasoner",
+    "reasoning": "Monday plus three days is Thursday.",
+    "replay": [
+      {
+        "kind": "reasoning-content",
+        "text": "Monday plus three days is Thursday."
+      }
+    ],
+    "response_id": "7e1c4d2a-0b9f-4e55-9d21-5a3c8b7f6e10",
+    "text": "Thursday",
+    "text_deltas": 1,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 512,
+      "input": 640,
+      "output": 27,
+      "reasoning": 19
+    }
+  }
+}

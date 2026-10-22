@@ -64,7 +64,7 @@ fn number(value: u64) -> Value {
     Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
-/// `gc#ContentBlobs`: delete the blobs no row refers to, not written or referenced in the last `blob_gc_prune_days`
+/// `gc#ContentBlobs`: delete the blobs no row refers to, not written or referenced in the last `resource-facade` `blob-gc-prune-days`
 /// days, and the chunks of abandoned uploads. Out: `deletedCount`, `deletedBytes`, `abandonedCount`.
 fn gc_content_blobs(
     parameters: &BTreeMap<String, Value>,
@@ -74,8 +74,7 @@ fn gc_content_blobs(
         .get("dryRun")
         .filter(|value| !is_empty(value))
         .is_some_and(|value| matches!(to_plain_string(value).as_str(), "true" | "Y" | "y"));
-    let days = moqui_lib::env::get_prop_or_env("blob_gc_prune_days")
-        .trim()
+    let days = crate::resource::setting("blob-gc-prune-days")
         .parse::<i64>()
         .unwrap_or(14)
         .max(1);

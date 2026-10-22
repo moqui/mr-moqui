@@ -20,6 +20,10 @@
 //! their `dependsOn` names, in suite order. Each spec runs in its own execution context on one database, as the Spock
 //! specs of a suite share one.
 
+#[cfg(feature = "llm")]
+mod agents;
+#[cfg(feature = "llm")]
+mod skills;
 mod coverage;
 mod fixture;
 mod report;
@@ -36,7 +40,7 @@ use moqui_lib::error::Error;
 pub use fixture::{DbMode, TestFixture};
 
 /// What `moqui test` was asked to do.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TestArgs {
     pub components: Vec<String>,
     pub specs: Vec<String>,
@@ -49,6 +53,22 @@ pub struct TestArgs {
     pub coverage: bool,
     /// `--coverage-report file`: write the full report here (with the called services) and print the total.
     pub coverage_report: Option<PathBuf>,
+    /// `--agents`: run the agent evaluation tasks of `test/agent/*.agent.js` instead of the specs.
+    pub agents: bool,
+    /// `--llm-profile model`: the model the agents run on.
+    pub llm_profile: Option<String>,
+    /// `--replay dir`: the recorded model replies to play instead of a model.
+    pub replay: Option<PathBuf>,
+    /// `--runs N`: runs of each agent task.
+    pub runs: u32,
+    /// `--seed S`: the seed of the first run.
+    pub seed: Option<u64>,
+    /// `--min-pass F`: the pass@1 a live agent run needs.
+    pub min_pass: Option<f64>,
+    /// `--write-baseline`: write the component's agent baseline from this run.
+    pub write_baseline: bool,
+    /// `--skills`: run the skill retrieval sets of `test/skill-retrieval.json` instead of the specs.
+    pub skills: bool,
 }
 
 pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
@@ -62,6 +82,14 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
         log_level: None,
         coverage: false,
         coverage_report: None,
+        agents: false,
+        llm_profile: None,
+        replay: None,
+        runs: 1,
+        seed: None,
+        min_pass: None,
+        write_baseline: false,
+        skills: false,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -87,6 +115,30 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
                 parsed.coverage = true;
                 parsed.coverage_report = Some(PathBuf::from(value("--coverage-report")?));
             }
+            "--agents" => parsed.agents = true,
+            "--skills" => parsed.skills = true,
+            "--llm-profile" => parsed.llm_profile = Some(value("--llm-profile")?),
+            "--replay" => parsed.replay = Some(PathBuf::from(value("--replay")?)),
+            "--runs" => {
+                parsed.runs = value("--runs")?
+                    .parse()
+                    .ok()
+                    .filter(|runs| *runs > 0)
+                    .ok_or_else(|| Error::new("--runs is a whole number of at least 1"))?;
+            }
+            "--seed" => {
+                parsed.seed = Some(value("--seed")?.parse().map_err(|_| Error::new("--seed is a whole number"))?);
+            }
+            "--min-pass" => {
+                parsed.min_pass = Some(
+                    value("--min-pass")?
+                        .parse()
+                        .ok()
+                        .filter(|share: &f64| (0.0..=1.0).contains(share))
+                        .ok_or_else(|| Error::new("--min-pass is a share from 0 to 1, such as 0.75"))?,
+                );
+            }
+            "--write-baseline" => parsed.write_baseline = true,
             other if other.starts_with("--") => {
                 return Err(Error::new(format!(
                     "unknown option {other}\nRun 'moqui help test' for details."
@@ -100,11 +152,11 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
 
 /// A component with specs.
 #[derive(Clone, Debug)]
-struct TestComponent {
-    name: String,
-    dir: PathBuf,
+pub(crate) struct TestComponent {
+    pub(crate) name: String,
+    pub(crate) dir: PathBuf,
     /// The specs to run, in order.
-    specs: Vec<SpecFile>,
+    pub(crate) specs: Vec<SpecFile>,
 }
 
 /// The components under `runtime/base-component` and `runtime/component` that have a `test` directory with specs.
@@ -136,7 +188,7 @@ fn discover(runtime: &Path) -> Result<Vec<TestComponent>, Error> {
 }
 
 /// The `name` of `component.xml`, else the directory name.
-fn component_name(dir: &Path) -> String {
+pub(crate) fn component_name(dir: &Path) -> String {
     let dir_name = dir
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -228,6 +280,28 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     };
     crate::logging::install_with_console(Some(console));
     let (runtime, framework) = crate::runtime_framework_dirs();
+    let agent_only = args.llm_profile.is_some()
+        || args.replay.is_some()
+        || args.seed.is_some()
+        || args.min_pass.is_some()
+        || args.write_baseline
+        || args.runs != 1;
+    if args.skills && !agent_only && !args.agents {
+        #[cfg(feature = "llm")]
+        return skills::dispatch(&args, &runtime, &framework);
+        #[cfg(not(feature = "llm"))]
+        return Err(Error::new("moqui test --skills: this build has no agents (the llm feature)"));
+    }
+    if args.agents {
+        #[cfg(feature = "llm")]
+        return agents::dispatch(&args, &runtime, &framework);
+        #[cfg(not(feature = "llm"))]
+        return Err(Error::new("moqui test --agents: this build has no agents (the llm feature)"));
+    } else if agent_only {
+        return Err(Error::new(
+            "--llm-profile, --replay, --runs, --seed, --min-pass and --write-baseline go with --agents\nRun 'moqui help test' for details.",
+        ));
+    }
     let mut components = discover(&runtime)?;
     if !args.components.is_empty() {
         for name in &args.components {
@@ -364,7 +438,7 @@ fn skipped_spec(spec: &SpecFile, missing: &[String]) -> SpecResult {
 }
 
 /// Leave out the components the factory did not load, and return their names.
-fn drop_unloaded(components: &mut Vec<TestComponent>, fixture: &TestFixture) -> Vec<String> {
+pub(crate) fn drop_unloaded(components: &mut Vec<TestComponent>, fixture: &TestFixture) -> Vec<String> {
     let loaded = loaded_locations(fixture);
     let mut dropped = Vec::new();
     components.retain(|component| {
@@ -416,7 +490,7 @@ fn print_coverage(
 }
 
 /// Components in the order the factory loads them, which follows `depends-on`.
-fn order_by_load(components: &mut [TestComponent], fixture: &TestFixture) {
+pub(crate) fn order_by_load(components: &mut [TestComponent], fixture: &TestFixture) {
     let loaded = loaded_locations(fixture);
     components.sort_by_key(|component| {
         let dir = std::fs::canonicalize(&component.dir).unwrap_or_else(|_| component.dir.clone());
@@ -462,6 +536,37 @@ mod tests {
         assert!(parsed.keep);
         assert!(parse_test_args(&["--db".to_string(), "nope".to_string()]).is_err());
         assert!(parse_test_args(&["--bogus".to_string()]).is_err());
+    }
+
+    #[test]
+    fn agent_args_parse() {
+        let args: Vec<String> = [
+            "tools",
+            "--agents",
+            "--llm-profile",
+            "local-qwen",
+            "--runs",
+            "3",
+            "--seed",
+            "7",
+            "--min-pass",
+            "0.5",
+            "--write-baseline",
+        ]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect();
+        let parsed = parse_test_args(&args).unwrap();
+        assert!(parsed.agents && parsed.write_baseline);
+        assert_eq!(parsed.llm_profile.as_deref(), Some("local-qwen"));
+        assert_eq!((parsed.runs, parsed.seed, parsed.min_pass), (3, Some(7), Some(0.5)));
+        let replay = parse_test_args(&["--agents".to_string(), "--replay".to_string(), "dir".to_string()]).unwrap();
+        assert_eq!(replay.replay, Some(PathBuf::from("dir")));
+        assert_eq!(replay.runs, 1);
+        for bad in [["--runs", "0"], ["--seed", "x"], ["--min-pass", "2"]] {
+            let bad: Vec<String> = bad.iter().map(|arg| (*arg).to_string()).collect();
+            assert!(parse_test_args(&bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

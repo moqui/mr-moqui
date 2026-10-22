@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- An endpoint: what is in effect (the conf with its row over it, the key masked), its database row, the key (written
+    here, never shown), and Test (one call to its first model). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Endpoint" default-menu-index="3" default-menu-include="false">
+
+    <parameter name="endpointId" required="true"/>
+
+    <transition name="modelList"><default-response url="../ModelList"/></transition>
+    <transition name="modelDetail"><default-response url="../ModelDetail"/></transition>
+    <transition name="storeEndpoint"><service-call name="store#moqui.llm.LlmEndpoint"/>
+        <default-response url="."/></transition>
+    <transition name="setApiKey"><service-call name="store#moqui.llm.LlmEndpoint" in-map="{endpointId:endpointId, apiKey:apiKey}"/>
+        <default-response url="."/></transition>
+    <transition name="deleteEndpointRow"><service-call name="delete#moqui.llm.LlmEndpoint"/>
+        <default-response url="../ModelList"/></transition>
+    <transition name="testEndpoint"><service-call name="org.moqui.agent.AgentAdminServices.test#Endpoint" in-map="{endpointId:endpointId}"/>
+        <default-response url="."/></transition>
+
+    <actions>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#EffectiveConfig" out-map="effectiveConfig"/>
+        <set field="effective" from="(effectiveConfig.endpointList || []).find(endpoint => endpoint.endpointId == endpointId) || {}"/>
+        <set field="endpointModels" from="(effectiveConfig.modelList || []).filter(model => model.endpointId == endpointId)"/>
+        <entity-find-one entity-name="moqui.llm.LlmEndpoint" value-field="endpointRow"/>
+        <set field="endpointRowMap" from="endpointRow ?? {endpointId: endpointId}"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Endpoint ${endpointId}"/><box-toolbar>
+            <link url="testEndpoint" text="Test" tooltip="One small call to the endpoint's first model"/>
+            <link url="modelList" text="All Models"/>
+        </box-toolbar><box-body>
+            <section name="UnknownSection" condition="!effective.endpointId"><widgets>
+                <label text="No endpoint ${endpointId ?? ''} is configured in the conf or the database." type="p" style="text-warning"/>
+            </widgets><fail-widgets>
+                <container-row>
+                    <row-col md="2"><label text="Protocol" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.protocol ?? ''}"/></row-col>
+                    <row-col md="2"><label text="URL" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.requestUrl ?? ''}"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="2"><label text="Key" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.apiKeyMasked || (effective.apiKeyEnv ? 'from ' + effective.apiKeyEnv : 'none')}"/></row-col>
+                    <row-col md="2"><label text="Local / Disabled / From" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.isLocal ?? ''} / ${effective.disabled ?? ''} / ${effective.source ?? ''}"/></row-col>
+                </container-row>
+            </fail-widgets></section>
+            <form-list name="EndpointModels" list="endpointModels" skip-form="true">
+                <field name="modelId"><default-field title="Model"><link url="modelDetail" text="${modelId}" link-type="anchor"/></default-field></field>
+                <field name="providerModel"><default-field title="Provider Model"><display/></default-field></field>
+                <field name="usable"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+
+        <container-row><row-col md="6">
+            <container-box><box-header title="Database Row"/><box-toolbar>
+                <link url="deleteEndpointRow" text="Remove Row" condition="endpointRow" parameter-map="{endpointId:endpointId}"
+                        confirmation="Remove the database row of this endpoint, with its key? A conf endpoint of this id applies again."/>
+            </box-toolbar><box-body>
+                <label text="Each field set here replaces the conf's value of this endpoint; an empty one keeps it." type="p"/>
+                <form-single name="EndpointRow" map="endpointRowMap" transition="storeEndpoint">
+                    <field name="endpointId"><default-field><hidden/></default-field></field>
+                    <auto-fields-entity entity-name="moqui.llm.LlmEndpoint" field-type="edit" include="nonpk"/>
+                    <field name="apiKey"><default-field><ignored/></default-field></field>
+                    <field name="lastUpdatedByUserId"><default-field><ignored/></default-field></field>
+                    <field name="protocol"><default-field><drop-down allow-empty="true">
+                        <option key="chat-completions"/><option key="responses"/><option key="anthropic-messages"/><option key="fake"/>
+                    </drop-down></default-field></field>
+                    <field name="headersJson"><default-field tooltip="More request headers, a JSON object of name to value">
+                        <text-area rows="3" cols="60"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save Row"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </row-col><row-col md="6">
+            <container-box><box-header title="Key"/><box-body>
+                <label text="Stored encrypted and never shown. A key here replaces the conf's; a row that changes the host needs one." type="p"/>
+                <form-single name="ApiKey" transition="setApiKey">
+                    <field name="endpointId" from="endpointId"><default-field><hidden/></default-field></field>
+                    <field name="apiKey"><default-field title="API Key"><password size="40"/></default-field></field>
+                    <field name="submitButton"><default-field title="Set Key"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </row-col></container-row>
+    </widgets>
+</screen>

@@ -32,8 +32,13 @@ const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const DAY: i64 = 86_400_000;
 
 fn setup() -> (ExecutionContext, EntityFacade) {
+    setup_with("")
+}
+
+/// [`setup`] with the conf text `conf`.
+fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        conf,
         crate::service::ServicePools::idle(),
         crate::context::framework_dir(),
     );
@@ -990,20 +995,15 @@ fn filing_snooze_archive_trash_and_the_unread_count() {
     assert_eq!(unread(None), (0, 0));
 }
 
-/// `email_allowed_hosts` while it lives.
-struct AllowedHosts;
-
-impl AllowedHosts {
-    fn set(value: &str) -> Self {
-        moqui_lib::env::set_property("email_allowed_hosts", value);
-        Self
-    }
-}
-
-impl Drop for AllowedHosts {
-    fn drop(&mut self) {
-        moqui_lib::env::clear_property("email_allowed_hosts");
-    }
+/// Set the `smtpHost` of the server of `account`.
+fn set_smtp_host(facade: &EntityFacade, account: &str, host: &str) {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let server = find_one(facade, "moqui.basic.email.EmailAccount", "emailAccountId", account)
+        .and_then(|row| row.get("emailServerId").map(to_plain_string))
+        .unwrap();
+    let mut row = find_one(facade, "moqui.basic.email.EmailServer", "emailServerId", &server).unwrap();
+    row.set("smtpHost", text(host));
+    row.update(facade).unwrap();
 }
 
 /// Drafts and sends through the test sink: a reply with an attachment now, a scheduled send and an undo-send hold by
@@ -1011,7 +1011,7 @@ impl Drop for AllowedHosts {
 #[test]
 fn drafts_send_now_scheduled_held_and_failed() {
     let _lock = crate::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install();
     let account = shared_account(&facade, "smtp.example.com");
@@ -1258,18 +1258,16 @@ fn drafts_send_now_scheduled_held_and_failed() {
     // a send that fails waits in the Outbox with its error, and goes on a retry
     let failing = new_draft("Fails");
     {
-        let _hosts = AllowedHosts::set("other.example.org");
+        set_smtp_host(&facade, &account, "smtp.other.example.org");
         let failed = ok("send#Draft", &[("emailMessageId", text(&failing))]);
+        set_smtp_host(&facade, &account, "smtp.example.com");
         assert_eq!(failed.get("sent"), Some(&Value::Bool(false)));
-        assert!(
-            out_text(&failed, "sendError").contains("email_allowed_hosts"),
-            "{failed:?}"
-        );
+        assert!(out_text(&failed, "sendError").contains("allowed-hosts"), "{failed:?}");
     }
     assert_eq!(message_field(&facade, &failing, "statusId"), "ES_READY");
     let outbox = ok("find#Messages", &[("view", text("outbox"))]);
     assert_eq!(message_ids(&outbox), [failing.as_str()]);
-    assert!(field(&maps(&outbox, "threadList")[0], "sendError").contains("email_allowed_hosts"));
+    assert!(field(&maps(&outbox, "threadList")[0], "sendError").contains("allowed-hosts"));
     let accounts = ok("get#UserEmailAccounts", &[]);
     assert_eq!(field(&maps(&accounts, "accountList")[1], "outboxErrorCount"), "1");
     refused(
@@ -2397,4 +2395,352 @@ fn unsubscribe_one_click_mailto_and_url() {
     assert_eq!(thread("U1"), "oneClick");
     assert_eq!(thread("U3"), "url");
     assert_eq!(thread("U5"), "");
+}
+
+/// A test message: from the account to its own address through its SMTP (kept by MailCapture), then in Sent, by a user
+/// who may send from it; a send that fails answers its error and leaves nothing in the Outbox.
+#[test]
+fn a_test_message_goes_from_the_account_to_itself() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "smtp.example.com");
+    let capture = crate::service::mail_capture::MailCapture::of(ctx.factory());
+    capture.set_enabled(Some(true));
+    capture.clear();
+
+    let out = ok("send#TestMessage", &[("emailAccountId", text(&account))]);
+    assert_eq!(out.get("sent"), Some(&Value::Bool(true)), "{out:?}");
+    assert_eq!(out_text(&out, "toAddress"), "team@example.com");
+    let mails = capture.messages();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, ["team@example.com"]);
+    assert_eq!(mails[0].from_address, "team@example.com");
+    assert!(mails[0].subject.starts_with("[Test] "), "{}", mails[0].subject);
+    assert_eq!(mails[0].subject, out_text(&out, "subject"));
+    assert!(mails[0].body_text.contains("smtp.example.com"), "{}", mails[0].body_text);
+    let sent = out_text(&out, "emailMessageId");
+    assert_eq!(message_field(&facade, &sent, "statusId"), "ES_SENT");
+    assert_eq!(message_field(&facade, &sent, "emailFolderId"), folder(&facade, &account, "EfkSent"));
+
+    // send permission: Carol sends; Bob only reads; Eve does not reach the account; the Internal account has no server
+    login("carol");
+    ok("send#TestMessage", &[("emailAccountId", text(&account))]);
+    assert_eq!(capture.messages().len(), 2);
+    login("bob");
+    refused("send#TestMessage", &[("emailAccountId", text(&account))], "may not send");
+    login("eve");
+    refused("send#TestMessage", &[("emailAccountId", text(&account))], "not found");
+    login("alice");
+    let internal = out_text(&ok("ensure#InternalAccount", &[]), "emailAccountId");
+    refused("send#TestMessage", &[("emailAccountId", text(&internal))], "no server");
+
+    // a send that fails: its error, and no test message waiting in the Outbox
+    set_smtp_host(&facade, &account, "smtp.other.example.org");
+    let failed = ok("send#TestMessage", &[("emailAccountId", text(&account))]);
+    set_smtp_host(&facade, &account, "smtp.example.com");
+    assert_eq!(failed.get("sent"), Some(&Value::Bool(false)), "{failed:?}");
+    assert!(out_text(&failed, "sendError").contains("allowed-hosts"), "{failed:?}");
+    assert_eq!(out_text(&failed, "emailMessageId"), "");
+    assert!(message_ids(&ok("find#Messages", &[("view", text("outbox"))])).is_empty());
+    assert_eq!(capture.messages().len(), 2);
+    capture.set_enabled(None);
+}
+
+/// The mail search index of a test: every message in it matches the free text; a search answers those dated before
+/// the filter's messageDate bound (and among its emailMessageId values, when it has them), newest first, at most its
+/// limit, and keeps each limit asked for.
+struct MailIndex {
+    documents: Vec<(String, i64)>,
+    limits: std::sync::Mutex<Vec<usize>>,
+}
+
+struct MailIndexBackend(std::sync::Arc<MailIndex>);
+
+/// The messageDate bound (lt, as epoch millis) and the emailMessageId values of a search filter.
+fn filter_bounds(query: &crate::search::Query, before: &mut Option<i64>, ids: &mut Option<Vec<String>>) {
+    match query {
+        crate::search::Query::Bool { all, .. } => {
+            for inner in all {
+                filter_bounds(inner, before, ids);
+            }
+        }
+        crate::search::Query::Field(field) if field.name == "messageDate" => {
+            *before = match &field.lt {
+                Some(Value::Timestamp(at)) => Some(at.as_millisecond()),
+                Some(value) => to_plain_string(value).parse::<f64>().ok().map(|millis| millis as i64),
+                None => None,
+            };
+        }
+        crate::search::Query::Field(field) if field.name == "emailMessageId" => {
+            *ids = Some(field.values.iter().map(to_plain_string).collect());
+        }
+        _ => {}
+    }
+}
+
+impl crate::search::SearchBackend for MailIndexBackend {
+    fn name(&self) -> &'static str {
+        "mail-index"
+    }
+    fn ensure_index(&self, _mapping: &crate::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
+        Ok(())
+    }
+    fn index_exists(&self, _mapping: &crate::search::DocumentMapping) -> Result<bool, moqui_lib::error::Error> {
+        Ok(true)
+    }
+    fn index_documents(
+        &self,
+        _mapping: &crate::search::DocumentMapping,
+        documents: &[(String, crate::entity::document::Document)],
+    ) -> Result<usize, moqui_lib::error::Error> {
+        Ok(documents.len())
+    }
+    fn delete_document(
+        &self,
+        _mapping: &crate::search::DocumentMapping,
+        _id: &str,
+    ) -> Result<bool, moqui_lib::error::Error> {
+        Ok(true)
+    }
+    fn delete_matching(
+        &self,
+        _mapping: &crate::search::DocumentMapping,
+        _filter: &crate::search::Query,
+    ) -> Result<u64, moqui_lib::error::Error> {
+        Ok(0)
+    }
+    fn get_document(
+        &self,
+        _mapping: &crate::search::DocumentMapping,
+        _id: &str,
+    ) -> Result<Option<crate::entity::document::Document>, moqui_lib::error::Error> {
+        Ok(None)
+    }
+    fn search(
+        &self,
+        _mappings: &[std::sync::Arc<crate::search::DocumentMapping>],
+        request: &crate::search::SearchRequest,
+    ) -> Result<crate::search::SearchPage, moqui_lib::error::Error> {
+        moqui_lib::sync::lock(&self.0.limits).push(request.limit);
+        let (mut before, mut ids) = (None, None);
+        if let Some(filter) = &request.filter {
+            filter_bounds(filter, &mut before, &mut ids);
+        }
+        let mut found: Vec<&(String, i64)> = self
+            .0
+            .documents
+            .iter()
+            .filter(|(id, at)| before.is_none_or(|bound| *at < bound) && ids.as_ref().is_none_or(|ids| ids.contains(id)))
+            .collect();
+        found.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        let total = found.len() as u64;
+        let hits = found
+            .into_iter()
+            .take(request.limit)
+            .map(|(id, _)| crate::search::SearchHit {
+                document_id: "MoquiEmailMessage".to_string(),
+                id: id.clone(),
+                index: "moqui_mail".to_string(),
+                score: 1.0,
+                body: Default::default(),
+                highlights: Default::default(),
+            })
+            .collect();
+        Ok(crate::search::SearchPage {
+            hits,
+            total,
+            ..Default::default()
+        })
+    }
+    fn aggregate(
+        &self,
+        _mapping: &crate::search::DocumentMapping,
+        _filter: &crate::search::Query,
+        _aggs: &IndexMap<String, crate::search::Agg>,
+    ) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
+        Ok(IndexMap::new())
+    }
+    fn drop_index(&self, _mapping: &crate::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
+        Ok(())
+    }
+}
+
+/// The index search reads its matches searchLimit at a time from the page's cursor, so a view with more matches than
+/// one read still pages through all of them, by message and by thread, with a thread shown on an earlier page (by a
+/// newer reply that matches) not shown again.
+#[test]
+fn the_index_search_pages_past_one_read_of_the_index() {
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "smtp.example.com");
+    const HOUR: i64 = 3_600_000;
+    let base = now() - 30 * DAY;
+    // I1 (oldest) to I12 match the search; I9 answers I3; I10 is archived; N1 to N3 do not match
+    let mut documents = Vec::new();
+    for number in 1..=12 {
+        let id = format!("I{number}");
+        let at = base + number * HOUR;
+        let mut more = vec![("subject", text(&format!("Invoice {number}")))];
+        if number == 9 {
+            more.extend([("rootEmailMessageId", text("I3")), ("parentEmailMessageId", text("I3"))]);
+        }
+        if number == 10 {
+            more.push(("archivedDate", stamp(at)));
+        }
+        message(&facade, &account, &id, "EfkInbox", at, &more);
+        documents.push((id, at));
+    }
+    for (number, at) in [(1, base + 5 * HOUR + HOUR / 2), (2, base + 9 * HOUR + HOUR / 2), (3, base + 13 * HOUR)] {
+        message(&facade, &account, &format!("N{number}"), "EfkInbox", at, &[]);
+    }
+    {
+        let _authz = ctx.disable_authz();
+        let data = std::fs::read_to_string(crate::context::framework_dir().join("data/MailSearchData.xml")).unwrap();
+        crate::entity::load_feed::load_entity_xml_text(&facade, "MailSearchData.xml", &data, &Default::default())
+            .unwrap();
+    }
+    let index = std::sync::Arc::new(MailIndex {
+        documents,
+        limits: Default::default(),
+    });
+    crate::search::install(
+        ctx.factory(),
+        crate::search::SearchFacade::new(
+            std::sync::Arc::new(MailIndexBackend(std::sync::Arc::clone(&index))),
+            facade.clone(),
+        ),
+    );
+
+    // the pages of a search for invoice in a view, 4 rows a page, the index read 5 matches at a time
+    let pages = |view: &str, thread_mode: bool| {
+        let mut pages = Vec::new();
+        let mut before: Option<i64> = None;
+        loop {
+            let mut parameters = vec![
+                ("view", text(view)),
+                ("threadMode", Value::Bool(thread_mode)),
+                ("searchText", text("invoice")),
+                ("searchLimit", Value::I64(5)),
+                ("pageSize", Value::I64(4)),
+            ];
+            if let Some(millis) = before {
+                parameters.push(("beforeDate", stamp(millis)));
+            }
+            let out = ok("find#Messages", &parameters);
+            assert_eq!(out_text(&out, "searchMode"), "index");
+            pages.push(if thread_mode { thread_ids(&out) } else { message_ids(&out) });
+            if out.get("hasMore") != Some(&Value::Bool(true)) {
+                break;
+            }
+            before = Some(out_number(&out, "nextBeforeDate"));
+            assert!(pages.len() < 10, "{pages:?}");
+        }
+        pages
+    };
+    assert_eq!(
+        pages("all", false),
+        [
+            ["I12", "I11", "I10", "I9"],
+            ["I8", "I7", "I6", "I5"],
+            ["I4", "I3", "I2", "I1"]
+        ]
+    );
+    // threads in the Inbox: I3's thread comes at its reply I9, and not again at I3 on the last page
+    assert_eq!(
+        pages("inbox", true),
+        [
+            vec!["I12", "I11", "I3", "I8"],
+            vec!["I7", "I6", "I5", "I4"],
+            vec!["I2", "I1"]
+        ]
+    );
+    // no read of the window took more than searchLimit
+    let limits = moqui_lib::sync::lock(&index.limits).clone();
+    assert!(limits.iter().all(|limit| *limit <= 5), "{limits:?}");
+    assert!(limits.len() > 6, "{limits:?}");
+}
+
+/// The automatic reply's own internal domains: kept in lower case, each once; one that is not a domain is refused; a
+/// sender at one of them is internal (the internal message, and the internal-only audience).
+#[test]
+fn the_automatic_reply_counts_its_own_domains_as_internal() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    user(&facade, "alice");
+    login("alice");
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@home.example.net")),
+                ("accountName", text("Alice")),
+                ("smtpHost", text("smtp.example.net")),
+                ("smtpStartTls", text("N")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let store = |domains: &str| {
+        call(
+            "store#EmailOutOfOffice",
+            &[
+                ("emailAccountId", text(&account)),
+                ("fromDate", stamp(now() - DAY)),
+                ("bodyHtml", text("<p>Away until Monday</p>")),
+                ("internalBodyHtml", text("<p>Away; ask Dave</p>")),
+                ("replyAudienceEnumId", text("EraInternal")),
+                ("internalDomains", text(domains)),
+            ],
+        )
+    };
+    store(" Partner.Example.org, @ally.example.com partner.example.org;");
+    assert_eq!(errors(), "");
+    let away = ok("get#EmailOutOfOffice", &[("emailAccountId", text(&account))]);
+    let reply = match away.get("outOfOffice") {
+        Some(Value::Map(map)) => map.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(field(&reply, "internalDomains"), "partner.example.org,ally.example.com");
+    store("partner.example.org, intranet");
+    assert!(errors().contains("Not a domain: intranet"));
+    // the refused list left the stored one
+    let away = ok("get#EmailOutOfOffice", &[("emailAccountId", text(&account))]);
+    assert!(matches!(away.get("outOfOffice"), Some(Value::Map(map)) if field(map, "internalDomains") == "partner.example.org,ally.example.com"));
+
+    let received = |id: &str, from: &str| {
+        message(
+            &facade,
+            &account,
+            id,
+            "EfkInbox",
+            now() - 60_000,
+            &[
+                ("fromAddress", text(from)),
+                ("toAddresses", text("alice@home.example.net")),
+                ("receivedDate", stamp(now() - 60_000)),
+                ("messageId", text(&format!("<{id}@mail.example.org>"))),
+            ],
+        );
+    };
+    received("D1", "Pat@Partner.example.org");
+    received("D2", "sam@ally.example.com");
+    received("D3", "kim@elsewhere.example.org");
+    let sink = crate::service::SinkGuard::install();
+    let out = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        ok(
+            "send#OutOfOfficeReplies",
+            &[("emailAccountId", text(&account)), ("emailMessageIdList", list(&["D1", "D2", "D3"]))],
+        )
+    };
+    assert_eq!(out_number(&out, "sentCount"), 2, "{out:?}");
+    let sent = sink.sent();
+    let to: Vec<String> = sent.iter().map(|mail| mail.to.join(",")).collect();
+    assert_eq!(to, ["Pat@Partner.example.org", "sam@ally.example.com"]);
+    assert!(sent.iter().all(|mail| mail.body.contains("ask Dave")), "{sent:?}");
 }

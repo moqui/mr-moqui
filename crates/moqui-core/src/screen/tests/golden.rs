@@ -66,6 +66,9 @@ fn check(mode: &str, name: &str, debug: bool) {
     let suffix = if debug { "-debug" } else { "" };
     let path = testdata().join(mode).join(format!("{name}{suffix}.js"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::fs::write(&path, &actual).unwrap();
         return;
     }
@@ -128,6 +131,17 @@ fn golden_qvt() {
 fn golden_qvt_static() {
     for name in FIXTURES.iter().chain(HTML_FIXTURES).chain(QVT_FIXTURES) {
         check("qvt-static", name, false);
+    }
+}
+
+/// A dialog body, a depends-on drop-down, a `text type="tui"` that is not JSON, and the dynamic widgets, row forms, typed
+/// columns, row actions, status bar, tree, button menu and wizard of Phase 3.
+const TUI_FIXTURES: &[&str] = &["tui-dialog", "tui-depends", "tui-text", "tui-dynamics"];
+
+#[test]
+fn golden_tui() {
+    for name in FIXTURES.iter().chain(TUI_FIXTURES) {
+        check("tui", name, false);
     }
 }
 

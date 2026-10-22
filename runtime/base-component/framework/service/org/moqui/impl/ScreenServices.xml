@@ -134,10 +134,9 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             ]]></script>
 
-            <!-- if noResultsAbort == 'Y' don't write file or send email -->
-            <!-- Java reads _formListRendered and _formListResultCount from the shared context map; the port's form-list
-                render does not set them, so noResultsAbort does not stop a send -->
-            <if condition="attachmentInfo != null &amp;&amp; (screenScheduled.noResultsAbort != 'Y' || !_formListRendered || _formListResultCount)"><then>
+            <!-- if noResultsAbort == 'Y' don't write file or send email. The counters are on the shared map;
+                a bare name does not see it, and the map's get is property access, not a method. -->
+            <if condition="attachmentInfo != null &amp;&amp; (screenScheduled.noResultsAbort != 'Y' || !ec.context.sharedMap._formListRendered || ec.context.sharedMap._formListResultCount)"><then>
                 <!-- send email -->
                 <if condition="emailTemplate != null">
                     <set field="toAddressSet" from="new Set()"/>
@@ -194,7 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </script>
                 </if>
             </then><else>
-                <log level="warn" message="Not saving or sending email for ScheduledScreen ${screenScheduledId}: no attachment, or noResultsAbort ${screenScheduled.noResultsAbort} _formListRendered ${_formListRendered} _formListResultCount ${_formListResultCount}"/>
+                <log level="warn" message="Not saving or sending email for ScheduledScreen ${screenScheduledId}: no attachment, or noResultsAbort ${screenScheduled.noResultsAbort} _formListRendered ${ec.context.sharedMap._formListRendered} _formListResultCount ${ec.context.sharedMap._formListResultCount}"/>
             </else></if>
 
             <!-- save lastRunTime -->

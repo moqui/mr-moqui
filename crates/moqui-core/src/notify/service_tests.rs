@@ -467,8 +467,8 @@ fn the_daily_digest_sends_each_user_one_email_of_their_digest_topics() {
             all.extend_from_slice(fields);
             row(&facade, "moqui.security.user.NotificationTopic", &all);
         };
-        topic("Daily", &[("digestDefault", "Y")]);
-        topic("Chosen", &[]);
+        topic("Daily", &[("digestDefault", "Y"), ("description", "Daily feed")]);
+        topic("Chosen", &[("description", "Chosen feed")]);
         topic(
             "Mentions",
             &[("emailNotifications", "Y"), ("emailTemplateId", "TEST_DIGEST")],
@@ -484,9 +484,14 @@ fn the_daily_digest_sends_each_user_one_email_of_their_digest_topics() {
         choice("Mentions", "dave", &[("digest", "Y"), ("emailNotifications", "Y")]);
     }
     let daily = notify("Daily", "carol", "Daily one", |note| {
-        note.link("/qapps/Commons/Tasks");
+        note.link("/qapps/Commons/Tasks").app_name("Warehouse");
     });
-    let chosen = notify("Chosen", "carol", "Chosen one", |_| {});
+    let daily_later = notify("Daily", "carol", "Daily later", |note| {
+        note.app_name("Warehouse");
+    });
+    let chosen = notify("Chosen", "carol", "Chosen one", |note| {
+        note.app_name("Purchasing");
+    });
     let viewed_one = notify("Daily", "carol", "Seen already", |_| {});
     {
         let _authz = ctx.disable_authz();
@@ -501,20 +506,35 @@ fn the_daily_digest_sends_each_user_one_email_of_their_digest_topics() {
 
     let out = call(
         "send#NotificationDigests",
-        &[("emailTemplateId", Value::string("TEST_DIGEST"))],
+        &[
+            ("emailTemplateId", Value::string("TEST_DIGEST")),
+            ("ignoreHour", Value::Bool(true)),
+        ],
     );
     assert_eq!(errors(), "");
     assert_eq!(count(&out, "userCount"), 1, "{out:?}");
-    assert_eq!(count(&out, "notificationCount"), 2);
+    assert_eq!(count(&out, "notificationCount"), 3);
     let sent = sink.sent();
     assert_eq!(sent.len(), 2, "one digest");
     let digest = &sent[1];
     assert_eq!(digest.to, ["carol@example.com"]);
-    assert_eq!(digest.subject, "Your notifications (2)");
-    for text in ["Daily one", "Chosen one", "/qapps/Commons/Tasks"] {
+    assert_eq!(digest.subject, "Your notifications (3)");
+    for text in ["Daily one", "Daily later", "Chosen one", "/qapps/Commons/Tasks"] {
         assert!(digest.body_text.contains(text), "{text} in {}", digest.body_text);
     }
     assert!(!digest.body_text.contains("Seen already"), "{}", digest.body_text);
+    // grouped by app, then topic; first seen (oldest) first, so the later daily title follows the first
+    let warehouse = digest.body.find("<h3>Warehouse</h3>").expect(&digest.body);
+    let purchasing = digest.body.find("<h3>Purchasing</h3>").expect(&digest.body);
+    assert!(warehouse < purchasing, "{}", digest.body);
+    assert!(digest.body.contains("<h4>Daily feed</h4>"), "{}", digest.body);
+    assert!(digest.body.contains("<h4>Chosen feed</h4>"), "{}", digest.body);
+    let first = digest.body.find("Daily one").expect(&digest.body);
+    let later = digest.body.find("Daily later").expect(&digest.body);
+    assert!(first < later, "{}", digest.body);
+    assert!(digest.body_text.contains("Warehouse\n"), "{}", digest.body_text);
+    assert!(digest.body_text.contains("  Daily feed"), "{}", digest.body_text);
+    assert!(digest.body_text.contains("  Chosen feed"), "{}", digest.body_text);
     // the dates are in the user's time zone
     let chicago = jiff::Timestamp::now()
         .to_zoned(jiff::tz::TimeZone::get("America/Chicago").unwrap())
@@ -523,7 +543,7 @@ fn the_daily_digest_sends_each_user_one_email_of_their_digest_topics() {
     assert!(digest.body_text.contains(&chicago), "{chicago} in {}", digest.body_text);
     {
         let _authz = ctx.disable_authz();
-        for id in [&daily, &chosen] {
+        for id in [&daily, &daily_later, &chosen] {
             let row = facade
                 .find("moqui.security.user.NotificationMessageUser")
                 .unwrap()
@@ -538,9 +558,108 @@ fn the_daily_digest_sends_each_user_one_email_of_their_digest_topics() {
     // a notification goes in one digest
     let again = call(
         "send#NotificationDigests",
-        &[("emailTemplateId", Value::string("TEST_DIGEST"))],
+        &[
+            ("emailTemplateId", Value::string("TEST_DIGEST")),
+            ("ignoreHour", Value::Bool(true)),
+        ],
     );
     assert_eq!(count(&again, "userCount"), 0);
     assert_eq!(sink.sent().len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Each user is sent only in their hour (NOTIFICATION_DIGEST_HOUR) in their time zone. Carol's hour is now in
+/// America/Chicago; Dave's is three hours off, so only Carol is sent and Dave's row stays unmarked.
+#[test]
+#[cfg(feature = "smtp")]
+fn the_digest_sends_a_user_only_in_their_hour() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let (ctx, facade, dir) = setup("digest-hour");
+    let _entered = ctx.enter();
+    install(&dir);
+    let chicago = jiff::tz::TimeZone::get("America/Chicago").unwrap();
+    let hour = i32::from(jiff::Timestamp::now().to_zoned(chicago).hour());
+    let carol_hour = hour.to_string();
+    let dave_hour = (hour + 3).rem_euclid(24).to_string();
+    {
+        let _authz = ctx.disable_authz();
+        row(
+            &facade,
+            "moqui.basic.email.EmailServer",
+            &[("emailServerId", "DIGEST_SMTP"), ("smtpHost", "smtp.example.com")],
+        );
+        row(
+            &facade,
+            "moqui.basic.email.EmailTemplate",
+            &[
+                ("emailTemplateId", "TEST_DIGEST"),
+                ("emailServerId", "DIGEST_SMTP"),
+                (
+                    "bodyScreenLocation",
+                    "component://framework/screen/NotificationDigestEmail.xml",
+                ),
+                ("webappName", "webroot"),
+                ("fromAddress", "notify@example.com"),
+                ("subject", "Your notifications (${notificationCount})"),
+            ],
+        );
+        account(&facade, "carol", "carol@example.com");
+        account(&facade, "dave", "dave@example.com");
+        row(
+            &facade,
+            "moqui.security.user.NotificationTopic",
+            &[
+                ("topic", "Daily"),
+                ("description", "Daily feed"),
+                ("digestDefault", "Y"),
+            ],
+        );
+        let pref = |user: &str, value: &str| {
+            row(
+                &facade,
+                "moqui.security.UserPreference",
+                &[
+                    ("userId", user),
+                    ("preferenceKey", "NOTIFICATION_DIGEST_HOUR"),
+                    ("preferenceValue", value),
+                ],
+            );
+        };
+        pref("carol", &carol_hour);
+        pref("dave", &dave_hour);
+    }
+    let carol_id = notify("Daily", "carol", "Carol now", |note| {
+        note.app_name("Warehouse");
+    });
+    let dave_id = notify("Daily", "dave", "Dave later", |_| {});
+    let sink = crate::service::SinkGuard::install();
+    let out = call(
+        "send#NotificationDigests",
+        &[("emailTemplateId", Value::string("TEST_DIGEST"))],
+    );
+    assert_eq!(errors(), "");
+    assert_eq!(count(&out, "userCount"), 1, "{out:?}");
+    let sent = sink.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].to, ["carol@example.com"]);
+    assert!(sent[0].body_text.contains("Carol now"), "{}", sent[0].body_text);
+    assert!(!sent[0].body_text.contains("Dave later"), "{}", sent[0].body_text);
+    {
+        let _authz = ctx.disable_authz();
+        let marked = |id: &str, user: &str| {
+            facade
+                .find("moqui.security.user.NotificationMessageUser")
+                .unwrap()
+                .eq("notificationMessageId", Value::string(id))
+                .eq("userId", Value::string(user))
+                .one()
+                .unwrap()
+                .unwrap()
+                .get("digestDate")
+                .is_some_and(|value| !value.is_null())
+        };
+        assert!(marked(&carol_id, "carol"));
+        assert!(!marked(&dave_id, "dave"));
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

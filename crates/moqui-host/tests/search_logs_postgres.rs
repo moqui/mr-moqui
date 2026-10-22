@@ -14,7 +14,7 @@
 
 //! The server on the default Postgres search backend: log events shipped to `moqui_logs` through the
 //! SearchFacade and read through the log viewer (with its time-range query string), HTTP requests
-//! shipped to `moqui_http_log`, and the `/elastic` proxy staying closed. This binary sets process
+//! shipped to `moqui_http_log`, and the `/search` proxy staying closed. This binary sets process
 //! state through the logger, so it has one test.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
@@ -88,7 +88,7 @@ fn postgres_backend_ships_logs_through_the_search_facade() {
     // The proxy to an Elastic server stays closed: this backend has none.
     let (status, _, _) = exchange(
         address,
-        &http_request("GET", "/elastic/", &[("Authorization", &john)], ""),
+        &http_request("GET", "/search/", &[("Authorization", &john)], ""),
     );
     assert_eq!(status, 404);
     drop(gate);

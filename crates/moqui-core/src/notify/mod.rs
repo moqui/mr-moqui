@@ -21,7 +21,7 @@ mod topic;
 pub(crate) use message::service_job_error;
 pub use message::{mark_sent, mark_viewed, NotificationMessage, ROUTE_USER_IDS};
 pub use topic::{
-    has_listeners, install, origin_id, publish, subscribe, Listener, Subscription, TopicMessage,
+    has_listeners, install, origin_id, publish, subscribe, Listener, Subscription, TopicMessage, COLLAB_UPDATE,
     ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE,
 };
 

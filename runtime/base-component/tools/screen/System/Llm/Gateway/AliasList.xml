@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The model names the gateway answers to (LlmModelAlias): each a model or a feature whose binding it follows. A row
+    replaces a gateway alias of the conf with the same name; Disabled turns either off. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Aliases" default-menu-index="3">
+
+    <transition name="storeAlias"><service-call name="store#moqui.llm.LlmModelAlias"/>
+        <default-response url="."/></transition>
+    <transition name="deleteAlias"><service-call name="delete#moqui.llm.LlmModelAlias"/>
+        <default-response url="."/></transition>
+
+    <widgets>
+        <container-dialog id="CreateAliasDialog" button-text="New Alias">
+            <form-single name="CreateAlias" transition="storeAlias">
+                <field name="alias"><default-field tooltip="The model name callers use"><text-line size="30"/></default-field></field>
+                <field name="modelId"><default-field title="Model ID" tooltip="A model of System > LLM > Models"><text-line size="20"/></default-field></field>
+                <field name="featureId"><default-field title="Feature" tooltip="Or a feature (assist, summarize, embed, ...) whose binding it follows"><text-line size="20"/></default-field></field>
+                <field name="description"><default-field><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+        <form-list name="AliasList" list="aliasList" transition="storeAlias" multi="false">
+            <entity-find entity-name="moqui.llm.LlmModelAlias" list="aliasList"><order-by field-name="alias"/></entity-find>
+            <field name="alias"><default-field><display/></default-field></field>
+            <field name="modelId"><header-field title="Model"/><default-field><text-line size="20"/></default-field></field>
+            <field name="featureId"><header-field title="Feature"/><default-field><text-line size="12"/></default-field></field>
+            <field name="description"><default-field><text-line size="30"/></default-field></field>
+            <field name="disabled"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+            <field name="update"><default-field title="Save"><submit/></default-field></field>
+            <field name="delete"><default-field title=""><link url="deleteAlias" text="Delete" parameter-map="{alias:alias}"
+                    confirmation="Delete this alias?"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The remote MCP servers: their tools that rows allow are mcp__server__tool for the agents allowedAgents names. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="MCP Servers" default-menu-index="3">
+
+    <transition name="serverDetail"><default-response url="../McpServerDetail"/></transition>
+    <transition name="createServer"><service-call name="org.moqui.agent.RemoteAgentServices.store#AgentMcpServer"/>
+        <default-response url="../McpServerDetail" parameter-map="{mcpServerId:mcpServerId}"/>
+        <error-response url="."/></transition>
+
+    <widgets>
+        <container-dialog id="CreateServerDialog" button-text="New MCP Server">
+            <form-single name="CreateServer" transition="createServer">
+                <field name="mcpServerId"><default-field title="Server ID" tooltip="Its tools are mcp__ this id __ tool"><text-line size="20"/></default-field></field>
+                <field name="serverName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="url"><default-field title="URL" tooltip="Its Streamable HTTP endpoint, https"><text-line size="60"/></default-field></field>
+                <field name="allowedAgents"><default-field title="Allowed Agents" tooltip="Comma separated agent ids, * for all"><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+        <form-list name="ServerList" list="serverList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.agent.AgentMcpServer" list="serverList">
+                <search-form-inputs default-order-by="mcpServerId"/>
+                <select-field field-name="mcpServerId,serverName,url,perUserAuth,allowedAgents,allowPrivateNetwork,disabled"/></entity-find>
+            <field name="mcpServerId"><header-field title="Server" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="serverDetail" text="${mcpServerId}" link-type="anchor"/></default-field></field>
+            <field name="serverName"><header-field title="Name"/><default-field><display/></default-field></field>
+            <field name="url"><header-field title="URL"/><default-field><display/></default-field></field>
+            <field name="perUserAuth"><header-field title="Per User"/><default-field><display/></default-field></field>
+            <field name="allowedAgents"><header-field title="Agents"/><default-field><display/></default-field></field>
+            <field name="allowPrivateNetwork"><header-field title="Private"/><default-field><display/></default-field></field>
+            <field name="disabled"><header-field title="Disabled"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

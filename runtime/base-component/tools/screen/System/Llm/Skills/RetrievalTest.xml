@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- What retrieval makes of a query (plans/LLM-A2A-Assist.md 7.5): the skills it finds for a user, agent and surface,
+    best first, with their scores, whether each is a strong match (the tail's "skills that may fit") and what matched;
+    the exact answer of skill find= with the query; the tail line a later message would carry; and the catalog a
+    conversation that starts with the query on the page would list. Nothing is stored. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Retrieval Test" default-menu-index="3">
+
+    <parameter name="query"/>
+    <parameter name="page"/>
+    <parameter name="userId"/>
+    <parameter name="agentId"/>
+    <parameter name="surface"/>
+    <transition name="skillDetail"><default-response url="../SkillDetail"/></transition>
+
+    <actions>
+        <if condition="query">
+            <service-call name="org.moqui.agent.AgentAdminServices.get#SkillRetrieval" out-map="retrieval"
+                    in-map="{query: query, page: page, userId: userId, agentId: agentId || 'assist', surface: surface}"/>
+            <set field="resultList" from="retrieval.resultList ?? []"/>
+        </if>
+        <entity-find entity-name="moqui.agent.AgentDefinition" list="agentList"><order-by field-name="agentId"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Retrieval Test"/><box-body>
+            <form-single name="RetrievalOptions" transition=".">
+                <field name="query"><default-field title="Query" tooltip="A message as a user would write it"><text-line size="70"/></default-field></field>
+                <field name="page"><default-field title="Page" tooltip="The page it is sent from, such as /apps/system/Security/UserAccount/UserAccountList"><text-line size="50"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><drop-down allow-empty="false" no-current-selected-key="assist">
+                    <list-options list="agentList" key="${agentId}" text="${agentName ?? agentId}"/></drop-down></default-field></field>
+                <field name="surface"><default-field><drop-down allow-empty="true">
+                    <option key="drawer"/><option key="chat"/><option key="a2a"/><option key="mcp"/><option key="job"/><option key="tui"/>
+                </drop-down></default-field></field>
+                <field name="userId"><default-field title="User ID" tooltip="Whose personal skills join the site's; empty is yours"><text-line size="20"/></default-field></field>
+                <field name="submitButton"><default-field title="Test"><submit/></default-field></field>
+                <field-layout>
+                    <field-ref name="query"/>
+                    <field-row><field-ref name="page"/><field-ref name="agentId"/></field-row>
+                    <field-row><field-ref name="surface"/><field-ref name="userId"/></field-row>
+                    <field-ref name="submitButton"/>
+                </field-layout>
+            </form-single>
+            <label text="${retrieval?.skillCount ?? 0} skills in the index for this user, agent and surface." type="p" condition="retrieval"/>
+        </box-body></container-box>
+        <section name="Result1Section" condition="retrieval"><widgets><container-box><box-header title="Ranked Skills"/><box-body>
+            <form-list name="ResultList" list="resultList" skip-form="true">
+                <field name="rank"><default-field title="#"><display/></default-field></field>
+                <field name="skillName"><default-field title="Skill"><link url="skillDetail" text="${skillName}" link-type="anchor" parameter-map="{skillId: skillId}"/></default-field></field>
+                <field name="title"><default-field><display/></default-field></field>
+                <field name="score"><default-field><display/></default-field></field>
+                <field name="lexical"><default-field title="Words"><display/></default-field></field>
+                <field name="semantic"><default-field title="Meaning" tooltip="The cosine of the semantic branch, when an embedder is installed"><display/></default-field></field>
+                <field name="strong"><default-field title="Strong"><display/></default-field></field>
+                <field name="why"><default-field title="Matched"><display/></default-field></field>
+                <field name="provenance"><default-field title="Source"><display/></default-field></field>
+                <field name="personal"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box></widgets></section>
+        <section name="Result2Section" condition="retrieval"><widgets><container-box><box-header title="skill find= answer"/><box-body>
+            <label text="${retrieval.findText ?? ''}" type="pre" encode="true"/>
+        </box-body></container-box></widgets></section>
+        <section name="Result3Section" condition="retrieval"><widgets><container-box><box-header title="Tail of a Later Message"/><box-body>
+            <label text="No strong match: the tail names no skill." type="p" condition="!retrieval.tailLine"/>
+            <label text="${retrieval.tailLine ?? ''}" type="pre" encode="true" condition="retrieval.tailLine"/>
+            <label text="A conversation leaves out of this line the skills its catalog lists and the ones it loaded." type="p"/>
+        </box-body></container-box></widgets></section>
+        <section name="Result4Section" condition="retrieval"><widgets><container-box><box-header title="Catalog of a Conversation That Starts With It"/><box-body>
+            <label text="${retrieval.catalogText ?? ''}" type="pre" encode="true"/>
+        </box-body></container-box></widgets></section>
+    </widgets>
+</screen>

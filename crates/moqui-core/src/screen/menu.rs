@@ -36,13 +36,14 @@ fn text(value: &str) -> Value {
     Value::string(value)
 }
 
-/// Whether the user may view `target` below `parents`, which are on the artifact stack as they are when the screen renders:
-/// a grant on a screen reaches the screens below it.
+/// Whether the user may view `target` below `parents`, the screens from the root down to its parent, decided on a fresh
+/// stack as when the target renders below them ([`Frames::check`]): a grant on a parent reaches the screens below it,
+/// while one on the screen that renders the check (a menu, the app list) does not.
 pub(super) fn permitted_under(
     parents: &[std::sync::Arc<super::definition::ScreenDef>],
     target: &super::definition::ScreenDef,
 ) -> bool {
-    let mut frames = Frames::untracked();
+    let mut frames = Frames::check();
     for parent in parents {
         if frames.push_screen(parent, false).is_err() {
             return false;
@@ -308,11 +309,12 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
     entry.insert("renderModes".into(), render_modes(&info.target_screen.render_modes));
     let mut saved_finds = Vec::new();
     for (name, form) in &info.target_screen.forms {
-        if !form.list || form.node.node()?.attribute("saved-finds").as_deref() != Some("true") {
+        let node = form.node.node()?;
+        if !form.list || node.attribute("saved-finds").as_deref() != Some("true") {
             continue;
         }
         let location = super::saved_finds::form_location(&info.target_screen.location, true, name);
-        let saved = super::saved_finds::saved_find_location(&location, form.dynamic);
+        let saved = super::saved_finds::saved_find_location(&location, form.dynamic, &node);
         let active = script::context_value("formListFindId")
             .map(|value| moqui_lib::object::to_plain_string(&value))
             .filter(|id| !id.is_empty())

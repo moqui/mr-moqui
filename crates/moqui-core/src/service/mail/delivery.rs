@@ -19,7 +19,7 @@
 //! Routing: a recipient is an account of kind EakHosted or EakShared that is not removed and has no incoming (IMAP or
 //! POP) server, since an account the sync feeds would get every message twice. The address matches the account's
 //! address, then one of its `EmailIdentity` addresses, without regard to case; then the same for the address without
-//! its plus tag (`sales+news@` is `sales@`), the delimiters being the listener's `smtp_plus_separator` characters. One
+//! its plus tag (`sales+news@` is `sales@`), the delimiters being the listener's `smtp-server` `plus-separator` characters. One
 //! address is one account: when several accounts claim it at the same step, the one made first (the lowest sequenced
 //! id) gets the mail and a warning names the others, so an identity added later cannot read another account's mail.
 //!
@@ -33,13 +33,18 @@
 //!    451 does not double the accounts that took it the first time.
 //! 3. The message is stored as the sync stores fetched mail ([`super::store::store_message`]: the `EmailMessage` in the
 //!    Inbox, its files as DbResource, its thread), in a transaction of its own; the app's `EmailMessage` ECA files it
-//!    on the records by the account's filing policy. Mail the gateway marked as spam (one of `smtp_spam_headers` says
+//!    on the records by the account's filing policy. Mail the gateway marked as spam (one of `smtp-server` `spam-headers` says
 //!    yes) goes to the Junk folder instead and is not filed.
 //! 4. For Inbox mail: the email ECAs, the account's rules (`run#EmailRules`), the snooze wake and the out-of-office
 //!    reply; then the account's users' counts. Each of these logs its own failure and the message stays stored.
 //!
-//! A store that fails is that account's [`Delivery`] error, which the listener answers with 451; the other accounts
-//! keep their copy.
+//! A store that fails is that account's [`Delivery`] error, which the listener answers with 451 (in LMTP, for that
+//! account's recipients only); the other accounts keep their copy.
+//!
+//! DSN (RFC 3461, with `smtp-server` `dsn`): a recipient the gateway passed an `ORCPT` for gets an `Original-Recipient`
+//! trace field, and the recipients whose `NOTIFY` has `SUCCESS` and whose account stored the message get one "delivered"
+//! `multipart/report` (RFC 3464) to the envelope sender, from the null reverse path, through the outgoing server of the
+//! first such account. A failure needs no DSN from here: the listener refuses at the time and the gateway reports it.
 
 use std::collections::HashSet;
 
@@ -175,11 +180,16 @@ pub struct Envelope {
     pub helo: String,
     /// The client's address (the gateway's, or the one its PROXY header named).
     pub client_ip: String,
-    /// `ESMTP`, `SMTP` or `UTF8ESMTP`.
+    /// The `with` protocol of the Received field (RFC 3848, 6531): `SMTP`, `ESMTP`, `ESMTPS`, `LMTP`, `UTF8SMTPS` and
+    /// so on.
     pub protocol: String,
     pub session_id: String,
     /// This server's name.
     pub hostname: String,
+    /// The DSN `RET` of `MAIL FROM` (`FULL` or `HDRS`), empty for none.
+    pub dsn_ret: String,
+    /// The DSN `ENVID` of `MAIL FROM`, decoded from xtext, empty for none.
+    pub dsn_envid: String,
 }
 
 /// What the listener was told to trust.
@@ -192,10 +202,30 @@ pub struct Options {
 }
 
 /// An account and the recipient addresses that named it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Recipients {
     pub email_account_id: String,
     pub addresses: Vec<String>,
+    /// The DSN parameters of those of `addresses` that had any.
+    pub dsn: Vec<RecipientDsn>,
+}
+
+/// The DSN parameters of one `RCPT TO` (RFC 3461).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecipientDsn {
+    pub address: String,
+    /// `NOTIFY` in upper case: `NEVER`, or some of `SUCCESS`, `FAILURE` and `DELAY` joined by commas; empty for none.
+    pub notify: String,
+    /// `ORCPT` decoded from xtext, with its address type: `rfc822;sales@example.com`; empty for none.
+    pub original: String,
+}
+
+impl RecipientDsn {
+    /// Whether the sender asked to hear of the delivery.
+    #[must_use]
+    pub fn wants_success(&self) -> bool {
+        self.notify.split(',').any(|word| word == "SUCCESS")
+    }
 }
 
 /// What became of the message in one account.
@@ -300,7 +330,136 @@ pub fn deliver(
             result,
         });
     }
+    send_delivered_notice(facade, head, envelope, recipients, &report);
     Ok(report)
+}
+
+/// The "delivered" DSN for the recipients that asked for one (`NOTIFY=SUCCESS`) and whose account stored the message
+/// now (not a `Duplicate`: that was told when it was stored). A failure is logged; the mail stays delivered.
+fn send_delivered_notice(
+    facade: &EntityFacade,
+    head: &[u8],
+    envelope: &Envelope,
+    recipients: &[Recipients],
+    report: &Report,
+) {
+    let stored = |account: &str| {
+        report.deliveries.iter().any(|delivery| {
+            delivery.email_account_id == account && matches!(delivery.result, Ok(Outcome::Stored { .. }))
+        })
+    };
+    let mut told: Vec<&RecipientDsn> = Vec::new();
+    let mut accounts: Vec<&str> = Vec::new();
+    for recipient in recipients {
+        if !stored(&recipient.email_account_id) {
+            continue;
+        }
+        for dsn in recipient.dsn.iter().filter(|dsn| dsn.wants_success()) {
+            if !told.iter().any(|seen| seen.address == dsn.address) {
+                told.push(dsn);
+                accounts.push(&recipient.email_account_id);
+            }
+        }
+    }
+    if told.is_empty() {
+        return;
+    }
+    let sender = envelope.mail_from.trim();
+    if sender.is_empty() || !sender.contains('@') {
+        // a bounce or a sender with no domain: nothing to tell (RFC 3461 section 6.2 for the null reverse path)
+        return;
+    }
+    let date = jiff::Zoned::now().strftime("%a, %d %b %Y %H:%M:%S %z").to_string();
+    let raw = delivered_report(head, envelope, &told, &date);
+    let mut server_id = String::new();
+    for account in &accounts {
+        if let Ok(Some(row)) = find_one(facade, ACCOUNT, "emailAccountId", account) {
+            server_id = field_text(&row, "emailServerId");
+            if !server_id.is_empty() {
+                break;
+            }
+        }
+    }
+    let addresses = told
+        .iter()
+        .map(|dsn| dsn.address.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if server_id.is_empty() {
+        tracing::warn!(
+            "The delivered notice of SMTP session {} to <{}> for {addresses} is not sent: no account of theirs has an \
+             outgoing server",
+            envelope.session_id,
+            trace_text(sender)
+        );
+        return;
+    }
+    let from = format!("MAILER-DAEMON@{}", trace_text(&envelope.hostname));
+    match super::implementation::send_built(facade, &server_id, &from, sender, DELIVERED_SUBJECT, &raw) {
+        Ok(()) => tracing::info!(
+            "SMTP session {} sent the delivered notice for {addresses} to <{}>",
+            envelope.session_id,
+            trace_text(sender)
+        ),
+        Err(err) => tracing::error!(
+            "The delivered notice of SMTP session {} to <{}> for {addresses} was not sent: {err}",
+            envelope.session_id,
+            trace_text(sender)
+        ),
+    }
+}
+
+const DELIVERED_SUBJECT: &str = "Delivery Status Notification (delivered)";
+
+/// A "delivered" `multipart/report` (RFC 3464) for `told`, with the header fields of the message (a delivered notice
+/// returns no content, whatever `RET` asked: RFC 3461 section 4.3 is about failures).
+fn delivered_report(head: &[u8], envelope: &Envelope, told: &[&RecipientDsn], date: &str) -> Vec<u8> {
+    let hostname = trace_text(&envelope.hostname);
+    let boundary = format!("{}.dsn/{hostname}", trace_text(&envelope.session_id));
+    let mut out = String::new();
+    out.push_str(&format!(
+        "From: Mail Delivery System <MAILER-DAEMON@{hostname}>\r\nTo: <{}>\r\nSubject: {DELIVERED_SUBJECT}\r\n\
+         Date: {date}\r\nMessage-ID: <{}.dsn@{hostname}>\r\nAuto-Submitted: auto-replied\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/report; report-type=delivery-status;\r\n\tboundary=\"{boundary}\"\r\n\r\n",
+        trace_text(&envelope.mail_from),
+        trace_text(&envelope.session_id),
+    ));
+    out.push_str(&format!(
+        "--{boundary}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour message was delivered to:\r\n\r\n"
+    ));
+    for dsn in told {
+        out.push_str(&format!("  {}\r\n", trace_text(&dsn.address)));
+    }
+    out.push_str(&format!(
+        "\r\n--{boundary}\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; {hostname}\r\n"
+    ));
+    if !envelope.dsn_envid.is_empty() {
+        out.push_str(&format!(
+            "Original-Envelope-Id: {}\r\n",
+            trace_text(&envelope.dsn_envid)
+        ));
+    }
+    out.push_str(&format!("Arrival-Date: {date}\r\n"));
+    for dsn in told {
+        out.push_str("\r\n");
+        if !dsn.original.is_empty() {
+            out.push_str(&format!("Original-Recipient: {}\r\n", trace_text(&dsn.original)));
+        }
+        out.push_str(&format!(
+            "Final-Recipient: rfc822; {}\r\nAction: delivered\r\nStatus: 2.0.0\r\n",
+            trace_text(&dsn.address)
+        ));
+    }
+    out.push_str(&format!(
+        "\r\n--{boundary}\r\nContent-Type: text/rfc822-headers\r\n\r\n"
+    ));
+    let mut raw = out.into_bytes();
+    raw.extend_from_slice(head);
+    if !head.ends_with(b"\n") {
+        raw.extend_from_slice(b"\r\n");
+    }
+    raw.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    raw
 }
 
 fn deliver_one(
@@ -336,7 +495,7 @@ fn deliver_one(
         .then(|| folders.iter().find(|folder| folder.kind == "EfkJunk"))
         .flatten();
     let folder = junk.unwrap_or(inbox);
-    let raw = with_trace(kept, body, envelope, &recipient.addresses);
+    let raw = with_trace(kept, body, envelope, recipient);
     let parsed = parse_message(&raw)?;
     if !parsed.message_id.is_empty() {
         let had = facade
@@ -525,12 +684,16 @@ fn trace_text(text: &str) -> String {
 }
 
 /// The message for one account: the trace fields, the fields kept, then the body.
-fn with_trace(kept: &[&[u8]], body: &[u8], envelope: &Envelope, addresses: &[String]) -> Vec<u8> {
+fn with_trace(kept: &[&[u8]], body: &[u8], envelope: &Envelope, recipient: &Recipients) -> Vec<u8> {
+    let addresses = recipient.addresses.as_slice();
     let mut out = Vec::with_capacity(body.len() + 1024);
     let mut push = |line: String| out.extend_from_slice(line.as_bytes());
     push(format!("Return-Path: <{}>\r\n", trace_text(&envelope.mail_from)));
     for address in addresses {
         push(format!("Delivered-To: {}\r\n", trace_text(address)));
+    }
+    for dsn in recipient.dsn.iter().filter(|dsn| !dsn.original.is_empty()) {
+        push(format!("Original-Recipient: {}\r\n", trace_text(&dsn.original)));
     }
     let date = jiff::Zoned::now().strftime("%a, %d %b %Y %H:%M:%S %z").to_string();
     let helo = if envelope.helo.trim().is_empty() {
@@ -613,10 +776,62 @@ mod tests {
             protocol: "ESMTP".to_string(),
             session_id: "s1".to_string(),
             hostname: "moqui.example.com".to_string(),
+            ..Envelope::default()
         };
-        let text = String::from_utf8(with_trace(&fields, body, &envelope, &["Sales@example.com".to_string()])).unwrap();
-        assert!(text.starts_with("Return-Path: <a@x.org>\r\nDelivered-To: Sales@example.com\r\nReceived: from gw.example.com? ([10.0.0.5])\r\n\tby moqui.example.com (mr-moqui) with ESMTP id s1\r\n\tfor <Sales@example.com>;"), "{text}");
+        let recipient = Recipients {
+            email_account_id: "A1".to_string(),
+            addresses: vec!["Sales@example.com".to_string()],
+            dsn: vec![RecipientDsn {
+                address: "Sales@example.com".to_string(),
+                notify: "SUCCESS".to_string(),
+                original: "rfc822;sales+x@example.com".to_string(),
+            }],
+        };
+        let text = String::from_utf8(with_trace(&fields, body, &envelope, &recipient)).unwrap();
+        assert!(text.starts_with("Return-Path: <a@x.org>\r\nDelivered-To: Sales@example.com\r\nOriginal-Recipient: rfc822;sales+x@example.com\r\nReceived: from gw.example.com? ([10.0.0.5])\r\n\tby moqui.example.com (mr-moqui) with ESMTP id s1\r\n\tfor <Sales@example.com>;"), "{text}");
         assert!(text.ends_with("\r\nSubject: Hi\r\n\r\nbody\r\n"), "{text}");
         assert_eq!(text.matches("Return-Path").count(), 1);
+    }
+
+    #[test]
+    fn a_delivered_report_names_each_recipient_and_returns_the_header() {
+        let envelope = Envelope {
+            mail_from: "a@x.org".to_string(),
+            session_id: "S1".to_string(),
+            hostname: "mx.example.com".to_string(),
+            dsn_envid: "QQ314159".to_string(),
+            ..Envelope::default()
+        };
+        let one = RecipientDsn {
+            address: "sales@example.com".to_string(),
+            notify: "SUCCESS,FAILURE".to_string(),
+            original: "rfc822;Sales@Example.com".to_string(),
+        };
+        assert!(one.wants_success());
+        assert!(!RecipientDsn {
+            notify: "FAILURE,DELAY".to_string(),
+            ..RecipientDsn::default()
+        }
+        .wants_success());
+        let text = String::from_utf8(delivered_report(
+            b"Subject: Hi\r\nMessage-ID: <m@x.org>\r\n",
+            &envelope,
+            &[&one],
+            "Mon, 19 Oct 2026 11:00:00 +0000",
+        ))
+        .unwrap();
+        assert!(
+            text.starts_with("From: Mail Delivery System <MAILER-DAEMON@mx.example.com>\r\nTo: <a@x.org>\r\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Content-Type: multipart/report; report-type=delivery-status;\r\n\tboundary=\"S1.dsn/mx.example.com\""
+            ),
+            "{text}"
+        );
+        assert!(text.contains("Reporting-MTA: dns; mx.example.com\r\nOriginal-Envelope-Id: QQ314159\r\nArrival-Date: Mon, 19 Oct 2026 11:00:00 +0000\r\n\r\nOriginal-Recipient: rfc822;Sales@Example.com\r\nFinal-Recipient: rfc822; sales@example.com\r\nAction: delivered\r\nStatus: 2.0.0\r\n"), "{text}");
+        assert!(text.ends_with("Content-Type: text/rfc822-headers\r\n\r\nSubject: Hi\r\nMessage-ID: <m@x.org>\r\n\r\n--S1.dsn/mx.example.com--\r\n"), "{text}");
+        assert!(parse_message(text.as_bytes()).is_ok());
     }
 }

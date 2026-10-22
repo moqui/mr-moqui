@@ -40,6 +40,8 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
+        // Assist: the drawer, its store, transport and follow (moqui.assist), before the client, which registers its components
+        footer_scripts.add('/js/WebrootAssist.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')
@@ -69,6 +71,8 @@ along with this software (see the LICENSE.md file). If not, see
         const density = (ec.user.userId && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'
         const logoList = sri.getThemeValues('STRT_HEADER_LOGO')
         const titleList = sri.getThemeValues('STRT_HEADER_TITLE')
+        // STRT_AVATAR_URL is a template with the characters ${userId}. Do not expand it here: the browser replaces the user id.
+        const avatarList = sri.getThemeValues('STRT_AVATAR_URL')
         // The Quasar configuration of the theme (brand colors, notify, loadingBar) as JSON in a STRT_QUASAR_CONFIG resource; a bad one is logged and skipped.
         let quasarConfig = null
         for (const text of sri.getThemeValues('STRT_QUASAR_CONFIG')) {
@@ -81,10 +85,15 @@ along with this software (see the LICENSE.md file). If not, see
             darkMode: ec.user.getPreference('QUASAR_DARK') == 'true', leftOpen: ec.user.getPreference('QUASAR_LEFT_OPEN') == 'true',
             density: density, startApp: startApp,
             notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
+            // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
+            terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
             navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),
             qz: { enabled: qzEnabled },
+            // Assist (js/WebrootAssist.js): the agents are built and on, and the user may use them (AgentUse); else the drawer makes no request
+            assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
             userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
             preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
+            avatarUrl: avatarList.length ? String(avatarList[0]) : '',
             qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },
             // the shell (m-qapps-root): the theme's logo, title and footer, the logout URL, and its labels in the user's language
             shell: { logoUrl: logoList.length ? sri.buildUrl(logoList[0]).url : '', title: titleList.length ? ec.resource.expand(titleList[0], '') : '',
@@ -93,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
                 screenHistory: ec.l10n.localize('Screen History'), account: ec.l10n.localize('Account'), welcome: ec.l10n.localize('Welcome'),
                 logout: ec.l10n.localize('Logout'), switchDarkLight: ec.l10n.localize('Switch Dark/Light'), reLogin: ec.l10n.localize('Re-Login'),
                 authenticationCode: ec.l10n.localize('Authentication Code'), signIn: ec.l10n.localize('Sign in'), password: ec.l10n.localize('Password'),
-                reloadPage: ec.l10n.localize('Reload Page'),
+                reloadPage: ec.l10n.localize('Reload Page'), terminal: ec.l10n.localize('Terminal UI'),
                 // the suite shell: launcher, search and palette, quick create, the tray and its counts, the keys (js/README.md)
                 applications: ec.l10n.localize('Applications'), allApplications: ec.l10n.localize('All applications'), search: ec.l10n.localize('Search'),
                 quickCreate: ec.l10n.localize('Create'), quickCreateFirst: ec.l10n.localize('Create in this app'), today: ec.l10n.localize('Today'),
@@ -111,7 +120,9 @@ along with this software (see the LICENSE.md file). If not, see
                 statusText: ec.l10n.localize("What's your status?"), emoji: ec.l10n.localize('Emoji'), clearAfter: ec.l10n.localize('Clear after'),
                 dontClear: ec.l10n.localize("Don't clear"), minutes30: ec.l10n.localize('30 minutes'), hour1: ec.l10n.localize('1 hour'),
                 hours4: ec.l10n.localize('4 hours'), thisWeek: ec.l10n.localize('This week'),
-                save: ec.l10n.localize('Save'), cancel: ec.l10n.localize('Cancel') }
+                save: ec.l10n.localize('Save'), cancel: ec.l10n.localize('Cancel'),
+                // Assist (js/WebrootAssist.js; its other texts are moqui.assist.labels)
+                assist: ec.l10n.localize('Assist'), askAssist: ec.l10n.localize('Ask Assist') }
         }
         // conditional QZ Tray scripts, only for a user who turned printing on; the client loads them
     ]]></script></pre-actions>

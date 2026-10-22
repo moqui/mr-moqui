@@ -196,13 +196,75 @@ pub fn has_permission(user_permission_id: &str) -> Result<bool, Error> {
     let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
         return Ok(false);
     };
+    user_has_permission(&user_id, user_permission_id)
+}
+
+/// [`has_permission`] for `user_id`, who need not be logged in: internal work for another user (a chat agent that runs as
+/// a message's sender).
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be read.
+pub fn user_has_permission(user_id: &str, user_permission_id: &str) -> Result<bool, Error> {
+    if !user_granted(user_id, user_permission_id)? {
+        return Ok(false);
+    }
+    // an external user never holds the agent permissions, whatever group grants them
+    Ok(!EXTERNAL_WITHHELD.contains(&user_permission_id) || !is_external_user(user_id))
+}
+
+/// The framework permission of a user from outside the organization that runs the server: a client contact, a vendor's
+/// or partner's user. Such a user reaches no room bound to a record (`org.moqui.impl.ChatServices`: not as a member
+/// either, and `check#RecordVisible` answers false for them whatever the app's hook says), no public room but as a
+/// member, no record folder of a records drive (`FileServices.get#DriveAccess`, over the screens, WebDAV and SFTP),
+/// sees no other user's presence, and never holds the agent permissions ([`EXTERNAL_WITHHELD`]: no Assist, chat agents,
+/// AI tasks, A2A, MCP or the LLM gateway). The framework grants it to no group; an app grants it to its group of outside
+/// users (IronStone BOSS: `BOSS_PROJECT_CLIENT`).
+pub const EXTERNAL_USER: &str = "EXTERNAL_USER";
+
+/// The permissions a user with [`EXTERNAL_USER`] never holds.
+pub const EXTERNAL_WITHHELD: &[&str] = &[
+    "AgentUse",
+    "AgentAdmin",
+    "AgentAudit",
+    "LlmGatewayUse",
+    "A2aServerUse",
+    "McpServerUse",
+];
+
+/// Whether `user_id` holds [`EXTERNAL_USER`]. A failure to read the rows counts as external (logged): what an external
+/// user is refused, an internal user can do without for the moment.
+pub fn is_external_user(user_id: &str) -> bool {
+    if user_id.is_empty() {
+        return false;
+    }
+    match user_granted(user_id, EXTERNAL_USER) {
+        Ok(external) => external,
+        Err(err) => {
+            tracing::error!("Could not read whether user {user_id} is external, treating them as external: {err}");
+            true
+        }
+    }
+}
+
+/// Whether the logged-in user holds [`EXTERNAL_USER`]; false without a user (system work).
+pub fn current_user_external() -> bool {
+    match session::current_user_id() {
+        Ok(Some(user_id)) => is_external_user(&user_id),
+        Ok(None) => false,
+        Err(err) => {
+            tracing::error!("Could not read the current user, treating them as external: {err}");
+            true
+        }
+    }
+}
+
+/// Whether a group `user_id` is in grants `user_permission_id`, both rows in date.
+fn user_granted(user_id: &str, user_permission_id: &str) -> Result<bool, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
     let now = now_value();
-    let members = facade
-        .find(GROUP_MEMBER)?
-        .eq("userId", Value::string(&user_id))
-        .list()?;
+    let members = facade.find(GROUP_MEMBER)?.eq("userId", Value::string(user_id)).list()?;
     for member in members
         .iter()
         .filter(|row| date_open(row, "fromDate", "thruDate", &now))

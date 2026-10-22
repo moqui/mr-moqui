@@ -33,4 +33,10 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Full permissions for the ADMIN user group -->
         <authz artifactAuthzId="MOQUI_API_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
+    <!-- Commit statuses posted by outside CI: any signed-in user reaches the path, and the services check the push right
+        on the repository (AT_GIT_REPOSITORY) -->
+    <artifactGroups artifactGroupId="MOQUI_API_GIT" description="Moqui Tools REST API: git commit statuses">
+        <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui/git"/>
+        <authz artifactAuthzId="MOQUI_API_GIT_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
 </entity-facade-xml>

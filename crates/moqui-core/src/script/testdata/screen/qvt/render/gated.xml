@@ -1,0 +1,56 @@
+<screen require-authentication="false">
+    <!-- row-selection condition and the views' move-condition: what a user who may not use them is not shown -->
+    <transition name="open"><default-response type="none"/></transition>
+    <transition name="moveTask"><default-response type="none"/></transition>
+    <transition name="bulk"><default-response type="none"/></transition>
+    <actions>
+        <set field="canBulk" from="true"/>
+        <set field="taskList" from="[
+            {taskId: 'T1', name: 'One', stage: 'todo', parentId: null},
+            {taskId: 'T2', name: 'Two', stage: 'doing', parentId: 'T1'}]"/>
+    </actions>
+    <widgets>
+        <form-list name="SelOn" list="taskList" transition="open" paginate="false">
+            <row-selection id-field="taskId" parameter="taskIds" condition="canBulk">
+                <action><dialog button-text="Bulk On"/>
+                    <form-single name="BulkOn" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
+            </row-selection>
+            <field name="name"><first-row-field><display text="first"/></first-row-field><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="SelOff" list="taskList" transition="open" paginate="false">
+            <row-selection id-field="taskId" parameter="taskIds" condition="!canBulk">
+                <action><dialog button-text="Bulk Off"/>
+                    <form-single name="BulkOff" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
+            </row-selection>
+            <field name="name"><first-row-field><display text="first"/></first-row-field><default-field><display/></default-field></field>
+        </form-list>
+        <!-- a condition that fails to evaluate does not hold -->
+        <form-list name="SelBad" list="taskList" transition="open" paginate="false">
+            <row-selection id-field="taskId" parameter="taskIds" condition="noSuchThing.call()">
+                <action><dialog button-text="Bulk Bad"/>
+                    <form-single name="BulkBad" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
+            </row-selection>
+            <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="BoardFixed" list="taskList" views="board,list" skip-form="true" paginate="false">
+            <view-board group-field="stage" card-title-field="name" transition="moveTask" move-condition="!canBulk"/>
+            <field name="taskId"><default-field><hidden/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="BoardMoves" list="taskList" views="board,list" skip-form="true" paginate="false">
+            <view-board group-field="stage" card-title-field="name" transition="moveTask" move-condition="canBulk"/>
+            <field name="taskId"><default-field><hidden/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="TreeFixed" list="taskList" views="tree,list" skip-form="true" paginate="false">
+            <view-tree parent-field="parentId" transition="moveTask" move-condition="!canBulk"/>
+            <field name="taskId"><default-field><hidden/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="TreeMoves" list="taskList" views="tree,list" skip-form="true" paginate="false">
+            <view-tree parent-field="parentId" transition="moveTask" move-condition="canBulk"/>
+            <field name="taskId"><default-field><hidden/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

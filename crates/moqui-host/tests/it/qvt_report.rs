@@ -48,14 +48,24 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
     // dialogs, links with parameter maps, and actions that are only finds. Every expression it writes is in the browser host, and its always-actions
     // and pre-actions have no side effect, so the report is clean and the fixture can be marked server-static for qvt.
     let fixture = find("tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml");
-    assert!(fixture.is_clean(), "{}", fixture.render());
+    // The lint command is the static half. Clean means the full check ran.
+    assert!(!fixture.is_clean(), "{}", fixture.render());
     assert!(
-        fixture.eligible && fixture.template_bytes > 5000 && !fixture.marked,
+        fixture.eligible
+            && fixture.violations.is_empty()
+            && !fixture.full_check
+            && fixture.template_bytes > 5000
+            && !fixture.marked,
         "{}",
         fixture.render()
     );
     assert_eq!(fixture.mode, "qvt");
-    assert!(fixture.render().contains("verdict clean"), "{}", fixture.render());
+    assert!(
+        fixture.render().contains("verdict static half only"),
+        "{}",
+        fixture.render()
+    );
+    assert!(!fixture.render().contains("verdict clean"), "{}", fixture.render());
 
     // A screen that reads a server-only part of ec in a widget says so, with the screen, the element and the operation.
     let service = find("tools/screen/Tools/Service/ServiceDetail.xml");

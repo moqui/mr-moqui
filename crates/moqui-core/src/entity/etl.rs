@@ -34,7 +34,6 @@ use crate::transaction::{TransactionAttribute, TransactionManager};
 pub struct EtlLoader {
     facade: EntityFacade,
     began: Vec<TransactionManager>,
-    use_try_insert: bool,
     dummy_fks: bool,
 }
 
@@ -43,7 +42,6 @@ impl EntityFacade {
         EtlLoader {
             facade: self.clone(),
             began: Vec::new(),
-            use_try_insert: false,
             dummy_fks: false,
         }
     }
@@ -67,13 +65,6 @@ impl EntityFacade {
 }
 
 impl EtlLoader {
-    /// Insert, or update on a primary-key conflict, instead of the entity-auto store.
-    #[must_use]
-    pub fn use_try_insert(mut self) -> Self {
-        self.use_try_insert = true;
-        self
-    }
-
     /// Create a dummy record for a foreign key that has no related record.
     #[must_use]
     pub fn dummy_fks(mut self) -> Self {
@@ -83,19 +74,16 @@ impl EtlLoader {
 
     fn write(&self, entity_name: &str, entry: &mut SimpleEntry) -> Result<(), Error> {
         let facade = &self.facade;
-        // The same pattern as the data loader's record write.
-        if self.dummy_fks || self.use_try_insert {
+        // The same pattern as the data loader's record write: one upsert where it fits (Java's `useTryInsert`, which
+        // this replaces), else create-or-update with dummy foreign keys or the entity-auto store.
+        let upsert = facade.upsert_fits(entity_name, &entry.values)?;
+        if upsert || self.dummy_fks {
             let mut value = facade.make_value(entity_name)?;
             for (name, field) in &entry.values {
                 value.set(name, field.clone());
             }
-            // Java's ETL loader tries the insert even where the database sets `never-try-insert` (Postgres), where the
-            // failed insert aborts the transaction and the update after it fails; here such a database stores with
-            // `createOrUpdate`, as the data loader's `handleValue` does.
-            let try_insert = self.use_try_insert
-                && facade.with_entity(entity_name, |_, dialect, _| Ok(!dialect.never_try_insert))?;
-            if try_insert {
-                facade.upsert_record(value.entity_name(), value.fields())
+            if upsert {
+                facade.upsert_record(entity_name, value.into_fields())
             } else {
                 value.create_or_update(facade)
             }
@@ -194,7 +182,7 @@ impl EntityFind {
 fn extract_values(find: EntityFind, etl: &mut SimpleEtl) -> Result<(), Error> {
     let mut values = find.iterator()?;
     while let Some(value) = values.next_value()? {
-        let entry = SimpleEntry::new(value.entity_name(), value.fields().clone());
+        let entry = SimpleEntry::new(value.entity_name(), crate::entity::string_map(value.fields()));
         if let Err(stop) = etl.process_entry(entry) {
             tracing::warn!(cause = %stop.cause, "EntityFind extract stopped");
             break;
@@ -294,14 +282,14 @@ mod tests {
             Some("transformed")
         );
 
-        // A second run updates through the try-insert path.
+        // A second run updates the row, with one upsert.
         let again = root.make_file("again.xml").unwrap();
         again
             .write_text(
                 r#"<data><moqui.basic.Enumeration enumId="EtlOne" enumTypeId="EtlType" description="Updated"/></data>"#,
             )
             .unwrap();
-        let mut etl = SimpleEtl::new(FlatXmlExtractor::new(again), facade.make_etl_loader().use_try_insert());
+        let mut etl = SimpleEtl::new(FlatXmlExtractor::new(again), facade.make_etl_loader());
         etl.process();
         assert!(
             !etl.has_error(),

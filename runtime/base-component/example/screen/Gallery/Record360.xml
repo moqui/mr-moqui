@@ -114,7 +114,21 @@ along with this software (see the LICENSE.md file). If not, see
         </div></div>
     </q-card-section>
 </q-card>
-            ]]></text></render-mode>
+            ]]></text>
+            <!-- the header card: identity, groups and status, then the key numbers as cards linking to their lists -->
+            <text type="tui"><![CDATA[[
+{"t": "box", "id": "Record360Header", "title": ${JSON.stringify(displayName + ' (' + initials + ')')}, "c": [
+    {"t": "text", "id": "Record360Identity", "text": ${JSON.stringify(userAccount.username + ' · ' + (userAccount.emailAddress || 'no email') + ' · ' + userId)}},
+    {"t": "text", "id": "Record360Chips", "style": "strong", "text": ${JSON.stringify(groupList.map((g) => '[' + (g.description || g.userGroupId) + ']')
+        .concat(['[' + (userAccount.disabled == 'Y' ? 'Disabled' : 'Active') + ']']).join(' '))}},
+    {"t": "dashboard", "id": "Record360Numbers", "c": [
+        {"t": "numberCard", "id": "Record360Groups", "title": "Groups", "value": ${JSON.stringify(String(ec.l10n.format(groupList.length, '#,##0')))}, "url": ${JSON.stringify(groupsUrl)}},
+        {"t": "numberCard", "id": "Record360Visits", "title": "Visits", "value": ${JSON.stringify(String(ec.l10n.format(visitCount, '#,##0')))}, "url": ${JSON.stringify(visitsUrl)}},
+        {"t": "numberCard", "id": "Record360Hits", "title": "Hits", "value": ${JSON.stringify(String(ec.l10n.format(hitCount, '#,##0')))}, "url": ${JSON.stringify(hitsUrl)}},
+        {"t": "numberCard", "id": "Record360Alerts", "title": "Alerts", "value": ${JSON.stringify(String(ec.l10n.format(notificationCount, '#,##0')))}, "url": ${JSON.stringify(notificationsUrl)}}
+    ]}
+]}
+]]]></text></render-mode>
 
             <!-- the app's actions: tonal links, destructive one confirms -->
             <container style="q-mx-sm q-mb-sm q-gutter-sm">
@@ -195,7 +209,14 @@ along with this software (see the LICENSE.md file). If not, see
     <q-timeline-entry title="Added to ${WebUtilities.encodeHtml(groupList.length ? (groupList[0].description || groupList[0].userGroupId) : 'no group')}" subtitle="${groupList.length ? ec.l10n.format(groupList[0].fromDate, 'yyyy-MM-dd') : ''}" icon="group_add" color="secondary"></q-timeline-entry>
     <q-timeline-entry title="Note: demo account of the framework" subtitle="Seed data" icon="note" color="grey-6"></q-timeline-entry>
 </q-timeline>
-                        ]]></text></render-mode>
+                        ]]></text>
+                        <text type="tui"><![CDATA[{"t": "component", "id": "Record360Timeline", "name": "timeline", "props": {"items": [
+    {"time": ${JSON.stringify(visitList.length ? String(ec.l10n.format(visitList[0].fromDate, 'yyyy-MM-dd HH:mm')) : '')}, "kind": "primary",
+        "title": ${JSON.stringify('Signed in from ' + (visitList.length ? (visitList[0].clientIpAddress || 'unknown address') : 'nowhere yet'))}},
+    {"time": ${JSON.stringify(groupList.length ? String(ec.l10n.format(groupList[0].fromDate, 'yyyy-MM-dd')) : '')}, "kind": "secondary",
+        "title": ${JSON.stringify('Added to ' + (groupList.length ? (groupList[0].description || groupList[0].userGroupId) : 'no group'))}},
+    {"time": "Seed data", "kind": "grey-6", "title": "Note: demo account of the framework"}
+]}}]]></text></render-mode>
                     </box-body></container-box>
                 </row-col>
             </container-row>

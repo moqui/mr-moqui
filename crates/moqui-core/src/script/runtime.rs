@@ -56,6 +56,8 @@ mod files_host;
 #[cfg(test)]
 mod framework_gaps_tests;
 mod helpers;
+#[cfg(feature = "llm")]
+mod llm;
 #[cfg(test)]
 mod metadata_tests;
 mod native_tools;
@@ -69,6 +71,7 @@ mod upload;
 mod urls;
 mod user_host;
 mod values;
+mod web_host;
 
 pub(crate) use compiled::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
@@ -90,6 +93,7 @@ pub use values::script_list_values;
 pub(crate) use values::{
     context_combined, pop_context_frame, put_context_all, value_entity_name, value_field, value_items, value_map,
 };
+pub(crate) use web_host::invoke as invoke_web_handler;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
 use moqui_db::sql::{CompareOp, Condition};
@@ -289,23 +293,25 @@ pub(crate) fn script_time_remaining() -> Option<Duration> {
 const DEFAULT_REQUEST_TIMEOUT: u64 = 300;
 
 /// Mark this thread a request worker: a script on it that runs outside a transaction is limited to the request
-/// timeout unless `script_timeout` says otherwise.
+/// timeout unless `resource-facade` `script-timeout` says otherwise.
 pub(crate) fn mark_request_thread() {
     REQUEST_THREAD.with(|flag| flag.set(true));
     SCRIPT_LIMIT.with(|cell| cell.set(None));
 }
 
-/// The seconds a script may run when no transaction limits it, read once per thread. `script_timeout` when set, for
-/// every thread; else `webapp_request_timeout` on a request worker, and no limit on a service, job, or scheduler
-/// thread, which run batch work outside a transaction as Java does. 0 is no limit.
+/// The seconds a script may run when no transaction limits it, read once per thread. The conf's `resource-facade`
+/// `script-timeout` when set, for every thread; else the webapp's `requests` `request-timeout`
+/// (`webapp_request_timeout`) on a request worker, and no limit on a service, job, or scheduler thread, which run batch
+/// work outside a transaction as Java does. 0 is no limit.
 fn default_script_limit() -> Option<Duration> {
     if let Some(limit) = SCRIPT_LIMIT.with(Cell::get) {
         return limit;
     }
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()));
     let limit = script_limit_for(
-        &moqui_lib::env::get_prop_or_env("script_timeout"),
+        &crate::resource::setting("script-timeout"),
         REQUEST_THREAD.with(Cell::get),
-        &moqui_lib::env::get_prop_or_env("webapp_request_timeout"),
+        &crate::web::protection_setting(factory.as_deref(), "requests", "request-timeout", "webapp_request_timeout"),
     );
     SCRIPT_LIMIT.with(|cell| cell.set(Some(limit)));
     limit
@@ -702,6 +708,10 @@ fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
             ctx.run_gc();
         }
         let flushed = flush_tracked(&ctx, &engine, Flush::End);
+        // what the outermost script opened with `send()` and did not read or forward goes with it
+        if depth == 0 {
+            crate::web::upstream::clear();
+        }
         match (result, flushed) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(err), _) | (Ok(_), Err(err)) => Err(err),
@@ -1469,6 +1479,8 @@ fn install_ec(ctx: &Ctx<'_>) -> Result<(), Error> {
     ec.set("web", web).map_err(js_error)?;
     ec.set("cache", cache_object(ctx)?).map_err(js_error)?;
     ec.set("search", search_object(ctx)?).map_err(js_error)?;
+    #[cfg(feature = "llm")]
+    ec.set("llm", llm::llm_object(ctx)?).map_err(js_error)?;
     ec.set("transaction", transaction_object(ctx)?).map_err(js_error)?;
     ec_extra::install_ec_extras(ctx, &ec)?;
     let make_notification = Function::new(ctx.clone(), notification::make_notification_message).map_err(js_error)?;
@@ -1629,6 +1641,8 @@ fn service_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     service.set("sync", sync).map_err(js_error)?;
     let async_call = Function::new(ctx.clone(), service_async).map_err(js_error)?;
     service.set("async", async_call).map_err(js_error)?;
+    let job = Function::new(ctx.clone(), service_job).map_err(js_error)?;
+    service.set("job", job).map_err(js_error)?;
     Ok(service)
 }
 
@@ -2248,7 +2262,7 @@ mod tests {
     fn a_loop_outside_a_transaction_stops_at_the_default_limit() -> Result<(), Error> {
         use std::time::{Duration, Instant};
         clear_context_stack();
-        // As a `script_timeout` of 200 ms would set it.
+        // As a `resource-facade` `script-timeout` of 200 ms would set it.
         super::SCRIPT_LIMIT.with(|limit| limit.set(Some(Some(Duration::from_millis(200)))));
         let started = Instant::now();
         let err = run_script("while (true) {}").expect_err("interrupted");

@@ -33,13 +33,27 @@ pub(crate) mod fs;
 pub mod gc;
 pub(crate) mod index;
 pub(crate) mod lfs_files;
+pub(crate) mod hosting;
+pub(crate) mod merge;
 pub(crate) mod ops;
 pub(crate) mod revwalk;
+pub(crate) mod rules;
 pub mod server;
 pub(crate) mod store;
 #[cfg(test)]
 mod tests;
 pub(crate) mod values;
+
+/// An attribute of the conf's `git-server` element in the current context's factory, `${}` expanded and trimmed; empty
+/// when there is no current context or the conf leaves it out.
+pub(crate) fn setting(name: &str) -> String {
+    crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting("git-server", name)).unwrap_or_default()
+}
+
+/// [`setting`] as a number, or `default` when it is empty or not one.
+pub(crate) fn number_setting<T: std::str::FromStr>(name: &str, default: T) -> T {
+    setting(name).parse().unwrap_or(default)
+}
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -108,6 +122,8 @@ pub(crate) struct Definition {
     pub branch_explicit: bool,
     pub path: PathBuf,
     pub credentials: fs::Credentials,
+    /// The row has an `archivedDate`: pushes, ref writes, merges and writes are refused.
+    pub archived: bool,
 }
 
 /// An open repository.
@@ -136,8 +152,8 @@ struct Inner {
     /// When each repository's refs last changed (milliseconds): a push of commits dated in the past still changes the
     /// last-modified time of its files, which caches over `git://` locations go by.
     updated: Mutex<HashMap<String, i64>>,
-    /// Decoded objects of the `db` repositories.
-    objects: Arc<db::ObjectCache>,
+    /// Decoded objects of the `db` repositories, made on first use by the conf of the context then current.
+    objects: std::sync::OnceLock<Arc<db::ObjectCache>>,
     /// Parsed `.gitattributes` files, by blob.
     attributes: attributes::RulesCache,
     /// The path index of each branch ("repositoryId\nbranch"), brought to the branch's head when it is used.
@@ -211,11 +227,16 @@ impl GitProvider {
                 locks: Mutex::new(HashMap::new()),
                 event_locks: Mutex::new(HashMap::new()),
                 updated: Mutex::new(HashMap::new()),
-                objects: db::object_cache(),
+                objects: std::sync::OnceLock::new(),
                 attributes: attributes::rules_cache(),
                 indexes: Mutex::new(BoundedMap::with_bytes(INDEX_BRANCHES, INDEX_BYTES)),
             }),
         }
+    }
+
+    /// The cache of decoded objects, made on first use.
+    pub(crate) fn objects(&self) -> Arc<db::ObjectCache> {
+        Arc::clone(self.inner.objects.get_or_init(db::object_cache))
     }
 
     fn entity(&self) -> Result<EntityFacade, Error> {
@@ -257,6 +278,7 @@ impl GitProvider {
                 username: text(row.get("username")),
                 token: text(row.get("accessToken")),
             },
+            archived: text(row.get("archivedDate")).is_some(),
         })
     }
 
@@ -275,7 +297,7 @@ impl GitProvider {
             RepositoryKind::Db => Box::new(db::DbStore::new(
                 self.entity()?,
                 &definition.id,
-                Arc::clone(&self.inner.objects),
+                self.objects(),
             )),
         };
         Ok(Repo { definition, store })
@@ -312,6 +334,11 @@ impl GitProvider {
     /// The current user as a commit author: the `UserAccount` name and email, else the username, else `moqui`.
     fn author(&self) -> Author {
         self.author_of(crate::user::current_user_id().ok().flatten(), true)
+    }
+
+    /// A user as a commit author, by their `UserAccount` (the author of a squash commit, say).
+    pub(crate) fn author_for_user(&self, user_id: &str) -> Author {
+        self.author_of(Some(user_id.to_string()), false)
     }
 
     /// A user as a commit author, by their `UserAccount`; `current` falls back to the current username.
@@ -369,6 +396,12 @@ impl GitProvider {
                 repo.definition.id
             )));
         }
+        if repo.definition.archived {
+            return Err(Error::new(format!(
+                "git repository {} is archived and read only: {location}",
+                repo.definition.id
+            )));
+        }
         Ok(())
     }
 
@@ -390,6 +423,7 @@ impl GitProvider {
         let author = self.version_author(&committer);
         let made = ops::commit_as(repo.store.as_ref(), &repo.definition.branch, &author, &committer, edits)?;
         if let Some(id) = made {
+            self.log_protected_write(repo, id);
             self.remember_head(&repo.definition.id, Some(id), None);
             if let Some(prior) = prior {
                 let name = ops::branch_ref(&repo.definition.branch);
@@ -530,7 +564,18 @@ impl GitProvider {
         head: &ops::CommitInfo,
         query: impl FnOnce(&BranchIndex) -> T,
     ) -> Result<T, Error> {
-        let key = format!("{}\n{}", repo.definition.id, repo.definition.branch);
+        self.indexed_at(repo, &repo.definition.branch, head, query)
+    }
+
+    /// [`Self::indexed`] for any branch (`name`), or for a commit not on a branch (`name` `@<commitId>`).
+    fn indexed_at<T>(
+        &self,
+        repo: &Repo,
+        name: &str,
+        head: &ops::CommitInfo,
+        query: impl FnOnce(&BranchIndex) -> T,
+    ) -> Result<T, Error> {
+        let key = format!("{}\n{name}", repo.definition.id);
         let cached = moqui_lib::sync::lock(&self.inner.indexes).get(&key);
         let (index, fresh) = match cached {
             Some(index) => (index, false),
@@ -688,6 +733,10 @@ impl GitProvider {
                 "fetch of git repository {repository_id} denied because sim mode is active"
             )));
         }
+        crate::entity::fence::check_effect(
+            crate::entity::fence::Effect::RemoteCall,
+            &format!("fetch of git repository {repository_id}"),
+        )?;
         let outcome = {
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
@@ -879,7 +928,7 @@ impl GitProvider {
                 RepositoryKind::Db => Box::new(db::DbStore::new(
                     self.entity()?,
                     &other.id,
-                    Arc::clone(&self.inner.objects),
+                    self.objects(),
                 )),
                 _ => Box::new(fs::FsStore::open(&other.path)?),
             };
@@ -899,6 +948,10 @@ impl GitProvider {
                     crate::outbound::redacted(&source)
                 )));
             }
+            crate::entity::fence::check_effect(
+                crate::entity::fence::Effect::RemoteCall,
+                &format!("import of {}", crate::outbound::redacted(&source)),
+            )?;
             let path = self.inner.runtime_dir.join("tmp").join(format!(
                 "git-import-{repository_id}-{}",
                 jiff::Timestamp::now().as_millisecond()

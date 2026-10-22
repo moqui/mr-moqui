@@ -12,14 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Notification socket and one cluster cache post. `cluster_https_port=0` is an ephemeral bind.
+//! Notification socket and one cluster cache post. `cluster_https_port=0` is an ephemeral bind. When the user's last
+//! socket closes, the user's offline presence is published (after the 20 second grace a reload gets).
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use moqui_core::context::ExecutionContextFactory;
@@ -107,9 +108,14 @@ fn notws_push_and_one_cluster_invalidation() {
     // The client gets Java's wrapped message: who else it went to is not in it.
     assert!(!frame.contains("userIds") && !frame.contains(&user_id), "{frame}");
     assert_absent(&mut other, ONLY_TOPIC, Duration::from_millis(400));
+    // the user is online; closing every socket of theirs publishes offline once the grace is over
+    let presence = Arc::new(Mutex::new(Vec::new()));
+    let _presence_tap = tap_presence(&user_id, Arc::clone(&presence));
+    set_online(&factory, &user_id);
     drop(all);
     drop(other);
     drop(extra);
+    let closed = Instant::now();
 
     let (session_fp, cert_fp) = member_fingerprints(&factory);
     let port = server.cluster_address().port();
@@ -132,6 +138,64 @@ fn notws_push_and_one_cluster_invalidation() {
         !added.is_empty() && added.iter().all(|topic| topic == "entity-cache-invalidate"),
         "posts {posts:?} before {before}"
     );
+
+    let offline = || presence.lock().unwrap().iter().any(|presence| presence == "offline");
+    let deadline = closed + Duration::from_secs(40);
+    while Instant::now() < deadline && !offline() {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        offline(),
+        "no offline presence after the last socket closed: {:?}",
+        presence.lock().unwrap()
+    );
+    assert!(
+        closed.elapsed() >= Duration::from_secs(19),
+        "offline came before the grace a reload gets"
+    );
+}
+
+/// The presence the userStatus pushes to `user_id` carry, kept while the subscription lives.
+fn tap_presence(user_id: &str, seen: Arc<Mutex<Vec<String>>>) -> moqui_core::notify::Subscription {
+    let user_id = user_id.to_string();
+    moqui_core::notify::subscribe(
+        moqui_core::notify::NOTIFICATION_MESSAGE,
+        Arc::new(move |message: &moqui_core::notify::TopicMessage| {
+            let routed = message.body[moqui_core::notify::ROUTE_USER_IDS]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(user_id.as_str())));
+            if routed && message.body["topic"].as_str() == Some("userStatus") {
+                if let Some(presence) = message.body["message"]["presence"].as_str() {
+                    seen.lock().unwrap().push(presence.to_string());
+                }
+            }
+        }),
+    )
+    .unwrap()
+}
+
+/// The user's chat presence is online: seen and active now, and published as online.
+fn set_online(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
+    let ctx = factory.new_context();
+    let entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let facade = factory.entity().unwrap();
+    let millis = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(0);
+    let now = basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let mut row = facade.make_value("moqui.security.UserStatus").unwrap();
+    row.set("userId", Value::string(user_id));
+    row.set("statusEnumId", Value::string("UpsOnline"));
+    row.set("lastSeenDate", now.clone());
+    row.set("lastActiveDate", now);
+    row.set("lastPresence", Value::string("online"));
+    row.create(&facade).unwrap();
+    drop(entered);
 }
 
 fn prove_both_subscribed(factory: &Arc<ExecutionContextFactory>, user_id: &str, all: &mut Ws, other: &mut Ws) {

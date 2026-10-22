@@ -125,6 +125,18 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     merge_entity_facade(base, over);
     merge_database_list(base, over);
     merge_repository_list(base, over);
+    // elements of settings only: an attribute of the override replaces the base one
+    for name in [
+        "email-client",
+        "ssh-server",
+        "terminal",
+        "git-server",
+        "dav-server",
+        "smtp-server",
+        "logging",
+    ] {
+        base.merge_single_child(over, name);
+    }
 }
 
 fn merge_server_stats(base: &MNode, over: &MNode) {
@@ -265,6 +277,7 @@ fn merge_user_facade(base: &MNode, over: &MNode) {
     base_node.merge_single_child(&over_node, "password");
     base_node.merge_single_child(&over_node, "login-key");
     base_node.merge_single_child(&over_node, "login");
+    base_node.merge_single_child(&over_node, "authz");
 }
 
 fn merge_transaction_facade(base: &MNode, over: &MNode) {
@@ -294,6 +307,9 @@ fn merge_screen_facade(base: &MNode, over: &MNode) {
         base_screen.merge_children_by_keys(over_screen, "subscreens-item", &["name"], None);
     };
     base.merge_child_with_child_key(over, "screen-facade", "screen", &["location"], Some(&mut merge_screen));
+    if let (Some(base_node), Some(over_node)) = (base.first_named("screen-facade"), over.first_named("screen-facade")) {
+        base_node.merge_single_child(&over_node, "pdf");
+    }
 }
 
 fn merge_service_facade(base: &MNode, over: &MNode) {
@@ -318,7 +334,7 @@ fn merge_service_facade(base: &MNode, over: &MNode) {
     append_named(&base_node, &over_node, "jms-service");
 }
 
-/// `search-facade` attributes override; a `postgres` or `cluster` child replaces the base one.
+/// `search-facade` attributes override; a `postgres`, `cluster` or `semantic` child merges into the base one.
 fn merge_search_facade(base: &MNode, over: &MNode) {
     let Some(over_node) = over.first_named("search-facade") else {
         return;
@@ -329,23 +345,52 @@ fn merge_search_facade(base: &MNode, over: &MNode) {
             base_node.copy_attributes_from(&over_node);
             base_node.merge_single_child(&over_node, "postgres");
             base_node.merge_single_child(&over_node, "cluster");
+            base_node.merge_single_child(&over_node, "semantic");
         }
     }
 }
 
+/// `llm-facade` attributes override; `endpoint` merges by id (its `header`s by name), `model` by id (its `reasoning`s
+/// by level, an `api-config` replaces the base one), `bind` by feature; the settings children merge their attributes,
+/// and the `push` and `security` of `a2a` theirs.
 fn merge_llm_facade(base: &MNode, over: &MNode) {
-    let mut merge_profile = |base_profile: &MNode, over_profile: &MNode| {
-        base_profile.merge_children_by_keys(over_profile, "header", &["name"], None);
-        base_profile.merge_children_by_keys(over_profile, "query", &["name"], None);
-        base_profile.merge_children_by_keys(over_profile, "allowed-path", &["prefix"], None);
-        base_profile.merge_children_by_keys(over_profile, "allowed-service", &["name"], None);
-        base_profile.merge_children_by_keys(over_profile, "allowed-entity", &["name"], None);
-        if let Some(api) = over_profile.first_named("api-config") {
-            base_profile.remove_where(|child| child.name() == "api-config");
-            base_profile.append_node(api.deep_copy());
+    let Some(over_node) = over.first_named("llm-facade") else {
+        return;
+    };
+    let Some(base_node) = base.first_named("llm-facade") else {
+        base.append_node(over_node.deep_copy());
+        return;
+    };
+    base_node.copy_attributes_from(&over_node);
+    let mut merge_endpoint = |base_endpoint: &MNode, over_endpoint: &MNode| {
+        base_endpoint.merge_children_by_keys(over_endpoint, "header", &["name"], None);
+    };
+    base_node.merge_children_by_keys(&over_node, "endpoint", &["id"], Some(&mut merge_endpoint));
+    let mut merge_model = |base_model: &MNode, over_model: &MNode| {
+        base_model.merge_children_by_keys(over_model, "reasoning", &["level"], None);
+        if let Some(api) = over_model.first_named("api-config") {
+            base_model.remove_where(|child| child.name() == "api-config");
+            base_model.append_node(api.deep_copy());
         }
     };
-    base.merge_child_with_child_key(over, "llm-facade", "profile", &["name"], Some(&mut merge_profile));
+    base_node.merge_children_by_keys(&over_node, "model", &["id"], Some(&mut merge_model));
+    base_node.merge_children_by_keys(&over_node, "bind", &["feature"], None);
+    base_node.merge_children_by_keys(&over_node, "data-entity", &["package", "entity"], None);
+    base_node.merge_children_by_keys(&over_node, "user-facts", &["service"], None);
+    base_node.merge_children_by_keys(&over_node, "ai-task", &["name"], None);
+    for name in ["limits", "content-log", "screen-sessions", "mcp", "gateway"] {
+        base_node.merge_single_child(&over_node, name);
+    }
+    if let Some(over_a2a) = over_node.first_named("a2a") {
+        match base_node.first_named("a2a") {
+            None => base_node.append_node(over_a2a.deep_copy()),
+            Some(base_a2a) => {
+                base_a2a.copy_attributes_from(&over_a2a);
+                base_a2a.merge_single_child(&over_a2a, "push");
+                base_a2a.merge_single_child(&over_a2a, "security");
+            }
+        }
+    }
 }
 
 fn merge_entity_facade(base: &MNode, over: &MNode) {
@@ -479,5 +524,93 @@ mod tests {
             .and_then(|list| list.first_named("webapp"))
             .unwrap();
         assert!(webapp.first_named("web-protection").is_some());
+    }
+
+    #[test]
+    fn the_llm_facade_merges_endpoints_models_and_binds_by_key() {
+        let base = MNode::parse_text(
+            "moqui-conf",
+            r#"<moqui-conf><llm-facade enabled="true">
+                <endpoint id="local" url="http://127.0.0.1:1234" local="true"><header name="A" value="1"/></endpoint>
+                <model id="m" endpoint="local" name="qwen"><reasoning level="low">{"a":1}</reasoning><api-config>{"b":1}</api-config></model>
+                <bind feature="assist" model="m" reasoning="low"/>
+                <limits max-steps="40" user-daily-tokens="100"/>
+                <a2a enabled="false"><push timeout="15"/><security bearer="true"/></a2a>
+            </llm-facade></moqui-conf>"#,
+        )
+        .unwrap();
+        let over = MNode::parse_text(
+            "moqui-conf",
+            r#"<moqui-conf><llm-facade enabled="false">
+                <endpoint id="local" url="http://gpu:1234"><header name="B" value="2"/></endpoint>
+                <endpoint id="hosted" url="https://api.example.com"/>
+                <model id="m" max-output="10"><reasoning level="high">{"c":1}</reasoning><api-config>{"d":1}</api-config></model>
+                <bind feature="assist" model="other"/>
+                <limits max-steps="10"/>
+                <a2a enabled="true"><security bearer="false"/></a2a>
+            </llm-facade></moqui-conf>"#,
+        )
+        .unwrap();
+        super::merge_conf(&base, &over);
+        let facade = base.first_named("llm-facade").unwrap();
+        assert_eq!(facade.attribute("enabled").as_deref(), Some("false"));
+        let endpoints = facade.children_named("endpoint");
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].attribute("url").as_deref(), Some("http://gpu:1234"));
+        assert_eq!(endpoints[0].attribute("local").as_deref(), Some("true"));
+        assert_eq!(endpoints[0].children_named("header").len(), 2);
+        let model = facade.first_named("model").unwrap();
+        assert_eq!(model.attribute("name").as_deref(), Some("qwen"));
+        assert_eq!(model.attribute("max-output").as_deref(), Some("10"));
+        assert_eq!(model.children_named("reasoning").len(), 2);
+        let api = model.children_named("api-config");
+        assert_eq!(api.len(), 1);
+        assert_eq!(api[0].text().as_deref(), Some(r#"{"d":1}"#));
+        let bind = facade.first_named("bind").unwrap();
+        assert_eq!(bind.attribute("model").as_deref(), Some("other"));
+        assert_eq!(bind.attribute("reasoning").as_deref(), Some("low"));
+        let limits = facade.first_named("limits").unwrap();
+        assert_eq!(limits.attribute("max-steps").as_deref(), Some("10"));
+        assert_eq!(limits.attribute("user-daily-tokens").as_deref(), Some("100"));
+        let a2a = facade.first_named("a2a").unwrap();
+        assert_eq!(a2a.attribute("enabled").as_deref(), Some("true"));
+        assert_eq!(a2a.first_named("push").unwrap().attribute("timeout").as_deref(), Some("15"));
+        assert_eq!(a2a.first_named("security").unwrap().attribute("bearer").as_deref(), Some("false"));
+    }
+
+    #[test]
+    fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
+        let base = MNode::parse_text(
+            "moqui-conf",
+            r#"<moqui-conf><screen-facade><pdf page-limit="4" timeout="60"/></screen-facade>
+                <user-facade><authz privileged-groups="ADMIN"/></user-facade>
+                <git-server max-concurrent="4" max-queued="16"/></moqui-conf>"#,
+        )
+        .unwrap();
+        let over = MNode::parse_text(
+            "moqui-conf",
+            r#"<moqui-conf><screen-facade><pdf timeout="90"/></screen-facade>
+                <user-facade><authz sealed-permissions="X"/></user-facade>
+                <git-server max-concurrent="2"/><ssh-server sftp-root="dbresource://sftp"/></moqui-conf>"#,
+        )
+        .unwrap();
+        super::merge_conf(&base, &over);
+        let pdf = base
+            .first_named("screen-facade")
+            .and_then(|facade| facade.first_named("pdf"))
+            .unwrap();
+        assert_eq!(pdf.attribute("page-limit").as_deref(), Some("4"));
+        assert_eq!(pdf.attribute("timeout").as_deref(), Some("90"));
+        let authz = base
+            .first_named("user-facade")
+            .and_then(|facade| facade.first_named("authz"))
+            .unwrap();
+        assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN"));
+        assert_eq!(authz.attribute("sealed-permissions").as_deref(), Some("X"));
+        let git = base.first_named("git-server").unwrap();
+        assert_eq!(git.attribute("max-concurrent").as_deref(), Some("2"));
+        assert_eq!(git.attribute("max-queued").as_deref(), Some("16"));
+        let ssh = base.first_named("ssh-server").unwrap();
+        assert_eq!(ssh.attribute("sftp-root").as_deref(), Some("dbresource://sftp"));
     }
 }

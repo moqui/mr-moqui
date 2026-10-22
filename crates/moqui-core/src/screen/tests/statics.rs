@@ -22,6 +22,9 @@ use moqui_lib::object::Value;
 use crate::context::ExecutionContextFactory;
 use crate::screen::{make_render, RenderOutput, ScreenFacade};
 
+/// `response-header` `screen-server-static` of the shipped conf.
+const SERVER_STATIC_CACHE: &str = "max-age=86400, must-revalidate, public";
+
 fn root() -> String {
     format!("{}/src/screen/testdata/Static/Static.xml", env!("CARGO_MANIFEST_DIR"))
 }
@@ -72,16 +75,40 @@ fn header<'a>(output: &'a RenderOutput, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no {name} in {:?}", output.headers))
 }
 
+/// The service the number fields of the `Number` screen name, for the browser rules of a number field.
+fn number_service() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/screen/testdata/Static/service/NumberService.xml")
+}
+
+/// A number field's browser rule calls a name of the scope, not a browser global: the server compiles the
+/// template with Vue's `prefixIdentifiers`, so a free identifier becomes `_ctx.<name>` and the scope has to
+/// have it. The scope has `$mq` and `ec`; it has no `moqui`.
+#[test]
+fn a_number_field_rule_calls_the_scope_and_not_a_browser_global() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let failures = crate::service::lint(&[number_service()]).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let output = render(context.factory(), "/Number.qvt", &[]);
+    assert_eq!(output.status, 200, "{}", output.body_text());
+    let script = output.body_text();
+    assert!(!script.contains("_ctx.moqui"), "{script}");
+    assert!(script.contains("_ctx.$mq.isStringNumber(value)"), "{script}");
+    // count is an integer parameter, so its rule is the integer check, and the class-derived digits rule is not added beside it
+    assert!(script.contains("_ctx.$mq.isStringInteger(value)"), "{script}");
+    assert!(!script.contains("d*$"), "{script}");
+    // the rule message is the host's localized string, quoted into the template; labels still localize in the browser
+    assert!(script.contains("Please enter a valid whole number"), "{script}");
+    assert!(script.contains("_ctx.ec.l10n.localize"), "{script}");
+}
+
 #[test]
 fn the_template_holds_no_request_data_and_compiles_without_with() {
     let context = ExecutionContextFactory::test_context();
     let output = render(context.factory(), "/Items.qvt", &[("password", "ZEBRA-secret")]);
     assert_eq!(output.status, 200, "{}", output.body_text());
     assert_eq!(header(&output, "X-Moqui-Qvt"), "static-template");
-    assert_eq!(
-        header(&output, "Cache-Control"),
-        crate::screen::statics::SERVER_STATIC_CACHE_CONTROL
-    );
+    assert_eq!(header(&output, "Cache-Control"), SERVER_STATIC_CACHE);
     assert_eq!(header(&output, "Content-Type"), "text/javascript;charset=UTF-8");
     assert!(header(&output, "ETag").starts_with("W/\""), "{:?}", output.headers);
     let script = output.body_text();
@@ -262,6 +289,12 @@ fn render_fixture_dir() -> std::path::PathBuf {
 
 /// The static template of a fixture screen of the qvt render tests, as the report makes it: the screen is not marked, so it is forced.
 fn static_fixture(name: &str) -> (String, crate::screen::statics::StaticReport) {
+    let (html, _, report) = static_fixture_compiled(name);
+    (html, report)
+}
+
+/// [`static_fixture`] with the render function the server compiled from the template.
+fn static_fixture_compiled(name: &str) -> (String, String, crate::screen::statics::StaticReport) {
     let context = ExecutionContextFactory::test_context();
     let guard = crate::screen::statics::ReportGuard::start(true);
     let location = render_fixture_dir()
@@ -282,7 +315,7 @@ fn static_fixture(name: &str) -> (String, crate::screen::statics::StaticReport) 
         .generated()
         .static_template("")
         .unwrap_or_else(|| panic!("{name} made no template: {report:?}"));
-    (template.html.clone(), report)
+    (template.html.clone(), template.script.clone(), report)
 }
 
 #[test]
@@ -302,6 +335,7 @@ fn the_qvt_fixture_screens_become_templates_that_compile() {
         "status",
         "mobile",
         "views",
+        "gated",
     ] {
         let (html, report) = static_fixture(name);
         if name == "fields" {
@@ -377,7 +411,7 @@ fn the_screen_context_is_bound_over_the_scope_in_a_static_template() {
 }
 
 /// The record panels of a server-static screen are bound over the scope (R18): the record id and the hints are expressions of
-/// the screen's data, a condition a v-if, and nothing is expanded on the server; a rich editor's mention transition is its path.
+/// the screen's data, a condition a v-if, and nothing is expanded on the server; a rich editor's mention and record transitions are its paths.
 #[test]
 fn the_record_panels_are_bound_over_the_scope_in_a_static_template() {
     let (html, _) = static_fixture("records");
@@ -387,6 +421,7 @@ fn the_record_panels_are_bound_over_the_scope_in_a_static_template() {
         r#"<m-record-files record-entity="mantle.work.effort.WorkEffort" :record-id="ec.resource.expandNoL10n('${taskId}',{'taskId':()=&gt;(taskId)})" class="q-mt-sm"></m-record-files>"#,
         r#"editor-type="rich-light""#,
         r#"mention-url="/mentions""#,
+        r#"record-url="/records""#,
     ] {
         assert!(html.contains(expected), "{expected} in {html}");
     }
@@ -406,6 +441,21 @@ fn the_html_view_is_bound_over_the_scope_in_a_static_template() {
         assert!(html.contains(expected), "{expected} in {html}");
     }
     assert!(!html.contains("{{ada}}") && !html.contains("alert(1)"), "{html}");
+}
+
+/// A code-view of a server-static screen is bound over the scope: the text and file name are expressions of the screen's data,
+/// the condition a v-if; no code is in the template.
+#[test]
+fn the_code_view_is_bound_over_the_scope_in_a_static_template() {
+    let (html, _) = static_fixture("codeview");
+    for expected in [
+        r#"<m-code id="Source" :text="ec.resource.expandNoL10n('${source}',{'source':()=&gt;(source)})" :file-name="ec.resource.expandNoL10n('${path}',{'path':()=&gt;(path)})" highlight-lines="2" class="q-mt-sm"></m-code>"#,
+        r#"<m-code :text="ec.resource.expandNoL10n('${source}',{'source':()=&gt;(source)})" language="rust" :line-numbers="false"></m-code>"#,
+        r#"<template v-if="(false)"><m-code"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert!(!html.contains("{{x}}"), "{html}");
 }
 
 /// A split of a server-static screen is the same m-container-split, its panes the side and main slots, the selection read from
@@ -507,14 +557,173 @@ fn report(
 #[test]
 fn a_screen_with_nothing_for_the_browser_to_refuse_has_a_clean_report() {
     let context = ExecutionContextFactory::test_context();
-    let report = report(context.factory(), "Clean", false);
-    assert!(report.is_clean(), "{}", report.render());
+    let half = report(context.factory(), "Clean", false);
+    assert!(!half.is_clean(), "{}", half.render());
     assert!(
-        report.marked && report.eligible && report.template_bytes > 0,
+        half.marked && half.eligible && half.template_bytes > 0 && !half.full_check,
         "{}",
-        report.render()
+        half.render()
     );
-    assert!(report.render().contains("verdict clean"), "{}", report.render());
+    assert!(half.render().contains("verdict static half only"), "{}", half.render());
+    assert!(!half.render().contains("verdict clean"), "{}", half.render());
+    let full = report(context.factory(), "Clean", true);
+    assert!(full.is_clean() && full.full_check, "{}", full.render());
+    assert!(full.render().contains("verdict clean"), "{}", full.render());
+}
+
+/// Hidden parameters, pass-through, and all-checked are expressions over the scope. The package holds the pass-through
+/// map, including when it is empty, and a credential name inside it is stripped. A screen that does not use the attribute
+/// does not get the key.
+#[test]
+fn hidden_parameters_pass_through_and_all_checked_read_the_scope() {
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let output = render(factory, "/Pass.qvt", &[]);
+    assert_eq!(output.status, 200, "{}", output.body_text());
+    assert_eq!(header(&output, "X-Moqui-Qvt"), "static-template");
+    let html = html_of(factory, "Pass", "/Pass");
+    assert!(
+        html.contains("$mq.merge(($scope['mqPassThrough']||{}),{'partyId':$scope['partyId'],'fromStatus':(statusId)},"),
+        "{html}"
+    );
+    assert!(html.contains("'moquiFormName':'EditForm'"), "{html}");
+    assert!(
+        html.contains("([{value:'A',label:ec.l10n.localize('A')},{value:'B',label:ec.l10n.localize('B')}]).map((item) =&gt; item.value)"),
+        "{html}"
+    );
+    assert!(
+        html.contains(":hidden-initial=\"(_ctx) =&gt; ({'partyId':$scope['partyId']})\""),
+        "{html}"
+    );
+    assert!(
+        html.contains(":row-initial=\"(_ctx) =&gt; ({'rowId':$mq.str($scope['rowId'])})\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("$mq.merge({'partyId':$scope['partyId']},{'rowId':$mq.str($scope['rowId']),'moquiFormName':'SingleRows','pageIndex':$mq.str($scope['pageIndex']||0)})"),
+        "{html}"
+    );
+    assert!(
+        html.contains("$mq.merge({'partyId':$scope['partyId']},{'rowId':$mq.str($scope['rowId']),'rowId_op':($scope['rowId_op']||'contains')"),
+        "{html}"
+    );
+    // url="." of the transition is this screen, so the path is /Pass. Pass-through is the parameter
+    // argument of $mq.url, which wins over the screen parameters in the map argument.
+    assert!(
+        html.contains("$mq.url('/Pass',$mq.merge({},($scope['mqPassThrough']||{})),"),
+        "{html}"
+    );
+    let plain_at = html.find("Plain").expect("plain link");
+    let plain_href = &html[html[..plain_at].rfind("<m-link").expect("plain m-link")..plain_at];
+    assert!(
+        plain_href.contains("$mq.url('/Pass',{},") && !plain_href.contains("mqPassThrough"),
+        "{plain_href}"
+    );
+    // the row form's initial is not the pass-through map, and the multi row-initial does not carry the hidden name
+    let row_initial = html
+        .split(":row-initial=\"")
+        .nth(1)
+        .unwrap_or("")
+        .split('"')
+        .next()
+        .unwrap_or("");
+    assert!(
+        !row_initial.contains("partyId") && !row_initial.contains("mqPassThrough"),
+        "{row_initial}"
+    );
+
+    let empty = json_of(&render(factory, "/Pass/actions", &[]));
+    assert_eq!(empty["mqPassThrough"], serde_json::json!({}), "{empty}");
+    let filled = json_of(&render(
+        factory,
+        "/Pass/actions",
+        &[("partyId", "P1"), ("password", "secret"), ("moquiSessionToken", "tok")],
+    ));
+    assert_eq!(filled["mqPassThrough"]["partyId"], "P1", "{filled}");
+    assert!(filled["mqPassThrough"].get("password").is_none(), "{filled}");
+    assert!(filled["mqPassThrough"].get("moquiSessionToken").is_none(), "{filled}");
+    assert!(filled.get("password").is_none(), "{filled}");
+    let clean = json_of(&render(factory, "/Clean/actions", &[]));
+    assert!(clean.get("mqPassThrough").is_none(), "{clean}");
+}
+
+/// A link in an included screen is enough for the package key. The including screen's own widgets do not use the attribute.
+#[test]
+fn pass_through_on_an_included_screen_is_on_the_package() {
+    let context = ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let dir = std::env::temp_dir().join(format!("moqui-static-pass-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let part = dir.join("Part.xml");
+    let part_location = part.to_string_lossy().into_owned();
+    std::fs::write(
+        &part,
+        r#"<screen require-authentication="false">
+            <parameter name="partyId"/>
+            <transition name="go"><default-response url="."/></transition>
+            <widgets><link url="go" text="Included" pass-through-parameters="true"/></widgets>
+        </screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        "<screen require-authentication=\"false\"><widgets><subscreens-active/></widgets><subscreens default-item=\"Holder\"/></screen>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Holder.xml"),
+        format!(
+            "<screen require-authentication=\"false\" server-static=\"qvt\"><parameter name=\"partyId\"/>\
+             <widgets><include-screen location=\"{}\"/><label text=\"holder\"/></widgets></screen>",
+            part_location
+        ),
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let package = make_render(factory)
+        .root_screen(root)
+        .screen_path("/Holder/actions")
+        .parameters({
+            let mut map = BTreeMap::new();
+            map.insert("partyId".to_string(), Value::string("P9"));
+            map
+        })
+        .render()
+        .unwrap();
+    assert_eq!(package.status, 200, "{}", package.body_text());
+    let json = json_of(&package);
+    assert_eq!(json["mqPassThrough"]["partyId"], "P9", "{json}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A static send is the screen the user got, so it is recorded. `make_render` does not enforce request checks, so it does not.
+#[test]
+fn a_static_screen_is_recorded_in_the_screen_history() {
+    // World sets the session cookie key and holds its lock. A second lock on this thread would deadlock.
+    // The cookie that comes back starts a visit, which needs an entity facade. The in-memory one is enough.
+    let world = super::World::open("");
+    let mut request = crate::web::WebRequest::new("GET", "/Clean.qvt");
+    request.peer_ip = "127.0.0.1".to_string();
+    request.query.push(("keep".to_string(), "1".to_string()));
+    let response = crate::screen::serve_at(&world.factory, request, &root());
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    assert_eq!(response.header("X-Moqui-Qvt"), Some("static-template"));
+    let cookie = response.header("Set-Cookie").expect("session cookie");
+    let value = cookie
+        .split(';')
+        .next()
+        .expect("pair")
+        .split_once('=')
+        .expect("value")
+        .1;
+    let context = world.factory.new_context();
+    let entered = context.enter();
+    let guard = crate::user::bind(&world.factory, Some(value), None, false).expect("bind");
+    let history = crate::user::screen_history().expect("history");
+    drop(guard);
+    drop(entered);
+    assert_eq!(history, vec!["/Clean?keep=1".to_string()], "{history:?}");
 }
 
 #[test]
@@ -539,9 +748,23 @@ fn the_report_names_what_a_browser_cannot_do_and_what_the_form_request_repeats()
     // always-actions and pre-actions with side effects, which the form request repeats
     assert!(has("side-effect", "always-actions/message"), "{text}");
     assert!(has("side-effect", "pre-actions/entity-make-value"), "{text}");
+    // a service call that writes is one; a get, find or setup service (or one declared read-only) only reads
+    assert!(
+        has("side-effect", "service-call moqui.test.WriteServices.update#Counts"),
+        "{text}"
+    );
+    assert!(!has("side-effect", "get#Counts"), "{text}");
     // the list of a form-list in a section-iterate and a label that reads its page keys
     assert!(has("form-list-key", "iterates enumList"), "{text}");
     assert!(has("form-list-key", "enumListCount"), "{text}");
+    // a condition outside the form-list that reads its list
+    assert!(
+        has("form-list-key", "section@NoEnums@condition reads enumList"),
+        "{text}"
+    );
+    // a form-list inside a section-iterate is one form request, outside the iteration
+    assert!(has("form-list-iterate", "form-list@GroupRows"), "{text}");
+    assert!(!has("form-list-iterate", "EnumList"), "{text}");
     // a content screen marked for html is a stale-cache bug
     assert!(has("stale-cache", "server-static names html"), "{text}");
     // the report is one block: location, mode, verdict, and each violation with its screen and element
@@ -649,7 +872,7 @@ fn qvt_of_a_marked_screen_is_a_template_and_of_an_unmarked_one_a_merge_with_the_
         assert_eq!(header(&output, "X-Moqui-Qvt"), expected, "{screen}");
         let cache = header(&output, "Cache-Control");
         if static_template {
-            assert_eq!(cache, crate::screen::statics::SERVER_STATIC_CACHE_CONTROL, "{screen}");
+            assert_eq!(cache, SERVER_STATIC_CACHE, "{screen}");
         } else {
             assert_eq!(cache, "private, no-store", "{screen}");
         }
@@ -662,15 +885,9 @@ fn a_mode_other_than_qvt_marked_static_sends_the_cache_header_and_the_automatic_
     let factory = context.factory();
     // explicit: html gets the header; the automatic subscreens case does not, since an html page holds the navbar of the user
     let marked = render(factory, "/HtmlOnly.html", &[]);
-    assert_eq!(
-        header(&marked, "Cache-Control"),
-        crate::screen::statics::SERVER_STATIC_CACHE_CONTROL
-    );
+    assert_eq!(header(&marked, "Cache-Control"), SERVER_STATIC_CACHE);
     let all = render(factory, "/All.html", &[]);
-    assert_eq!(
-        header(&all, "Cache-Control"),
-        crate::screen::statics::SERVER_STATIC_CACHE_CONTROL
-    );
+    assert_eq!(header(&all, "Cache-Control"), SERVER_STATIC_CACHE);
     let auto = render(factory, "/Auto.html", &[]);
     assert!(auto.header("Cache-Control").is_none(), "{:?}", auto.headers);
     // a screen not marked for the mode has none
@@ -762,10 +979,7 @@ fn the_template_has_a_validator_and_answers_304_and_head() {
     let tag = first.header("ETag").expect("a validator").to_string();
     assert_eq!(first.header("X-Moqui-Qvt"), Some("static-template"));
     // the shared headers of a screen response are there too, and the cache header of the template was not replaced by the private one
-    assert_eq!(
-        first.header("Cache-Control"),
-        Some(crate::screen::statics::SERVER_STATIC_CACHE_CONTROL)
-    );
+    assert_eq!(first.header("Cache-Control"), Some(SERVER_STATIC_CACHE));
     assert_eq!(first.header("X-Content-Type-Options"), Some("nosniff"));
     let same = get("GET", Some(&tag));
     assert_eq!(same.status, 304);
@@ -1052,6 +1266,38 @@ fn a_status_bar_and_expression_styles_are_bound_in_a_static_template() {
     }
 }
 
+/// A row-selection condition and a view's move-condition in a server-static screen are evaluated by the template over the scope: the
+/// list's selection-id-field is bound to the condition (no id field, no selection), the selection cell of a row is there only with the
+/// checkbox set and a first row's only when the condition holds; the board's and tree's transition is the path when the move-condition
+/// holds, else null. A condition that throws in the browser does not hold. A row-selection with no condition is written as before.
+#[test]
+fn a_row_selection_condition_and_a_move_condition_are_bound_in_a_static_template() {
+    let (html, script, report) = static_fixture_compiled("gated");
+    for expected in [
+        r#":selection-id-field="(() =&gt; { try { return !!(canBulk); } catch { return false; } })() ? 'taskId' : null""#,
+        r#":selection-id-field="(() =&gt; { try { return !!(!canBulk); } catch { return false; } })() ? 'taskId' : null""#,
+        r#":selection-id-field="(() =&gt; { try { return !!(noSuchThing.call()); } catch { return false; } })() ? 'taskId' : null""#,
+        r#"<div class="td" v-if="mqSel"><q-checkbox"#,
+        r#"<div class="tr first"><div class="td" v-if="(() =&gt; { try { return !!(canBulk); } catch { return false; } })()">&nbsp;</div>"#,
+        "'transition':((() =&gt; { try { return !!(!canBulk); } catch { return false; } })() ? '/moveTask' : null)",
+        "'transition':((() =&gt; { try { return !!(canBulk); } catch { return false; } })() ? '/moveTask' : null)",
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert!(!html.contains(r#" selection-id-field="#), "{html}");
+    // the names of a condition are the scope's, and the catch binds no name
+    assert!(
+        script.contains("_ctx.canBulk") && script.contains("_ctx.noSuchThing.call()") && script.contains("catch {"),
+        "{script}"
+    );
+    let (extras, _) = static_fixture("extras");
+    assert!(
+        extras.contains(r#" selection-id-field="id""#) && !extras.contains(r#"v-if="mqSel""#),
+        "{extras}"
+    );
+    eprintln!("{}", report.render());
+}
+
 /// The views of a form-list in a server-static screen: m-static-form-list gets the board's and calendar's settings (the transitions as
 /// paths of the screen, the key fields, color-map) and a card slot over the row's scope with the title, badge and card fields as the
 /// row slot writes them (no hidden input for a display); the rows are the ones it fetches. markdown-view is bound over the scope.
@@ -1077,5 +1323,25 @@ fn form_list_views_and_the_markdown_view_in_a_static_template() {
     let card = &card[..card.find("</template>").unwrap()];
     assert!(!card.contains(r#"type="hidden""#), "no hidden input in a card: {card}");
     assert!(card.contains("Tasks_card_"), "a card's ids are its own: {card}");
+    // group-fields with their titles as expressions, all-rows from the form request, a peek-url and the rows' index; the tree's
+    // settings and its slot over the row's scope: the row's cells in a form of the row, the first with the tree's lead
+    for expected in [
+        "'groups':[{'field':'owner','label':ec.l10n.localize('owner')},{'field':'stage','label':ec.l10n.localize('Stage')}]",
+        "'allRows':true,'rowsUrl':'/actions/Grouped','listName':'taskList','maxRows':50",
+        r#":peek="{'url':'/open','parameters':{},'keyField':'taskId'}""#,
+        r#":data-row="rowIndex""#,
+        "'parentField':'parentId','keyFields':['nodeId'],'childCountField':'kids','rollups':[{'name':'totalPoints','label':ec.l10n.localize('Total points')}]",
+        "'childrenUrl':'/planTask'",
+        r#"<template v-slot:tree="_ctx">"#,
+        r#"<m-tree-lead :t="mqTree.t"></m-tree-lead>"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    let tree = &html[html.find(r#"<template v-slot:tree="_ctx">"#).unwrap()..];
+    let tree = &tree[..tree.find("</template>").unwrap()];
+    assert!(
+        tree.contains("<m-form") && !tree.contains(r#"name="totalPoints""#),
+        "the roll-up is no cell of the tree row: {tree}"
+    );
     eprintln!("{}", report.render());
 }

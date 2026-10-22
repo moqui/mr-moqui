@@ -21,6 +21,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use super::{active_def, encode_html, write, NodeLit, Runner};
 use crate::context::{Error, ErrorKind, ExecutionContext};
+use crate::screen::cache::OutputKind;
 use crate::screen::definition::{ScreenDef, SectionDef, SectionKind};
 use crate::screen::generate::UnitRequest;
 use crate::screen::render::{check_condition, Frames, RenderState};
@@ -41,8 +42,10 @@ pub(in crate::screen) fn is_security(err: &Error) -> bool {
 ///
 /// A qvt page is a Vue template, which does not compile with the elements the failed render left open, so there what it
 /// wrote is dropped before the message, and a brace in the message is a character reference, not an interpolation.
+/// A JSON document drops the same bytes, then writes one `error` node so the array stays valid.
 pub(super) fn guarded(state: &RenderState, label: &str, body: impl FnOnce() -> Result<(), Error>) -> Result<(), Error> {
-    let written = (state.render_mode == "qvt").then(|| web::output_body_len().unwrap_or(0));
+    let capture = matches!(state.output_kind, OutputKind::Vue | OutputKind::Json);
+    let written = capture.then(|| web::output_body_len().unwrap_or(0));
     match body() {
         Err(err) if !is_security(&err) => {
             let detail = format!("Error rendering {label}: {err}");
@@ -52,19 +55,70 @@ pub(super) fn guarded(state: &RenderState, label: &str, body: impl FnOnce() -> R
                     web::log_error_id(&detail)
                 )
             } else {
-                tracing::error!("{detail}");
+                log_render_failure(&detail);
                 format!("Error rendering {label}: {}", err.message())
             };
             if let Some(len) = written {
                 web::truncate_output(len);
-                write(state, &encode_html(&text).replace('{', "&#123;"));
-            } else {
-                write(state, &encode_html(&text));
             }
+            let body = match state.output_kind {
+                OutputKind::Vue => encode_html(&text).replace('{', "&#123;"),
+                OutputKind::Json => json_error_array(&text),
+                OutputKind::Text | OutputKind::Html => encode_html(&text),
+            };
+            write(state, &body);
             Ok(())
         }
         other => other,
     }
+}
+
+/// Log a failed section or screen on the subscriber that is current now.
+///
+/// Dispatched directly. A `tracing` callsite first hit with no subscriber stays disabled for the rest of the
+/// process, which hides this line from a subscriber installed by a later test.
+fn log_render_failure(detail: &str) {
+    static META: tracing::Metadata<'static> = tracing::metadata! {
+        name: "render failure",
+        target: module_path!(),
+        level: tracing::Level::ERROR,
+        fields: &["message"],
+        callsite: &CALLSITE,
+        kind: tracing::metadata::Kind::EVENT,
+    };
+    static CALLSITE: tracing::callsite::DefaultCallsite = tracing::callsite::DefaultCallsite::new(&META);
+
+    tracing::dispatcher::get_default(|dispatch| {
+        if !dispatch.enabled(&META) {
+            return;
+        }
+        // The value set borrows temporaries the macro builds. Passing it into a call keeps them alive for the event.
+        emit_event(dispatch, &META, &tracing::valueset!(META.fields(), message = %detail));
+    });
+}
+
+fn emit_event<'a>(
+    dispatch: &tracing::Dispatch,
+    meta: &'static tracing::Metadata<'static>,
+    values: &tracing::field::ValueSet<'a>,
+) {
+    dispatch.event(&tracing::Event::new(meta, values));
+}
+
+/// Drop C0 and C1 controls other than tab and newline, so a value cannot carry a terminal sequence into the document.
+pub(in crate::screen) fn strip_controls(text: &str) -> String {
+    text.chars()
+        .filter(|ch| {
+            let code = u32::from(*ch);
+            *ch == '\t' || *ch == '\n' || (code >= 0x20 && code != 0x7F && !(0x80..0xA0).contains(&code))
+        })
+        .collect()
+}
+
+/// One `error` node in an array, the shape a JSON section writes when it fails.
+pub(super) fn json_error_array(text: &str) -> String {
+    let encoded = serde_json::to_string(&strip_controls(text)).unwrap_or_else(|_| "\"\"".to_string());
+    format!(r#"[{{"t":"error","text":{encoded}}}]"#)
 }
 
 /// `ScreenDefinition.render`: the active screen's frame, then its root section.
@@ -75,9 +129,9 @@ pub(super) fn guarded(state: &RenderState, label: &str, body: impl FnOnce() -> R
 /// security error.
 pub fn render_active_screen(state: &RenderState, runner: &dyn Runner, is_target: bool) -> Result<(), Error> {
     let def = active_def(state);
-    // A qvt render below the root screen is a screen the client shows inside its parents, as the html render shows
-    // the subscreen, so its error is written in its place the same way.
-    if state.render_mode == "qvt" && state.screen_path_index.get() > 0 {
+    // A qvt or tui render below the root screen is a screen the client shows inside its parents, so its error is
+    // written in its place and the page continues.
+    if matches!(state.output_kind, OutputKind::Vue | OutputKind::Json) && state.screen_path_index.get() > 0 {
         return guarded(state, &format!("screen [{}]", def.location), || {
             render_def(state, runner, &def, is_target)
         });
@@ -100,7 +154,20 @@ fn render_def(state: &RenderState, runner: &dyn Runner, def: &Arc<ScreenDef>, is
 pub fn render_section(state: &RenderState, runner: &dyn Runner, name: &str) -> Result<(), Error> {
     let def = active_def(state);
     let label = format!("section [{name}] in screen [{}]", def.location);
-    guarded(state, &label, || render_section_of(state, runner, &def, name))
+    json_value(state, || {
+        guarded(state, &label, || render_section_of(state, runner, &def, name))
+    })
+}
+
+/// In a JSON document a nested render is the value of its parent's `"c"`, so one that writes nothing (an empty
+/// section, a stopped screen, a screen with no widgets) writes `[]`.
+fn json_value(state: &RenderState, body: impl FnOnce() -> Result<(), Error>) -> Result<(), Error> {
+    let before = (state.output_kind == OutputKind::Json).then(|| web::output_body_len().unwrap_or(0));
+    body()?;
+    if before.is_some_and(|before| web::output_body_len().unwrap_or(0) == before) {
+        write(state, "[]");
+    }
+    Ok(())
 }
 
 /// The screen of a form that one of `def`'s forms `extends`, when that screen has the section `name`: a section
@@ -135,14 +202,16 @@ pub fn render_section_include(state: &RenderState, runner: &dyn Runner, include:
     if location.contains("${") || name.contains("${") {
         let def = active_def(state);
         let label = format!("section include [{location}#{name}] in screen [{}]", def.location);
-        return guarded(state, &label, || {
-            let location = script::expand(location)?;
-            let name = script::expand(name)?;
-            let other = state.facade.screen_def(&state.factory, &location)?;
-            let previous = state.override_def.replace(Some(Arc::clone(&other)));
-            let result = render_section_of(state, runner, &other, &name);
-            state.override_def.replace(previous);
-            result
+        return json_value(state, || {
+            guarded(state, &label, || {
+                let location = script::expand(location)?;
+                let name = script::expand(name)?;
+                let other = state.facade.screen_def(&state.factory, &location)?;
+                let previous = state.override_def.replace(Some(Arc::clone(&other)));
+                let result = render_section_of(state, runner, &other, &name);
+                state.override_def.replace(previous);
+                result
+            })
         });
     }
     let name = match (name.is_empty(), location.split_once('#')) {
@@ -188,6 +257,9 @@ fn render_section_of(state: &RenderState, runner: &dyn Runner, def: &Arc<ScreenD
         } => {
             let value = script::eval_value(list)?;
             if is_empty(&value) {
+                if state.output_kind == OutputKind::Json {
+                    write(state, "[]");
+                }
                 return Ok(());
             }
             let mut items = iteration_entries(&value);
@@ -270,6 +342,11 @@ fn iterate_section(
     key: Option<&str>,
     items: &[(Option<String>, Value)],
 ) -> Result<(), Error> {
+    let json = state.output_kind == OutputKind::Json;
+    if json {
+        write(state, "[");
+    }
+    let mut have_item = false;
     for (index, (item_key, item)) in items.iter().enumerate() {
         let frame = ContextFrame::push();
         let _ = script::set_context_name(entry, item.clone());
@@ -279,14 +356,52 @@ fn iterate_section(
         let _ = script::set_context_name("sectionEntryIndex", Value::I64(index as i64));
         let _ = script::set_context_name(&format!("{entry}_index"), Value::I64(index as i64));
         let _ = script::set_context_name(&format!("{entry}_has_next"), Value::Bool(index + 1 < items.len()));
+        let start = json.then(|| web::output_body_len().unwrap_or(0));
         let result = render_single(state, runner, def, section, name);
         drop(frame);
+        if let Some(start) = start {
+            if result.is_ok() {
+                have_item = splice_json_array_item(start, have_item);
+            }
+        }
         result?;
         if state.dont_do_render.get() {
             break;
         }
     }
+    if json {
+        write(state, "]");
+    }
     Ok(())
+}
+
+/// One iteration wrote `[inner]` or `[]`. Fold it into the array this loop opened: drop an empty array, and put a
+/// comma before the next inner value. Bytes that are not an array would break the document, so they are logged and
+/// become one error node.
+fn splice_json_array_item(start: usize, have_item: bool) -> bool {
+    let tail = web::with_body(|body| body.get(start..).map(<[u8]>::to_vec).unwrap_or_default());
+    let trimmed = tail.trim_ascii();
+    let error;
+    let inner = match trimmed.strip_prefix(b"[").and_then(|rest| rest.strip_suffix(b"]")) {
+        Some(inner) => inner.trim_ascii(),
+        None if trimmed.is_empty() => trimmed,
+        None => {
+            tracing::error!("A section-iterate entry did not render a JSON array");
+            error = json_error_array("a section-iterate entry did not render as JSON");
+            &error.as_bytes()[1..error.len() - 1]
+        }
+    };
+    if inner.is_empty() {
+        web::truncate_output(start);
+        return have_item;
+    }
+    let mut next = Vec::with_capacity(inner.len() + usize::from(have_item));
+    if have_item {
+        next.push(b',');
+    }
+    next.extend_from_slice(inner);
+    web::rewrite_tail(start, &next);
+    true
 }
 
 fn render_single(
@@ -324,7 +439,11 @@ fn render_single(
     let errors = ExecutionContext::with_current(|ec| ec.message().errors().join("\n")).unwrap_or_default();
     if holds && !errors.is_empty() {
         // Rendering widgets after an error in the actions would only add more errors.
-        write(state, &encode_html(&errors));
+        if state.output_kind == OutputKind::Json {
+            write(state, &json_error_array(&errors));
+        } else {
+            write(state, &encode_html(&errors));
+        }
         return Ok(());
     }
     runner.run(&unit)
@@ -336,6 +455,10 @@ fn render_single(
 ///
 /// Returns a security error, and the error of a subscreen that is not available.
 pub fn render_subscreen(state: &RenderState, runner: &dyn Runner) -> Result<(), Error> {
+    json_value(state, || render_next_screen(state, runner))
+}
+
+fn render_next_screen(state: &RenderState, runner: &dyn Runner) -> Result<(), Error> {
     let defs = &state.url_info.path_defs;
     let index = state.screen_path_index.get();
     if index + 1 >= defs.len() {
@@ -347,17 +470,29 @@ pub fn render_subscreen(state: &RenderState, runner: &dyn Runner) -> Result<(), 
                 None,
                 "",
             )?;
-            write(state, &text);
+            if state.output_kind == OutputKind::Json {
+                let encoded = serde_json::to_string(&strip_controls(&text)).unwrap_or_else(|_| "\"\"".to_string());
+                write(state, &format!(r#"[{{"t":"text","text":{encoded}}}]"#));
+            } else {
+                write(state, &text);
+            }
+            return Ok(());
+        }
+        // An always-standalone mode (`tui`) asks for each level on its own: the level under this one is the client's
+        // next request, so a parent rendered alone has nothing here, with or without a default item.
+        if state.always_standalone {
             return Ok(());
         }
         let def = active_def(state);
-        write(
-            state,
-            &encode_html(&format!(
-                "Tried to render subscreen in screen [{}] but there is no subscreens.@default-item, and no more valid subscreen names in the screen path [{:?}]",
-                def.location, state.url_info.full_path
-            )),
+        let message = format!(
+            "Tried to render subscreen in screen [{}] but there is no subscreens.@default-item, and no more valid subscreen names in the screen path [{:?}]",
+            def.location, state.url_info.full_path
         );
+        if state.output_kind == OutputKind::Json {
+            write(state, &json_error_array(&message));
+        } else {
+            write(state, &encode_html(&message));
+        }
         return Ok(());
     }
     let next = Arc::clone(&defs[index + 1]);
@@ -410,10 +545,12 @@ pub fn render_include_screen(
 ) -> Result<(), Error> {
     let _frame = (!share_scope).then(ContextFrame::push);
     let previous = state.override_def.borrow().clone();
-    let result = guarded(state, &format!("screen [{location}]"), || {
-        let def = state.facade.screen_def(&state.factory, location)?;
-        *state.override_def.borrow_mut() = Some(Arc::clone(&def));
-        render_def(state, runner, &def, false)
+    let result = json_value(state, || {
+        guarded(state, &format!("screen [{location}]"), || {
+            let def = state.facade.screen_def(&state.factory, location)?;
+            *state.override_def.borrow_mut() = Some(Arc::clone(&def));
+            render_def(state, runner, &def, false)
+        })
     });
     *state.override_def.borrow_mut() = previous;
     result
@@ -428,6 +565,21 @@ pub fn render_include_screen(
 ///
 /// Returns an error when the file cannot be read, is a FreeMarker template, or fails to render.
 pub fn render_text(state: &RenderState, location: &str, template: &str) -> Result<String, Error> {
+    if template == "false" {
+        return render_text_value(state, location, template);
+    }
+    let rendered = render_text_value(state, location, template)?;
+    write(state, &rendered);
+    Ok(String::new())
+}
+
+/// `sri.renderTextValue(location, template)`: as [`render_text`], but the rendered text is returned rather than
+/// written. The tui mode checks a text as JSON before it writes it.
+///
+/// # Errors
+///
+/// As [`render_text`].
+pub fn render_text_value(state: &RenderState, location: &str, template: &str) -> Result<String, Error> {
     if location.is_empty() || location == "null" {
         tracing::warn!(
             "Not rendering text in screen [{}], location was empty",
@@ -448,12 +600,8 @@ pub fn render_text(state: &RenderState, location: &str, template: &str) -> Resul
     }
     // As Java's renderText: the renderer of the location's extension, else of the `template` value as an extension,
     // else the file's text as it is, so a .js or .css file is not run as a template.
-    let rendered = {
-        let _frame = ContextFrame::push();
-        registry.render_location_default(&state.factory, location, None, template)
-    };
-    write(state, &rendered?);
-    Ok(String::new())
+    let _frame = ContextFrame::push();
+    registry.render_location_default(&state.factory, location, None, template)
 }
 
 pub fn append_to_after_screen_writer(state: &RenderState, text: &str) {

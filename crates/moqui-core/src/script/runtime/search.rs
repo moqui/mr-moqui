@@ -68,6 +68,7 @@ pub(super) fn search_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     method!("indexExists", search_index_exists);
     method!("documentTypes", search_document_types);
     method!("isAvailable", search_is_available);
+    method!("hasElasticApi", search_has_elastic_api);
     method!("backendName", search_backend_name);
     method!("capabilities", search_capabilities);
     method!("embedPending", search_embed_pending);
@@ -418,6 +419,13 @@ pub(super) fn search_index_exists<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rqu
 
 pub(super) fn search_is_available(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
     host_guard(&ctx, || Ok(search::current().is_ok()))
+}
+
+/// Whether the search backend answers the Elasticsearch REST API (OpenSearch), so a proxy to it has something to reach.
+pub(super) fn search_has_elastic_api(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
+    host_guard(&ctx, || {
+        Ok(search::current().is_ok_and(|found| found.backend().has_elastic_api()))
+    })
 }
 
 pub(super) fn search_backend_name<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {

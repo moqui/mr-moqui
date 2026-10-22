@@ -188,9 +188,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="gc" noun="GitRepositories" type="rust" location="moqui_core::service::git::gc_repositories"
             transaction="ignore">
         <description>Delete the objects of db kind repositories that no ref reaches (and no change in progress or of
-            the last git_gc_reflog_days days needs) and that were not written or referenced in the last
-            git_gc_prune_days days; then repack: store the versions of each path as deltas of each other, the newest
-            whole, compress rows written before the zlib format, and make delta chains deeper than git_db_delta_depth
+            the last git-server gc-reflog-days days needs) and that were not written or referenced in the last
+            git-server gc-prune-days days; then repack: store the versions of each path as deltas of each other, the newest
+            whole, compress rows written before the zlib format, and make delta chains deeper than git-server db-delta-depth
             shorter (for the gc_GitRepositories_daily ServiceJob). A repository whose refs reach a missing object is
             not collected. A repository that fails has its error recorded (lastGcResult) and logged, and the others
             still run.</description>
@@ -235,5 +235,526 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="processedCount" type="Integer"/>
             <parameter name="failedCount" type="Integer"/>
         </out-parameters>
+    </service>
+
+    <!-- The push log and the git:// writes a gitECA rule listens to. recording, pending, running and failed stay. -->
+    <service verb="clean" noun="GitUpdates" authenticate="false" transaction-timeout="600">
+        <description>Delete GitUpdate rows in ecaStatus done or none whose updateDate is older than daysToKeep
+            (for the clean_GitUpdates_daily ServiceJob). A row's GitUpdateRef rows go first. A row that cannot
+            be removed is logged and the others still go.</description>
+        <in-parameters><parameter name="daysToKeep" type="Integer" default="90"/></in-parameters>
+        <out-parameters><parameter name="recordsRemoved" type="Long"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                const basisTimestamp = new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - daysToKeep * 86400000).toISOString()
+                let removed = 0
+                const updates = ec.entity.find("moqui.resource.GitUpdate")
+                        .condition(ec.entity.conditionFactory.makeCondition("updateDate", "<", basisTimestamp))
+                        .disableAuthz().list()
+                for (const update of updates) {
+                    if (update.ecaStatus !== "done" && update.ecaStatus !== "none") continue
+                    try {
+                        ec.entity.find("moqui.resource.GitUpdateRef").condition("updateId", update.updateId).disableAuthz().deleteAll()
+                        ec.entity.find("moqui.resource.GitUpdate").condition("updateId", update.updateId).disableAuthz().deleteAll()
+                        removed++
+                    } catch (err) {
+                        ec.logger.log("error", "GitUpdate " + update.updateId + " was not removed: " + err)
+                    }
+                }
+                recordsRemoved = removed
+            ]]></script>
+            <log level="info" message="Removed ${recordsRemoved} GitUpdate records."/>
+        </actions>
+    </service>
+
+    <!-- Hosting (docs/Git-Hosting.md: Browsing, Refs, Compare and merge, Archive, Commit statuses, Webhooks, Branch
+        rules). Each checks the repository's rights as the git server does (AT_GIT_REPOSITORY, or the drive's rule for a
+        drive's repository): the rows are moqui.* entities that entity filters do not reach, so screens read them only
+        through these services. The bodies are Rust: crates/moqui-core/src/service/git_hosting.rs. -->
+    <service verb="get" noun="GitRepositoryAccess" type="rust" location="moqui_core::service::git_hosting::get_repository_access">
+        <description>What the current user may do in a repository: view (clone, read), create (new branches and tags),
+            update (fast-forwards, merges, commit statuses) and delete (force, delete refs, settings, archive).</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="canView" type="Boolean"/>
+            <parameter name="canCreate" type="Boolean"/>
+            <parameter name="canUpdate" type="Boolean"/>
+            <parameter name="canDelete" type="Boolean"/>
+            <parameter name="archived" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="GitRepositories" type="rust" location="moqui_core::service::git_hosting::find_repositories">
+        <description>The repositories the current user may view, by id, paged. Archived ones are left out unless
+            includeArchived (or archivedOnly).</description>
+        <in-parameters>
+            <parameter name="repositoryIdList" type="List"><description>Only these (a project's repositories)</description></parameter>
+            <parameter name="text"><description>In the id or description</description></parameter>
+            <parameter name="repositoryKind"/>
+            <parameter name="includeArchived" type="Boolean" default="false"/>
+            <parameter name="archivedOnly" type="Boolean" default="false"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+            <parameter name="pageNoLimit" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="repositoryList" type="List"><description>Maps: repositoryId, description, repositoryKind,
+                branch, headCommitId, lastUpdateDate, archivedDate, defaultMergeMethodEnumId, remoteUrl,
+                openMergeRequestCount</description></parameter>
+            <parameter name="repositoryListCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="GitUpdates" type="rust" location="moqui_core::service::git_hosting::find_updates">
+        <description>The push log of a repository, newest first: every push (accepted or not), mirror fetch, import and
+            write through Moqui, each with its refs and the state of its gitECA rules. For its viewers.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="source"><description>push, fetch, import or write</description></parameter>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="updateList" type="List"><description>Maps: updateId, source, transport, userId, username,
+                remoteAddress, updateDate, ecaStatus, ecaError, processedDate, refList (refName, shortName, changeType,
+                oldObjectId, newObjectId, result)</description></parameter>
+            <parameter name="updateListCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitTree" type="rust" location="moqui_core::service::git_hosting::get_tree">
+        <description>The directory at a path in a revision: directories first, then files, each with its last commit
+            on the revision's first-parent line (from the path index of the branch, or of the commit). Nothing out when
+            the revision or the path names nothing; isFile when the path is a file (read it with get#GitBlob).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="revision"><description>A branch, tag or commit; the default branch when empty</description></parameter>
+            <parameter name="path"><description>The directory; the root when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="branch"><description>The branch the revision names, when it names one</description></parameter>
+            <parameter name="isFile" type="Boolean"/>
+            <parameter name="entryList" type="List"><description>Maps: name, path, type (dir, file, executable, link,
+                submodule), objectId, size (a file kept in LFS: its content's), lfs, lfsOid, lastCommit (commitId,
+                shortId, summary, authorName, authorEmail, authorDate, committerDate, moquiUserId)</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="GitRef" type="rust" location="moqui_core::service::git_hosting::create_ref"
+            transaction="ignore">
+        <description>A branch, or a tag (annotated, by the current user, when a message is given), at a revision. Needs
+            create; the branch rules apply as to a push, and the change runs the gitECA rules of source write (so
+            Mantle's link rules follow) and is in the push log.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refName" required="true"><description>A branch or tag name, or a full refs/heads/ or
+                refs/tags/ name</description></parameter>
+            <parameter name="refType"><description>branch (the default) or tag</description></parameter>
+            <parameter name="revision"><description>What it points to; the default branch's head when empty</description></parameter>
+            <parameter name="message" allow-html="any"><description>For a tag: makes it annotated</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refName"/>
+            <parameter name="objectId"><description>The commit, or the annotated tag object</description></parameter>
+            <parameter name="commitId"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="GitRef" type="rust" location="moqui_core::service::git_hosting::delete_ref"
+            transaction="ignore">
+        <description>Delete a branch or tag. Needs delete; the default branch cannot be deleted, a protected one only
+            when its branch rule allows. Runs the gitECA rules of source write.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refName" required="true"/>
+            <parameter name="refType"><description>branch or tag, for a short name that is both</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="GitCompare" type="rust" location="moqui_core::service::git_hosting::get_compare">
+        <description>What head has that base lacks, as GitHub's compare: the merge base, the commits in head and not in
+            base (oldest first, at most 250), ahead and behind, the files changed from the merge base to head with their
+            line counts, and with withDiffs each file's diff (at most 300 files) as the moqui-diff html and as hunks of
+            numbered lines for review. With checkMergeable a trial merge of head into base.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="base"><description>The target; the default branch when empty</description></parameter>
+            <parameter name="head" required="true"><description>The source</description></parameter>
+            <parameter name="withDiffs" type="Boolean" default="false"/>
+            <parameter name="checkMergeable" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="baseCommitId"/>
+            <parameter name="headCommitId"/>
+            <parameter name="mergeBaseId"/>
+            <parameter name="aheadBy" type="Integer"/>
+            <parameter name="behindBy" type="Integer"/>
+            <parameter name="commitList" type="List"><description>Maps as get#GitLog's</description></parameter>
+            <parameter name="commitsTruncated" type="Boolean"/>
+            <parameter name="fileList" type="List"><description>Maps: path, changeType, oldObjectId, newObjectId,
+                binary, tooLarge, insertions, deletions, diffed, and with withDiffs html and hunks (oldStart,
+                oldLines, newStart, newLines, lines: tag, oldNo, newNo, text)</description></parameter>
+            <parameter name="insertions" type="Integer"/>
+            <parameter name="deletions" type="Integer"/>
+            <parameter name="mergeable" type="Boolean"/>
+            <parameter name="alreadyMerged" type="Boolean"/>
+            <parameter name="fastForward" type="Boolean"/>
+            <parameter name="conflictPaths" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="merge" noun="GitRefs" type="rust" location="moqui_core::service::git_hosting::merge_refs"
+            transaction="ignore">
+        <description>Merge a source revision into a target branch as the current user, by method: GmmMerge (a merge
+            commit), GmmFastForward (refused when the target has commits the source lacks), GmmSquash (one commit of
+            the merged tree on the target) or GmmRebase (each commit of the source replayed on the target). Refused on
+            a conflict (the paths in conflictPaths), when the target already has the source, and by the target's
+            branch rules (a protected target changes through merge#MergeRequest). Needs update; the change runs the
+            gitECA rules of source write. With checkOnly a trial merge that changes nothing (view is enough).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="source" required="true"><description>A branch, tag or commit</description></parameter>
+            <parameter name="target" required="true"><description>A branch</description></parameter>
+            <parameter name="method" default-value="GmmMerge"/>
+            <parameter name="message" allow-html="any"><description>Of a merge commit or squash; a default when empty</description></parameter>
+            <parameter name="checkOnly" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"><description>The target's new head</description></parameter>
+            <parameter name="madeCommitIds" type="List"/>
+            <parameter name="mergeable" type="Boolean"/>
+            <parameter name="alreadyMerged" type="Boolean"/>
+            <parameter name="fastForward" type="Boolean"/>
+            <parameter name="baseCommitId"/>
+            <parameter name="conflictPaths" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="archive" noun="GitRepository" type="rust" location="moqui_core::service::git_hosting::archive_repository">
+        <description>Archive a repository: read only from now (pushes, ref writes, merges and writes refused), its open
+            merge requests closed, left out of find#GitRepositories unless asked. Needs delete.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="closedMergeRequestCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="unarchive" noun="GitRepository" type="rust" location="moqui_core::service::git_hosting::unarchive_repository">
+        <description>Make an archived repository writable again. Needs delete.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+    </service>
+    <service verb="update" noun="GitRepository" type="rust" location="moqui_core::service::git_hosting::update_repository">
+        <description>A repository's description, default branch (an existing branch) and default merge method (GmmMerge
+            or GmmSquash). Needs delete.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="description"/>
+            <parameter name="branch"/>
+            <parameter name="defaultMergeMethodEnumId"/>
+        </in-parameters>
+    </service>
+
+    <!-- Branch rules: moqui.resource.GitBranchRule, enforced by the git server and the ref services -->
+    <service verb="get" noun="GitBranchRules" type="rust" location="moqui_core::service::git_hosting::get_branch_rules">
+        <description>The branch rules of a repository that name a ref (every rule without one), and what they ask
+            together. For its viewers.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refName"/>
+            <parameter name="refType"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ruleList" type="List"/>
+            <parameter name="protected" type="Boolean"/>
+            <parameter name="requireMergeRequest" type="Boolean"/>
+            <parameter name="requiredApprovals" type="Integer"/>
+            <parameter name="dismissStaleApprovals" type="Boolean"/>
+            <parameter name="requiredStatusContexts" type="List"/>
+            <parameter name="allowedMergeMethods" type="List"><description>Empty: any</description></parameter>
+            <parameter name="mayPushDirectly" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="GitBranchRule">
+        <description>Create or update a branch rule. Needs delete on the repository.</description>
+        <in-parameters>
+            <parameter name="branchRuleId"/>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refPattern" required="true"/>
+            <parameter name="allowForcePush" default-value="N"/>
+            <parameter name="allowDelete" default-value="N"/>
+            <parameter name="requireMergeRequest" default-value="N"/>
+            <parameter name="requiredApprovals" type="Integer" default="0"/>
+            <parameter name="dismissStaleApprovals" default-value="N"/>
+            <parameter name="requiredStatusContexts"/>
+            <parameter name="allowedMergeMethods"/>
+            <parameter name="pushUserGroupId"/>
+        </in-parameters>
+        <out-parameters><parameter name="branchRuleId"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.impl.GitServices.get#GitRepositoryAccess" in-map="{repositoryId:repositoryId}" out-map="access"/>
+            <script><![CDATA[
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not change the branch rules of ${repositoryId}', '', {repositoryId})); return }
+                const methods = String(allowedMergeMethods || '').split(',').map((item) => item.trim()).filter((item) => item)
+                const known = ['GmmMerge', 'GmmSquash', 'GmmFastForward', 'GmmRebase']
+                const unknown = methods.filter((method) => !known.includes(method))
+                if (unknown.length) { ec.message.addError('Not merge methods: ' + unknown.join(', ')); return }
+                const yn = (value) => (value === true || value === 'Y' || value === 'true') ? 'Y' : 'N'
+                const fields = {repositoryId, refPattern: String(refPattern).trim(), allowForcePush: yn(allowForcePush),
+                    allowDelete: yn(allowDelete), requireMergeRequest: yn(requireMergeRequest),
+                    requiredApprovals: Math.max(0, requiredApprovals || 0), dismissStaleApprovals: yn(dismissStaleApprovals),
+                    requiredStatusContexts: requiredStatusContexts || null, allowedMergeMethods: methods.join(',') || null,
+                    pushUserGroupId: pushUserGroupId || null}
+                let rule = branchRuleId ? ec.entity.find('moqui.resource.GitBranchRule').condition('branchRuleId', branchRuleId).disableAuthz().one() : null
+                if (rule && rule.repositoryId !== repositoryId) { ec.message.addError('Branch rule ' + branchRuleId + ' is not of repository ' + repositoryId); return }
+                if (rule) {
+                    rule.setFields(fields, true, null, null)
+                    rule.update()
+                } else {
+                    rule = ec.entity.makeValue('moqui.resource.GitBranchRule')
+                    rule.setSequencedIdPrimary()
+                    rule.setFields(fields, true, null, null)
+                    rule.create()
+                }
+                branchRuleId = rule.branchRuleId
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="delete" noun="GitBranchRule">
+        <description>Delete a branch rule. Needs delete on its repository.</description>
+        <in-parameters><parameter name="branchRuleId" required="true"/></in-parameters>
+        <actions>
+            <script><![CDATA[
+                const rule = ec.entity.find('moqui.resource.GitBranchRule').condition('branchRuleId', branchRuleId).disableAuthz().one()
+                if (!rule) return
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: rule.repositoryId}).call()
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not change the branch rules of ${repositoryId}', '', {repositoryId: rule.repositoryId})); return }
+                rule.delete()
+            ]]></script>
+        </actions>
+    </service>
+
+    <!-- Commit statuses: outside CI posts them over REST (moqui.rest.xml: git/{repositoryId}/commits/{commitId}/statuses) -->
+    <service verb="create" noun="GitCommitStatus" type="rust" location="moqui_core::service::git_hosting::create_commit_status">
+        <description>A check of a commit by outside CI, in GitHub's status shape. Needs a push right on the repository
+            (a CI user with an access token); the commit must be in the repository.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="commitId" required="true"/>
+            <parameter name="state" required="true"><description>pending, success, failure or error</description></parameter>
+            <parameter name="context"><description>default when empty</description></parameter>
+            <parameter name="targetUrl"/>
+            <parameter name="target_url"><description>GitHub's name for targetUrl</description></parameter>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitStatusId"/>
+            <parameter name="id"/>
+            <parameter name="commitId"/>
+            <parameter name="context"/>
+            <parameter name="state"/>
+            <parameter name="targetUrl"/>
+            <parameter name="target_url"/>
+            <parameter name="description"/>
+            <parameter name="createdByUserId"/>
+            <parameter name="creator"/>
+            <parameter name="createdDate" type="Timestamp"/>
+            <parameter name="created_at" type="Timestamp"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GitCommitStatuses" type="rust" location="moqui_core::service::git_hosting::get_commit_statuses">
+        <description>The statuses of a commit, or of many: the latest of each context and the combined state (failure
+            when any failed or erred, pending when any is pending, success when all succeeded). For its viewers.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="commitId"><description>A commit, or a branch or tag</description></parameter>
+            <parameter name="commitIdList" type="List"><description>Full commit ids, for a log page</description></parameter>
+            <parameter name="allStatuses" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="state"/>
+            <parameter name="statusList" type="List"/>
+            <parameter name="stateByCommit" type="Map"/>
+        </out-parameters>
+    </service>
+
+    <!-- Webhooks: moqui.resource.GitWebhook; each delivery a SystemMessage of type GitWebhook -->
+    <service verb="find" noun="GitWebhooks">
+        <description>The webhooks of a repository, the secret left out. Needs delete on the repository.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="webhookList" type="List"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.impl.GitServices.get#GitRepositoryAccess" in-map="{repositoryId:repositoryId}" out-map="access"/>
+            <script><![CDATA[
+                webhookList = []
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not see the webhooks of ${repositoryId}', '', {repositoryId})); return }
+                for (const hook of Array.from(ec.entity.find('moqui.resource.GitWebhook').condition('repositoryId', repositoryId).orderBy('webhookId').disableAuthz().list())) {
+                    webhookList.push({webhookId: hook.webhookId, repositoryId: hook.repositoryId, url: hook.url, events: hook.events,
+                        active: hook.active, description: hook.description, hasSecret: !!hook.secret, createdDate: hook.createdDate,
+                        lastDeliveryDate: hook.lastDeliveryDate, lastDeliveryStatus: hook.lastDeliveryStatus})
+                }
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="store" noun="GitWebhook">
+        <description>Create or update a webhook: an http or https URL, the events (push, tag, merge_request; all when
+            empty), the secret its deliveries are signed with (kept when left empty on an update), active. Needs delete
+            on the repository.</description>
+        <in-parameters>
+            <parameter name="webhookId"/>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="url" required="true"/>
+            <parameter name="events"/>
+            <parameter name="secret"/>
+            <parameter name="active" default-value="Y"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters><parameter name="webhookId"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.impl.GitServices.get#GitRepositoryAccess" in-map="{repositoryId:repositoryId}" out-map="access"/>
+            <script><![CDATA[
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not change the webhooks of ${repositoryId}', '', {repositoryId})); return }
+                const target = String(url).trim()
+                if (!/^https?:\/\/[^\s/]+/.test(target)) { ec.message.addError('A webhook URL is http or https'); return }
+                const known = ['push', 'tag', 'merge_request']
+                const list = String(events || '').split(',').map((item) => item.trim()).filter((item) => item)
+                const unknown = list.filter((item) => !known.includes(item))
+                if (unknown.length) { ec.message.addError('Not webhook events: ' + unknown.join(', ')); return }
+                const fields = {repositoryId, url: target, events: list.join(',') || null,
+                    active: (active === false || active === 'N' || active === 'false') ? 'N' : 'Y', description: description || null}
+                if (secret) fields.secret = secret
+                let hook = webhookId ? ec.entity.find('moqui.resource.GitWebhook').condition('webhookId', webhookId).disableAuthz().one() : null
+                if (hook && hook.repositoryId !== repositoryId) { ec.message.addError('Webhook ' + webhookId + ' is not of repository ' + repositoryId); return }
+                if (hook) {
+                    hook.setFields(fields, true, null, null)
+                    hook.update()
+                } else {
+                    hook = ec.entity.makeValue('moqui.resource.GitWebhook')
+                    hook.setSequencedIdPrimary()
+                    hook.setFields(fields, true, null, null)
+                    hook.createdByUserId = ec.user.userId
+                    hook.createdDate = ec.user.nowTimestamp
+                    hook.create()
+                }
+                webhookId = hook.webhookId
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="delete" noun="GitWebhook">
+        <description>Delete a webhook; its deliveries not yet sent are cancelled. Needs delete on its repository.</description>
+        <in-parameters><parameter name="webhookId" required="true"/></in-parameters>
+        <actions>
+            <script><![CDATA[
+                const hook = ec.entity.find('moqui.resource.GitWebhook').condition('webhookId', webhookId).disableAuthz().one()
+                if (!hook) return
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: hook.repositoryId}).call()
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not change the webhooks of ${repositoryId}', '', {repositoryId: hook.repositoryId})); return }
+                ec.entity.find('moqui.service.message.SystemMessage').condition({systemMessageTypeId: 'GitWebhook', receiverId: webhookId, statusId: 'SmsgProduced'})
+                        .disableAuthz().updateAll({statusId: 'SmsgCancelled'})
+                hook.delete()
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="test" noun="GitWebhook" type="rust" location="moqui_core::service::git_hosting::test_webhook"
+            transaction="ignore">
+        <description>Send a ping event to a webhook now, recorded as a delivery. Needs delete on its repository.</description>
+        <in-parameters><parameter name="webhookId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="systemMessageId"/>
+            <parameter name="statusCode"/>
+            <parameter name="delivered" type="Boolean"/>
+            <parameter name="errorText"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="GitWebhookDeliveries">
+        <description>The deliveries of a webhook, newest first, each with its attempts' errors: the delivery log. Needs
+            delete on its repository.</description>
+        <in-parameters>
+            <parameter name="webhookId" required="true"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deliveryList" type="List"><description>Maps: systemMessageId, event, statusId (SmsgProduced
+                while it is retried, SmsgSent, SmsgError when it gave up, SmsgCancelled), initDate, lastAttemptDate,
+                processedDate, failCount, httpStatus, messageText, errorList (errorDate, errorText)</description></parameter>
+            <parameter name="deliveryListCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                deliveryList = []
+                deliveryListCount = 0
+                const hook = ec.entity.find('moqui.resource.GitWebhook').condition('webhookId', webhookId).disableAuthz().one()
+                if (!hook) { ec.message.addError('No webhook ' + webhookId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: hook.repositoryId}).call()
+                if (!access.canDelete) { ec.message.addError(ec.resource.expand('You may not see the webhooks of ${repositoryId}', '', {repositoryId: hook.repositoryId})); return }
+                const find = () => ec.entity.find('moqui.service.message.SystemMessage').condition({systemMessageTypeId: 'GitWebhook', receiverId: webhookId}).disableAuthz()
+                deliveryListCount = find().count()
+                const messages = Array.from(find().orderBy('-initDate').orderBy('-systemMessageId').offset(pageIndex * pageSize).limit(pageSize).list())
+                for (const message of messages) {
+                    const errors = Array.from(ec.entity.find('moqui.service.message.SystemMessageError').condition('systemMessageId', message.systemMessageId)
+                            .orderBy('-errorDate').disableAuthz().list()).map((error) => ({errorDate: error.errorDate, errorText: error.errorText}))
+                    deliveryList.push({systemMessageId: message.systemMessageId, event: message.docType, statusId: message.statusId,
+                        initDate: message.initDate, lastAttemptDate: message.lastAttemptDate, processedDate: message.processedDate,
+                        failCount: message.failCount || 0, httpStatus: message.remoteMessageId, messageText: message.messageText, errorList: errors})
+                }
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="send" noun="GitWebhookDelivery" type="rust" location="moqui_core::service::git_hosting::send_webhook_delivery">
+        <description>The send service of SystemMessage type GitWebhook: POST the message's JSON to its webhook's URL
+            with X-Moqui-Event, X-Moqui-Delivery and, with a secret, X-Hub-Signature-256 (sha256= the HMAC-SHA256 of
+            the body). Internal addresses are refused unless git-server webhook-private-network. A status that is not
+            2xx is an error, so the delivery is retried.</description>
+        <in-parameters><parameter name="systemMessageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="remoteMessageId"/></out-parameters>
+    </service>
+    <service verb="queue" noun="GitWebhookPush" type="rust" location="moqui_core::service::git_hosting::queue_webhook_push">
+        <description>For the framework's post-receive gitECA rule (Git.gitecas.xml): a push event per branch that
+            changed and a tag event per tag, to each active webhook of the repository that takes it.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="source"/>
+            <parameter name="userId"/>
+            <parameter name="refUpdates" type="List"><description>As org.moqui.GitServices.process#GitEca's</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="queue" noun="GitWebhookEvent" type="rust" location="moqui_core::service::git_hosting::queue_webhook_event">
+        <description>Any other event of a repository (merge_request, with an action) to each active webhook that takes
+            it: payload as the body, with event, action, repository and sender.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="event" required="true"/>
+            <parameter name="action"/>
+            <parameter name="payload" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="queuedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="retry" noun="GitWebhookDeliveries" authenticate="anonymous-all">
+        <description>Send again the webhook deliveries that failed, each after a wait that doubles with its failures (1,
+            2, 4 ... minutes); after retryLimit failures it is in error and no longer tried (for the
+            retry_GitWebhookDeliveries_frequent ServiceJob). One that fails is logged and the others are still tried.</description>
+        <in-parameters><parameter name="retryLimit" type="Integer" default="8"/></in-parameters>
+        <out-parameters><parameter name="retriedCount" type="Integer"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                retriedCount = 0
+                const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+                const pending = Array.from(ec.entity.find('moqui.service.message.SystemMessage')
+                        .condition({systemMessageTypeId: 'GitWebhook', statusId: 'SmsgProduced', isOutgoing: 'Y'})
+                        .orderBy('initDate').limit(200).disableAuthz().list())
+                for (const message of pending) {
+                    const failures = message.failCount || 0
+                    if (failures === 0 && message.lastAttemptDate == null && now - ec.user.timestampMillis(message.initDate) < 60000) continue
+                    if (failures >= retryLimit) {
+                        ec.entity.find('moqui.service.message.SystemMessage').condition('systemMessageId', message.systemMessageId).disableAuthz()
+                                .updateAll({statusId: 'SmsgError'})
+                        continue
+                    }
+                    const last = message.lastAttemptDate ? ec.user.timestampMillis(message.lastAttemptDate) : 0
+                    if (now - last < Math.pow(2, failures) * 60000) continue
+                    try {
+                        ec.service.sync().name('org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage')
+                                .parameters({systemMessageId: message.systemMessageId}).call()
+                        retriedCount++
+                    } catch (err) {
+                        ec.logger.log('error', 'Webhook delivery ' + message.systemMessageId + ' not retried: ' + err)
+                    }
+                    ec.message.clearErrors()
+                }
+            ]]></script>
+        </actions>
     </service>
 </services>

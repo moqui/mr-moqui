@@ -16,7 +16,7 @@
 //!
 //! `push#RemoteChanges` (internal) queues each change as an `EmailRemoteChange` row in the caller's transaction, so a
 //! change that rolls back is not queued and one that commits is not lost while the server is away. Once it commits a
-//! push-only session runs on a service worker (`email_sync_push_now`, on by default); otherwise the account's next
+//! push-only session runs on a service worker (`email-client` `sync-push-now`, on by default); otherwise the account's next
 //! sync makes it. A change is made from the message's state when it is applied, not when it was queued: a flag change
 //! stores the flags it named as they are now, a move takes the message from where it is on the server
 //! (`remoteFolderId`) to its folder here, a label change stores the labels as keywords, a sent message is appended to
@@ -207,9 +207,7 @@ fn push_now() -> bool {
     if !PUSH_NOW_IN_TESTS.load(std::sync::atomic::Ordering::SeqCst) {
         return false;
     }
-    !moqui_lib::env::get_prop_or_env("email_sync_push_now")
-        .trim()
-        .eq_ignore_ascii_case("false")
+    !super::client_setting("sync-push-now").eq_ignore_ascii_case("false")
 }
 
 /// After the caller's commit, a push-only session for the account on a service worker.

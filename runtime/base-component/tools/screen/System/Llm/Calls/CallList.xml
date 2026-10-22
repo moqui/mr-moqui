@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The provider calls: one row per request attempt, with its latency, tokens, cost and error. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Calls" default-menu-index="1">
+
+    <transition name="callDetail"><default-response url="../CallDetail"/></transition>
+    <transition name="modelDetail"><default-response url="../../Models/ModelDetail"/></transition>
+    <transition name="userAccountDetail"><default-response url="../../../Security/UserAccount/UserAccountDetail"/></transition>
+
+    <actions>
+    </actions>
+    <widgets>
+        <form-list name="CallList" list="callList" skip-form="true" header-dialog="true" show-csv-button="true">
+            <entity-find entity-name="moqui.llm.LlmCall" list="callList" use-clone="true">
+                <search-form-inputs default-order-by="-startDate">
+                    <default-parameters startDate_poffset="-1" startDate_period="7d"/></search-form-inputs>
+                <select-field field-name="callId,startDate,userId,featureId,modelId,source,runId,httpStatus,finishReason,errorClass,attempt,firstTokenMs,durationMs,inputTokens,cachedInputTokens,outputTokens,cost,currencyUomId"/>
+            </entity-find>
+            <field name="callId"><header-field title="Call" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="callDetail" text="${callId}" link-type="anchor"/></default-field></field>
+            <field name="startDate"><header-field title="Start" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/>
+                <link url="userAccountDetail" text="${userId}" link-type="anchor" condition="userId"/>
+            </default-field></field>
+            <field name="featureId"><header-field title="Feature"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="modelId"><header-field title="Model" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="modelDetail" text="${modelId}" link-type="anchor" parameter-map="{modelId:modelId}"/></default-field></field>
+            <field name="source"><header-field show-order-by="true"><drop-down allow-empty="true">
+                    <option key="agent"/><option key="gateway"/><option key="api"/><option key="probe"/><option key="embed"/><option key="test"/>
+                </drop-down></header-field><default-field><display/></default-field></field>
+            <field name="runId"><header-field title="Run"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="httpStatus"><header-field title="HTTP"/><default-field><display/></default-field></field>
+            <field name="finishReason"><header-field title="Finish"/><default-field><display/></default-field></field>
+            <field name="errorClass"><header-field title="Error"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="attempt"><default-field><display/></default-field></field>
+            <field name="firstTokenMs"><header-field title="First Token ms"/><default-field><display/></default-field></field>
+            <field name="durationMs"><header-field title="ms" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="inputTokens"><header-field title="Input"/><default-field><display/></default-field></field>
+            <field name="cachedInputTokens"><header-field title="Cached"/><default-field><display/></default-field></field>
+            <field name="outputTokens"><header-field title="Output"/><default-field><display/></default-field></field>
+            <field name="cost"><header-field show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="currencyUomId"><header-field title="Currency"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

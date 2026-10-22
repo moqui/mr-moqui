@@ -23,8 +23,8 @@ use crate::model::EntityModel;
 use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
-    insert, insert_or_update, render_condition, select, select_view, select_view_with, select_with, update, CompareOp,
-    Condition, FieldRef, LimitOffset, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
+    insert, insert_or_update, render_condition, select, select_view, select_view_with, select_with, supports_upsert,
+    update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -278,14 +278,13 @@ fn ignore_case_upper_cases_text_fields_and_values_only() {
 }
 
 #[test]
-fn insert_or_update_follows_never_try_insert() {
+fn insert_or_update_is_one_statement_for_each_database_that_has_one() {
     let (model, dialects) = framework();
     let enumeration = model.entity("moqui.basic.Enumeration").unwrap();
     let postgres = dialects.get("postgres").unwrap();
     let mysql = dialects.get("mysql").unwrap();
-
-    let err = insert_or_update(enumeration, postgres, &["enumId", "description"]).unwrap_err();
-    assert!(err.to_string().contains("try-insert is off"), "{err}");
+    assert!(supports_upsert(postgres) && supports_upsert(mysql));
+    assert!(!supports_upsert(dialects.get("oracle").unwrap()));
 
     let mysql_sql = insert_or_update(enumeration, mysql, &["enumId", "description"]).unwrap();
     assert!(mysql_sql.contains("ON DUPLICATE KEY UPDATE"), "{mysql_sql}");
@@ -294,9 +293,7 @@ fn insert_or_update_follows_never_try_insert() {
         "{mysql_sql}"
     );
 
-    let mut postgres_try = postgres.clone();
-    postgres_try.never_try_insert = false;
-    let conflict = insert_or_update(enumeration, &postgres_try, &["enumId", "description"]).unwrap();
+    let conflict = insert_or_update(enumeration, postgres, &["enumId", "description"]).unwrap();
     assert!(conflict.contains("ON CONFLICT"), "{conflict}");
     assert!(conflict.contains("DO UPDATE SET"), "{conflict}");
     assert!(conflict.contains("EXCLUDED.\"description\""), "{conflict}");
@@ -602,7 +599,8 @@ fn fts_ddl_is_javas_generated_column_and_named_index() {
     );
     let table = create_table(&fts, &model, postgres).unwrap();
     assert!(table.ends_with(&pg.join(";\n")), "{table}");
-    assert!(fts_index_sql(&fts, body, dialects.get("h2").unwrap())
+    // A style other than postgres-tsvector and mysql-fulltext adds no index of its own.
+    assert!(fts_index_sql(&fts, body, dialects.get("sqlite").unwrap())
         .unwrap()
         .is_empty());
 

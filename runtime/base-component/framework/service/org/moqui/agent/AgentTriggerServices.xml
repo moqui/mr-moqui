@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Triggered agents (plans/LLM-A2A-Assist.md 4.14; crates/moqui-core/src/llm/trigger.rs): an AgentTrigger starts a run of
+    its agent on the job surface, as its run-as user, on a schedule (the ServiceJob agent_trigger_[triggerId] that
+    store#AgentTrigger keeps) or when the records of its DataDocument change (the AgentTriggers data feed, whose services
+    are here). A record change the trigger's own agent made does not fire it (the loop guard); events are batched within
+    the trigger's window into one run; run limits and a breaker bound it; results, failures and the approvals that wait go
+    to the AgentInbox notification topic. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="store" noun="AgentTrigger" type="rust" location="moqui_core::llm::trigger::store_agent_trigger"
+            transaction="ignore">
+        <description>Create or change a trigger (AgentAdmin) and keep what fires it: the cron job, paused while the trigger
+            is paused or its breaker is open, and the link of its DataDocument to the AgentTriggers feed. The breaker and
+            its count are not set here (reset#AgentTriggerBreaker).</description>
+        <in-parameters>
+            <parameter name="triggerId"/>
+            <parameter name="agentId"/>
+            <parameter name="triggerTypeEnumId"><description>AgttCron or AgttDocument</description></parameter>
+            <parameter name="description"/>
+            <parameter name="cronExpression"/>
+            <parameter name="dataDocumentId"/>
+            <parameter name="instructions" allow-html="any"/>
+            <parameter name="runAsUserId"/>
+            <parameter name="batchSeconds" type="Integer"/>
+            <parameter name="maxBatchEvents" type="Integer"/>
+            <parameter name="maxRunsPerHour" type="Integer"/>
+            <parameter name="maxRunsPerDay" type="Integer"/>
+            <parameter name="maxConcurrent" type="Integer"/>
+            <parameter name="approvalHold"/>
+            <parameter name="failureLimit" type="Integer"/>
+            <parameter name="paused"/>
+        </in-parameters>
+        <out-parameters><parameter name="triggerId"/></out-parameters>
+    </service>
+
+    <service verb="fire" noun="AgentTrigger" type="rust" location="moqui_core::llm::trigger::fire_agent_trigger"
+            authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>Fire a trigger now (its cron job, a closed batch window, or an admin's Fire now): a run of its agent
+            with its waiting events (a document trigger with none does not run), unless it is paused, its breaker is open
+            or a run limit is reached (skipped, and logged). A firing that cannot start a run counts as a failure. Internal
+            (the job, the feed, the admin screen): it runs as the trigger's run-as user whoever calls it.</description>
+        <in-parameters>
+            <parameter name="triggerId" required="true"/>
+            <parameter name="cause"><description>schedule (default), batch, change or manual</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="eventCount" type="Integer"/>
+            <parameter name="skipped"/>
+        </out-parameters>
+    </service>
+
+    <service verb="reset" noun="AgentTriggerBreaker" type="rust" location="moqui_core::llm::trigger::reset_trigger_breaker"
+            transaction="ignore">
+        <description>Close a trigger's breaker (AgentAdmin): its failure count starts again and its cron job runs again.</description>
+        <in-parameters><parameter name="triggerId" required="true"/></in-parameters>
+    </service>
+
+    <service verb="receive" noun="TriggerDocuments" type="rust" location="moqui_core::llm::trigger::receive_trigger_documents"
+            authenticate="anonymous-all" allow-remote="false">
+        <description>The receive service of the AgentTriggers data feed: each document becomes an event of the triggers on
+            its type, unless the trigger's own agent made the change (_originAgentId, the loop guard). A trigger with no
+            batch window fires once the delivery commits; the others when their window closes.</description>
+        <in-parameters>
+            <parameter name="dataFeedId"/>
+            <parameter name="feedStamp" type="Timestamp"/>
+            <parameter name="documentList" type="List" required="true"><description>The documents as
+                receive#DataFeed has them (_id, _type), with _originAgentId when one agent's run made every change of
+                the record</description></parameter>
+        </in-parameters>
+    </service>
+
+    <service verb="delete" noun="TriggerDocument" type="rust" location="moqui_core::llm::trigger::delete_trigger_document"
+            authenticate="anonymous-all" allow-remote="false">
+        <description>The delete service of the AgentTriggers data feed: a record of a trigger's document type is gone, an
+            event {_type, _id, _deleted}.</description>
+        <in-parameters>
+            <parameter name="dataFeedId"/>
+            <parameter name="feedStamp" type="Timestamp"/>
+            <parameter name="dataDocumentId"/>
+            <parameter name="documentId"/>
+            <parameter name="originAgentId"/>
+        </in-parameters>
+    </service>
+</services>

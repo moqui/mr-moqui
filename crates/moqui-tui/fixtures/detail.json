@@ -1,0 +1,110 @@
+{
+  "v": 1,
+  "screen": {
+    "path": "/Gallery/Detail",
+    "title": "Enumeration Detail"
+  },
+  "c": [
+    {
+      "t": "box",
+      "id": "record",
+      "title": "Record",
+      "c": [
+        {
+          "t": "field",
+          "id": "enumId",
+          "name": "enumId",
+          "title": "Enum ID",
+          "w": {
+            "kind": "display",
+            "text": "STT_INTERNAL"
+          }
+        },
+        {
+          "t": "field",
+          "id": "updated",
+          "name": "updated",
+          "title": "Updated",
+          "w": {
+            "kind": "dateTime",
+            "value": "2026-10-20",
+            "format": "yyyy-MM-dd"
+          }
+        },
+        {
+          "t": "field",
+          "id": "status",
+          "name": "status",
+          "title": "Status",
+          "w": {
+            "kind": "dropDown",
+            "value": "EsRunning",
+            "options": [
+              {
+                "value": "EsRunning",
+                "label": "Running"
+              },
+              {
+                "value": "EsComplete",
+                "label": "Complete"
+              }
+            ]
+          }
+        },
+        {
+          "t": "field",
+          "id": "enumDescription",
+          "name": "enumDescription",
+          "title": "Enumeration description from seed data",
+          "w": {
+            "kind": "display",
+            "text": "café"
+          }
+        }
+      ]
+    },
+    {
+      "t": "box",
+      "id": "typeBox",
+      "title": "Type",
+      "c": [
+        {
+          "t": "field",
+          "id": "typeName",
+          "name": "typeName",
+          "title": "Type",
+          "w": {
+            "kind": "display",
+            "text": "Screen Theme Type"
+          }
+        },
+        {
+          "t": "field",
+          "id": "typeCode",
+          "name": "typeCode",
+          "title": "Code",
+          "w": {
+            "kind": "display",
+            "text": "STT"
+          }
+        },
+        {
+          "t": "field",
+          "id": "sample",
+          "name": "sample",
+          "title": "Sample",
+          "w": {
+            "kind": "display",
+            "text": "東京 🎉"
+          }
+        }
+      ]
+    },
+    {
+      "t": "link",
+      "id": "back",
+      "text": "Back to list",
+      "url": "/Gallery/List"
+    }
+  ]
+}

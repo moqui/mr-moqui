@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One conversation: its metadata and runs for any admin; its transcript (messages with tool calls and results) only for
+    its own user or with AgentAudit, each such read logged in AgentAuditLog (get#AgentAuditView). Nobody drives another
+    user's conversation from here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Conversation" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="conversationId" required="true"/>
+    <transition name="conversationList"><default-response url="../ConversationList"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentConversation" value-field="conversation"/>
+        <!-- the prompt, title, summary and screen state are content: they come only through the service -->
+        <script>if (conversation) { for (const name of ['title', 'summary', 'searchText', 'systemText', 'compactionSummary', 'screenStateJson']) conversation[name] = null }</script>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#AgentAuditView" in-map="{conversationId:conversationId}" out-map="audit"/>
+        <set field="messageList" from="audit?.messageList ?? []"/>
+        <set field="runList" from="audit?.runList ?? []"/>
+        <set field="conversationTitle" from="audit?.conversation?.title ?? ''"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Conversation ${conversationId ?? ''} ${conversationTitle}"/><box-toolbar>
+            <link url="conversationList" text="All Conversations"/>
+        </box-toolbar><box-body>
+            <label text="${audit?.reason ?? ''}" type="p" condition="!audit?.shown"/>
+            <label text="This read of another user's conversation is logged." type="p" condition="audit?.audited"/>
+            <form-single name="ConversationDetail" map="conversation">
+                <field name="conversationId"><default-field title="Conversation"><display/></default-field></field>
+                <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+                <field name="surfaceEnumId"><default-field title="Surface"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="activeRunId"><default-field title="Active Run"><display/></default-field></field>
+                <field name="clientId"><default-field title="Follow Owner"><display/></default-field></field>
+                <field name="contextVersion"><default-field title="Page Version"><display/></default-field></field>
+                <field name="recordEntityName"><default-field title="Record Entity"><display/></default-field></field>
+                <field name="recordId"><default-field title="Record"><display/></default-field></field>
+                <field name="lastMessageDate"><default-field title="Last Message"><display/></default-field></field>
+                <field name="createdDate"><default-field title="Created"><display/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Runs"/><box-body>
+            <form-list name="RunList" list="runList" skip-form="true">
+                <field name="runId"><default-field title="Run"><link url="runDetail" text="${runId}" link-type="anchor" parameter-map="{runId:runId}"/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="submittedDate"><default-field title="Submitted"><display/></default-field></field>
+                <field name="endedDate"><default-field title="Ended"><display/></default-field></field>
+                <field name="stepCount"><default-field title="Steps"><display/></default-field></field>
+                <field name="toolCallCount"><default-field title="Tool Calls"><display/></default-field></field>
+                <field name="inputTokens"><default-field title="Input"><display/></default-field></field>
+                <field name="outputTokens"><default-field title="Output"><display/></default-field></field>
+                <field name="cost"><default-field><display/></default-field></field>
+                <field name="errorCode"><default-field title="Error"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <section name="TranscriptSection" condition="audit?.shown"><widgets>
+            <container-box><box-header title="Transcript"/><box-body>
+                <form-list name="MessageList" list="messageList" skip-form="true">
+                    <field name="messageSeq"><default-field title="#"><display/></default-field></field>
+                    <field name="role"><default-field><display/></default-field></field>
+                    <field name="createdDate"><default-field title="Date"><display/></default-field></field>
+                    <field name="text"><default-field><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

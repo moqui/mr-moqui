@@ -159,7 +159,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <div class="text-caption" :class="$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'">over 2.6 standard deviations</div>
                 </q-card-section></q-card></div>
             </div>
-        ]]></text></render-mode>
+        ]]></text>
+        <text type="tui"><![CDATA[{"t": "dashboard", "id": "ReportCards", "c": [
+    {"t": "numberCard", "id": "ReportHits", "title": "Hits", "value": ${JSON.stringify(cardHits + ' in ' + binCount + ' bins')}},
+    {"t": "numberCard", "id": "ReportArtifacts", "title": "Artifacts", "value": ${JSON.stringify(cardArtifacts + ' distinct names')}},
+    {"t": "numberCard", "id": "ReportAverage", "title": "Average time", "value": ${JSON.stringify(cardAvg + ' ms, max ' + cardMax + ' ms')}},
+    {"t": "numberCard", "id": "ReportSlow", "title": "Slow hits (over 2.6 std dev)", "value": ${JSON.stringify(String(cardSlow))}}
+]}]]></text></render-mode>
 
         <!-- Chart.js reads colors as values, so each series color is a scriptable option that reads the brand variable
             from the canvas's computed style when the chart draws (a theme change plus chart.update recolors); the axis
@@ -175,7 +181,10 @@ along with this software (see the LICENSE.md file). If not, see
                             (name) => (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).getPropertyValue("--q-" + name).trim(),
                             (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).color,
                             (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).color.replace(/^rgba?\((\d+,\s*\d+,\s*\d+)[^)]*\)$/, "rgba($1, 0.12)"))'></m-chart>
-                    ]]></text></render-mode>
+                    ]]></text>
+                    <text type="tui"><![CDATA[{"t": "component", "id": "ReportTypeChart", "name": "chart", "props": {
+                        "labels": ${JSON.stringify(JSON.parse(typeLabelsJson))},
+                        "series": [{"name": "Hits", "data": ${JSON.stringify(JSON.parse(typeHitsJson))}}]}}]]></text></render-mode>
                 </box-body></container-box>
             </row-col>
             <row-col md="6">
@@ -192,7 +201,11 @@ along with this software (see the LICENSE.md file). If not, see
                             (name) => (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).getPropertyValue("--q-" + name).trim(),
                             (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).color,
                             (c) => c.chart.canvas.ownerDocument.defaultView.getComputedStyle(c.chart.canvas).color.replace(/^rgba?\((\d+,\s*\d+,\s*\d+)[^)]*\)$/, "rgba($1, 0.12)"))'></m-chart>
-                    ]]></text></render-mode>
+                    ]]></text>
+                    <text type="tui"><![CDATA[{"t": "component", "id": "ReportDayChart", "name": "chart", "props": {
+                        "labels": ${JSON.stringify(JSON.parse(dayLabelsJson))},
+                        "series": [{"name": "Hits", "data": ${JSON.stringify(JSON.parse(dayHitsJson))}},
+                            {"name": "Average ms", "data": ${JSON.stringify(JSON.parse(dayAvgJson))}}]}}]]></text></render-mode>
                 </box-body></container-box>
             </row-col>
         </container-row>

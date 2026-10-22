@@ -42,6 +42,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <div>You are using the <strong>dynamic Material</strong> UI</div>
                     <div><a href="/apps">Switch to the standard UI</a></div>
                 ]]></text>
+                <!-- the same apps as links, one a line -->
+                <text type="tui"><![CDATA[${JSON.stringify((sri.getMenuItems("/apps") || []).filter((item) => !item.hasParameters)
+                    .map((item, index) => ({t: "link", id: "AppListApp" + index, kind: "anchor-button", text: String(ec.resource.expand(item.title, "")),
+                        url: String(item.url)}))
+                    .concat([{t: "text", id: "AppListUi", text: "You are using the terminal UI; the same apps are in the browser under /apps."}]))}]]></text>
             </render-mode>
         </container>
     </widgets>

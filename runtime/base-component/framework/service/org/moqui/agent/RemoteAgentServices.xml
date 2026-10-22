@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The admin services of the A2A and MCP clients (plans/LLM-A2A-Assist.md 4.15, 4.16, 4.18; System > LLM > Remote;
+    docs/A2A.md and docs/MCP.md): the remote agents agents may delegate to and the MCP servers whose tools they may call.
+    The bodies are Rust (crates/moqui-core/src/llm/remote.rs). Each needs AgentAdmin. A credential is set by its kind and
+    secret and never returned. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="store" noun="AgentRemoteA2a" type="rust" location="moqui_core::llm::remote::store_remote_agent">
+        <description>Create or change a remote A2A agent, the tool a2a__remoteId. The card URL is checked as a delegation
+            checks it: https, no user info, no internal address unless allowPrivateNetwork. allowedAgents is a comma list
+            of the local agents that may delegate to it (* for all, empty for none). The credential is set only when
+            authKind is given (none, bearer, basic or header, with authSecret, authUsername and authHeader) and is never
+            returned. A field left out keeps its value.</description>
+        <in-parameters>
+            <parameter name="remoteId" required="true"/>
+            <parameter name="remoteName"/>
+            <parameter name="description"/>
+            <parameter name="cardUrl"/>
+            <parameter name="allowedAgents"/>
+            <parameter name="allowPrivateNetwork"/>
+            <parameter name="timeoutSeconds"/>
+            <parameter name="disabled"/>
+            <parameter name="authKind"/>
+            <parameter name="authSecret"/>
+            <parameter name="authUsername"/>
+            <parameter name="authHeader"/>
+        </in-parameters>
+        <out-parameters><parameter name="remoteId"/></out-parameters>
+    </service>
+    <service verb="test" noun="AgentRemoteA2a" type="rust" location="moqui_core::llm::remote::test_remote_agent"
+            transaction="ignore">
+        <description>Read the remote agent's card now, as a delegation would, and keep it on its row.</description>
+        <in-parameters><parameter name="remoteId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="ok"/>
+            <parameter name="message"/>
+            <parameter name="agentName"/>
+            <parameter name="interfaceUrl"/>
+            <parameter name="binding"/>
+            <parameter name="skills"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="AgentMcpServer" type="rust" location="moqui_core::llm::remote::store_mcp_server">
+        <description>Create or change a remote MCP server, as store#AgentRemoteA2a stores a remote agent. With
+            perUserAuth each user calls with their own token (AgentMcpUserToken) instead of the server's credential.
+            Its tools are offered only as AgentMcpServerTool rows allow them.</description>
+        <in-parameters>
+            <parameter name="mcpServerId" required="true"/>
+            <parameter name="serverName"/>
+            <parameter name="description"/>
+            <parameter name="url"/>
+            <parameter name="perUserAuth"/>
+            <parameter name="allowedAgents"/>
+            <parameter name="allowPrivateNetwork"/>
+            <parameter name="timeoutSeconds"/>
+            <parameter name="disabled"/>
+            <parameter name="authKind"/>
+            <parameter name="authSecret"/>
+            <parameter name="authUsername"/>
+            <parameter name="authHeader"/>
+        </in-parameters>
+        <out-parameters><parameter name="mcpServerId"/></out-parameters>
+    </service>
+    <service verb="store" noun="AgentMcpServerTool" type="rust" location="moqui_core::llm::remote::store_mcp_server_tool">
+        <description>Allow a tool of a remote MCP server (the tool mcp__server__tool), or change or disable it. No
+            classification is EXTERNAL (an approval for each call); AgclRead runs it at once under the read fence with
+            only its server let through. The description replaces the server's own.</description>
+        <in-parameters>
+            <parameter name="mcpServerId" required="true"/>
+            <parameter name="toolName" required="true"/>
+            <parameter name="classificationEnumId"/>
+            <parameter name="description"/>
+            <parameter name="disabled"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mcpServerId"/>
+            <parameter name="toolName"/>
+        </out-parameters>
+    </service>
+    <service verb="test" noun="AgentMcpServer" type="rust" location="moqui_core::llm::remote::test_mcp_server"
+            transaction="ignore">
+        <description>Discover the MCP server and list its tools now (as an agent's catalog does, the kept list
+            forgotten), each with whether a row allows it.</description>
+        <in-parameters><parameter name="mcpServerId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="ok"/>
+            <parameter name="message"/>
+            <parameter name="protocol"/>
+            <parameter name="toolList" type="List"/>
+        </out-parameters>
+    </service>
+</services>

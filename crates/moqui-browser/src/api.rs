@@ -249,7 +249,7 @@ fn entity_map(entity: &EntityValue) -> Value {
         entity
             .fields()
             .iter()
-            .map(|(key, item)| (key.clone(), plain(item)))
+            .map(|(key, item)| (key.to_string(), plain(item)))
             .collect(),
     )
 }

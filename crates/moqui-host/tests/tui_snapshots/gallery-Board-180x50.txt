@@ -1,0 +1,50 @@
+ gallery ▸ Board                                                                                                                                                john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ Qualify · 3
+     Landing             │   Acme Co. warehouse expansion
+     List                │   120000 · JD · Call tomorrow 10:00
+     Detail              │   Beta Inc. pilot program
+     360                 │   45000 · MS · Send deck by Friday
+     Task                │   Iota Health devices
+   ▶ Board               │   64000 · AK · Qualify budget owner
+     Calendar            │ Propose · 2
+     Split               │   Gamma LLC renewal
+     Settings            │   18500 · JD · Quote Q-10077 sent
+     Wizard              │   Delta Corp. new line
+     Dialog              │   230000 · AK · Demo on the 24th
+     Report              │ Negotiate · 2
+     Panel               │   Epsilon retail rollout
+     Widgets             │   76000 · MS · Legal review of terms
+     Editor              │   Kappa Logistics fleet
+     Message             │   410000 · JD · Counter offer due Monday
+     Views               │ Won · 2
+ ▾ Home                  │   Zeta Partners add-on
+                         │   9800 · AK · Kickoff scheduled
+                         │   Eta Foods seasonal order
+                         │   32000 · JD · Invoice INV-2201 paid
+                         │ Lost · 1
+                         │   Theta Systems migration
+                         │   150000 · MS · Lost to incumbent
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

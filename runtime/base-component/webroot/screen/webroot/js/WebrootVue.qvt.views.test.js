@@ -3,8 +3,10 @@
 // Tests of the form-list views of WebrootVue.qvt.js that need no browser (moqui.listViews, which m-list-views draws): the views
 // offered, a board's columns (the status flow's, column-order's, then the rows' values) with counts and sums, a card moved, the
 // wall clock of a time stamp in the user's zone and back, the events of a calendar (all day, no end, a date only, moved), the
-// lanes of overlapping events, a month's weeks, and what a move posts. Dragging cards and events, the popover and the quick
-// create are the Chromium smoke of Gate 3 (crates/moqui-host/tests/gate3_browser.rs).
+// lanes of overlapping events, a month's weeks, and what a move posts; a board grouped by another of its group-fields, the find of
+// a views request (all-rows, a tree's level); a tree's rows under their parents, its indent and levels, and the parent and previous
+// sibling of each move (moqui.listTree); the time m-elapsed shows. Dragging cards and events, the popover and the quick create are
+// the Chromium smoke of Gate 3 (crates/moqui-host/tests/gate3_browser.rs).
 // Run: node --test runtime/base-component/webroot/screen/webroot/js/WebrootVue.qvt.views.test.js
 "use strict";
 const test = require("node:test");
@@ -258,4 +260,122 @@ test("the list views component's template compiles and declares the slots and pr
     ["views", "rows", "board", "calendar", "formLocation", "reload", "view", "infoUrl"].forEach((name) => assert.ok(props.includes(name), name));
     assert.ok(/card_' \+ item\.index/.test(comp.template) || comp.template.indexOf("'card_' + item.index") >= 0);
     assert.ok(comp.template.indexOf('name="card"') >= 0);
+});
+
+test("a board grouped by another of its group-fields takes that field's columns and flow and none of the default's settings", () => {
+    const board = { groupField: "statusId", columnOrder: ["A"], statusTypeId: "T", parameterName: "toStatus", columns: [{ value: "A" }], flow: { A: ["B"] },
+        groups: [{ field: "statusId", label: "Status" }, { field: "ownerId", label: "Owner" }, { field: "sprintStatusId", label: "Sprint", columns: [{ value: "S1" }], flow: {} }] };
+    assert.equal(lv.boardFor(board, ""), board);
+    assert.equal(lv.boardFor(board, "statusId"), board);
+    assert.equal(lv.boardFor(board, "nope"), board, "a field that is not a group");
+    const owner = lv.boardFor(board, "ownerId");
+    assert.equal(owner.groupField, "ownerId");
+    assert.deepEqual([owner.columns, owner.flow, owner.columnOrder, owner.statusTypeId, owner.parameterName], [null, null, [], null, null]);
+    assert.deepEqual(lv.boardFor(board, "sprintStatusId").columns, [{ value: "S1" }]);
+    const rows = [{ exampleId: "E1", ownerId: "ann" }, { exampleId: "E2", ownerId: "bo" }, { exampleId: "E3", ownerId: "ann" }];
+    const columns = lv.boardColumns(rows.map((row, index) => ({ index, row })), owner, owner.columns || [], {});
+    assert.deepEqual(columns.map((column) => column.value + ":" + column.count), ["ann:2", "bo:1"]);
+});
+
+test("the find of a views request leaves out the paging, the client's keys and a tree's parent field with its operators", () => {
+    const shown = { exampleName: "plan", statusId: "A", pageIndex: "2", pageSize: "20", view: "tree", peekId: "E1", treeLevel: "2", parentId: "X", parentId_op: "empty",
+        parentIdent: "kept", moquiSessionToken: "t", empty: null };
+    assert.deepEqual(lv.findParams(shown), { exampleName: "plan", statusId: "A", parentId: "X", parentId_op: "empty", parentIdent: "kept" });
+    assert.deepEqual(lv.findParams(shown, ["parentId"]), { exampleName: "plan", statusId: "A", parentIdent: "kept" });
+    // the rows of an answer: the list's, the first list, the answer itself
+    assert.deepEqual(lv.answerRows({ other: [1], itemList: [2] }, "itemList"), [2]);
+    assert.deepEqual(lv.answerRows({ count: 3, rows: [{ a: 1 }] }, "missing"), [{ a: 1 }]);
+    assert.deepEqual(lv.answerRows([{ a: 1 }], "x"), [{ a: 1 }]);
+    assert.deepEqual(lv.answerRows("text", "x"), []);
+});
+
+// The tree of the work breakdown of style-guide §3.15: P1 > (P4 > (P9, P11), P5), P2; X's parent is not known
+const treeKnown = () => {
+    const known = {};
+    [["P1", ""], ["P4", "P1"], ["P9", "P4"], ["P11", "P4"], ["P5", "P1"], ["P2", ""], ["X", "GONE"]].forEach(([key, parent], order) => {
+        known[key] = { key, row: { id: key, parentId: parent }, index: order, parent, muted: false, order };
+    });
+    return known;
+};
+
+test("a tree places its rows under their parents, depth first, a row whose parent is not known at the top", () => {
+    const lt = moqui.listTree;
+    const known = treeKnown();
+    assert.equal(lt.keyOf({ id: 7, other: 1 }, ["id", "other"]), "7");
+    const children = lt.childrenOf(known);
+    assert.deepEqual(children[""], ["P1", "P2", "X"]);
+    assert.deepEqual(children.P4, ["P9", "P11"]);
+    assert.deepEqual(lt.missing(known), ["GONE"]);
+    const open = { P1: true, P4: true };
+    const shown = lt.visible(known, children, (key) => !!open[key], (key) => (key === "P4" ? ["more"] : []));
+    assert.deepEqual(shown.map((entry) => (entry.kind === "row" ? entry.key + "@" + entry.level : entry.kind + ":" + entry.key)),
+        ["P1@1", "P4@2", "P9@3", "P11@3", "more:P4", "P5@2", "P2@1", "X@1"]);
+    assert.deepEqual([shown[1].posinset, shown[1].setsize, shown[6].posinset, shown[6].setsize], [1, 2, 2, 3]);
+    // a loop of parents shows neither row and does not hang
+    const loop = { A: { key: "A", parent: "B", order: 0 }, B: { key: "B", parent: "A", order: 1 } };
+    assert.deepEqual(lt.visible(loop, lt.childrenOf(loop), () => true), []);
+    assert.equal(lt.within(known, "P9", "P1"), true);
+    assert.equal(lt.within(known, "P2", "P1"), false);
+    // the indent: 20 px a level to the sixth, then the level shows; 12 px to the fourth on a phone
+    assert.deepEqual([lt.indent(1).px, lt.indent(3).px, lt.indent(6).px, lt.indent(9).px, lt.indent(9).deep, lt.indent(6).deep], [0, 40, 100, 100, true, false]);
+    assert.deepEqual([lt.indent(4, true).px, lt.indent(5, true).px, lt.indent(5, true).deep], [36, 36, true]);
+    // Expand to level 2 opens the top rows that have children; all opens every one
+    const has = (key) => (children[key] || []).length > 0;
+    assert.deepEqual(lt.openTo(children, "1", has), {});
+    assert.deepEqual(lt.openTo(children, "2", has), { P1: true });
+    assert.deepEqual(lt.openTo(children, "all", has), { P1: true, P4: true });
+});
+
+test("a tree's moves are a new parent and a new previous sibling: indent, outdent, up, down and a drop", () => {
+    const lt = moqui.listTree;
+    const known = treeKnown();
+    const children = lt.childrenOf(known);
+    // Tab: under the sibling above, as its last child; the first child cannot
+    assert.deepEqual(lt.move(known, children, "P5", "indent"), { parent: "P4", previous: "P11" });
+    assert.equal(lt.move(known, children, "P4", "indent"), null);
+    // Shift+Tab: to the grandparent, after the old parent; a top row cannot
+    assert.deepEqual(lt.move(known, children, "P11", "outdent"), { parent: "P1", previous: "P4" });
+    assert.deepEqual(lt.move(known, children, "P4", "outdent"), { parent: "", previous: "P1" });
+    assert.equal(lt.move(known, children, "P2", "outdent"), null);
+    // Alt+Up and Alt+Down among the siblings
+    assert.deepEqual(lt.move(known, children, "P11", "up"), { parent: "P4", previous: "" });
+    assert.deepEqual(lt.move(known, children, "P2", "up"), { parent: "", previous: "" });
+    assert.deepEqual(lt.move(known, children, "P1", "down"), { parent: "", previous: "P2" });
+    assert.equal(lt.move(known, children, "P11", "down"), null);
+    assert.deepEqual(lt.place(known, children, "P11"), { parent: "P4", previous: "P9" });
+    // a drop before, after or into a row; after an open row with children is its first child; not into its own branch
+    assert.deepEqual(lt.drop(known, children, "P2", "P9", "before", false), { parent: "P4", previous: "" });
+    assert.deepEqual(lt.drop(known, children, "P2", "P11", "before", false), { parent: "P4", previous: "P9" });
+    assert.deepEqual(lt.drop(known, children, "P2", "P9", "after", false), { parent: "P4", previous: "P9" });
+    assert.deepEqual(lt.drop(known, children, "P2", "P4", "after", true), { parent: "P4", previous: "" });
+    assert.deepEqual(lt.drop(known, children, "P2", "P4", "after", false), { parent: "P1", previous: "P4" });
+    assert.deepEqual(lt.drop(known, children, "P9", "P5", "into", false), { parent: "P5", previous: "" });
+    assert.deepEqual(lt.drop(known, children, "P2", "P4", "into", true), { parent: "P4", previous: "P11" });
+    assert.equal(lt.drop(known, children, "P1", "P9", "into", false), null);
+    assert.equal(lt.drop(known, children, "P4", "P4", "before", false), null);
+    // a row placed at the top for a parent that is not known keeps that parent when it moves among the top rows
+    assert.deepEqual(lt.drop(known, children, "P2", "X", "after", false), { parent: "GONE", previous: "X" });
+});
+
+test("the time since a moment is h:mm, past 24 hours as it is, 0:00 for one to come", () => {
+    const start = Date.UTC(2026, 9, 21, 9, 0);
+    assert.equal(moqui.elapsedText(start, start + 59 * 1000), "0:00");
+    assert.equal(moqui.elapsedText(String(start), start + (2 * 60 + 5) * 60000 + 30000), "2:05");
+    assert.equal(moqui.elapsedText(new Date(start), start + 26 * 3600000), "26:00");
+    assert.equal(moqui.elapsedText(start + 60000, start), "0:00");
+    assert.equal(moqui.elapsedText("2026-10-21T09:00:00Z", start + 61 * 60000), "1:01");
+    assert.equal(moqui.elapsedText(null, start), "");
+    assert.equal(moqui.elapsedText("soon", start), "");
+});
+
+test("the tree, its lead and the elapsed time are components, and the list views take a tree and a peek", () => {
+    ["m-list-tree", "m-tree-lead", "m-elapsed"].forEach((name) => assert.ok(moqui.qvt.components[name], name));
+    const views = moqui.qvt.components["m-list-views"];
+    ["tree", "peek"].forEach((name) => assert.ok(Object.keys(views.props).includes(name), name));
+    assert.deepEqual(lv.views("tree,list", null, null, {}), ["tree", "list"]);
+    assert.deepEqual(lv.views("", null, null, {}), ["list", "tree"]);
+    assert.deepEqual(lv.views("tree,list", null, null, null), ["list"]);
+    const tree = moqui.qvt.components["m-list-tree"];
+    assert.ok(tree.template.indexOf("'tree_' + entry.index") >= 0 && tree.template.indexOf('name="tree"') >= 0);
+    assert.ok(tree.template.indexOf('role="treegrid"') >= 0 && tree.template.indexOf(":aria-level") >= 0);
 });

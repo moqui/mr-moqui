@@ -153,9 +153,13 @@ pub struct PostgresUrl {
     pub database: String,
     /// False only when the url says `sslmode=disable`, as the entity datasource reads `sslmode`.
     pub tls: bool,
+    /// What TLS checks of the server's certificate, from `sslmode`.
+    pub tls_verify: crate::entity::datasource::TlsVerify,
+    /// `sslrootcert`, a PEM file of the authorities to trust; empty is the public ones.
+    pub tls_root_cert: String,
 }
 
-/// `postgresql://host:port/database[?sslmode=...]`. The port defaults to 5432, and TLS is on
+/// `postgresql://host:port/database[?sslmode=...&sslrootcert=...]`. The port defaults to 5432, and TLS is on
 /// unless `sslmode` is `disable`.
 ///
 /// # Errors
@@ -190,16 +194,21 @@ pub fn parse_postgres_url(url: &str) -> Result<PostgresUrl, Error> {
             "search postgres url {url} needs a host and a database"
         )));
     }
-    let sslmode = params
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(key, _)| key.eq_ignore_ascii_case("sslmode"))
-        .map_or("", |(_, value)| value);
+    let param = |name: &str| {
+        params
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map_or("", |(_, value)| value)
+    };
+    let sslmode = param("sslmode");
     Ok(PostgresUrl {
         host: host.to_string(),
         port,
         database: database.to_string(),
         tls: crate::entity::datasource::tls_wanted(sslmode),
+        tls_verify: crate::entity::datasource::tls_verify(sslmode),
+        tls_root_cert: param("sslrootcert").to_string(),
     })
 }
 
@@ -232,6 +241,8 @@ mod tests {
             port,
             database: database.to_string(),
             tls,
+            tls_verify: crate::entity::datasource::TlsVerify::Full,
+            tls_root_cert: String::new(),
         };
         assert_eq!(
             parse_postgres_url("postgresql://db.example:6432/search").unwrap(),
@@ -244,6 +255,11 @@ mod tests {
         assert_eq!(
             parse_postgres_url("postgresql://127.0.0.1:5433/search?user=s&sslmode=disable").unwrap(),
             url("127.0.0.1", 5433, "search", false)
+        );
+        let verified = parse_postgres_url("postgresql://db/search?sslmode=verify-ca&sslrootcert=/etc/ca.pem").unwrap();
+        assert_eq!(
+            (verified.tls, verified.tls_verify, verified.tls_root_cert.as_str()),
+            (true, crate::entity::datasource::TlsVerify::Ca, "/etc/ca.pem")
         );
         assert!(parse_postgres_url("mysql://db/x").is_err());
     }

@@ -1,0 +1,53 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-cut",
+      "model": "qwen3.8-27b",
+      "type": "started"
+    },
+    {
+      "delta": "The orders are",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "delta": " listed in",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "class": "network",
+      "code": null,
+      "finish": "error",
+      "message": "the stream ended without a finish reason",
+      "status": null,
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "class": "network",
+      "code": null,
+      "finish": "error",
+      "message": "the stream ended without a finish reason",
+      "status": null,
+      "type": "finish"
+    },
+    "model": "qwen3.8-27b",
+    "reasoning": "",
+    "replay": null,
+    "response_id": "chatcmpl-cut",
+    "text": "The orders are listed in",
+    "text_deltas": 2,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 0,
+      "output": 0,
+      "reasoning": 0
+    }
+  }
+}

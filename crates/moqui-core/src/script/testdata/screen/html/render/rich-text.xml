@@ -1,0 +1,11 @@
+<screen require-authentication="false">
+    <transition name="save"><default-response type="none"/></transition>
+    <actions>
+        <set field="note" from="{body: '&lt;p&gt;Hello &lt;strong&gt;there&lt;/strong&gt;&lt;/p&gt;&lt;script&gt;no&lt;/script&gt;'}"/>
+    </actions>
+    <widgets>
+        <form-single name="Note" map="note" transition="save">
+            <field name="body"><default-field><text-area editor-type="rich"/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

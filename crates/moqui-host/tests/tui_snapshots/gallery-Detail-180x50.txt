@@ -1,0 +1,50 @@
+ gallery ▸ Detail                                                                                                                                               john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.3 Detail ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ One record with its parts and actions: a title row with the identifier, the status flow, one primary action and a menu of secondary actions; the     │
+     List                │ ┃ parts as boxes (three or fewer, so no tabs) and Chatter at the right from 1440 px, below it on narrower screens. Read-only values are display fields │
+   ▶ Detail              │ ┃ with a label. Every action is a no-op here.                                                                                                          │
+     360                 │ ┃ The status-bar element shows the stages of the framework's EntitySync status flow (the status is the syncStatusId parameter, as the gallery writes   │
+     Task                │ ┃ nothing): the current stage filled, the done ones checked, and the transitions from it as buttons, the next stage the primary action and Error in    │
+     Board               │ ┃ the negative color; each confirms and posts setStatus with statusId. The Chatter column is the chatter and record-files elements: they load the      │
+     Calendar            │ ┃ subscreens of the current app root that the theme values STRT_CHATTER_SCREEN and STRT_RECORD_FILES_SCREEN name (here the gallery's own Chatter and   │
+     Split               │ ┃ RecordFiles), and show nothing when the theme names none.                                                                                            │
+     Settings            │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Wizard              │ Error Screens
+     Dialog              │ STT_ERROR · Screen Theme Type
+     Report              │ ✓ Not Started ─ ● Running ─ ○ Complete
+     Panel               │ [ Complete ]  Reset Not Started  [ Error ]
+     Widgets             │ [ More ▾ ]
+     Editor              │ ┌─ Header ────────────────────────────────────────────────────────────────┐ ▣ chatter has a browser-only part · o=Open in browser
+     Message             │ │ ID  . . . . . : STT_ERROR                                               │ ▣ record-files has a browser-only part · o=Open in browser
+     Views               │ │ Type  . . . . : Screen Theme Type                                       │
+ ▾ Home                  │ │ Description . : Error Screens                                           │
+                         │ │ Code  . . . . : ERROR                                                   │
+                         │ │ Sequence  . . :                                                         │
+                         │ │ Parent  . . . :                                                         │
+                         │ │ Option value  :                                                         │
+                         │ │ Related . . . :                                                         │
+                         │ │ Last updated  : <today> hh:mm                                        │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Related: 4 of type Screen Theme Type ──────────────────────────────────┐
+                         │ │ All of this type                                                        │
+                         │ │   ID                  Description                    Code           Seq │
+                         │ │ ────────────────────────────────────────────────────────────────────────│
+                         │ │   STT_INTERNAL        Internal Applications          DEFAULT            │
+                         │ │   STT_INTERNAL_QUASAR Internal Applications - Quasar DEFAULT_QUASAR     │
+                         │ │   STT_PUBLIC          Public Web Site/etc            PUBLIC             │
+                         │ │   Rows 1–3 of 3 · Page 1/1                                              │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ History ───────────────────────────────────────────────────────────────┐
+                         │ │   When             Who      What                                        │
+                         │ │ ──────────────────────────────────────────────────                      │
+                         │ │   <today> hh:mm john.doe Opened in the gallery                       │
+                         │ │   <today> hh:mm system   Loaded from seed data                       │
+                         │ │   Rows 1–2 of 2 · Page 1/1                                              │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

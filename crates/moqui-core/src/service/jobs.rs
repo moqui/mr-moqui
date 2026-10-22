@@ -19,6 +19,11 @@
 //! two instances cannot both run a job, creates the `ServiceJobRun` history row, and hands the run
 //! to the service pool. It never runs the service body. A worker does, and records the outcome.
 //!
+//! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
+//! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
+//! The pass still skips a job only when the previous occurrence is strictly before the last run, so
+//! a last run at that occurrence still runs, as Java's `!lastSchedule.isBefore(lastRunDt)`.
+//!
 //! A fire-and-forget call that finds the pool queue full is stored as a `ServiceJob` named with
 //! [`QUEUE_PREFIX`] and no cron expression. The pass submits it when a slot is free and deletes it
 //! when it has run. Parameters of such a call are stored as text, as for any job.
@@ -50,6 +55,12 @@ const DEFAULT_RETRY_MINUTES: i64 = 5;
 const DEFAULT_JOB_TIMEOUT_SECONDS: u64 = 1800;
 const TEXT_LIMIT: usize = 4000;
 
+/// The time zone a ServiceJob cron expression is read in: the machine's zone, the one the operating
+/// system reports. It is not the server zone `default_time_zone` names.
+pub(crate) fn job_time_zone() -> jiff::tz::TimeZone {
+    jiff::tz::TimeZone::system()
+}
+
 /// A job handed to a worker.
 pub(crate) struct JobRun {
     job_name: String,
@@ -61,6 +72,8 @@ pub(crate) struct JobRun {
     last_run_time: Value,
     delete_when_done: bool,
     user_name: Option<String>,
+    /// The agent run that started it, which the run works for too (the agent triggers' loop guard).
+    origin: Option<crate::context::AgentOrigin>,
     /// `ServiceJob.topic`: a notification of this topic is sent when the run ends.
     topic: Option<String>,
     description: Option<String>,
@@ -228,7 +241,7 @@ fn readiness(
     }
     if !cron_text.is_empty() {
         let cron = super::schedule::cached_cron(cron_text)?;
-        let zoned = now.to_zoned(jiff::tz::TimeZone::system());
+        let zoned = now.to_zoned(job_time_zone());
         // A schedule with nothing before now has not come due yet.
         let Ok(last_schedule) = cron.find_previous_occurrence(&zoned, true) else {
             return Ok(None);
@@ -289,6 +302,7 @@ fn dispatch(
             last_run_time: ready.last_run_time,
             delete_when_done: queued,
             user_name: None,
+            origin: None,
             topic: Some(field_text(job, "topic")).filter(|topic| !topic.is_empty()),
             description: Some(field_text(job, "description")).filter(|text| !text.is_empty()),
             factory: Arc::clone(factory),
@@ -400,6 +414,7 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
         last_run_time: Value::Null,
         delete_when_done: false,
         user_name: crate::user::current_username().ok().flatten(),
+        origin: super::pool::current_origin(),
         topic: Some(field_text(&job, "topic")).filter(|topic| !topic.is_empty()),
         description: Some(field_text(&job, "description")).filter(|text| !text.is_empty()),
         factory: Arc::clone(&factory),
@@ -457,6 +472,7 @@ pub(crate) fn run_job(job: JobRun) {
             tracing::warn!(job = %job.job_name, error = %err, "could not log in the job's user");
         }
     }
+    context.set_agent_origin(job.origin.clone());
     let Some(facade) = factory.entity() else {
         return;
     };
@@ -1002,6 +1018,7 @@ mod tests {
             last_run_time: timestamp_value(PREVIOUS),
             delete_when_done: false,
             user_name: None,
+            origin: None,
             topic: None,
             description: None,
             factory: Arc::clone(ctx.factory()),

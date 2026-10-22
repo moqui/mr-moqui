@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A service with a number parameter, for the server-static qvt tests: a field that names it with
+     validate-service gets the number browser rule. The file's path gives the service its prefix. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="validate" type="inline">
+        <in-parameters>
+            <parameter name="qty" type="Double"/>
+            <parameter name="count" type="Integer"/>
+        </in-parameters>
+    </service>
+</services>

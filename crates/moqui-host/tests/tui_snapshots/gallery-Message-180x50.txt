@@ -1,0 +1,50 @@
+ gallery ▸ Message                                                                                                                                              john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ A designed message ────────────────────────────────────────────────────┐ ┌─ A plain-text message ───────────────────────────────────────────────────┐
+     Landing             │ │ Trust this sender                                                       │ │ Hi team,                                                                 │
+     List                │ │ The HTML is cleaned in the browser and shown in a frame without         │ │                                                                          │
+     Detail              │ │ scripts. Remote images wait for Show images or a trusted sender; the    │ │ The plan is at https://moqui.org/docs, and questions go to               │
+     360                 │ │ reply history is behind the dots.                                       │ │ ada@example.com.                                                         │
+     Task                │ │ [Logo] IronStone news                                                   │ │ Use <b>plain</b> words; nothing here is HTML.                            │
+     Board               │ │ Hello Ada, here is this week's update with a picture from the           │ │                                                                          │
+     Calendar            │ │ sender's server:                                                        │ │ On Sun, Oct 18, 2026 at 9:00 AM Bob <bob@example.com> wrote:             │
+     Split               │ │ [Remote picture]                                                        │ │ > Where is the plan?                                                     │
+     Settings            │ │ Read more[1] or a bad link.                                             │ │ >                                                                        │
+     Wizard              │ │ Sign in                                                                 │ │ > Thanks, Bob                                                            │
+     Dialog              │ │ You get this because you asked for it.                                  │ └──────────────────────────────────────────────────────────────────────────┘
+     Report              │ │ On Mon, Oct 19, 2026 at 9:00 AM Bob <bob@example.com> wrote:            │
+     Panel               │ │ │ The earlier message,                                                  │
+     Widgets             │ │   with its lines,                                                       │
+     Editor              │ │   and more of them.                                                     │
+   ▶ Message             │ │ References                                                              │
+     Views               │ │ 1. Read more                                                            │
+ ▾ Home                  │ └─────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

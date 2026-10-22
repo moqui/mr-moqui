@@ -12,13 +12,13 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The gallery's second quick-create kind (shell-providers in Gallery.xml), a .qvue screen and nothing else (render-modes="qvue"):
-    QuickTask.qvue next to this file. The provider names it without .qvue, and the shell's dialog (an m-dynamic-container) loads it
+<!-- The gallery's second quick-create kind (shell-providers in Gallery.xml), a .qvue screen and its terminal twin (render-modes="qvue,tui"):
+    QuickTask.qvue next to this file, and a tui text the TUI's quick create loads. The provider names it without .qvue, and the shell's dialog (an m-dynamic-container) loads it
     as qvue all the same (js/README.md, Loading a screen); a tray tab that names it does too. The component reads its own query
     through inject mScreen, confirms Discard with Quasar's Dialog plugin ($q.dialog), and refreshes itself in place when the tray
     refreshes its tab (shellRefresh). Saving is a no-op. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Gallery task" default-menu-include="false" render-modes="qvue">
+        default-menu-title="Gallery task" default-menu-include="false" render-modes="qvue,tui">
 
     <!-- JSON with the message and no screenUrl: the quick-create dialog closes on it and the page under it stays -->
     <transition name="saveTask">
@@ -32,6 +32,22 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <render-mode>
             <text type="qvue" location="component://example/screen/Gallery/QuickTask.qvue" template="false"/>
+            <!-- the terminal twin (the TUI's quick create loads it): the same form, posting to saveTask -->
+            <text type="tui"><![CDATA[[
+{"t": "text", "id": "GalleryTaskIntro", "text": "A .qvue screen with a tui twin: the form posts to the same saveTask transition."},
+${JSON.stringify((() => {
+    const parameters = (ec.web && ec.web.parameters) || {}
+    const entityName = recordEntity || parameters.recordEntity || ''
+    const entityId = recordId || parameters.recordId || ''
+    const nodes = []
+    if (entityId) nodes.push({t: 'text', id: 'GalleryTaskRecord', text: 'On ' + entityName + ' ' + entityId})
+    nodes.push({t: 'form', id: 'GalleryTask', name: 'GalleryTask', transitionUrl: sri.buildUrl('saveTask').url, method: 'post',
+        hidden: [{name: 'recordEntity', value: String(entityName)}, {name: 'recordId', value: String(entityId)}],
+        c: [{t: 'field', id: 'GalleryTask_taskName', name: 'taskName', title: 'Task', w: {kind: 'textLine', value: ''}},
+            {t: 'field', id: 'GalleryTask_submit', name: 'submitButton', title: 'Save', w: {kind: 'submit', text: 'Save'}}]})
+    return {t: 'container', id: 'GalleryTaskBody', c: nodes}
+})())}
+]]]></text>
         </render-mode>
     </widgets>
 </screen>

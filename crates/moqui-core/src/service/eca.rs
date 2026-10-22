@@ -59,7 +59,7 @@ pub fn run_matched_eca(
     operation: &str,
     before: bool,
     rules: &[EcaRule],
-    values: &mut BTreeMap<String, Value>,
+    values: &mut crate::entity::FieldMap,
     pre_row: Option<&crate::entity::EntityValue>,
 ) -> Result<(), Error> {
     if !rules.iter().any(|rule| rule.run_before == before) {
@@ -106,14 +106,14 @@ pub fn run_matched_eca(
         };
         let mut current = facade.make_value(entity_name).map_err(in_rule)?;
         for (name, value) in values.iter() {
-            current.set(name.clone(), value.clone());
+            current.set(std::sync::Arc::clone(name), value.clone());
         }
         let cell: std::sync::Arc<std::sync::Mutex<crate::entity::EntityValue>> =
             std::sync::Arc::new(std::sync::Mutex::new(current));
 
         // Every field of the entity is a name in the rule's context, null when not set, as the Java value's map is, so an
         // unset field does not read a variable of the same name from the caller.
-        let mut published = values.clone();
+        let mut published = crate::entity::string_map(values);
         let names = facade
             .with_entity(entity_name, |entity, _, _| {
                 Ok(entity.field_names().into_iter().map(str::to_string).collect::<Vec<_>>())
@@ -139,7 +139,7 @@ pub fn run_matched_eca(
             // Fields set on `entityValue` are fields of the write, as the Java value is the one written.
             let shared = cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             for (name, value) in shared.fields() {
-                if values.get(name) != Some(value) {
+                if values.get(&**name) != Some(value) {
                     values.insert(name.clone(), value.clone());
                 }
             }
@@ -159,7 +159,7 @@ pub fn run_matched_eca(
                 .map_err(in_rule)?;
             for name in fields {
                 if let Some(value) = set.get(&name) {
-                    values.insert(name, value.clone());
+                    values.insert(name.into(), value.clone());
                 }
             }
         }

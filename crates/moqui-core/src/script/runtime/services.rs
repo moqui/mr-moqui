@@ -297,6 +297,80 @@ impl HostService {
     }
 }
 
+/// `ec.service.job(jobName)`: a builder for running a `ServiceJob` now, outside its schedule, as Java's `ServiceCallJob`.
+pub(super) fn service_job<'js>(ctx: Ctx<'js>, job_name: String) -> rquickjs::Result<Class<'js, HostJob>> {
+    host_guard(&ctx, || {
+        Class::instance(
+            ctx.clone(),
+            HostJob {
+                job_name,
+                parameters: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            },
+        )
+    })
+}
+
+/// A job run builder: `parameters(map)`, `parameter(name, value)` and `localOnly(flag)` return it; `run()` starts the
+/// job with the job's own parameters and these over them, and returns its run id. A job that cannot start (no such
+/// job, a full pool) is an error in the message facade and the result is null, as a failed service call is.
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class]
+pub(super) struct HostJob {
+    #[qjs(skip_trace)]
+    job_name: String,
+    #[qjs(skip_trace)]
+    parameters: std::cell::RefCell<std::collections::BTreeMap<String, Value>>,
+}
+
+#[rquickjs::methods(rename_all = "camelCase")]
+impl HostJob {
+    fn parameters<'js>(
+        this: This<Class<'js, HostJob>>,
+        ctx: Ctx<'js>,
+        map: JsValue<'js>,
+    ) -> rquickjs::Result<Class<'js, HostJob>> {
+        host_guard(&ctx, || {
+            if let Some(entries) = super::values::value_map(&js_to_host(&ctx, &map)?) {
+                this.0.borrow().parameters.borrow_mut().extend(entries);
+            }
+            Ok(this.0)
+        })
+    }
+
+    fn parameter<'js>(
+        this: This<Class<'js, HostJob>>,
+        ctx: Ctx<'js>,
+        name: String,
+        value: JsValue<'js>,
+    ) -> rquickjs::Result<Class<'js, HostJob>> {
+        host_guard(&ctx, || {
+            let value = js_to_host(&ctx, &value)?;
+            this.0.borrow().parameters.borrow_mut().insert(name, value);
+            Ok(this.0)
+        })
+    }
+
+    /// Java's: run on this server, not on another of the cluster. A job here always runs on this server.
+    fn local_only<'js>(this: This<Class<'js, HostJob>>, _flag: Opt<JsValue<'js>>) -> Class<'js, HostJob> {
+        this.0
+    }
+
+    fn run<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || {
+            flush_current(&ctx, true)?;
+            match crate::service::run_job_now(&self.job_name, &self.parameters.borrow()) {
+                Ok(run_id) => run_id.into_js(&ctx),
+                Err(err) => {
+                    tracing::error!("Service job {} did not start: {}", self.job_name, err.diagnostic());
+                    let message = crate::context::client_text(&err.to_string());
+                    with_ec(&ctx, |ec| ec.message().add_error(message))?;
+                    Null.into_js(&ctx)
+                }
+            }
+        })
+    }
+}
+
 /// The pending result of `callFuture`: `get()`, `get(timeoutMs)`, and `isDone()`.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class]

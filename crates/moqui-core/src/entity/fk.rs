@@ -19,11 +19,13 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use moqui_db::model::{EntityDefinition, EntityModel, Relationship};
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
+use super::value::FieldMap;
 use super::facade::EntityFacade;
 use super::value::EntityValue;
 
@@ -80,13 +82,13 @@ pub(crate) fn fk_create_disabled(facade: &EntityFacade) -> bool {
 struct FkJob {
     relationship: String,
     related: String,
-    keys: BTreeMap<String, Value>,
+    keys: FieldMap,
 }
 
 pub(crate) fn enforce(
     facade: &EntityFacade,
     entity_name: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
     stack: &mut HashSet<String>,
 ) -> Result<(), Error> {
     if !dummy_fks(facade) {
@@ -123,7 +125,7 @@ pub(crate) fn enforce(
 fn fk_jobs(
     entity: &EntityDefinition,
     model: &EntityModel,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<Vec<FkJob>, Error> {
     let mut jobs = Vec::new();
     for relationship in &entity.relationships {
@@ -147,20 +149,20 @@ fn fk_jobs(
 fn related_keys(
     relationship: &Relationship,
     related: &EntityDefinition,
-    values: &BTreeMap<String, Value>,
-) -> Result<Option<BTreeMap<String, Value>>, Error> {
+    values: &FieldMap,
+) -> Result<Option<FieldMap>, Error> {
     let pairs = key_pairs(relationship, related)?;
     let mut keys = BTreeMap::new();
     for (source, target) in pairs {
-        match values.get(&source) {
+        match values.get(source.as_str()) {
             Some(value) if !value.is_null() => {
-                keys.insert(target, value.clone());
+                keys.insert(Arc::from(target), value.clone());
             }
             _ => return Ok(None),
         }
     }
     for key_value in &relationship.key_values {
-        keys.insert(key_value.related.clone(), Value::string(key_value.value.clone()));
+        keys.insert(Arc::from(key_value.related.as_str()), Value::string(key_value.value.clone()));
     }
     let missing: Vec<&str> = related
         .pk_field_names()
@@ -215,7 +217,7 @@ fn key_pairs(relationship: &Relationship, related: &EntityDefinition) -> Result<
     Ok(pairs)
 }
 
-fn row_exists(facade: &EntityFacade, entity_name: &str, keys: &BTreeMap<String, Value>) -> Result<bool, Error> {
+fn row_exists(facade: &EntityFacade, entity_name: &str, keys: &FieldMap) -> Result<bool, Error> {
     // Existence does not access localized fields; keep cached/transaction-held rows usable.
     let _raw = super::field_rw::RawReadGuard::enter();
     // Java leaves FK existence to the database and makes no such read, so it is counted in a Rust-only bin.

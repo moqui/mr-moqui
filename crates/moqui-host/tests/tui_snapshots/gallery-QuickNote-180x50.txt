@@ -1,0 +1,50 @@
+ gallery ▸ Gallery note                                                                                                                                         john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ A note from the shell's quick create. With a record in the screen context it is linked to it.
+   ▶ Gallery note        │ Note  : │
+     Landing             │         │
+     List                │         │
+     Detail              │ < Save >
+     360                 │
+     Task                │
+     Board               │
+     Calendar            │
+     Split               │
+     Settings            │
+     Wizard              │
+     Dialog              │
+     Report              │
+     Panel               │
+     Widgets             │
+     Editor              │
+     Message             │
+     Views               │
+ ▾ Home                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Note
+ F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

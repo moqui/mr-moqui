@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function renderList({ saved = true, header = true, denied = false, hideNav = false, noSearch = false, finds = [], fields = [], hidden = {}, headerColumns = null, headerFields = [] } = {}) {
+function renderList({ saved = true, header = true, denied = false, hideNav = false, noSearch = false, finds = [], active = null, scheduled = null, fields = [], hidden = {}, headerColumns = null, headerFields = [] } = {}) {
     const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'ScreenQvt.js'), 'utf8'));
     const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
         anyMacros: () => ({}), allElements: [], opaqueElements: []
@@ -21,12 +21,13 @@ function renderList({ saved = true, header = true, denied = false, hideNav = fal
             write: text => { html += text; }, buildUrl: url, makeUrlByType: url,
             getScreenUrlInstance: url, getCurrentScreenUrl: url,
             getFormHiddenParameters: () => hidden, getFormListHeaderValues: () => ({}),
-            getUserFormListFinds: () => finds, getUserDefaultFormListFindId: () => '',
+            getUserFormListFinds: () => finds, getUserDefaultFormListFindId: () => '', getFormListFindScreenScheduled: () => scheduled,
+            getSavedFindFullLocation: (name) => '/qapps/FindPayment.xml.form_list$' + name,
             pushSingleFormMapContext() {}, popContext() {}, safeCloseList() {}
         },
         ec: {
             context: {
-                get: key => key === 'hideNav' && hideNav ? 'true' : null,
+                get: key => key === 'hideNav' && hideNav ? 'true' : key === 'formListFindId' ? active : null,
                 sharedMap: { _entityListNoSearchParms: noSearch }
             },
             l10n: { localize: text => text }, resource: { expand: text => text }
@@ -138,6 +139,7 @@ test('saved finds have a separate named dialog, not inside Find Options', () => 
     assert.ok(saved);
     assert.match(saved, /icon="find_in_page" label="Saved Finds"/);
     assert.match(saved, /label="Save New Find"/);
+    assert.match(saved, /\/qapps\/FindPayment\.xml\.form_list\$PaymentList/);
     const find = dialog(html, 'PaymentList_hdialog');
     assert.match(find, /label="Find Options"/);
     assert.match(find, /label="Clear Parameters"/);
@@ -167,7 +169,15 @@ test('server-static forms also separate Saved Finds from Find Options', () => {
     context.$mqQvtS.formList({ attrs: { name: 'PaymentList', list: 'payments', 'saved-finds': 'true', 'header-dialog': 'true' }, children: [] }, [], []);
     assert.match(dialog(html, 'PaymentList_sfdialog'), /icon="find_in_page"/);
     assert.match(dialog(html, 'PaymentList_sfdialog'), /Save New Find/);
+    assert.match(dialog(html, 'PaymentList_sfdialog'), /nv\.findUrl\('_clear'\)/);
+    assert.match(dialog(html, 'PaymentList_sfdialog'), /Clear Current Find/);
     assert.doesNotMatch(dialog(html, 'PaymentList_hdialog'), /Save New Find|_NewFind/);
+    const saved = dialog(html, 'PaymentList_sfdialog');
+    assert.match(saved, /<template v-if="nv\.activeFind">/);
+    assert.match(saved, /v-if="nv\.activeScheduled"/);
+    assert.match(saved, /<m-form v-else[^>]*id="PaymentList_SCHED"[^>]*:fields-initial="nv\.scheduleFields\(\)"/);
+    assert.match(saved, /name="ScheduleFind" value="Y"/);
+    assert.match(saved, /:data-confirm="ec\.l10n\.localize\('Setup a schedule/);
 });
 
 test('filter summary uses all fields, escapes labels and keeps hidden reset parameters only', () => {
@@ -201,7 +211,49 @@ test('existing saved find actions stay in the Saved Finds dialog', () => {
     }] });
     const saved = dialog(html, 'PaymentList_sfdialog');
     assert.ok(saved);
-    for (const label of ['My payments', 'Update to Current', 'Make Default', 'Delete']) {
+    for (const label of ['My payments', 'Update to Current', 'Make Default', 'Delete', 'Clear Current Find']) {
         assert.ok(saved.includes(label), label);
     }
+    assert.match(saved, /href="\/qapps\/FindPayment\?formListFindId=_clear"/);
+});
+
+test('the active saved find can be scheduled, and a scheduled one shows its schedule', () => {
+    const finds = [{ formListFind: { formListFindId: 'mine' }, description: 'My payments', isByUserId: 'true' }];
+    assert.doesNotMatch(dialog(renderList({ finds }), 'PaymentList_sfdialog'), /_SCHED|Active Saved Find/);
+    const open = dialog(renderList({ finds, active: 'mine' }), 'PaymentList_sfdialog');
+    assert.match(open, /<strong>Active Saved Find:<\/strong> My payments/);
+    const form = open.match(/<m-form[^>]*id="PaymentList_SCHED"[^>]*>[\s\S]*?<\/m-form>/)?.[0];
+    assert.ok(form, open);
+    assert.match(form, /'formListFindId':'mine'/);
+    assert.match(form, /'screenPath':'\/qapps\/FindPayment'/);
+    assert.match(form, /name="renderMode"[\s\S]*'xsl-fo'/);
+    assert.match(form, /name="cronSelected"[\s\S]*'0 0 6 \? \* MON-FRI'/);
+    assert.match(form, /name="ScheduleFind" value="Y"/);
+    assert.match(form, /data-confirm="Setup a schedule to send this saved find to you by email\?"/);
+    assert.doesNotMatch(form, /onclick/);
+    const scheduled = dialog(renderList({ finds, active: 'mine', scheduled: { renderMode: 'xsl-fo', cronDescription: 'at 06:00' } }), 'PaymentList_sfdialog');
+    assert.match(scheduled, /<p>\(Scheduled for PDF at 06:00\)<\/p>/);
+    assert.doesNotMatch(scheduled, /_SCHED/);
+});
+
+test('the filter summary shows a display header field by its value and a display-entity by its entity text', () => {
+    const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'ScreenQvt.js'), 'utf8'));
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, { anyMacros: () => ({}), allElements: [], opaqueElements: [] });
+    const calls = [];
+    const context = {
+        sri: {
+            getFieldValueString: () => 'PMT_ID',
+            getFieldEntityValue: () => 'Visa ending 1111',
+            getFieldTransitionValue: (...args) => { calls.push(args); return 'Labelled'; }
+        },
+        ec: { context: { get: () => null }, l10n: { localize: text => text } }
+    };
+    vm.runInNewContext(module.runtime, context);
+    const widget = (name, attrs = {}) => ({ name, attrs, parent: { parent: { attrs: { name: 'eitherPaymentMethodId' } } } });
+    assert.equal(context.$mqQvt.valueText(widget('display', { text: 'Static text' })), 'PMT_ID');
+    assert.equal(context.$mqQvt.valueText(widget('display-entity', { 'entity-name': 'PaymentMethod' })), 'Visa ending 1111');
+    assert.equal(context.$mqQvt.valueText(widget('display', { 'dynamic-transition': 'getLabel' })), 'Labelled');
+    assert.equal(calls[0][0], 'getLabel');
+    assert.equal(calls[0][2], 'PMT_ID');
+    assert.equal(context.$mqQvt.valueText(widget('hidden')), '');
 });

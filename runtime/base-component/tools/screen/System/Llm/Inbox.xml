@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The agent inbox (the AgentInbox notification topic, plans/LLM-A2A-Assist.md 4.14): what background runs finished or
+    failed, the approvals they wait for, the AI tasks that ended and the trigger breakers that opened. Only the viewer's
+    own messages (D12: an admin has no implicit access to another user's agent content); another user's runs are read
+    in Runs, with AgentAudit and an AgentAuditLog row. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="My Inbox" default-menu-index="13">
+    <widgets>
+        <form-list name="InboxList" list="inboxList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.security.user.NotificationMessageByUser" list="inboxList">
+                <search-form-inputs default-order-by="-sentDate">
+                    <default-parameters sentDate_poffset="-1" sentDate_period="7d"/></search-form-inputs>
+                <econdition field-name="topic" value="AgentInbox"/>
+                <econdition field-name="userId" from="ec.user.userId"/>
+                <select-field field-name="notificationMessageId,sentDate,titleText,messageJson"/>
+            </entity-find>
+            <field name="sentDate"><header-field title="Sent" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="titleText"><header-field title="Title"><text-find size="20" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="messageJson"><header-field title="Message"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

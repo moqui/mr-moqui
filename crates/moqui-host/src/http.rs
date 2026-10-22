@@ -23,9 +23,11 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::HttpBody as _;
 use axum::extract::{ConnectInfo, Request, State};
+use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{any, get};
+use axum::routing::get;
 use axum::Router;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use moqui_core::context::ErrorKind;
@@ -37,7 +39,7 @@ use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
 use crate::guard::{setting, Event, Guard, GuardConf};
-use crate::{notws, search_proxy};
+use crate::notws;
 
 pub(crate) struct HttpState {
     pub factory: Arc<ExecutionContextFactory>,
@@ -66,7 +68,7 @@ pub(crate) struct ListenLimits {
     /// is cut off with 408.
     pub upload_idle: Option<Duration>,
     /// `request-timeout` (`webapp_request_timeout`), default 300: from the request head to the response head, or the
-    /// answer is 504. `/notws` is exempt, and a response body, such as a long download, is sent after it.
+    /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
     /// `max` (`webapp_max_connections`), default 1024: connections served at once, HTTP and HTTPS together. Past it
     /// the listeners stop accepting until one closes.
@@ -151,6 +153,18 @@ pub(crate) struct ListenReport {
 #[derive(Clone, Copy)]
 pub(crate) struct TlsConnection;
 
+/// The request is HTTPS: the listener is TLS, or a trusted proxy sent `X-Forwarded-Proto: https`.
+#[derive(Clone, Copy)]
+struct HttpsRequest;
+
+/// Session, visitor, and username copied from [`moqui_core::web::HttpLogIdentity`] onto the axum response.
+#[derive(Clone)]
+struct LoggedIdentity {
+    session: Option<String>,
+    visitor_id: Option<String>,
+    remote_user: Option<String>,
+}
+
 /// Bind `bind` (and the HTTPS address when there is one), publish the local addresses, and serve until `stop` is
 /// dropped or a ctrl-c arrives.
 pub(crate) async fn listen(
@@ -195,8 +209,12 @@ pub(crate) async fn listen(
     let https_text = https_address
         .map(|secure| format!(", HTTPS on {secure}"))
         .unwrap_or_default();
+    let notws = endpoint_enabled(&factory, "/notws");
+    let termws = cfg!(feature = "tui") && endpoint_enabled(&factory, "/termws");
     tracing::info!(
-        "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /notws, /elastic, /kibana, {}the screen dispatcher",
+        "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /dav, {}{}{}the webapp's servlets",
+        if notws { "/notws, " } else { "" },
+        if termws { "/termws, " } else { "" },
         if cfg!(feature = "git") { "/git and " } else { "" }
     );
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -207,18 +225,47 @@ pub(crate) async fn listen(
     // Text responses are compressed when the client accepts gzip (`Compressible`).
     let app = Router::new()
         .route("/health", get(health))
-        .route("/metrics", get(metrics))
-        .route("/notws", get(notws::upgrade))
-        .route("/elastic", any(search_proxy::elastic))
-        .route("/elastic/", any(search_proxy::elastic))
-        .route("/elastic/{*rest}", any(search_proxy::elastic))
-        .route("/kibana", any(search_proxy::kibana))
-        .route("/kibana/", any(search_proxy::kibana))
-        .route("/kibana/{*rest}", any(search_proxy::kibana));
+        .route("/metrics", get(metrics));
+    // The notification socket, unless the webapp's `/notws` endpoint has enabled="false"; the html and qvt clients
+    // connect when the property is set.
+    let app = if notws {
+        moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "/notws");
+        notws::collab::install(&factory, shutdown_rx.clone());
+        app.route("/notws", get(notws::upgrade))
+    } else {
+        moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "");
+        app
+    };
+    // The browser terminal, unless the `/termws` endpoint has enabled="false"; the account menu offers it when the
+    // property is set.
+    #[cfg(feature = "tui")]
+    let app = if termws {
+        moqui_lib::env::set_property(crate::termws::ENDPOINT_PROPERTY, "/termws");
+        app.route("/termws", get(crate::termws::upgrade))
+    } else {
+        moqui_lib::env::set_property(crate::termws::ENDPOINT_PROPERTY, "");
+        app
+    };
     #[cfg(feature = "git")]
-    let app = app.route("/git/{*rest}", any(crate::git_http::handle));
+    let app = app.route("/git/{*rest}", axum::routing::any(crate::git_http::handle));
+    // the event stream of an agent run and its catch-up (the Assist drawer)
+    #[cfg(feature = "llm")]
+    let app = crate::llm::routes(app);
+    // the DAV server (CalDAV, CardDAV, WebDAV over drives), with the well-known addresses clients look for
     let app = app
-        .fallback(dispatch_screen)
+        .route("/dav", axum::routing::any(crate::dav_http::handle))
+        .route("/dav/", axum::routing::any(crate::dav_http::handle))
+        .route("/dav/{*rest}", axum::routing::any(crate::dav_http::handle))
+        .route("/.well-known/caldav", axum::routing::any(crate::dav_http::handle))
+        .route("/.well-known/carddav", axum::routing::any(crate::dav_http::handle));
+    let app = app.fallback(dispatch_screen);
+    // The request log, Java's ElasticRequestLogFilter: off when its filter element says enabled="false".
+    let app = if factory.webapp_scripts().request_log() {
+        app.layer(axum::middleware::from_fn(log_http))
+    } else {
+        app
+    };
+    let app = app
         .layer(tower_http::compression::CompressionLayer::new().compress_when(Compressible))
         .with_state(Arc::new(HttpState {
             factory,
@@ -407,6 +454,9 @@ where
         if secure {
             request.extensions_mut().insert(TlsConnection);
         }
+        if secure || forwarded_https(request.headers(), remote.ip(), guard.conf.addressing()) {
+            request.extensions_mut().insert(HttpsRequest);
+        }
         let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
         let refused = if uri_length > limits.max_uri {
             Some(plain(414, "the request URI is too long"))
@@ -417,16 +467,19 @@ where
                 .err()
                 .map(|refused| *refused.response)
         };
-        // a websocket, a git clone or push (which has its own idle timeout), and an upload (whose screen has the
-        // deadline once it has arrived) run as long as they need
+        // a websocket, a git clone or push (which has its own idle timeout), an upload (whose screen has the
+        // deadline once it has arrived), and a model call of the LLM gateway (whose own timeout bounds it, answered in
+        // the OpenAI shape) run as long as they need
         let upload = request
             .headers()
             .get(axum::http::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.trim_start().to_ascii_lowercase().starts_with("multipart/"));
+        let socket = matches!(request.uri().path(), "/notws" | "/termws");
+        let path = request.uri().path();
         let deadline = limits
             .request
-            .filter(|_| request.uri().path() != "/notws" && !request.uri().path().starts_with("/git/") && !upload);
+            .filter(|_| !socket && !path.starts_with("/git/") && !path.starts_with("/dav/") && !path.starts_with("/llm/v1") && !upload);
         let call = refused.is_none().then(|| router.clone().oneshot(request));
         async move {
             let Some(call) = call else {
@@ -441,7 +494,9 @@ where
             }
         }
     });
-    let connection = builder.serve_connection(TokioIo::new(stream), service).with_upgrades();
+    let connection = builder
+        .serve_connection(TokioIo::new(Lingering::new(stream)), service)
+        .with_upgrades();
     let mut connection = std::pin::pin!(connection);
     tokio::select! {
         result = connection.as_mut() => {
@@ -453,6 +508,116 @@ where
             connection.as_mut().graceful_shutdown();
             let _ = connection.await;
         }
+    }
+}
+
+/// How long a closed connection the client has not closed yet is read and dropped, after the write side is shut down.
+const LINGER: Duration = Duration::from_secs(2);
+
+/// A connection that closes as a lingering close does. A server that closes with request bytes still unread (a
+/// request head over `max-header-bytes`, answered 431) sends a reset, and a macOS or BSD client then discards the
+/// answer it has not read yet. So when the connection is dropped before the client has closed its side, the write
+/// side is shut down first and whatever the client still sends is read and dropped, for up to `LINGER`.
+struct Lingering<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> {
+    inner: Option<S>,
+    /// The client closed its side, or the connection failed: nothing is left to drain.
+    ended: bool,
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> Lingering<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner: Some(inner),
+            ended: false,
+        }
+    }
+
+    fn inner(&mut self) -> std::pin::Pin<&mut S> {
+        std::pin::Pin::new(self.inner.as_mut().expect("the stream is taken only on drop"))
+    }
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> tokio::io::AsyncRead for Lingering<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let polled = self.inner().poll_read(cx, buf);
+        match &polled {
+            std::task::Poll::Ready(Ok(())) if buf.filled().len() == before && buf.remaining() > 0 => self.ended = true,
+            std::task::Poll::Ready(Err(_)) => self.ended = true,
+            _ => {}
+        }
+        polled
+    }
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> tokio::io::AsyncWrite for Lingering<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = self.inner().poll_write(cx, buf);
+        if matches!(polled, std::task::Poll::Ready(Err(_))) {
+            self.ended = true;
+        }
+        polled
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = self.inner().poll_write_vectored(cx, bufs);
+        if matches!(polled, std::task::Poll::Ready(Err(_))) {
+            self.ended = true;
+        }
+        polled
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.as_ref().is_some_and(|inner| inner.is_write_vectored())
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.inner().poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.inner().poll_shutdown(cx)
+    }
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> Drop for Lingering<S> {
+    fn drop(&mut self) {
+        let Some(mut stream) = self.inner.take() else {
+            return;
+        };
+        if self.ended {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            let _ = tokio::time::timeout(LINGER, async {
+                let _ = stream.shutdown().await;
+                let mut sink = [0u8; 4096];
+                while matches!(stream.read(&mut sink).await, Ok(read) if read > 0) {}
+            })
+            .await;
+        });
     }
 }
 
@@ -497,7 +662,10 @@ pub(crate) fn http_port(raw: &str) -> Result<u16, Error> {
 }
 
 async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    if !status_allowed(&peer.ip().to_canonical().to_string()) {
+    if !status_allowed(
+        &state.factory.webapp_setting("webroot", "status-ips"),
+        &peer.ip().to_canonical().to_string(),
+    ) {
         return plain(404, "not found");
     }
     if readiness(&state.factory) {
@@ -508,7 +676,10 @@ async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectI
 }
 
 async fn metrics(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    if !status_allowed(&peer.ip().to_canonical().to_string()) {
+    if !status_allowed(
+        &state.factory.webapp_setting("webroot", "status-ips"),
+        &peer.ip().to_canonical().to_string(),
+    ) {
         return plain(404, "not found");
     }
     let Some(stats) = pool_stats(&state.factory) else {
@@ -545,8 +716,6 @@ async fn dispatch_screen(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
-    let started = std::time::Instant::now();
-    let started_millis = crate::logging::now_millis();
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
     let client = request
         .extensions()
@@ -558,6 +727,7 @@ async fn dispatch_screen(
     web.peer_ip = peer.ip().to_string();
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
+    web.raw_query = parts.uri.query().map(str::to_string);
     // The limit is `webapp_max_body` (10 MiB), or `webapp_max_upload` for a multipart body, and it stops the read.
     let limit = moqui_core::web::body_limit_for(Some(&state.factory), &web);
     let declared = parts
@@ -582,18 +752,6 @@ async fn dispatch_screen(
         };
         web.body = bytes.to_vec();
     }
-    let log = RequestLog {
-        started_millis,
-        client_ip: client.to_string(),
-        method: parts.method.as_str().to_string(),
-        https: web.https,
-        host: web.header("host").unwrap_or("").to_string(),
-        path: parts.uri.path().to_string(),
-        query: parts.uri.query().unwrap_or("").to_string(),
-        version: parts.version,
-        referrer: web.header("referer").unwrap_or("").to_string(),
-        agent: web.header("user-agent").unwrap_or("").to_string(),
-    };
     let factory = Arc::clone(&state.factory);
     let job_factory = Arc::clone(&factory);
     let serve_factory = Arc::clone(&factory);
@@ -637,10 +795,7 @@ async fn dispatch_screen(
         None => result.await,
     };
     match result {
-        Ok(Some(response)) => {
-            log.queue(&response, started.elapsed());
-            from_web(&state.factory, response)
-        }
+        Ok(Some(response)) => from_web(&state.factory, response),
         Ok(None) => state.guard.unavailable("the server is busy; try again"),
         Err(_) => plain(500, "request worker stopped"),
     }
@@ -776,7 +931,7 @@ struct RequestLog {
 }
 
 impl RequestLog {
-    fn queue(self, response: &WebResponse, elapsed: std::time::Duration) {
+    fn queue(self, response: &Response, identity: Option<&LoggedIdentity>, elapsed: std::time::Duration) {
         use moqui_lib::object::Value;
 
         let millis = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
@@ -788,10 +943,17 @@ impl RequestLog {
             _ => 1.1,
         };
         let content_type = response
-            .headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-            .map(|(_, value)| value.clone());
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = response
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .or_else(|| response.body().size_hint().exact())
+            .unwrap_or(0);
         let mut entry = moqui_core::entity::document::Document::new();
         entry.insert("@timestamp".into(), Value::I64(self.started_millis));
         entry.insert("remote_ip".into(), Value::String(self.client_ip));
@@ -810,21 +972,78 @@ impl RequestLog {
             entry.insert("request_query".into(), Value::String(self.query));
         }
         entry.insert("http_version".into(), Value::F64(version));
-        entry.insert("response".into(), Value::I64(i64::from(response.status)));
+        entry.insert("response".into(), Value::I64(i64::from(response.status().as_u16())));
         entry.insert("time_initial_ms".into(), Value::I64(millis));
         entry.insert("time_final_ms".into(), Value::I64(millis));
-        entry.insert(
-            "bytes".into(),
-            Value::I64(i64::try_from(response.body_len()).unwrap_or(i64::MAX)),
-        );
+        entry.insert("bytes".into(), Value::I64(i64::try_from(bytes).unwrap_or(i64::MAX)));
         if !self.referrer.is_empty() {
             entry.insert("referrer".into(), Value::String(self.referrer));
         }
         if !self.agent.is_empty() {
             entry.insert("agent".into(), Value::String(self.agent));
         }
+        if let Some(identity) = identity {
+            if let Some(session) = identity.session.clone() {
+                entry.insert("session".into(), Value::String(session));
+            }
+            if let Some(visitor_id) = identity.visitor_id.clone() {
+                entry.insert("visitor_id".into(), Value::String(visitor_id));
+            }
+            if let Some(remote_user) = identity.remote_user.clone() {
+                entry.insert("remote_user".into(), Value::String(remote_user));
+            }
+        }
         crate::logging::queue_http_request(entry);
     }
+}
+
+/// One `moqui_http_log` entry for every route, including a refusal before the screen worker.
+async fn log_http(request: Request, next: Next) -> Response {
+    let started = std::time::Instant::now();
+    let started_millis = crate::logging::now_millis();
+    let method = request.method().as_str().to_string();
+    let https = request.extensions().get::<HttpsRequest>().is_some();
+    let client_ip = request
+        .extensions()
+        .get::<ClientAddr>()
+        .map(|client| client.0.to_string())
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|peer| peer.0.ip().to_string())
+        })
+        .unwrap_or_default();
+    let host = request_header(request.headers(), "host");
+    let path = request.uri().path().to_string();
+    let query = request.uri().query().unwrap_or("").to_string();
+    let version = request.version();
+    let referrer = request_header(request.headers(), "referer");
+    let agent = request_header(request.headers(), "user-agent");
+    let response = next.run(request).await;
+    let identity = response.extensions().get::<LoggedIdentity>().cloned();
+    RequestLog {
+        started_millis,
+        client_ip,
+        method,
+        https,
+        host,
+        path,
+        query,
+        version,
+        referrer,
+        agent,
+    }
+    .queue(&response, identity.as_ref(), started.elapsed());
+    response
+}
+
+fn request_header(headers: &axum::http::HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// `X-Forwarded-Proto` is believed only when `client-ip-header` marks a reverse proxy in front, and `peer` is one of
@@ -861,7 +1080,14 @@ pub(crate) fn header_map(headers: &axum::http::HeaderMap) -> BTreeMap<String, St
         if values.is_empty() {
             continue;
         }
-        map.insert(name.as_str().to_ascii_lowercase(), values.join(", "));
+        // Repeated headers are one list, as the servlet's `getHeader` joins them; cookies are pairs split on `;`
+        // (RFC 6265), so a second `Cookie` header must not run into the last pair of the first.
+        let separator = if *name == axum::http::header::COOKIE {
+            "; "
+        } else {
+            ", "
+        };
+        map.insert(name.as_str().to_ascii_lowercase(), values.join(separator));
     }
     map
 }
@@ -876,9 +1102,14 @@ fn pool_stats(factory: &ExecutionContextFactory) -> Option<PoolStats> {
     Some(transactions.stats())
 }
 
-fn status_allowed(ip: &str) -> bool {
+/// False only when the `webroot` webapp's `endpoint` at `path` has `enabled="false"`.
+fn endpoint_enabled(factory: &ExecutionContextFactory, path: &str) -> bool {
+    factory.webapp_child_setting("webroot", &format!("endpoint {path}"), "enabled") != "false"
+}
+
+/// True when `ip` is in `configured` (the webapp's `status-ips`, comma-separated) or is a loopback address.
+fn status_allowed(configured: &str, ip: &str) -> bool {
     let mut allowed = Vec::new();
-    let configured = moqui_lib::env::get_prop_or_env("webapp_status_ips");
     for part in configured.split(',') {
         let part = part.trim();
         if !part.is_empty() {
@@ -894,6 +1125,7 @@ fn status_allowed(ip: &str) -> bool {
 }
 
 fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, response: WebResponse) -> Response {
+    let http_log = response.http_log.clone();
     let mut builder = Response::builder().status(response.status);
     for (name, value) in response.headers {
         builder = builder.header(name, value);
@@ -902,9 +1134,17 @@ fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, respons
         Some(stream) => crate::source_body::body(Arc::clone(factory), stream),
         None => axum::body::Body::from(response.body),
     };
-    builder
+    let mut built = builder
         .body(body)
-        .unwrap_or_else(|_| plain(500, "could not build the response"))
+        .unwrap_or_else(|_| plain(500, "could not build the response"));
+    if http_log.session.is_some() || http_log.visitor_id.is_some() || http_log.remote_user.is_some() {
+        built.extensions_mut().insert(LoggedIdentity {
+            session: http_log.session,
+            visitor_id: http_log.visitor_id,
+            remote_user: http_log.remote_user,
+        });
+    }
+    built
 }
 
 /// The responses worth compressing: text (and JSON, JavaScript, XML, SVG, WebAssembly) over 32 bytes, not a range
@@ -935,7 +1175,9 @@ impl tower_http::compression::Predicate for Compressible {
             .and_then(|value| value.to_str().ok())
             .map(|value| value.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
             .unwrap_or_default();
+        // an event stream is sent as it comes; a compressor would hold it back
         !small
+            && kind != "text/event-stream"
             && (kind.starts_with("text/")
                 || kind.ends_with("+json")
                 || kind.ends_with("+xml")
@@ -1059,7 +1301,7 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::Semaphore;
 
-    use super::{http_port, serve, status_allowed, ListenLimits, TlsConnection};
+    use super::{header_map, http_port, serve, status_allowed, ListenLimits, TlsConnection};
     use crate::guard::Guard;
     use crate::tls;
 
@@ -1074,6 +1316,55 @@ mod tests {
             .expect("the listener did not close the connection")
             .unwrap();
         String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    #[tokio::test]
+    async fn a_screen_request_is_logged_with_its_user_and_health_without_one() {
+        use moqui_lib::object::Value;
+        use tower::ServiceExt as _;
+
+        let _hold = crate::logging::begin_http_capture().await;
+        let app = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .route(
+                "/screen",
+                get(|| async {
+                    let mut response = axum::response::Response::new(axum::body::Body::from("hi"));
+                    response.extensions_mut().insert(super::LoggedIdentity {
+                        session: Some("session-1".to_string()),
+                        visitor_id: Some("visitor-1".to_string()),
+                        remote_user: Some("ada".to_string()),
+                    });
+                    response
+                }),
+            )
+            .layer(axum::middleware::from_fn(super::log_http));
+        let screen = Request::builder()
+            .uri("/screen?tab=1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        app.clone().oneshot(screen).await.unwrap();
+        let health = Request::builder()
+            .uri("/health")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        app.oneshot(health).await.unwrap();
+        let entries = crate::logging::take_http_capture();
+        let screen = entries
+            .iter()
+            .find(|entry| entry.get("request_path").and_then(Value::as_str) == Some("/screen"))
+            .expect("screen request was not logged");
+        assert_eq!(screen.get("session").and_then(Value::as_str), Some("session-1"));
+        assert_eq!(screen.get("visitor_id").and_then(Value::as_str), Some("visitor-1"));
+        assert_eq!(screen.get("remote_user").and_then(Value::as_str), Some("ada"));
+        assert_eq!(screen.get("request_query").and_then(Value::as_str), Some("tab=1"));
+        let health = entries
+            .iter()
+            .find(|entry| entry.get("request_path").and_then(Value::as_str) == Some("/health"))
+            .expect("health request was not logged");
+        assert!(health.get("session").is_none(), "{health:?}");
+        assert!(health.get("visitor_id").is_none(), "{health:?}");
+        assert!(health.get("remote_user").is_none(), "{health:?}");
     }
 
     #[tokio::test]
@@ -1343,6 +1634,26 @@ mod tests {
             .unwrap();
     }
 
+    /// A header sent twice is one value; two `Cookie` headers join as one cookie list, so each pair stays whole.
+    #[test]
+    fn repeated_headers_join_and_cookies_join_as_pairs() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.append(axum::http::header::COOKIE, "a=1".parse().unwrap());
+        headers.append(axum::http::header::COOKIE, "moqui.session=abc".parse().unwrap());
+        headers.append("x-forwarded-for", "10.0.0.1".parse().unwrap());
+        headers.append("x-forwarded-for", "10.0.0.2".parse().unwrap());
+        let map = header_map(&headers);
+        assert_eq!(map.get("cookie").map(String::as_str), Some("a=1; moqui.session=abc"));
+        assert_eq!(
+            map.get("x-forwarded-for").map(String::as_str),
+            Some("10.0.0.1, 10.0.0.2")
+        );
+        assert_eq!(
+            moqui_core::web::cookie_value(&map["cookie"], "moqui.session").as_deref(),
+            Some("abc")
+        );
+    }
+
     #[test]
     fn empty_webapp_http_port_is_8080() {
         assert_eq!(http_port("").unwrap(), 8080);
@@ -1353,15 +1664,13 @@ mod tests {
 
     #[test]
     fn status_routes_allow_loopback_only() {
-        assert!(status_allowed("127.0.0.1"));
-        assert!(status_allowed("::1"));
-        assert!(status_allowed("0:0:0:0:0:0:0:1"));
+        assert!(status_allowed("", "127.0.0.1"));
+        assert!(status_allowed("", "::1"));
+        assert!(status_allowed("", "0:0:0:0:0:0:0:1"));
         // an IPv4 peer seen through a dual-stack socket is its IPv4 address
         let mapped: std::net::IpAddr = "::ffff:127.0.0.1".parse().unwrap();
-        assert!(status_allowed(&mapped.to_canonical().to_string()));
-        let configured = moqui_lib::env::get_prop_or_env("webapp_status_ips");
-        if !configured.split(',').any(|part| part.trim() == "203.0.113.5") {
-            assert!(!status_allowed("203.0.113.5"));
-        }
+        assert!(status_allowed("", &mapped.to_canonical().to_string()));
+        assert!(!status_allowed("127.0.0.1", "203.0.113.5"));
+        assert!(status_allowed("10.0.0.9, 203.0.113.5", "203.0.113.5"));
     }
 }

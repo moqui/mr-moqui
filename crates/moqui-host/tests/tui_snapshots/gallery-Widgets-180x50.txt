@@ -1,0 +1,50 @@
+ gallery ▸ Widgets                                                                                                                                              john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 4 Widget guide ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ The fixture for style changes: every field widget of section 4.5 in one form, every button role of 4.6, the label types and text classes of 4.7, a   │
+     List                │ ┃ list with header find, sort, paging, row selection and row actions (4.4), and the containers of 4.1 and 4.2. Nothing here writes; every action       │
+     Detail              │ ┃ answers with a message.                                                                                                                              │
+     360                 │ ┃ Fallbacks for style-guide section 8: none needed; the dynamic container loads this screen with dynPart=Y because the gallery owns no second screen   │
+     Task                │ ┃ file.                                                                                                                                                │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ ┌─ Fields (4.5): every widget, titled by its element ──────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Split               │ │ text-line mask=(999) 999… : [8015551234 _________]                        text-line input-type=num… : [        42]                                   │
+     Settings            │ │ text-area . . . . . . . . : │Plain text area.                             text-area editor-type=md  : │**Markdown** text area with a preview         │
+     Wizard              │ │                             │                                                                         │                                              │
+     Dialog              │ │                                                                                                       │                                              │
+     Report              │ │ text-area editor-type=ri… : │<h3>Rich text</h3><p>The <strong>Tiptap</strotext-area editor-type=ri… : │<p>A <strong>light</strong> editor for note…  │
+     Panel               │ │ drop-down entity-options  : [Screen Theme Type [ScreenThemeType]      ▾]  drop-down allow-multiple  : [["UserGroup", "UserAccount… ▾]                │
+   ▶ Widgets             │ │ drop-down dynamic-option… : [           ▾]                                date-time type=date . . . : [2026-10-18________]                           │
+     Editor              │ │ date-time type=time . . . : [09:30_____________]                          date-time type=date-time  : [2026-10-18 09:30__]                           │
+     Message             │ │ date-period . . . . . . . : [___________] – [___________]                 date-find type=date . . . : [___________] – [___________]                  │
+     Views               │ │ range-find  . . . . . . . : [________] – [________]                       text-find . . . . . . . . : [____________________]                         │
+ ▾ Home                  │ │ check (single)  . . . . . : [x] Active                                    check with options  . . . : [ ] Email  [ ] SMS  [ ] Push  [x] ["email"]    │
+                         │ │ radio . . . . . . . . . . : (•) Task  ( ) Call  ( ) Event                 file  . . . . . . . . . . : [ choose… ]  upload in the browser             │
+                         │ │ display (label-wrapper) . : A read-only value with a label                display-entity Enumerati… : Screen Theme Type                              │
+                         │ │ password  . . . . . . . . : [______________________________]              Hid . . . . . . . . . . . :                                                │
+                         │ │ < Save >                                                                                                                                             │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Buttons (4.6): primary, tonal, flat, text ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                         │ │ Primary: a form's submit, outline until a field changes.                                                                                             │
+                         │ │ Type here to see the sub… : [________________________________________]                                                                               │
+                         │ │ < Save >  [ Reset ]                                                                                                                                  │
+                         │ │ Tonal (secondary): transition links by btn-type, a danger link with confirmation, a button-menu.                                                     │
+                         │ │ Tonal primary  [ Tonal success ]  [ Tonal info ]  [ Tonal warning ]  [ Delete ]  [ More ▾ ]                                                          │
+                         │ │ Flat (tertiary): icon-only links with link-type=hidden-form-link. The first uses a Material Symbols outlined name (icon=sym_o_edit_note, the style   │
+                         │ │ guide's icons), the second a Material Icons name (icon=edit), the third a Font Awesome class (icon=fa fa-pencil); a name is written as a q-icon and  │
+                         │ │ a class as an i element.                                                                                                                             │
+                         │ │       Flat with text                                                                                                                                 │
+                         │ │ Text links: link-type=anchor to a screen and to a transition that redirects.                                                                         │
+                         │ │ Text link to the Detail archetype  Text link through a transition  Plain URL in a new window                                                         │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Labels (4.7): types and text classes ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                         │ │ h1 label                                                                  text-subtitle1 text-weight-medium: a box title                             │
+                         │ │ h2 label                                                                  text-subtitle2: a group caption                                            │
+                         │ │ h3 label                                                                  text-body2: fields and table cells                                         │
+                         │ │ h4 label: a landing greeting                                              text-caption: who, when, ids under a title                                 │
+                         │ │ h5 label: a record title                                                  text-overline: a number card label                                         │
+                         │ │ h6 label: a section title outside a box                                   text-mono: LOT-2026-00417                                                  │
+                         │ │ p label: a paragraph of body text, 14 px at line height 1.5.              text-weight-bold: a total 12,400.00                                        │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ text-line mask=(999) 999-9999 · A masked text line
+ F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

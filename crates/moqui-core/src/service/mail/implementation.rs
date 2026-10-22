@@ -62,6 +62,7 @@ pub(super) fn send_template(
     if facade.sim_active() {
         return Ok(ids("SIM", ""));
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "send#EmailTemplate")?;
     let template_id = param_text(parameters, "emailTemplateId");
     let Some(template) = find_one(facade, TEMPLATE, "emailTemplateId", &template_id)? else {
         return fail(format!("No EmailTemplate record found for ID [{template_id}]"));
@@ -87,7 +88,10 @@ pub(super) fn send_template(
     if screen.is_empty() && supplied_body.is_empty() && supplied_text.is_empty() {
         return fail("email has no body");
     }
-    let env = RenderEnv::new(&template, parameters);
+    let server_web_base_url = find_one(facade, SERVER, "emailServerId", &field_text(&template, "emailServerId"))?
+        .map(|server| field_text(&server, "webBaseUrl"))
+        .unwrap_or_default();
+    let env = RenderEnv::new(&template, &server_web_base_url, parameters);
     let email_type = {
         let given = param_text(parameters, "emailTypeEnumId");
         if given.is_empty() {
@@ -200,6 +204,7 @@ pub(super) fn send_message(
     if facade.sim_active() {
         return Ok(ids("SIM", ""));
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "send#EmailMessage")?;
     let Some(message) = find_one(facade, MESSAGE, "emailMessageId", &email_message_id)? else {
         return fail(format!("No EmailMessage record found for ID {email_message_id}"));
     };
@@ -431,7 +436,9 @@ struct RenderEnv {
 }
 
 impl RenderEnv {
-    fn new(template: &EntityValue, parameters: &BTreeMap<String, Value>) -> Self {
+    /// The base URL links in the email start with is the first of: `https://` and the template's `webHostName`, the
+    /// server's `webBaseUrl`, the conf webapp's root URL. Never a request's host: an email is often sent from a job.
+    fn new(template: &EntityValue, server_web_base_url: &str, parameters: &BTreeMap<String, Value>) -> Self {
         let factory = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory()));
         let webapp_name = {
             let named = field_text(template, "webappName");
@@ -441,17 +448,24 @@ impl RenderEnv {
                 named
             }
         };
-        let base_url = factory
-            .as_ref()
-            .map(|factory| factory.webapp_root_url(&webapp_name))
-            .unwrap_or_default();
+        let web_host_name = field_text(template, "webHostName");
+        let base_url = if !web_host_name.is_empty() {
+            format!("https://{web_host_name}")
+        } else if !server_web_base_url.trim().is_empty() {
+            server_web_base_url.trim().trim_end_matches('/').to_string()
+        } else {
+            factory
+                .as_ref()
+                .map(|factory| factory.webapp_root_url(&webapp_name))
+                .unwrap_or_default()
+        };
         let parameters = body_parameters(parameters)
             .map(|map| map.iter().map(|(key, value)| (key.clone(), value.clone())).collect())
             .unwrap_or_default();
         Self {
             factory,
             webapp_name,
-            web_host_name: field_text(template, "webHostName"),
+            web_host_name,
             base_url,
             parameters,
         }
@@ -729,12 +743,18 @@ pub(super) fn require_host(host: &str) -> Result<(), Error> {
     if host_allowed(host) {
         Ok(())
     } else {
-        Err(Error::new(format!("Email host {host} is not in email_allowed_hosts")))
+        Err(Error::new(format!(
+            "Email host {host} is not in email-client allowed-hosts"
+        )))
     }
 }
 
 fn host_allowed(host: &str) -> bool {
-    let allowed = moqui_lib::env::get_prop_or_env("email_allowed_hosts");
+    host_in(&super::client_setting("allowed-hosts"), host)
+}
+
+/// True when `allowed` (comma-separated hosts and domains) is empty or names `host` or a domain above it.
+fn host_in(allowed: &str, host: &str) -> bool {
     if allowed.trim().is_empty() {
         return true;
     }
@@ -1182,9 +1202,70 @@ pub(super) fn header_value(headers: &str, name: &str) -> String {
 }
 
 fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
+    if captured(letter) {
+        return Ok(());
+    }
+    lettre_send(facade, letter, server)
+}
+
+/// A message built whole (the SMTP listener's delivered notice, `delivery.rs`), sent from the null reverse path to
+/// `to` through the SMTP of server `server_id`, within half a minute. A test sink or `mail_capture_sends` keeps it as
+/// a letter with the message as its text.
+#[cfg(feature = "imap")]
+pub(super) fn send_built(
+    facade: &EntityFacade,
+    server_id: &str,
+    from: &str,
+    to: &str,
+    subject: &str,
+    raw: &[u8],
+) -> Result<(), Error> {
+    let letter = Letter {
+        subject: subject.to_string(),
+        from_address: from.to_string(),
+        from_name: String::new(),
+        to: vec![to.to_string()],
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        reply_to: Vec::new(),
+        bounce: String::new(),
+        body: String::new(),
+        body_text: String::from_utf8_lossy(raw).into_owned(),
+        attachments: Vec::new(),
+        inline: Vec::new(),
+        message_id: String::new(),
+        in_reply_to: String::new(),
+        references: String::new(),
+        date: None,
+        extra_headers: Vec::new(),
+    };
+    if captured(&letter) {
+        return Ok(());
+    }
+    let server = find_one(facade, SERVER, "emailServerId", server_id)
+        .map_err(|err| Error::new(err.to_string()))?
+        .ok_or_else(|| Error::new(format!("no email server {server_id}")))?;
+    let host = field_text(&server, "smtpHost");
+    if host.is_empty() {
+        return Err(Error::new(format!("email server {server_id} has no SMTP host")));
+    }
+    require_host(&host)?;
+    let recipient = to
+        .parse::<lettre::Address>()
+        .map_err(|err| Error::new(format!("{to} is not an address: {err}")))?;
+    let envelope = lettre::address::Envelope::new(None, vec![recipient]).map_err(|err| Error::new(err.to_string()))?;
+    let auth = smtp_auth(facade, &server, None)?;
+    let transport = smtp_transport(&server, &auth, Some(Duration::from_secs(30)))?;
+    lettre::Transport::send_raw(&transport, &envelope, raw)
+        .map(|_| ())
+        .map_err(|err| Error::new(err.to_string()))
+}
+
+/// Whether a test sink or `mail_capture_sends` kept `letter` instead of sending it.
+fn captured(letter: &Letter) -> bool {
     #[cfg(test)]
     if push_sink(letter) {
-        return Ok(());
+        return true;
     }
     // mail_capture_sends (moqui test): kept for the spec instead of sent (service/mail_capture.rs)
     if crate::service::mail_capture::enabled() {
@@ -1204,9 +1285,9 @@ fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Resu
             attachment_names: letter.attachments.iter().map(|part| part.filename.clone()).collect(),
             headers: letter.extra_headers.clone(),
         });
-        return Ok(());
+        return true;
     }
-    lettre_send(facade, letter, server)
+    false
 }
 
 fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
@@ -1299,9 +1380,11 @@ fn smtp_transport(
     timeout: Option<Duration>,
 ) -> Result<lettre::SmtpTransport, Error> {
     let host = field_text(server, "smtpHost");
+    // Every SMTP connection starts here, so nothing reaches a mail server under the read fence.
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, &host)?;
     let port = parse_port(&field_text(server, "smtpPort"), 25)?;
     // smtpSsl is TLS from the start. smtpStartTls upgrades when the server offers it, as Java's setStartTLSEnabled
-    // (not required), so a server without STARTTLS still takes the mail. Both trust `email_tls_ca_file` too.
+    // (not required), so a server without STARTTLS still takes the mail. Both trust `email-client` `tls-ca-file` too.
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
     use lettre::transport::smtp::client::Tls;
     let mut builder = lettre::SmtpTransport::builder_dangerous(&host).port(port);
@@ -1623,6 +1706,7 @@ pub(super) fn test_server(
     if facade.sim_active() {
         return fail("Email server test is disabled in LLM sim session");
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "test#EmailServer")?;
     let server_id = param_text(parameters, "emailServerId");
     let Some(mut server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));
@@ -1709,18 +1793,19 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> (&'static str, bool
     }
 }
 
-/// The certificates of the PEM file `email_tls_ca_file` names, for a mail server with its own CA. Empty when unset.
+/// The certificates of the PEM file `email-client` `tls-ca-file` names, for a mail server with its own CA. Empty when
+/// unset.
 pub(super) fn extra_ca_certificates() -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, Error> {
     use rustls::pki_types::pem::PemObject;
-    let location = moqui_lib::env::get_prop_or_env("email_tls_ca_file");
+    let location = super::client_setting("tls-ca-file");
     if location.trim().is_empty() {
         return Ok(Vec::new());
     }
     let pem = std::fs::read(location.trim())
-        .map_err(|err| Error::new(format!("could not read email_tls_ca_file {location}: {err}")))?;
+        .map_err(|err| Error::new(format!("could not read tls-ca-file {location}: {err}")))?;
     rustls::pki_types::CertificateDer::pem_slice_iter(&pem)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| Error::new(format!("email_tls_ca_file {location} is not PEM certificates: {err}")))
+        .map_err(|err| Error::new(format!("tls-ca-file {location} is not PEM certificates: {err}")))
 }
 
 fn smtp_tls(host: &str) -> Result<lettre::transport::smtp::client::TlsParameters, Error> {
@@ -1847,7 +1932,7 @@ mod tests {
 
     use indexmap::IndexMap;
 
-    use super::{field_text, host_allowed, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
+    use super::{field_text, host_in, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
     use crate::context::ExecutionContextFactory;
     use crate::entity::EntityFacade;
     use crate::screen::PDF_UNAVAILABLE;
@@ -1857,7 +1942,7 @@ mod tests {
     use crate::service::mail::inbound::{header_one, parse_rfc822, read_line_bytes, FakeGuard, Inbound, FAKE_DELETED};
     use moqui_lib::object::Value;
 
-    /// The tests set `email_allowed_hosts`, a process property, so they share the property lock.
+    /// The tests set `email-client` `allowed-hosts`, a process property, so they share the property lock.
     fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
         crate::user::session::cookie_property_lock()
     }
@@ -1903,25 +1988,15 @@ mod tests {
         )
     }
 
-    struct HostList;
-
-    impl HostList {
-        fn set(value: &'static str) -> Self {
-            moqui_lib::env::set_property("email_allowed_hosts", value);
-            Self
-        }
-    }
-
-    impl Drop for HostList {
-        fn drop(&mut self) {
-            moqui_lib::env::clear_property("email_allowed_hosts");
-        }
-    }
-
     fn entered() -> (EntityFacade, crate::context::ExecutionContext) {
+        entered_with("")
+    }
+
+    /// [`entered`] with the conf text `conf`.
+    fn entered_with(conf: &str) -> (EntityFacade, crate::context::ExecutionContext) {
         let facade = crate::testing::open();
         let context = ExecutionContextFactory::test_context_in(
-            "",
+            conf,
             crate::service::ServicePools::idle(),
             crate::context::framework_dir(),
         );
@@ -1940,12 +2015,10 @@ mod tests {
 
     #[test]
     fn host_suffix_matches_on_a_dot_boundary() {
-        assert!(host_allowed("smtp.example.com") || !moqui_lib::env::get_prop_or_env("email_allowed_hosts").is_empty());
-        let _lock = lock_tests();
-        let _list = HostList::set("example.com");
-        assert!(host_allowed("smtp.example.com"));
-        assert!(host_allowed("example.com"));
-        assert!(!host_allowed("notexample.com"));
+        assert!(host_in("", "smtp.example.com"));
+        assert!(host_in("example.com", "smtp.example.com"));
+        assert!(host_in("example.com", "example.com"));
+        assert!(!host_in("example.com", "notexample.com"));
     }
 
     #[test]
@@ -2059,10 +2132,9 @@ mod tests {
     }
 
     #[test]
-    fn host_rejected_by_email_allowed_hosts_does_not_touch_the_sink() {
+    fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
         let _lock = lock_tests();
-        let _list = HostList::set("example.com");
-        let (facade, context) = entered();
+        let (facade, context) = entered_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
         let _entered = context.enter();
         crate::service::load_definitions().unwrap();
         seed(

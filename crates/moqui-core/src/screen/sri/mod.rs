@@ -29,6 +29,8 @@ mod options;
 mod sections;
 mod theme;
 
+pub(in crate::screen) use sections::strip_controls;
+
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -42,14 +44,14 @@ use crate::context::Error;
 use crate::web;
 
 pub use fields::{
-    context_value, field_validation, field_validation_js_rules, get_field_entity_value, get_field_value,
+    context_value, field_validation, field_validation_rules, get_field_entity_value, get_field_value,
     get_field_value_class, get_field_value_plain_string, get_field_value_string, get_field_value_string_for,
     get_named_value_plain, node_parameters, set_in_context,
 };
 pub use forms::{
-    close_form_list, form_list_sub_row_count, get_form, open_form_list, push_single_form_map_context,
-    render_dynamic_form, render_user_columns_form, start_form_list_row, start_form_list_sub_row,
-    user_default_form_list_find_id, user_form_list_finds,
+    close_form_list, form_list_find_screen_scheduled, form_list_sub_row_count, get_form, open_form_list,
+    push_single_form_map_context, render_dynamic_form, render_user_columns_form, saved_find_full_location,
+    start_form_list_row, start_form_list_sub_row, user_default_form_list_find_id, user_form_list_finds,
 };
 pub(super) use forms::{form_list_row_frame, form_list_sub_row_frame, single_form_map_frame};
 pub use layout::form_list_column_char_widths;
@@ -58,11 +60,42 @@ pub(super) use menu_items::screen_permitted;
 pub use options::{field_transition_value, get_field_options};
 pub use sections::{
     append_to_after_screen_writer, append_to_script_writer, render_active_screen, render_include_screen,
-    render_section, render_section_include, render_subscreen, render_text,
+    render_section, render_section_include, render_subscreen, render_text, render_text_value,
 };
 pub(super) use sections::{is_security, iteration_entries, paginate_items};
 pub use theme::{get_theme_icon_class, get_theme_values};
 pub(crate) use theme::{theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
+
+/// The first focus id wins. A tui form macro calls this with `form.field` from the form's `focus-field`.
+pub fn set_focus_field(state: &RenderState, id: &str) {
+    let mut slot = state.focus.borrow_mut();
+    if !slot.is_empty() {
+        return;
+    }
+    let clean = strip_controls(id);
+    if !clean.is_empty() {
+        *slot = clean;
+    }
+}
+
+/// A node id that no earlier node of this document has: `id` the first time, then `id~2`, `id~3`. The same screen
+/// rendered again gives the same ids, so the tui client keeps focus and edits across reloads, while a section that
+/// is iterated, included twice, or named like another section does not repeat an id.
+pub fn unique_id(state: &RenderState, id: &str) -> String {
+    let mut ids = state.node_ids.borrow_mut();
+    let (given, next) = &mut *ids;
+    if given.insert(id.to_string()) {
+        return id.to_string();
+    }
+    let suffix = next.entry(id.to_string()).or_insert(2);
+    loop {
+        let candidate = format!("{id}~{suffix}");
+        *suffix += 1;
+        if given.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
 
 /// Generates and runs the code of a section on the script runtime that is running the render.
 pub trait Runner {

@@ -51,17 +51,23 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
         .first()
         .map(|root| root.location.clone())
         .ok_or_else(|| Error::new("no root screen"))?;
-    // The items of another screen: the path is resolved from the root, and its items are paths below it.
-    let (def, prefix) = match screen_path {
+    // The items of another screen: the path is resolved from the root, and its items are paths below it. Each item is
+    // authorized under the screens from the root down to the screen whose items they are.
+    let (def, prefix, mut parents) = match screen_path {
         Some(path) => {
             let names = crate::screen::url::resolve_screen_path(&state.factory, &root, &[], path)?.names;
             let info = ScreenUrlInfo::resolve(&state.factory, &root, &names, 0)?;
             // The screen the path names, not the default subscreen the walk goes on to.
             let named = info.path_defs.get(names.len()).unwrap_or(&info.target_screen);
-            (Arc::clone(named), Some(names))
+            let above = info.path_defs[..names.len().min(info.path_defs.len())].to_vec();
+            (Arc::clone(named), Some(names), above)
         }
-        None => (active_def(state), None),
+        None => {
+            let index = state.screen_path_index.get().min(state.url_info.path_defs.len());
+            (active_def(state), None, state.url_info.path_defs[..index].to_vec())
+        }
     };
+    parents.push(Arc::clone(&def));
     let mut out = Vec::new();
     for item in def
         .subscreens
@@ -69,7 +75,7 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
         .into_iter()
         .filter(|item| item.menu_include && item.is_valid_in_current_context())
     {
-        match menu_entry(state, &root, prefix.as_deref(), item) {
+        match menu_entry(state, &root, prefix.as_deref(), &parents, item) {
             Ok(Some(entry)) => out.push(entry),
             Ok(None) => {}
             Err(err) => crate::screen::menu::leave_out(&def.location, item, &err),
@@ -78,12 +84,13 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
     Ok(out)
 }
 
-/// The entry of `item`, or None when its screen does not exist or the user may not view it. `prefix` is the path of
-/// another screen whose items these are.
+/// The entry of `item`, or None when its screen does not exist or the user may not view it below `parents`
+/// ([`crate::screen::menu::permitted_under`]). `prefix` is the path of another screen whose items these are.
 fn menu_entry(
     state: &RenderState,
     root: &str,
     prefix: Option<&[String]>,
+    parents: &[Arc<ScreenDef>],
     item: &SubscreensItem,
 ) -> Result<Option<MenuEntry>, Error> {
     let url = match prefix {
@@ -98,7 +105,7 @@ fn menu_entry(
         return Ok(None);
     }
     let target = state.facade.screen_def(&state.factory, &item.location)?;
-    if !screen_permitted(&target) {
+    if !crate::screen::menu::permitted_under(parents, &target) {
         return Ok(None);
     }
     let disabled = match &item.disable_when {

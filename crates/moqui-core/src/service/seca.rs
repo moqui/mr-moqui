@@ -68,6 +68,9 @@ pub fn run_seca_rules(
         crate::script::set_context_name("parameters", Value::Map(to_index_map(parameters)))?;
         if let Some(results) = results.as_deref() {
             for (name, value) in results {
+                if name == "context" {
+                    continue;
+                }
                 crate::script::set_context_name(name, value.clone())?;
             }
             crate::script::set_context_name("results", Value::Map(to_index_map(results)))?;
@@ -106,8 +109,8 @@ pub(super) fn has_rules(service: &str, when: &str) -> bool {
     eca_rules::current().is_some_and(|rules| !rules.seca_index.matching(&rules.seca, service, when).is_empty())
 }
 
-/// The positions of the pattern rules that matched, by `when` and service name.
-type PatternHits = HashMap<(String, String), Arc<[usize]>>;
+/// The positions of the pattern rules that matched, by `when`, then service name. Nested, so a lookup makes no key.
+type PatternHits = HashMap<String, HashMap<String, Arc<[usize]>>>;
 
 /// The SECA rules by `when` and service, made once when the rules load, so a call does not scan every rule at each of
 /// its phases. Each list holds positions in the priority order.
@@ -151,16 +154,23 @@ impl SecaIndex {
         if patterns.is_empty() && exact.is_none() {
             return Cow::Borrowed(&[]);
         }
-        let plain = service.replace('#', "");
+        let plain: Cow<'_, str> = if service.contains('#') {
+            Cow::Owned(service.replace('#', ""))
+        } else {
+            Cow::Borrowed(service)
+        };
         let named = exact
-            .and_then(|by_service| by_service.get(&plain))
+            .and_then(|by_service| by_service.get(plain.as_ref()))
             .map_or(&[][..], Vec::as_slice);
-        let key = (when.to_string(), plain.clone());
+        if patterns.is_empty() {
+            return Cow::Borrowed(named);
+        }
         let cached = self
             .pattern_hits
             .read()
             .unwrap_or_else(|err| err.into_inner())
-            .get(&key)
+            .get(when)
+            .and_then(|by_service| by_service.get(plain.as_ref()))
             .cloned();
         let hits = cached.unwrap_or_else(|| {
             let hits: Arc<[usize]> = patterns
@@ -171,13 +181,15 @@ impl SecaIndex {
             self.pattern_hits
                 .write()
                 .unwrap_or_else(|err| err.into_inner())
-                .insert(key, Arc::clone(&hits));
+                .entry(when.to_string())
+                .or_default()
+                .insert(plain.into_owned(), Arc::clone(&hits));
             hits
         });
-        let mut positions: Vec<usize> = hits.to_vec();
-        if positions.is_empty() {
+        if hits.is_empty() {
             return Cow::Borrowed(named);
         }
+        let mut positions: Vec<usize> = hits.to_vec();
         positions.extend_from_slice(named);
         positions.sort_unstable();
         Cow::Owned(positions)
@@ -394,6 +406,39 @@ mod tests {
         assert_eq!(context.message().messages(), ["early", "late"]);
         run_seca_rules("test.example#Run", "post-service", &mut parameters, None).unwrap();
         assert_eq!(context.message().messages(), ["early", "late"]);
+    }
+
+    /// A parameter or result named `context` (a commit status's) cannot be a name of the rule's frame, which `context`
+    /// names: the rule still runs and finds it in `parameters` and `results`.
+    #[test]
+    fn a_parameter_named_context_stays_in_parameters_and_results() {
+        let context = crate::context::ExecutionContextFactory::test_context();
+        eca_rules::install(
+            context.factory(),
+            eca_rules::from_xml(
+                r#"<secas>
+                <seca service="test.example#Status" when="post-service">
+                    <condition><expression>state == 'failure'</expression></condition>
+                    <actions><script>ec.message.addMessage(parameters.context + " " + results.context);</script></actions>
+                </seca>
+            </secas>"#,
+                "",
+            ),
+        );
+        let _entered = context.enter();
+        let mut parameters = BTreeMap::new();
+        parameters.insert("context".to_string(), Value::string("ci/build"));
+        parameters.insert("state".to_string(), Value::string("failure"));
+        let mut results = BTreeMap::new();
+        results.insert("context".to_string(), Value::string("ci/test"));
+        run_seca_rules(
+            "test.example#Status",
+            "post-service",
+            &mut parameters,
+            Some(&mut results),
+        )
+        .unwrap();
+        assert_eq!(context.message().messages(), ["ci/build ci/test"]);
     }
 
     /// Java writes each entity audit row with `create#moqui.entity.EntityAuditLog`, so that service's SECA rules run.

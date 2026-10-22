@@ -17,11 +17,15 @@
 pub mod backup;
 pub mod build_info;
 pub mod cluster;
+pub mod collab;
 pub mod context;
+pub mod dav;
 pub mod driver;
 pub mod edi;
 pub mod entity;
 pub mod l10n;
+#[cfg(feature = "llm")]
+pub mod llm;
 pub mod native;
 pub mod notify;
 pub mod outbound;

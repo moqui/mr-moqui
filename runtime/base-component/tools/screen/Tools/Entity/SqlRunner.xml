@@ -83,6 +83,16 @@ along with this software (see the LICENSE.md file). If not, see
                     </div>
                 </#list>
             </#if>
-        ]]></text></render-mode>
+        ]]></text>
+        <!-- each result set as a list, a null as an empty cell -->
+        <text type="tui"><![CDATA[${JSON.stringify((outerColumnsList || []).flatMap((columns, columnsIndex) => {
+            const records = outerRecordsList[columnsIndex] || []
+            return [{t: 'text', id: 'SqlResultTitle' + columnsIndex, style: 'h5', text: 'Result Set ' + (columnsIndex + 1)},
+                {t: 'formList', id: 'SqlResult' + columnsIndex, name: 'SqlResult' + columnsIndex,
+                    columns: columns.map((column) => ({title: String(column)})),
+                    rows: records.map((record, recordIndex) => ({id: String(recordIndex),
+                        cells: record.map((curField) => curField == null ? '' : String(ec.l10n.format(curField, '')))})),
+                    paging: {index: 0, size: records.length, count: records.length}}]
+        }))}]]></text></render-mode>
     </widgets>
 </screen>

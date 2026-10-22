@@ -69,7 +69,8 @@ fn a_file_under_the_screen_is_served_with_a_type_a_validator_and_a_cache_rule() 
     assert_eq!(response.header("Content-Type"), Some("text/css; charset=UTF-8"));
     assert_eq!(
         response.header("Cache-Control"),
-        Some("public, max-age=3600, must-revalidate")
+        Some("max-age=86400, must-revalidate, public"),
+        "the conf's screen-resource-text header"
     );
     assert_eq!(response.header("Content-Length"), Some("19"));
     assert!(response.header("ETag").is_some_and(|tag| tag.starts_with("W/\"")));
@@ -166,11 +167,38 @@ fn a_screen_with_a_render_mode_extension_still_beats_a_missing_file() {
     assert_ne!(response.status, 500, "{}", response.body_text());
 }
 
+/// True when `node` is installed and has `node --test`, which came in Node 18; otherwise says why `tests` are skipped.
+fn node_has_test_runner(tests: &str) -> bool {
+    let output = match std::process::Command::new("node").arg("--version").output() {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!("skipping {tests}, no node: {err}");
+            return false;
+        }
+    };
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let major = version
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok());
+    match major {
+        Some(major) if major >= 18 => true,
+        _ => {
+            eprintln!("skipping {tests}: node {version} has no `node --test` (Node 18 or later)");
+            false
+        }
+    }
+}
+
 /// The pure functions of the html client run under Node. Nothing runs when `node` is not installed.
 #[test]
 fn the_html_client_passes_its_node_tests() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/base-component/webroot/screen/webroot/js/moqui-html.test.js");
+    if !node_has_test_runner("the client tests") {
+        return;
+    }
     let output = match std::process::Command::new("node").arg("--test").arg(&file).output() {
         Ok(output) => output,
         Err(err) => {
@@ -191,11 +219,17 @@ fn the_html_client_passes_its_node_tests() {
 /// its record components (the HTML of m-rich-text, the record panels, avatars and record cards), its layout panels,
 /// the cleaning of m-html-view, the form-list views (board columns, calendar times and lanes), m-markdown's rendering, and
 /// the chat store (WebrootChat.js: presence, unread counts, typing, a pushed event
-/// merged into a timeline, the status menu). Nothing runs when `node` is not installed.
+/// merged into a timeline, the status menu), Assist (WebrootAssist.js: the reducer, follow.locate, safePath, chips) and its canvas
+/// (WebrootAssistCanvas.js: the library spec golden, lang-core parses, state reconciliation, and the Vue SFC frame's
+/// message validator, watchdog and submit gate).
+/// Nothing runs when `node` is not installed.
 #[test]
 fn the_qvt_client_passes_its_node_tests() {
     let dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/webroot/screen/webroot/js");
+    if !node_has_test_runner("the qvt client tests") {
+        return;
+    }
     let mut command = std::process::Command::new("node");
     command.arg("--test");
     for name in [
@@ -209,8 +243,12 @@ fn the_qvt_client_passes_its_node_tests() {
         "WebrootVue.qvt.htmlview.test.js",
         "WebrootVue.qvt.views.test.js",
         "WebrootVue.qvt.markdown.test.js",
+        "WebrootVue.qvt.code.test.js",
+        "WebrootVue.qvt.coedit.test.js",
         "WebrootPublic.qvt.test.js",
         "WebrootChat.test.js",
+        "WebrootAssist.test.js",
+        "WebrootAssistCanvas.test.js",
     ] {
         command.arg(dir.join(name));
     }

@@ -407,7 +407,7 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
       --https-port N   HTTPS port to listen on (webapp_https_listen_port), or off
   -D name=value        Set any conf property, as an environment variable; repeatable. Use the
                        underscore name (entity_ds_db_conf), not a dotted one
-      --build          Build the package first (./moq build). A binary that is not there is always built
+      --nobuild        Skip the build (./moq build) that runs first. A binary that is not there is still built
       --               End of moq options'
 
 help_build() {
@@ -420,7 +420,7 @@ or Debug, Maximal or Enterprise. Each has its own cargo profile, features and bi
   Enterprise  cargo build --profile enterprise --no-default-features -F enterprise -p moqui
                                                                                  target/enterprise/moqui
 Other words go to cargo as they are. The tasks that run moqui (run, load, test, save-db, ...) build
-the binary they need when it is not there.
+the binary they need first, so it is never stale; --nobuild skips that when the binary is there.
 
 A component in runtime/component with a Cargo.toml beside its component.xml is a Rust crate: the
 build generates target/moqui-app, a crate that links those crates with the framework, and builds
@@ -470,7 +470,7 @@ LOAD_HELP='Words without "=" are data types, joined into types=a,b. name=value w
 they are: components=a,b, timeout=<seconds>, raw=true, disableEntityEca=true,
 disableAuditLog=true, disableFkCreate=true, disableDataFeed=true.
 
-Options (as for run): --debug, --release, --enterprise, -c FILE, -D name=value, --build, and
+Options (as for run): --debug, --release, --enterprise, -c FILE, -D name=value, --nobuild, and
   -l, --location FILE  Load only this data file (location=<absolute path>)'
 
 help_test() {
@@ -484,7 +484,7 @@ any other option is passed on, so moqui's own options work as they are:
   ./moq test mantle-usl --spec OrderToCashBasicFlow --feature "ship Sales Order"
   ./moq test mantle-usl --junit build/test-results
 
-Options (as for run): --debug, --release, --enterprise, -c FILE, -p, -D name=value, --build, and
+Options (as for run): --debug, --release, --enterprise, -c FILE, -p, -D name=value, --nobuild, and
   --  End of moq options; everything after it goes to moqui test
 EOF
 }
@@ -536,8 +536,8 @@ This saves only the embedded database, not an external one set by entity_ds_db_c
 
 Options:
       --debug, --release
-                       Use the Debug or Maximal binary (default: the Default package). A binary that
-                       is not there is built
+                       Use the Debug or Maximal binary (default: the Default package), built first
+      --nobuild        Skip that build. A binary that is not there is still built
       --skip-opensearch  Leave out the OpenSearch data
 EOF
 }
@@ -552,8 +552,8 @@ must be stopped. The name defaults to "default".
 
 Options:
       --debug, --release
-                       Use the Debug or Maximal binary (default: the Default package). A binary that
-                       is not there is built
+                       Use the Debug or Maximal binary (default: the Default package), built first
+      --nobuild        Skip that build. A binary that is not there is still built
       --skip-opensearch  Leave runtime/opensearch/data alone
 EOF
 }
@@ -777,7 +777,7 @@ or tar and gzip.
 
 Options:
 $PACKAGE_OPTIONS_HELP
-      --build          Build the package first. A binary that is not there is always built
+      --nobuild        Skip the build that runs first. A binary that is not there is still built
   -c, --conf FILE      The conf put in the archive as MoquiConf.xml (default
                        conf/MoquiProductionConf.xml); relative to the runtime directory, or a path
       --tgz            A gzipped tar (.tgz) instead of a zip
@@ -810,7 +810,7 @@ help_help() {
 # Set by parse_run_opts.
 OPT_PACKAGE=
 OPT_CONF=
-OPT_BUILD=
+OPT_NOBUILD=
 OPT_LOCATION=
 OPT_PROPS=()
 OPT_REST=()
@@ -842,7 +842,7 @@ parse_run_opts() {
     shift
     OPT_PACKAGE=
     OPT_CONF=
-    OPT_BUILD=
+    OPT_NOBUILD=
     OPT_LOCATION=
     OPT_PROPS=()
     OPT_REST=()
@@ -888,7 +888,7 @@ parse_run_opts() {
                 shift
                 ;;
             -D?*) add_property "${arg#-D}" ;;
-            --build) OPT_BUILD=1 ;;
+            --nobuild) OPT_NOBUILD=1 ;;
             -l | --location)
                 [ "$mode" = load ] || die "unknown option $arg"
                 [ $# -ge 2 ] || die "$arg needs a file"
@@ -977,7 +977,9 @@ build_binary() {
     package_args=(--profile "$(package_profile "$package")" --no-default-features
         --features "$(package_features "$package")")
     local -a addons
-    mapfile -t addons < <(component_crate_dirs "$RUNTIME_DIR/component" "$RUNTIME_DIR/ecomponent")
+    local addon
+    while IFS= read -r addon; do addons+=("$addon"); done \
+        < <(component_crate_dirs "$RUNTIME_DIR/component" "$RUNTIME_DIR/ecomponent")
     if [ ${#addons[@]} -eq 0 ]; then
         run_cmd cargo build "${package_args[@]}" -p moqui "$@" >&2 || die "cargo build failed"
         return
@@ -1016,6 +1018,11 @@ crate_package_name() {
     sed -n '/^\[package\]/,/^\[/s/^name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1/Cargo.toml" | head -n 1
 }
 
+# Whether the crate in $1 declares the feature $2 in its [features] table.
+crate_has_feature() {
+    sed -n '/^\[features\]/,/^\[/p' "$1/Cargo.toml" | grep -q "^$2[[:space:]]*="
+}
+
 # Write $2 to the file $1 when its content differs, so cargo sees no change on a build with the same components.
 write_if_changed() {
     if [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; then
@@ -1032,10 +1039,10 @@ write_if_changed() {
 # crates/moqui links, then the add-on ones. Its Cargo.lock starts from the repository's, so the reviewed versions stay
 # and only the component crates' own dependencies are added.
 write_app_crate() {
-    local app=$1 dir package deps="" uses="" unoptimized="" crate
+    local app=$1 dir package deps="" uses="" unoptimized="" crate tui_features=
     shift
     local -a dirs
-    mapfile -t dirs < <(component_crate_dirs "$ROOT/runtime/base-component")
+    while IFS= read -r dir; do dirs+=("$dir"); done < <(component_crate_dirs "$ROOT/runtime/base-component")
     dirs+=("$@")
     for dir in "${dirs[@]}"; do
         package=$(crate_package_name "$dir")
@@ -1043,6 +1050,11 @@ write_app_crate() {
         deps+="$package = { path = \"$dir\" }"$'\n'
         unoptimized+=$'\n'"[profile.dev.package.$package]"$'\n'"opt-level = 0"$'\n'
         uses+="use ${package//-/_} as _;"$'\n'
+        # A component crate with its own terminal components (a tui feature, plans/Screen-TUI-Impl.md 2.9) has them
+        # registered when the binary has the TUI.
+        if crate_has_feature "$dir" tui; then
+            tui_features+=", \"$package/tui\""
+        fi
         info "Linking component crate $package ($(rel "$dir"))" >&2
     done
     if ! dry_run; then
@@ -1067,10 +1079,11 @@ path = \"src/main.rs\"
 # The packages, as crates/moqui has them (docs/Packaging.md). ./moq build picks one with --no-default-features.
 [features]
 default = [\"maximal\"]
-lite = [\"moqui-host/lite\"]
-enterprise = [\"moqui-host/enterprise\"]
-maximal = [\"moqui-host/maximal\"]
+lite = [\"moqui-host/lite\", \"tui\"]
+enterprise = [\"moqui-host/enterprise\", \"tui\"]
+maximal = [\"moqui-host/maximal\", \"tui\"]
 inbound-smtp = [\"moqui-host/inbound-smtp\"]
+tui = [\"moqui-host/tui\"${tui_features}]
 
 [dependencies]
 moqui-host = { path = \"$ROOT/crates/moqui-host\", default-features = false }
@@ -1094,11 +1107,11 @@ fn main() {
     fi
 }
 
-# The binary for a package. It is built first when asked (--build), and when it is not there.
+# The binary for a package, built first so it is not stale; with --nobuild only when it is not there.
 moqui_binary() {
     local package=$1 bin
     bin=$(binary_path "$package")
-    if [ -n "$OPT_BUILD" ]; then
+    if [ -z "$OPT_NOBUILD" ]; then
         build_binary "$package"
     elif [ ! -x "$bin" ]; then
         info "$(rel "$bin") is not built, building it" >&2
@@ -1237,10 +1250,16 @@ task_load_production() {
 
 task_load_save() {
     local name=default
-    local -a load_args
+    local -a load_args save_args
     load_args=()
+    save_args=()
     while [ $# -gt 0 ]; do
         case $1 in
+            # save-db runs the binary the load built, with no second build.
+            --debug | --release | --enterprise)
+                load_args+=("$1")
+                save_args+=("$1")
+                ;;
             -n | --name)
                 [ $# -ge 2 ] || die "$1 needs a name"
                 name=$2
@@ -1254,7 +1273,7 @@ task_load_save() {
     valid_name "$name" || die "save name '$name' may use only letters, digits, '.', '_' and '-'"
     clean_all
     (task_load "${load_args[@]}") || die "load failed; nothing was saved"
-    task_save_db "$name"
+    task_save_db "$name" "${save_args[@]}" --nobuild
 }
 
 # ========== OpenSearch ==========
@@ -2101,10 +2120,10 @@ BEGIN { FS = "\t" }
     path = $2
     name = base(path)
     parent = path
-    sub(/\/[^/]+$/, "", parent)
+    sub(/\/[^\/]+$/, "", parent)
     parent_name = base(parent)
     grand = parent
-    sub(/\/[^/]+$/, "", grand)
+    sub(/\/[^\/]+$/, "", grand)
 
     if (parent_name == ".fingerprint") {
         unit[path] = name
@@ -2246,7 +2265,7 @@ parse_save_args() {
     SAVE_NAME=default
     SKIP_OPENSEARCH=
     OPT_PACKAGE=
-    OPT_BUILD=
+    OPT_NOBUILD=
     local named=''
     while [ $# -gt 0 ]; do
         case $1 in
@@ -2254,6 +2273,7 @@ parse_save_args() {
             --release) set_package release ;;
             --enterprise) set_package enterprise ;;
             --skip-opensearch) SKIP_OPENSEARCH=1 ;;
+            --nobuild) OPT_NOBUILD=1 ;;
             -*) die "unknown option $1" ;;
             *)
                 [ -z "$named" ] || die "$task takes one save name"
@@ -3096,13 +3116,13 @@ EOF
 task_archive() {
     local file='' conf=$PRODUCTION_CONF force='' with_save='' no_data='' named='' tgz=''
     OPT_PACKAGE=
-    OPT_BUILD=
+    OPT_NOBUILD=
     while [ $# -gt 0 ]; do
         case $1 in
             --debug) set_package debug ;;
             --release) set_package release ;;
             --enterprise) set_package enterprise ;;
-            --build) OPT_BUILD=1 ;;
+            --nobuild) OPT_NOBUILD=1 ;;
             -c | --conf)
                 [ $# -ge 2 ] || die "$1 needs a file"
                 conf=$2
@@ -3438,7 +3458,7 @@ complete_run_like() {
         --https-port) filter_prefix "$cur" off; return ;;
     esac
     case $cur in
-        -*) filter_prefix "$cur" --debug --release --enterprise -c --conf -p --port --https-port -D --build --; return ;;
+        -*) filter_prefix "$cur" --debug --release --enterprise -c --conf -p --port --https-port -D --nobuild --; return ;;
     esac
     printf '%s\n' "$positional"
 }
@@ -3492,7 +3512,7 @@ complete_task() {
             ;;
         save-db | reload-save)
             case $cur in
-                -*) filter_prefix "$cur" --debug --release --enterprise --skip-opensearch ;;
+                -*) filter_prefix "$cur" --debug --release --enterprise --nobuild --skip-opensearch ;;
                 *) filter_prefix "$cur" $(save_names) ;;
             esac
             ;;
@@ -3547,7 +3567,7 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --debug --release --enterprise --build -c --conf --tgz --with-save \
+                    filter_prefix "$cur" --debug --release --enterprise --nobuild -c --conf --tgz --with-save \
                         --no-data -f --force
                     ;;
                 *) echo @files ;;

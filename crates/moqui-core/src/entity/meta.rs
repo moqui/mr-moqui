@@ -1094,7 +1094,7 @@ fn schema_expr(dialect: &Dialect) -> &'static str {
     }
 }
 
-fn row_matches(columns: &[(String, Value)], table: &str) -> bool {
+fn row_matches(columns: &[(std::sync::Arc<str>, Value)], table: &str) -> bool {
     let Some(Value::String(name)) = columns.first().map(|(_, value)| value) else {
         return false;
     };

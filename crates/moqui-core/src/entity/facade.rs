@@ -111,7 +111,9 @@ pub(crate) struct Inner {
     sim_starter: Mutex<Option<SimStarter>>,
     /// Embedded-database backup. The host installs it; core does not spawn `pg_dump`.
     backup_runner: Mutex<Option<crate::backup::BackupRunner>>,
-    slots: Mutex<HashMap<TypeId, Box<dyn Any + Send>>>,
+    /// Read for a lookup ([`EntityFacade::with_slot_read`]), written to change a slot; finds on several threads read
+    /// the same slots several times a call, which one mutex made them take in turn.
+    slots: RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>,
     /// What is known of the tables, and the groups' DDL settings.
     pub(crate) tables: super::meta::TableState,
     /// Definitions built at runtime, consulted when the file model has no such name. See [`super::derived`].
@@ -275,7 +277,7 @@ impl EntityFacade {
                 sim_starter: Mutex::new(None),
                 backup_runner: Mutex::new(None),
                 sim_tx: RwLock::new(None),
-                slots: Mutex::new(HashMap::new()),
+                slots: RwLock::new(HashMap::new()),
                 tables: super::meta::TableState::default(),
                 derived: super::derived::DerivedDefinitions::default(),
             }),
@@ -319,15 +321,32 @@ impl EntityFacade {
             .unwrap_or(false)
     }
 
-    /// Hook-module state. `init` runs once per `T`. Do not call `with_slot` from `body`.
+    /// Hook-module state. `init` runs once per `T`. Do not call `with_slot` or [`Self::with_slot_read`] from `body`.
     pub fn with_slot<T, R>(&self, init: impl FnOnce() -> T, body: impl FnOnce(&mut T) -> R) -> R
     where
-        T: Any + Send + 'static,
+        T: Any + Send + Sync + 'static,
     {
-        let mut slots = lock(&self.inner.slots);
+        let mut slots = write(&self.inner.slots);
         let entry = slots.entry(TypeId::of::<T>()).or_insert_with(|| Box::new(init()));
         let value = entry.downcast_mut::<T>().expect("slot type matches its TypeId");
         body(value)
+    }
+
+    /// [`Self::with_slot`] for a lookup: `body` reads the slot alongside other threads reading it. `init` runs once
+    /// per `T`, as there. Do not call either from `body`.
+    pub fn with_slot_read<T, R>(&self, init: impl FnOnce() -> T, body: impl FnOnce(&T) -> R) -> R
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        {
+            let slots = read(&self.inner.slots);
+            if let Some(entry) = slots.get(&TypeId::of::<T>()) {
+                return body(entry.downcast_ref::<T>().expect("slot type matches its TypeId"));
+            }
+        }
+        let mut slots = write(&self.inner.slots);
+        let entry = slots.entry(TypeId::of::<T>()).or_insert_with(|| Box::new(init()));
+        body(entry.downcast_ref::<T>().expect("slot type matches its TypeId"))
     }
 
     /// True while sim mode should keep writes off the main schema on this thread. The cache module
@@ -348,6 +367,11 @@ impl EntityFacade {
 
     pub fn sim_transactions(&self) -> Option<TransactionManager> {
         read(&self.inner.sim_tx).clone()
+    }
+
+    /// Whether this process can enter a sim: it has the overlay pool, or a starter for it.
+    pub fn sim_available(&self) -> bool {
+        self.sim_transactions().is_some() || lock(&self.inner.sim_starter).is_some()
     }
 
     /// The host's start of the overlay cluster, run once by the first `enter_sim` that finds no

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     this file; the month is a URL parameter, the events come from the events transition (an inline list made for the
     month asked), and the quick-create form posts to createEvent, which writes nothing. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Calendar" default-menu-index="7" render-modes="vue,qvue" server-static="vue,qvue">
+        default-menu-title="Calendar" default-menu-index="7" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="month"/>
 
@@ -54,6 +54,8 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <render-mode>
             <text type="qvue" location="component://example/screen/Gallery/Calendar.qvue" template="false"/>
+            <!-- the terminal twin (style-guide 4.8): the calendar component, its data from the same transitions -->
+            <text type="tui" location="component://example/screen/Gallery/Calendar.tui.json" template="false"/>
             <text type="html,qvt"><![CDATA[<p><strong>The Calendar is a .qvue screen: open it under /qapps (the qvt render mode).</strong></p>]]></text>
         </render-mode>
     </widgets>

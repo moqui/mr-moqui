@@ -357,7 +357,7 @@ pub trait SearchBackend: Send + Sync {
         false
     }
 
-    /// True when this backend is an Elastic-compatible server the `/elastic` and `/kibana` proxies can reach.
+    /// True when this backend is an Elastic-compatible server the `/search` and `/dashboard` proxies (`ProxyServlet.js`) can reach.
     fn has_elastic_api(&self) -> bool {
         false
     }
@@ -908,23 +908,29 @@ pub fn agg_empty(agg: &Agg) -> Value {
 }
 
 /// One vector or the reason there is none, for each text. A batch the model fails is embedded
-/// again a text at a time, to find the texts it fails on. A vector of the wrong length or with a
-/// non-finite value is a failure, since the store would refuse it.
+/// again a text at a time, to find the texts it fails on, unless the embedder says its server is not
+/// answering ([`semantic::Embedder::retries_each`]): then, and as soon as a text's retry says so, the
+/// batch fails as a whole rather than costing a timeout a text. A vector of the wrong length or with
+/// a non-finite value is a failure, since the store would refuse it.
 ///
 /// # Errors
 ///
-/// Returns the model's error for a batch of one text.
+/// Returns the model's error for a batch of one text, or for a batch its server did not answer.
 fn embed_each(embedder: &dyn semantic::Embedder, texts: &[String]) -> Result<Vec<Result<Vec<f32>, String>>, Error> {
     let vectors: Vec<Result<Vec<f32>, String>> = match embedder.embed(texts) {
         Ok(vectors) => vectors.into_iter().map(Ok).collect(),
-        Err(err) if texts.len() <= 1 => return Err(err),
-        Err(_) => texts
-            .iter()
-            .map(|text| match embedder.embed(std::slice::from_ref(text)) {
-                Ok(mut one) => one.pop().ok_or_else(|| "the model returned no vector".to_string()),
-                Err(err) => Err(err.message().to_string()),
-            })
-            .collect(),
+        Err(err) if texts.len() <= 1 || !embedder.retries_each(&err) => return Err(err),
+        Err(_) => {
+            let mut each = Vec::with_capacity(texts.len());
+            for text in texts {
+                match embedder.embed(std::slice::from_ref(text)) {
+                    Ok(mut one) => each.push(one.pop().ok_or_else(|| "the model returned no vector".to_string())),
+                    Err(err) if !embedder.retries_each(&err) => return Err(err),
+                    Err(err) => each.push(Err(err.message().to_string())),
+                }
+            }
+            each
+        }
     };
     let dimensions = embedder.dimensions();
     Ok(vectors

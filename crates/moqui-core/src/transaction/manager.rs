@@ -196,6 +196,16 @@ impl TransactionManager {
         self.inner.pool.check_caps(request_cap, service_cap)
     }
 
+    /// See [`super::pool::Pool::spare_connections`].
+    pub fn spare_connections(&self, request_cap: u32, service_cap: u32) -> u32 {
+        self.inner.pool.spare_connections(request_cap, service_cap)
+    }
+
+    /// See [`super::pool::Pool::check_caps_with`].
+    pub fn check_caps_with(&self, request_cap: u32, service_cap: u32, single: u32) -> Result<(), Error> {
+        self.inner.pool.check_caps_with(request_cap, service_cap, single)
+    }
+
     /// Records the deadline and pushes a frame, or joins the active one. Does not check out a connection.
     ///
     /// Returns `true` when this call began the transaction, and `false` when it joined the frame
@@ -333,6 +343,9 @@ impl TransactionManager {
         if !self.has_active() {
             let mut pooled = self.inner.pool.checkout_ordinary()?;
             let result = body(pooled.conn());
+            if result.is_err() && pooled.live() && pooled.conn().is_closed() {
+                pooled.discard();
+            }
             drop(pooled);
             return result;
         }
@@ -357,6 +370,9 @@ impl TransactionManager {
         self.arm_statement_timeout(borrow.as_mut())?;
         let pooled = borrow.as_mut().ok_or_else(|| Error::new("no connection enlisted"))?;
         let result = body(pooled.conn());
+        if result.is_err() && pooled.live() && pooled.conn().is_closed() {
+            pooled.discard();
+        }
         if let Err(err) = &result {
             let message = err.to_string();
             let info = RollbackInfo {
@@ -378,6 +394,9 @@ impl TransactionManager {
     {
         let mut pooled = self.inner.pool.checkout_reserve()?;
         let result = body(pooled.conn());
+        if result.is_err() && pooled.live() && pooled.conn().is_closed() {
+            pooled.discard();
+        }
         drop(pooled);
         result
     }
@@ -585,6 +604,17 @@ impl TransactionManager {
     /// True when the active frame is marked rollback-only, as Java's `STATUS_MARKED_ROLLBACK`.
     pub fn is_rollback_only(&self) -> bool {
         self.with_frames(|frames| active(frames).is_some_and(|frame| frame.rollback_only.is_some()))
+    }
+
+    /// Wait for what the enlisted connection sent without waiting ([`DbConnection::execute_deferred`]) and report the
+    /// first that failed, which marks the frame rollback-only as a failed statement does. Nothing when no connection
+    /// is enlisted.
+    pub fn finish_deferred(&self) -> Result<(), Error> {
+        let enlisted = self.has_active() && self.active_conn().is_ok_and(|slot| slot.borrow().is_some());
+        if !enlisted {
+            return Ok(());
+        }
+        self.with_connection(|conn| conn.finish_deferred())
     }
 
     /// True when this thread has an active frame, as Java `isTransactionInPlace`. A thread whose
@@ -1264,6 +1294,10 @@ fn rollback_after_failure(conn: &Rc<RefCell<Option<PooledConn>>>) {
 fn rollback_enlisted(conn: &Rc<RefCell<Option<PooledConn>>>) -> Result<(), Error> {
     let mut slot = conn.borrow_mut();
     if let Some(pooled) = slot.as_mut() {
+        if !pooled.live() || pooled.conn().is_closed() {
+            pooled.discard();
+            return Ok(());
+        }
         pooled.conn().rollback()?;
     }
     Ok(())

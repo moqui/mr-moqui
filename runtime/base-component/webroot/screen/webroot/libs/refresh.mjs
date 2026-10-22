@@ -6,6 +6,9 @@
 //   node refresh.mjs --write          rewrite libs/, MANIFEST.json and NOTICES.md from the pinned versions
 //   node refresh.mjs --work DIR       use DIR (must be empty or absent) as the scratch directory
 //
+// A fix to a vendored package is a reviewed patch under patches/ (a unified diff with a header that says what and why),
+// applied by the build of that library and recorded with its sha256 in MANIFEST.json; minified files are never edited.
+//
 // To upgrade a library, change its `version` below, run with --write, review the diff and
 // plans/archive/License-Review.md, and commit. Nothing here runs a package script: every install is
 // `--ignore-scripts`, tarballs come from `npm pack`, and the tarball sha512 (npm `integrity`) is recorded.
@@ -39,6 +42,12 @@ const BUILD_DEPS = {
   'estree-walker': '2.0.2',
   'source-map-js': '1.2.2',
   'highlight.js': '11.12.0',
+  // OpenUI Lang (pinned Oct 22, 2026; 0.2.18 was published Sep 10, the version the Java prototype's guide was written
+  // against) with the zod it imports and its one dependency; the bundle is built from the npm package with the reviewed
+  // patches of patches/ applied (OPENUI_PATCHES).
+  '@openuidev/lang-core': '0.2.18',
+  zod: '4.6.5',
+  'ci-info': '4.4.0',
   // Tiptap 3 (pinned Oct 19, 2026, published by Oct 5) and everything its bundle takes in.
   ...TIPTAP_DEPS(),
 };
@@ -56,6 +65,8 @@ function TIPTAP_DEPS() {
     '@tiptap/extension-bullet-list': '3.31.4',
     '@tiptap/extension-code': '3.31.4',
     '@tiptap/extension-code-block': '3.31.4',
+    '@tiptap/extension-collaboration': '3.31.4',
+    '@tiptap/extension-collaboration-caret': '3.31.4',
     '@tiptap/extension-document': '3.31.4',
     '@tiptap/extension-dropcursor': '3.31.4',
     '@tiptap/extension-gapcursor': '3.31.4',
@@ -73,12 +84,24 @@ function TIPTAP_DEPS() {
     '@tiptap/extension-paragraph': '3.31.4',
     '@tiptap/extension-placeholder': '3.31.4',
     '@tiptap/extension-strike': '3.31.4',
+    '@tiptap/extension-table': '3.31.4',
+    '@tiptap/extension-table-cell': '3.31.4',
+    '@tiptap/extension-table-header': '3.31.4',
+    '@tiptap/extension-table-row': '3.31.4',
     '@tiptap/extension-text': '3.31.4',
     '@tiptap/extension-underline': '3.31.4',
     '@tiptap/extensions': '3.31.4',
     '@tiptap/pm': '3.31.4',
     '@tiptap/starter-kit': '3.31.4',
     '@tiptap/suggestion': '3.31.4',
+    // The collaboration of m-coedit (pinned Oct 21, 2026, published by Sep 30): Yjs, Tiptap's y-prosemirror (@tiptap/y-tiptap,
+    // which the two collaboration extensions import) and the awareness protocol, in the same bundle so ProseMirror and Yjs are
+    // one instance each.
+    '@tiptap/y-tiptap': '3.0.9',
+    yjs: '13.6.33',
+    'y-protocols': '1.0.7',
+    lib0: '0.2.119',
+    'isomorphic.js': '0.2.5',
     '@floating-ui/core': '1.8.0',
     '@floating-ui/dom': '1.8.0',
     '@floating-ui/utils': '0.2.12',
@@ -101,16 +124,38 @@ function TIPTAP_DEPS() {
     'w3c-keyname': '2.2.8',
   };
 }
-// What the Tiptap bundle exports as the global Tiptap: the editor and the extensions m-rich-text uses.
+// What the Tiptap bundle exports as the global Tiptap: the editor and the extensions m-rich-text uses, and for m-coedit the
+// Yjs namespace (Y), the collaboration extensions and the awareness protocol.
 const TIPTAP_ENTRY = `export { Editor, Extension, Node, Mark, mergeAttributes } from '@tiptap/core';
 export { default as StarterKit } from '@tiptap/starter-kit';
 export { default as Link } from '@tiptap/extension-link';
 export { default as Image } from '@tiptap/extension-image';
 export { default as Mention } from '@tiptap/extension-mention';
 export { default as Placeholder } from '@tiptap/extension-placeholder';
+export { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
+export { PluginKey } from '@tiptap/pm/state';
+export { default as Collaboration } from '@tiptap/extension-collaboration';
+export { default as CollaborationCaret } from '@tiptap/extension-collaboration-caret';
+export * as Y from 'yjs';
+export { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 `;
 
-const HLJS_LANGS = ['bash', 'css', 'diff', 'groovy', 'java', 'javascript', 'json', 'markdown', 'plaintext',
+// What the OpenUI Lang bundle exports as the global OpenUILang: the parser (whole and streaming), the statement merge of
+// a patch, the store, the query manager and the evaluator the canvas renderer (js/WebrootAssistCanvas.js) uses; the
+// server runs the same bundle in QuickJS to parse, check and merge write_ui programs (crates/moqui-core/src/llm/ui/openui.rs),
+// which also reads each statement's syntax tree (tokenize, split, parseExpression).
+const OPENUI_ENTRY = `export { createParser, createStreamingParser, mergeStatements, createStore, createQueryManager, evaluate,
+  evaluateElementProps, BuiltinActionType, ACTION_STEPS, walkAST, tokenize, split, parseExpression, BUILTIN_NAMES,
+  ACTION_NAMES } from '@openuidev/lang-core';
+`;
+// The reviewed patches applied, in order, to the installed package before it is bundled (patch -p1 in its directory).
+// Each file says what it changes and why; a patch that no longer applies stops the build.
+const OPENUI_PATCHES = [
+  'patches/openui-lang-core-0.2.18-telemetry-off.patch',
+  'patches/openui-lang-core-0.2.18-failed-query.patch',
+];
+
+const HLJS_LANGS = ['bash', 'css', 'diff', 'groovy', 'java', 'javascript', 'json', 'kotlin', 'markdown', 'plaintext',
   'python', 'rust', 'sql', 'typescript', 'xml', 'yaml'];
 const QUASAR_LANGS = ['en-US', 'de', 'es', 'fr', 'it', 'pt-BR', 'ja', 'zh-CN', 'ru', 'nl'];
 
@@ -167,6 +212,21 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
   {
     id: 'sortablejs', name: 'SortableJS', npm: 'sortablejs', version: '1.15.7', license: 'MIT',
     copy: [['Sortable.min.js', 'sortablejs/Sortable.min.js']],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    // The browser terminal (/qapps/Terminal): the terminal client over /termws. Pinned Oct 21, 2026; 6.0.0 and 0.11.0
+    // are the latest stable releases, both published in 2025.
+    id: 'xterm', name: 'xterm.js', npm: '@xterm/xterm', version: '6.0.0', license: 'MIT',
+    copy: [
+      ['lib/xterm.js', 'xterm/xterm.js'],
+      ['css/xterm.css', 'xterm/xterm.css'],
+    ],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    id: 'xterm-addon-fit', name: '@xterm/addon-fit', npm: '@xterm/addon-fit', version: '0.11.0', license: 'MIT',
+    copy: [['lib/addon-fit.js', 'xterm/addon-fit.js']],
     licenseFiles: ['LICENSE'],
   },
   {
@@ -255,20 +315,53 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
-    // The rich-text editor of m-rich-text, loaded only when an editor mounts. Tiptap has no browser build of its own (it
-    // ships ES modules), so this is a bundle of the packages in TIPTAP_DEPS with ProseMirror in it.
+    // The rich-text editor of m-rich-text and m-coedit, loaded only when an editor mounts. Tiptap has no browser build of its
+    // own (it ships ES modules), so this is a bundle of the packages in TIPTAP_DEPS with ProseMirror and Yjs in it.
     id: 'tiptap', name: 'Tiptap (with ProseMirror, bundled)', npm: '@tiptap/core', version: '3.31.4', license: 'MIT',
     licenseNote: 'Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, ' +
-      'extension-mention, extension-placeholder, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, ' +
-      '@floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, ' +
+      'extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, ' +
+      'extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, ' +
+      'the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, ' +
+      'orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, ' +
       'with the packages it is the license of.',
     copy: [],
     noticePackages: Object.keys(TIPTAP_DEPS()),
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, ' +
-      'Image, Mention and Placeholder. Exposes the global Tiptap.',
+      'Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y ' +
+      '(the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.',
     produce: (ctx) => [['tiptap/tiptap.min.js', ctx.esbuildTiptap()]],
+  },
+  {
+    // The OpenUI Lang canvas of Assist (plans/LLM-A2A-Assist.md 4.10): parsed in the browser by the renderer and on the
+    // server in QuickJS. The license texts are lang-core's and zod's (noticePackages).
+    id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', version: '0.2.18',
+    license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: ' +
+      OPENUI_PATCHES.join(', ') + ' (telemetry off; a failed Query is not fetched again until its arguments change).',
+    copy: [],
+    noticePackages: ['@openuidev/lang-core', 'zod'],
+    noticeDedupe: true,
+    patches: OPENUI_PATCHES,
+    build: 'the patches applied with patch -p1 to the installed package, then esbuild --bundle --minify --format=iife ' +
+      '--global-name=OpenUILang --platform=browser --target=es2020 --legal-comments=none of an entry that exports ' +
+      'createParser, createStreamingParser, mergeStatements, createStore, createQueryManager, evaluate, ' +
+      'evaluateElementProps, BuiltinActionType, ACTION_STEPS, walkAST, tokenize, split, parseExpression, BUILTIN_NAMES and ' +
+      'ACTION_NAMES. Exposes the global OpenUILang; the build fails ' +
+      'when the bundle names a telemetry host, a process call or a network call of its own.',
+    produce: (ctx) => [['openui/lang-core.min.js', ctx.esbuildLangCore()]],
+  },
+  {
+    // PDF previews in Files: the PDF engine's Chromium page imports the two modules (crates/moqui-host/src/pdf.rs).
+    // Pinned Oct 21, 2026; 6.4.299 was published Oct 3 and has the CVE-2024-4367 fix (4.2.67 and later).
+    id: 'pdfjs', name: 'PDF.js', npm: 'pdfjs-dist', version: '6.4.299', license: 'Apache-2.0',
+    licenseNote: 'Only the display and worker modules. The standard_fonts (Foxit fonts under a BSD license, Liberation ' +
+      'fonts under GPL-2.0 with a font exception), cmaps, iccs and wasm directories are not shipped.',
+    copy: [
+      ['build/pdf.min.mjs', 'pdfjs/pdf.min.mjs'],
+      ['build/pdf.worker.min.mjs', 'pdfjs/pdf.worker.min.mjs'],
+    ],
+    licenseFiles: ['LICENSE'],
   },
   {
     id: 'qz-tray', name: 'QZ Tray connector (qz-tray.js)', npm: 'qz-tray', version: '2.3.0', license: 'LGPL-2.1-only',
@@ -359,6 +452,23 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       return esbuild(['tt-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=Tiptap', '--platform=browser',
         '--target=es2020', '--legal-comments=none']);
     },
+    esbuildLangCore() {
+      const pkg = join(build, 'node_modules', '@openuidev', 'lang-core');
+      for (const patch of OPENUI_PATCHES) {
+        run('patch', ['-p1', '--forward', '--batch', '-i', join(here, patch)], { cwd: pkg });
+      }
+      writeFileSync(join(build, 'openui-entry.js'), OPENUI_ENTRY);
+      const out = esbuild(['openui-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=OpenUILang',
+        '--platform=browser', '--target=es2020', '--legal-comments=none']);
+      // the bundle parses, evaluates and merges; it reaches nothing: no telemetry host, no process, no network of its own
+      // (a Query's tool is the page's read proxy, given to the query manager as its provider)
+      const text = out.toString('utf8');
+      for (const banned of ['posthog', 'cloudfront', 'ci-info', 'child_process', 'execfile', 'getbuiltinmodule', 'sendbeacon',
+        'xmlhttprequest', 'fetch(', 'websocket', 'importscripts']) {
+        if (text.toLowerCase().includes(banned)) throw new Error(`the OpenUI Lang bundle still names ${banned}`);
+      }
+      return out;
+    },
     esbuildMarked() {
       const src = join(packages.marked.root, 'lib', 'marked.umd.js');
       const v = LIBS.find((l) => l.id === 'marked').version;
@@ -400,14 +510,24 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       source: `https://registry.npmjs.org/${lib.npm}/-/${lib.npm.split('/').pop()}-${lib.version}.tgz`,
       npm: `${lib.npm}@${lib.version}`, tarballIntegrity: packages[lib.id].integrity,
       ...(lib.build ? { build: lib.build } : {}),
+      ...(lib.patches ? { patches: lib.patches.map((path) => ({ path, sha256: sha256(readFileSync(join(here, path))) })) } : {}),
       files: files.map((f) => ({ path: f.path, from: f.from, size: outputs.get(f.path).length, sha256: sha256(outputs.get(f.path)) })),
     });
   }
 
-  // Verbatim license texts that the packages do not carry.
+  // Verbatim license texts that the packages do not carry. The hosts sometimes do not answer; these texts
+  // do not change with a library pin, so a failed download keeps the copy already in the tree.
   const lt = [];
   for (const { path, url } of LICENSE_TEXTS) {
-    const buf = Buffer.from(run('curl', ['-fsSL', url]), 'utf8');
+    let buf;
+    try {
+      buf = Buffer.from(run('curl', ['-fsSL', '--max-time', '20', url]), 'utf8');
+    } catch (err) {
+      const kept = join(here, path);
+      if (!existsSync(kept)) throw err;
+      console.error(`could not download ${url}; keeping the copy at ${path}`);
+      buf = readFileSync(kept);
+    }
     outputs.set(path, buf);
     lt.push({ path, from: url, size: buf.length, sha256: sha256(buf) });
   }
@@ -442,6 +562,14 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   for (const lib of committed.libraries) for (const f of lib.files) want.set(f.path, f.sha256);
   want.set(committed.notices.path, committed.notices.sha256);
   const problems = [];
+  // the reviewed patches a bundle was built with are the ones on disk
+  for (const lib of committed.libraries) {
+    for (const patch of lib.patches ?? []) {
+      const disk = join(here, patch.path);
+      if (!existsSync(disk)) problems.push(`missing patch: ${patch.path}`);
+      else if (sha256(readFileSync(disk)) !== patch.sha256) problems.push(`patch ${patch.path} differs from MANIFEST.json`);
+    }
+  }
   for (const [path, buf] of outputs) {
     const h = sha256(buf);
     if (!want.has(path)) problems.push(`not in MANIFEST.json: ${path}`);

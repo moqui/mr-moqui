@@ -26,7 +26,7 @@ use crate::model::{EntityDefinition, EntityModel, FieldDefinition, IndexDefiniti
 
 use super::condition::{fts_config, Column, Condition, FieldRef, LimitOffset, OrderBy, Writer};
 use super::ident::{
-    clip_length, clip_name, is_mysql, physical_column_name, physical_name, placeholders, quote_column,
+    clip_length, clip_name, is_mysql, is_sqlite, physical_column_name, physical_name, placeholders, quote_column,
     quote_ident as quote_alias, quote_list, quote_physical_ident as quote_ident, shrink_name,
 };
 use super::Statement;
@@ -172,8 +172,8 @@ pub fn select_with(
     });
     // A distinct select can only be ordered by what it selects, so the order-by fields are selected too, as Java's
     // EntityFindBase adds them.
-    let mut selected: Vec<FieldRef> = fields.to_vec();
-    if options.distinct && !selected.is_empty() {
+    if options.distinct && !fields.is_empty() {
+        let mut selected: Vec<FieldRef> = fields.to_vec();
         for order in order_by {
             if order.field.expr.is_none()
                 && order.field.entity_alias.is_none()
@@ -182,10 +182,59 @@ pub fn select_with(
                 selected.push(FieldRef::new(&order.field.name));
             }
         }
+        out.push(&select_list(entity, dialect, &selected));
+    } else {
+        out.push(&select_list(entity, dialect, fields));
     }
-    out.push(&select_list(entity, dialect, &selected));
     out.push(" FROM ");
     out.push(&quote_ident(dialect, &entity.table_name));
+    select_tail(out, entity, dialect, condition, order_by, page, options)
+}
+
+/// `SELECT <fields> FROM <table>` of a select that is not distinct, the part of [`select_with`] that does not change
+/// with the condition. Empty `fields` selects every field. For [`select_with_head`].
+pub fn select_head(entity: &EntityDefinition, dialect: &Dialect, fields: &[FieldRef]) -> String {
+    let mut head = String::from("SELECT ");
+    head.push_str(&select_list(entity, dialect, fields));
+    head.push_str(" FROM ");
+    head.push_str(&quote_ident(dialect, &entity.table_name));
+    head
+}
+
+/// [`select_with`] after a [`select_head`] of the same entity and dialect, so a find that renders the same columns again
+/// does not render them again. Not for a distinct select, whose head can change with the order.
+pub fn select_with_head(
+    head: &str,
+    entity: &EntityDefinition,
+    dialect: &Dialect,
+    condition: Option<&Condition>,
+    order_by: &[OrderBy],
+    page: LimitOffset,
+    options: &SelectOptions,
+) -> Result<Statement, Error> {
+    if options.distinct {
+        return Err(Error::new("a select head is not distinct; use select_with"));
+    }
+    if options.having.is_some() {
+        return Err(Error::new(format!(
+            "{} has no aggregate fields, so a having condition has nothing to apply to",
+            entity.full_name
+        )));
+    }
+    let mut out = Writer::new(dialect);
+    out.push(head);
+    select_tail(out, entity, dialect, condition, order_by, page, options)
+}
+
+fn select_tail(
+    mut out: Writer<'_>,
+    entity: &EntityDefinition,
+    dialect: &Dialect,
+    condition: Option<&Condition>,
+    order_by: &[OrderBy],
+    page: LimitOffset,
+    options: &SelectOptions,
+) -> Result<Statement, Error> {
     where_clause(&mut out, entity, condition)?;
     let columns = |field: &FieldRef| Ok(entity_column(entity, dialect, field));
     out.order_by(order_by, page.is_set(), &columns)?;
@@ -293,14 +342,17 @@ fn where_clause(out: &mut Writer<'_>, entity: &EntityDefinition, condition: Opti
     Ok(())
 }
 
-/// Insert, then update on a key conflict.
-///
-/// When `never_try_insert` is set, this returns an error that says try-insert is off.
-/// The caller uses create-or-update instead. Postgres writes `ON CONFLICT (pk) DO UPDATE SET`.
-/// MySQL writes `ON DUPLICATE KEY UPDATE`.
+/// Whether [`insert_or_update`] writes one statement for `dialect`: Postgres and SQLite (`ON CONFLICT`) and MySQL
+/// (`ON DUPLICATE KEY UPDATE`).
+pub fn supports_upsert(dialect: &Dialect) -> bool {
+    dialect.name == "postgres" || is_mysql(dialect) || is_sqlite(dialect)
+}
+
+/// Insert, or update the given columns on a primary key conflict, in one statement. Postgres and SQLite write
+/// `ON CONFLICT (pk) DO UPDATE SET`, MySQL `ON DUPLICATE KEY UPDATE`; see [`supports_upsert`].
 pub fn insert_or_update(entity: &EntityDefinition, dialect: &Dialect, columns: &[&str]) -> Result<String, Error> {
-    if dialect.never_try_insert {
-        return Err(Error::new(format!("try-insert is off for database {}", dialect.name)));
+    if !supports_upsert(dialect) {
+        return Err(Error::new(format!("database {} has no upsert statement", dialect.name)));
     }
     if columns.is_empty() {
         return Err(Error::new("insert_or_update has no columns"));

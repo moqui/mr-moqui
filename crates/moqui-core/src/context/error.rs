@@ -70,6 +70,8 @@ pub struct Error {
     kind: ErrorKind,
     denied: Option<Box<DeniedArtifact>>,
     missing_path: Option<Box<str>>,
+    /// Seconds until a refused request may come again, for a `Retry-After` (a tarpit).
+    retry_after: Option<u64>,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -82,6 +84,7 @@ impl Error {
             kind: ErrorKind::General,
             denied: None,
             missing_path: None,
+            retry_after: None,
             source: None,
         }
     }
@@ -119,6 +122,18 @@ impl Error {
     /// The screen path segment that was not found, of the first context error in the source chain that names one.
     pub fn missing_path(&self) -> Option<&str> {
         self.first_in_chain(|err| err.missing_path.as_deref())
+    }
+
+    /// A refusal the client may retry after `seconds`, Java's `ArtifactTarpitException.retryAfterSeconds`.
+    #[must_use]
+    pub fn with_retry_after(mut self, seconds: u64) -> Self {
+        self.retry_after = Some(seconds);
+        self
+    }
+
+    /// The seconds of the first context error in the source chain that has a retry time.
+    pub fn retry_after(&self) -> Option<u64> {
+        self.first_in_chain(|err| err.retry_after.as_ref()).copied()
     }
 
     fn first_in_chain<'a, T: ?Sized>(&'a self, pick: impl Fn(&'a Error) -> Option<&'a T>) -> Option<&'a T> {
@@ -214,6 +229,7 @@ impl From<moqui_lib::error::Error> for Error {
                     kind: ErrorKind::of(&err),
                     denied: None,
                     missing_path: None,
+                    retry_after: None,
                     source: Some(Box::new(err)),
                 }
             }
@@ -226,6 +242,7 @@ impl From<moqui_lib::error::Error> for Error {
                 kind: ErrorKind::of(other.as_ref()),
                 denied: None,
                 missing_path: None,
+                retry_after: None,
                 source: Some(other),
             },
         }

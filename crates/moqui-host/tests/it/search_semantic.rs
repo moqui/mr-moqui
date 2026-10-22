@@ -44,7 +44,10 @@ fn embeddings_are_stored_guarded_and_searched() {
         &parsed.database,
         &parsed.host,
         parsed.port,
-        parsed.tls,
+        parsed
+            .tls
+            .then(|| moqui_host::db::pg_tls::TlsOptions::new(parsed.tls_verify, &parsed.tls_root_cert))
+            .as_ref(),
     )
     .unwrap();
     let pool = PoolConfig {

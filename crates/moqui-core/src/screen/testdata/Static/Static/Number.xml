@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A form whose fields are checked in the browser: a number and a whole number. The rule the server writes for
+     them is a call of $mq, which is the scope's name in a server-static template. -->
+<screen require-authentication="false" server-static="qvt" default-menu-title="Number">
+    <transition name="saveNumber"><default-response type="none"/></transition>
+    <widgets>
+        <form-single name="NumberForm" transition="saveNumber">
+            <field name="qty">
+                <default-field validate-service="NumberService.validate" validate-parameter="qty">
+                    <text-line/>
+                </default-field>
+            </field>
+            <field name="count">
+                <default-field validate-service="NumberService.validate" validate-parameter="count">
+                    <text-line/>
+                </default-field>
+            </field>
+            <field name="go"><default-field><submit text="Save"/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

@@ -22,10 +22,12 @@
 //! - the columns of a form-list from the active saved find's `FormConfig`, else the user's, else a group's.
 //!
 //! A form location is Java's: the screen location, `.form_list$` or `.form_single$`, and the form name, so saved finds
-//! and column configurations written by the Java framework still apply. A posted `formLocation` that is only a form
-//! name (what the macros send) is taken as a form of the screen the transition is on.
+//! and column configurations written by the Java framework still apply. A dynamic form's saved finds also take `#`
+//! and the entity or service. A posted `formLocation` that is only a form name (what the column dialog sends) is
+//! taken as a form of the screen the transition is on.
 
 use indexmap::IndexMap;
+use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
 use crate::context::{Error, ExecutionContext};
@@ -108,18 +110,57 @@ pub(crate) fn form_location(screen_location: &str, list: bool, form_name: &str) 
     )
 }
 
-/// The location a dynamic form's saved finds are kept under: the form location and the context's `formLocationExtension`,
-/// as `getSavedFindFullLocation`.
-pub(crate) fn saved_find_location(location: &str, dynamic: bool) -> String {
-    let extension = if dynamic {
-        context_text("formLocationExtension")
-    } else {
-        String::new()
-    };
+/// The location a dynamic form's saved finds are kept under, as `getSavedFindFullLocation`.
+///
+/// `form` is the source form: assembly consumes `auto-fields-service` and `auto-fields-entity`. The extension is the
+/// context's `formLocationExtension`, else the first auto service name, else the first auto entity name. That is
+/// Java's order. The assembler prefers the expanded name and falls back to the context; this key does not. Blank and
+/// the literal `null` are missing, as the assembler treats them.
+pub(crate) fn saved_find_location(location: &str, dynamic: bool, form: &MNode) -> String {
+    if !dynamic {
+        return location.to_string();
+    }
+    let extension = form_location_extension(form);
     if extension.is_empty() {
         location.to_string()
     } else {
         format!("{location}#{extension}")
+    }
+}
+
+/// The `#` suffix of a dynamic saved find. Empty when none of the three sources has one.
+fn form_location_extension(form: &MNode) -> String {
+    if let Some(text) = present_extension(context_text("formLocationExtension")) {
+        return text;
+    }
+    for (element, attribute) in [
+        ("auto-fields-service", "service-name"),
+        ("auto-fields-entity", "entity-name"),
+    ] {
+        let Some(node) = form.first_named(element) else {
+            continue;
+        };
+        let raw = node.attribute(attribute).unwrap_or_default();
+        let expanded = match script::expand(&raw) {
+            Ok(text) => text,
+            Err(err) => {
+                tracing::warn!(error = %err, "saved find location extension did not expand");
+                String::new()
+            }
+        };
+        if let Some(text) = present_extension(expanded) {
+            return text;
+        }
+    }
+    String::new()
+}
+
+fn present_extension(text: String) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() || text == "null" {
+        None
+    } else {
+        Some(text.to_string())
     }
 }
 
@@ -227,7 +268,8 @@ pub(crate) fn apply_on_render(
             .unwrap_or_default();
         let saved = crate::user::get_preference("screen.user.page.size")?;
         if page_size.parse::<i64>().is_ok() {
-            if saved.as_deref() != Some(page_size.as_str()) {
+            // a fenced render (an agent's) reads as the user and changes none of the user's preferences
+            if saved.as_deref() != Some(page_size.as_str()) && !crate::entity::fence::active() {
                 crate::user::set_preference("screen.user.page.size", Some(&page_size))?;
             }
         } else if let Some(saved) = saved.filter(|saved| saved.parse::<i64>().is_ok()) {
@@ -286,7 +328,7 @@ pub(crate) fn user_form_list_finds(saved_location: &str) -> Result<Vec<Value>, E
             Value::Map(
                 find.fields()
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|(name, value)| (name.to_string(), value.clone()))
                     .collect(),
             ),
         );
@@ -315,6 +357,41 @@ pub(crate) fn user_default_find_id(screen_location: &str) -> Result<Option<Strin
     )?
     .first()
     .map(|row| text(row, "formListFindId")))
+}
+
+/// The newest `ScreenScheduled` of a saved find for the user, else for one of the user's groups, as
+/// `ScreenForm.getFormListFindScreenScheduled`: `{renderMode, cronExpression, cronDescription}`, or None.
+///
+/// # Errors
+///
+/// Returns an error when the records cannot be read.
+pub(crate) fn form_list_find_screen_scheduled(find_id: &str) -> Result<Option<Value>, Error> {
+    let Some(user) = user_id().filter(|_| !find_id.is_empty()) else {
+        return Ok(None);
+    };
+    let facade = facade()?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let all = facade
+        .find("moqui.screen.ScreenScheduled")?
+        .eq("formListFindId", Value::string(find_id))
+        .order_by("screenScheduledId", true)
+        .list()?
+        .into_values();
+    let mut scheduled = all.iter().find(|row| text(row, "userId") == user).cloned();
+    if scheduled.is_none() {
+        let groups = crate::user::current_user_groups()?;
+        scheduled = all.into_iter().find(|row| groups.contains(&text(row, "userGroupId")));
+    }
+    Ok(scheduled.map(|row| {
+        let cron = text(&row, "cronExpression");
+        // A cron the parser does not read is shown as it is.
+        let description = crate::service::info::cron_description(&cron).unwrap_or_else(|_| cron.clone());
+        let mut map = IndexMap::new();
+        map.insert("renderMode".to_string(), Value::string(text(&row, "renderMode")));
+        map.insert("cronExpression".to_string(), Value::string(cron));
+        map.insert("cronDescription".to_string(), Value::string(description));
+        Value::Map(map)
+    }))
 }
 
 /// The form a posted `formLocation` names: a full location, else the name of a form of the screen at `screen_location`.
@@ -405,8 +482,21 @@ fn find_fields(form: &moqui_lib::node::MNode) -> Vec<IndexMap<String, Value>> {
     out
 }
 
+/// The source form, which still has its `auto-fields-*` elements, and whether it is dynamic.
+/// `None` when the screen has no form of that name.
+fn source_form(screen_location: &str, form_name: &str) -> Result<Option<(bool, MNode)>, Error> {
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| Error::new("no execution context"))?;
+    let screens = super::ScreenFacade::of(&factory);
+    let def = screens.screen_def(&factory, screen_location)?;
+    let Some(form) = def.forms.get(form_name) else {
+        return Ok(None);
+    };
+    Ok(Some((form.dynamic, form.node.node()?)))
+}
+
 /// The assembled form a saved find is for, from the screen at `screen_location`.
-fn assembled_form(screen_location: &str, form_name: &str) -> Result<moqui_lib::node::MNode, Error> {
+fn assembled_form(screen_location: &str, form_name: &str) -> Result<MNode, Error> {
     let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
         .ok_or_else(|| Error::new("no execution context"))?;
     let screens = super::ScreenFacade::of(&factory);
@@ -483,13 +573,29 @@ pub(crate) fn process_saved_find(transition_screen: &str) -> Result<Option<Strin
         add_error("No form location specified, cannot process saved find");
         return Ok(None);
     }
-    let Some((location, screen_location, form_name, extension)) = split_form_location(&posted, transition_screen)
+    let Some((mut location, screen_location, form_name, mut extension)) =
+        split_form_location(&posted, transition_screen)
     else {
         add_error("Form location invalid, cannot process saved find");
         return Ok(None);
     };
+    // A posted '#' is the key. A bare name, or a full location with no '#', still keys a dynamic form by its entity
+    // or service, so a post that sends only the form name does not land in the shared list.
+    if extension.is_empty() {
+        if let Some((dynamic, node)) = source_form(&screen_location, &form_name)? {
+            if dynamic {
+                let derived = saved_find_location(&location, true, &node);
+                if let Some((base, ext)) = derived.rsplit_once('#') {
+                    if !base.is_empty() && !ext.is_empty() {
+                        extension = ext.to_string();
+                        location = derived;
+                    }
+                }
+            }
+        }
+    }
     if !extension.is_empty() {
-        script::set_context_name("formLocationExtension", Value::string(extension))?;
+        script::set_context_name("formLocationExtension", Value::string(&extension))?;
     }
 
     if context_has("MakeDefault") {
@@ -544,6 +650,9 @@ fn delete_find(facade: &EntityFacade, user: &str, find_id: &str, exists: bool) -
     Ok(None)
 }
 
+/// The render modes a saved find may be scheduled in: a spreadsheet, a CSV file, or a PDF (`xsl-fo` is `html-print`).
+const SCHEDULE_RENDER_MODES: &[&str] = &["xlsx", "csv", "xsl-fo"];
+
 /// `ScheduleFind`: a `ScreenScheduled` that renders the find's screen and sends it by email on a cron schedule.
 fn schedule_find(
     facade: &EntityFacade,
@@ -564,6 +673,13 @@ fn schedule_find(
     let render_mode = Some(context_text("renderMode"))
         .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| "csv".into());
+    // The modes the Saved Finds dialog offers, which the scheduled send attaches; Java stores any text.
+    if !SCHEDULE_RENDER_MODES.contains(&render_mode.as_str()) {
+        add_error(&format!(
+            "Render mode {render_mode} cannot be scheduled, not scheduling saved find with ID {find_id}"
+        ));
+        return Ok(Some(find_id));
+    }
     let screen_path = context_text("screenPath");
     let cron = context_text("cronSelected");
     if screen_path.is_empty() {

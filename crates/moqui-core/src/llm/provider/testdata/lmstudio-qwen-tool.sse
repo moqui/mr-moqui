@@ -1,0 +1,18 @@
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"reasoning_content":"The user wants the open orders, "},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"reasoning_content":"so I search for them."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"381940277","type":"function","function":{"name":"search","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"{\"query\":\"open"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":" orders\",\"limit\":10}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-k3q8v1x0b2","object":"chat.completion.chunk","created":1792500000,"model":"qwen3.8-27b","system_fingerprint":"qwen3.8-27b","choices":[],"usage":{"prompt_tokens":2412,"completion_tokens":58,"total_tokens":2470}}
+
+data: [DONE]
+

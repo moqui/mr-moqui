@@ -1,5 +1,6 @@
 <screen require-authentication="false">
     <transition name="mentions" read-only="true"><default-response type="none"/></transition>
+    <transition name="records" read-only="true"><default-response type="none"/></transition>
     <actions>
         <set field="taskId" value="T100"/>
         <set field="tab" value="activity"/>
@@ -11,7 +12,7 @@
         <record-files record-entity="mantle.work.effort.WorkEffort" record-id="${taskId}" style="q-mt-sm"/>
         <form-single name="NoteForm" transition="mentions">
             <field name="noteText"><default-field title="Note"><text-area editor-type="rich-light" mention-transition="mentions"/></default-field></field>
-            <field name="bodyText"><default-field title="Body"><text-area rows="6" editor-type="rich"/></default-field></field>
+            <field name="bodyText"><default-field title="Body"><text-area rows="6" editor-type="rich" record-transition="records"/></default-field></field>
             <field name="plainText"><default-field title="Plain"><text-area mention-transition="mentions"/></default-field></field>
         </form-single>
         <label text="the panels render no text of their own"/>

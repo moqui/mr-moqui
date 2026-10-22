@@ -69,6 +69,14 @@ fn every_file_in_the_manifest_exists_with_its_recorded_sha256() {
                 file["size"].as_u64(),
             );
         }
+        // the reviewed patches a library was built with (libs/refresh.mjs records them)
+        for patch in lib["patches"].as_array().into_iter().flatten() {
+            check(
+                patch["path"].as_str().unwrap_or_else(|| panic!("{id}: a patch has no path")),
+                patch["sha256"].as_str().unwrap_or_else(|| panic!("{id}: a patch has no sha256")),
+                None,
+            );
+        }
     }
     // Nothing else sits in the tree: no source maps, tests, or docs.
     let mut found = Vec::new();
@@ -101,7 +109,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
         let license = lib["license"].as_str().unwrap();
         let reviewed = match id {
             "fontawesome" => "OFL-1.1 AND MIT",
-            "tom-select" | "material-icons" | "material-symbols" => "Apache-2.0",
+            "tom-select" | "material-icons" | "material-symbols" | "pdfjs" => "Apache-2.0",
             "dompurify" => "MPL-2.0 OR Apache-2.0",
             "highlightjs" => "BSD-3-Clause",
             "qz-tray" => "LGPL-2.1-only",

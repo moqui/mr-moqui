@@ -20,10 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Dialog" default-menu-index="11">
 
     <transition name="createEnum"><actions>
-        <message message="Enumeration ${enumId || ''} created (gallery demo: nothing is written)" type="success"/>
+        <message type="success">Enumeration ${enumId || ''} created (gallery demo: nothing is written)</message>
     </actions><default-response type="none"/></transition>
     <transition name="updateEnum"><actions>
-        <message message="Enumeration ${enumId || ''} updated (gallery demo: nothing is written)" type="success"/>
+        <message type="success">Enumeration ${enumId || ''} updated (gallery demo: nothing is written)</message>
     </actions><default-response url="."/></transition>
     <transition name="viewDetail"><default-response url="../Detail"/></transition>
 

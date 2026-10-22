@@ -13,8 +13,10 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Chat and presence (IronStone design-drawers-commons §1.8, §13, §19; impl-drawers-commons M10): rooms, members, the
-    timeline of each room, unread and mention counts, typing, and users' presence and status. The model is
-    framework/entity/ChatEntities.xml. No Java counterpart.
+    timeline of each room, unread and mention counts, typing, users' presence and status, and the later parts: sends tried
+    again, a room's files and threads, forwards, polls, link previews, retention, the mentions of record rooms and
+    offline when the last socket closes. The model is framework/entity/ChatEntities.xml.
+    No Java counterpart.
 
     Access (R21). These are moqui.* entities, which entity filters never apply to, so every service checks the room
     (get#RoomAccess): a user reaches a room they are a current member of (a direct room's members always: leaving a direct
@@ -22,7 +24,12 @@ along with this software (see the LICENSE.md file). If not, see
     joinable; a room whose visibility is CrvRecord (a record room) is readable and joinable by a user who may see the
     record, which the service the theme value STRT_RECORD_VISIBLE_SERVICE names answers (check#RecordVisible; IronStone BOSS
     names mantle.party.CommunicationServices.get#RecordLinkInfo, called with checkOnly). A room the user cannot reach is
-    "not found". Members post, react, pin and edit or delete their own messages; moderators and owners also delete others'
+    "not found". An external user (the framework permission EXTERNAL_USER, which an app grants its outside users, such as
+    IronStone's client contacts) reaches no room bound to a record (a record room by type or visibility, or a room with a
+    record), not as a member either, and no public room but one they are a member of; nobody adds them to a record room;
+    check#RecordVisible answers false for them before any hook, so they are never mentioned into a record room; they
+    see no other user's presence (get#UserStatuses), and push#Signal leaves them out of a record room's pushes and of
+    others' presence (get#ExternalUsers names them). Members post, react, pin and edit or delete their own messages; moderators and owners also delete others'
     messages and change members; owners change visibility and archive. Another user's view is for internal work only
     (authorization disabled).
 
@@ -30,7 +37,10 @@ along with this software (see the LICENSE.md file). If not, see
     topic chatRoom:<chatRoomId> (push#Signal, after the commit), so the notification socket delivers it only to them:
       {kind: 'event', chatRoomId, eventSeq, event}       a new event, as get#Timeline lists one (without aggregates)
       {kind: 'typing', chatRoomId, userId, typing}       signal#Typing, nothing stored
-      {kind: 'read', chatRoomId, userId, lastReadEventSeq}   a member's read marker moved (read receipts)
+      {kind: 'read', chatRoomId, userId, lastReadEventSeq}   a member's read marker moved (read receipts; none for a
+                                                         member whose preference CHAT_READ_RECEIPTS is N)
+      {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields}   a message changed with no event of its own:
+                                                         its linkPreviews, its poll (push#Update; the same for everyone)
     A user's room list changes go on chatUser:<userId>:
       {kind: 'room', action: 'joined' | 'left' | 'changed' | 'role' | 'settings', chatRoomId}
       {kind: 'read', chatRoomId, lastReadEventSeq} and {kind: 'read', all: true}   read in another tab or device
@@ -39,18 +49,72 @@ along with this software (see the LICENSE.md file). If not, see
     The users whose unread counts change get their shell counts (ShellServices.publish#ShellCounts); an app's counts
     service adds get#UnreadCounts as its chat part (IronStone: mantle.party.PartyServices.get#ShellCounts).
 
-    A mention (<span data-mention-id="userId"> in a message, the m-rich-text mention) of a member, or of any user in a
-    public room, is counted (ChatEventMention) and notified on the topic ChatMention (an app seeds the NotificationTopic;
-    IronStone's Mantle does), with roomName, chatRoomId, eventSeq, authorUserId, authorName and summary in the message,
-    the room as its record, and roomUrl, when the caller gives one, as its link (notify#Mention). A member whose notification
-    level is CnlNone is counted but not notified. A user whose preference CHAT_NOTIFY_PREVIEW is N gets no summary (no message
-    text in the notification). Do not disturb changes nothing here: the client silences toasts and sounds. A membership
-    starts at the user's preference CHAT_NOTIFY_DEFAULT (all, mentions or none) when set, but in a direct room.
+    A mention (<span data-mention-id="userId"> in a message, the m-rich-text mention) of a member, of any user in a
+    public room, or of a user who may see the record of a record room, is counted (ChatEventMention) and notified on the
+    topic ChatMention (an app seeds the NotificationTopic; IronStone's Mantle does), with roomName, chatRoomId,
+    eventSeq, authorUserId, authorName and summary in the message, the room as its record, and roomUrl, when the caller
+    gives one, as its link (notify#Mention). A member whose notification level is CnlNone is counted but not notified. A
+    user whose preference CHAT_NOTIFY_PREVIEW is N gets no summary (no message text in the notification). Do not disturb
+    changes nothing here: the client silences toasts and sounds. A membership starts at the user's preference
+    CHAT_NOTIFY_DEFAULT (all, mentions or none) when set, but in a direct room. An @room mention (data-mention-id
+    "@room") mentions every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer.
+    Read receipts are a user's choice: CHAT_READ_RECEIPTS of N pushes no read marker of theirs to the room and blanks it
+    (null) in the member lists others read.
+
+    Sends tried again. A client keeps a message until it is answered (WebrootChat.js's outbox, which sends what waited
+    when the page is back online) and sends it with its clientRef; send#Message answers a clientRef the sender already
+    used in the room with that message (duplicate true), so a message is never posted twice. The pushed event carries its
+    clientRef. get#Timeline with eventSeq reads one event, as a client reads one it missed.
+
+    The lists of a room: find#RoomFiles (its messages' files, newest first, by type and name, paged at whole messages)
+    and find#RoomThreads (its threads, the latest reply first, or the ones the user started or replied in; a thread root
+    keeps threadLastEventSeq, threadLastUserId and threadLastDate, which a redaction of the last reply sets back).
+
+    A forward is send#Message with forwardOfChatRoomId and forwardOfEventSeq: the server makes content.forwardOf from a
+    message of a room the sender is in, so it cannot be forged, with its mentions inert and nothing of its room, and
+    copies its files into the room it goes to (each on its own; one that fails is logged).
+
+    A poll is a message (CetMessage, content.poll; its question is the body, so unread counts, threads and search work as
+    for any message) with ChatPoll, ChatPollOption and ChatPollVote: create#Poll (2 to 10 options, anonymous, multiple,
+    closesDate), vote#Poll (a vote replaces the user's; an empty one takes it back), close#Poll (its creator or a
+    moderator), read by get#Timeline through get#PollStates with the user's own votes (mine). Its changes are update pushes
+    with the same state for everyone: no mine, and no voters of an anonymous poll. edit#Message refuses a poll; a redaction
+    removes it.
+
+    Link previews: once a message (or its edit) commits, fetch#LinkPreviews reads up to 3 of its links (extract#LinkUrls:
+    http or https, not /qapps, no user or password, the default port) each on its own through get#LinkPreview, cached a
+    day in ChatLinkPreview (an hour for a link that failed), keeps them on the message (linkPreviewJson) and pushes them as
+    an update. fetch#LinkPage reads a page with the SSRF guard of moqui-lib's RestClient (no internal address, also after
+    a redirect to another host), 5 seconds, 512 KB, text/html only, and keeps text only: title, description and site
+    name; no picture is read, so no reader's address reaches a third party. The property chat_link_previews of false turns
+    them off, as the sender's preference CHAT_LINK_PREVIEWS of N does for their messages; remove#LinkPreviews (the sender)
+    takes them off a message for good. The property chat_link_preview_service names a service asked in place of the
+    network (tests).
+
+    Retention: a room's retentionDays keeps its events that many days; the daily job clean#ChatRetention deletes the
+    older ones, each room on its own (clean#RoomRetention: one that fails is logged and the rest go on). A message goes
+    with its mentions, files, poll, link previews and search document (clear#MessageContent, which redact#Message uses
+    too), and the edits, reactions and redactions of what goes go with it.
+
+    A record room's mentions: a mentioned user who is not a member of a record room (CrvRecord) counts when they may see
+    the record, which check#RecordVisible asks as that user (its userId, internal work only: the hook of their theme runs
+    as them, with authorization on). They get the ChatMention notification, and no room count, as they are not a member.
+
+    The counts: the unread messages and mentions of all of a user's rooms are one query each, over the views
+    ChatMemberUnread and ChatMemberMentions (the events after the member's read marker, grouped by room), in
+    get#UnreadCounts and find#Rooms.
+
+    Offline when the last socket closes: when the last notification socket of a user on a server closes and none comes
+    back within 20 seconds (a reload does not flicker), notws.rs calls disconnect#UserStatus, which marks the user
+    offline at once and publishes it; else the heartbeat runs out after 3 minutes. In a cluster this is per node: a user
+    still on another node shows online again with that page's next heartbeat, within a minute.
 
     The agent entry point (for the Assist port, mr-moqui Phase 13): a room member with roleEnumId CmrAgent is a service
-    user whose agentRef names a service; each message from another member is handed to it by deliver#AgentMessage, run
+    user (an AgentDefinition's chatUserId: add#Member and set#MemberRole refuse the role for anyone else) whose agentRef names a service; each message from another member is handed to it by deliver#AgentMessage, run
     asynchronously with the message in its parameters. The agent answers by calling send#Message with senderUserId (as
-    internal work). No model runs in the framework. -->
+    internal work). The framework's agents (org.moqui.agent.AgentServices.handle#ChatMessage, crates/moqui-core/src/llm/chat.rs)
+    post their approvals, questions and replies as cards (send#AssistCard, content.assist, changed in place with
+    update#AssistCard) and type with a status text (signal#Typing statusText). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Access ========== -->
@@ -58,7 +122,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="RoomAccess">
         <description>What a user (the current user; another only with authorization disabled) may do in a room. level: 0
             none, 1 read (a public room, or a record room whose record the user may see, without being a member), 2 member,
-            3 moderator, 4 owner. canRead, canJoin (not a member and may join; not archived), canPost (a member of a room that
+            3 moderator, 4 owner; 0 for an external user (EXTERNAL_USER) in a record room, a member too, and in a public room
+            they are not in. canRead, canJoin (not a member and may join; not archived), canPost (a member of a room that
             is not archived), canModerate (level 3 and up in a room that is not direct), isOwner. room is the room as
             find#Rooms lists it (null when not found or not readable); member the user's member row (null when none).
             Adds no error for a room the user cannot reach, so a caller may use it as a check.</description>
@@ -98,6 +163,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const row = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
             if (!row) return
+            // an external user (EXTERNAL_USER; a failed check counts as external) reaches no record room, as a member
+            // neither, and no public room they are not a member of
+            const external = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
+                    .disableAuthz().call()?.anyExternal !== false
+            if (external && (row.roomTypeEnumId === 'CrtRecord' || row.visibilityEnumId === 'CrvRecord' || row.recordEntityName)) return
             const isDirect = row.roomTypeEnumId === 'CrtDirect'
             const memberRow = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', userId).one()
             isArchived = !!row.archivedDate
@@ -107,11 +177,13 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 const visibility = row.visibilityEnumId || DEFAULT_VISIBILITY[row.roomTypeEnumId] || 'CrvMembers'
                 if (visibility === 'CrvUsers') {
-                    level = 1
+                    if (!external) level = 1
                 } else if (visibility === 'CrvRecord' && row.recordEntityName && row.recordId) {
-                    // the record's visibility is the app's: asked as the user, with the caller's authorization
+                    // the record's visibility is the app's: asked as the user, with the caller's authorization (another
+                    // user, internal work only, is asked for as that user)
                     const out = ec.service.sync().name('org.moqui.impl.ChatServices.check#RecordVisible')
-                            .parameters({recordEntityName: row.recordEntityName, recordId: row.recordId}).call()
+                            .parameters({recordEntityName: row.recordEntityName, recordId: row.recordId,
+                                userId: userId !== currentUserId ? userId : null}).call()
                     if (out && out.recordVisible === true) level = 1
                 }
                 canJoin = level === 1 && !isArchived
@@ -144,10 +216,13 @@ along with this software (see the LICENSE.md file). If not, see
             managers a records drive's record folders, FileServices.check#RecordPaths), logged once. A service that fails or
             answers no recordVisible: false, logged once. Adds no error. The hook runs in the caller's transaction, so it
             sees records the caller made; with checkOnly it must answer without an error, which would mark that
-            transaction rollback-only (docs/Services.md).</description>
+            transaction rollback-only (docs/Services.md). userId asks for another user, only with authorization disabled
+            (else false, logged): the hook of that user's theme runs as that user, with authorization on, in the caller's
+            transaction. An external user (EXTERNAL_USER), current or asked for: false, no hook asked.</description>
         <in-parameters>
             <parameter name="recordEntityName" required="true"/>
             <parameter name="recordId" required="true"/>
+            <parameter name="userId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="recordVisible" type="Boolean"/>
@@ -155,11 +230,25 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="get" noun="ExternalUsers" type="rust" location="moqui_core::service::chat::get_external_users"
+            transaction="ignore" allow-remote="false">
+        <description>Internal: the users of userIdList (the current user when empty) who hold the framework permission
+            EXTERNAL_USER (outside users: an app's client contacts), whom chat keeps out of record rooms, public rooms they
+            are not in and others' presence, and the drives out of a records drive. A user whose rows cannot be read
+            counts as external.</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters>
+            <parameter name="externalUserIdList" type="List"/>
+            <parameter name="anyExternal" type="Boolean"/>
+        </out-parameters>
+    </service>
+
     <service verb="push" noun="Signal" type="rust" location="moqui_core::service::chat::push_signal" authenticate="false"
             transaction="ignore">
         <description>Internal: send message to the users of userIdList on a chat topic (chatRoom:id, chatUser:userId or
             userStatus) as a NotificationMessage that is not persisted and shows no alert; after the caller's transaction
-            commits (nothing on a rollback), and at once outside one.</description>
+            commits (nothing on a rollback), and at once outside one. An external user (EXTERNAL_USER) is left out of the
+            pushes of a record room and of the presence of other users on userStatus.</description>
         <in-parameters>
             <parameter name="topic" required="true"/>
             <parameter name="userIdList" type="List" required="true"/>
@@ -184,6 +273,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadRootEventSeq" type="Integer"/>
             <parameter name="editsEventSeq" type="Integer"/>
             <parameter name="relatesToEventSeq" type="Integer"/>
+            <parameter name="clientRef"/>
             <parameter name="noPush" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
@@ -208,7 +298,8 @@ along with this software (see the LICENSE.md file). If not, see
             row.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, senderUserId: senderUserId || null,
                 contentJson: content ? JSON.stringify(content) : null, bodyText: bodyText || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
-                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, sentDate: now}, true, null, null)
+                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null, sentDate: now},
+                true, null, null)
             row.create()
             room.set('lastEventSeq', eventSeq)
             room.set('lastEventDate', now)
@@ -231,8 +322,9 @@ along with this software (see the LICENSE.md file). If not, see
                 senderUserId: senderUserId || null, senderName: senderName, sentDate: Number(now), content: content || {},
                 body: body, bodyText: bodyText || null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
+                forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
-                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null}
+                editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null}
 
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             memberUserIdList = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
@@ -241,6 +333,29 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                     userIdList: memberUserIdList, message: {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}}).call()
             }
+        ]]></script></actions>
+    </service>
+
+    <service verb="push" noun="Update" allow-remote="false">
+        <description>Internal: a change of a message that is no event of its own (its link previews, its poll's votes), pushed
+            to the room's members on chatRoom:id and not stored: {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq,
+            fields}, where fields are the message's fields as get#Timeline gives them. Every member gets the same fields, so
+            nothing of one user's own (a poll's mine) is in them. The caller has checked access.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="fields" type="Map" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
+            if (!room || !row) return
+            const isDirect = room.roomTypeEnumId === 'CrtDirect'
+            const users = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                    .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
+            if (users.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
+                userIdList: users, message: {kind: 'update', chatRoomId: chatRoomId, eventSeq: eventSeq,
+                threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null, fields: fields}}).call()
         ]]></script></actions>
     </service>
 
@@ -288,7 +403,8 @@ along with this software (see the LICENSE.md file). If not, see
             direct room otherUserIdList and, with one other member, otherUserId and presence (as get#UserStatuses gives it).
             filter: unread (unread messages or mentions), mentions, direct, rooms (private and public), records; searchText
             matches the name and topic. includeJoinable adds the public rooms the user has not joined (isMember false).
-            unreadTotal and mentionTotal add up the listed rooms.</description>
+            unreadTotal and mentionTotal add up the listed rooms. An external user (EXTERNAL_USER) gets no record room and no
+            joinable room.</description>
         <in-parameters>
             <parameter name="userId"/>
             <parameter name="filter"/>
@@ -318,6 +434,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!userId) return
             if (userId !== currentUserId && !ec.artifactExecution.authzDisabled()) {
                 ec.message.addError(`The chat rooms of user ${userId} are not yours to see`); return }
+            // an external user (EXTERNAL_USER; a failed check counts as external): no record room, no public room to join
+            const external = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
+                    .disableAuthz().call()?.anyExternal !== false
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', userId).condition('leftDate', null).list())
             const memberOf = {}
             for (const row of memberRows) memberOf[row.chatRoomId] = row
@@ -329,8 +448,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (recordEntityName) find = find.condition('recordEntityName', recordEntityName)
                 if (recordId) find = find.condition('recordId', recordId)
                 rooms = Array.from(find.list())
+                if (external) rooms = rooms.filter((row) => !(row.roomTypeEnumId === 'CrtRecord' || row.visibilityEnumId === 'CrvRecord' || row.recordEntityName))
             }
-            if (includeJoinable && filter !== 'direct') {
+            if (includeJoinable && filter !== 'direct' && !external) {
                 let find = ec.entity.find('moqui.chat.ChatRoom').condition('visibilityEnumId', 'CrvUsers').condition('archivedDate', null)
                 if (roomIds.length) find = find.condition('chatRoomId', 'not-in', roomIds)
                 if (recordEntityName) find = find.condition('recordEntityName', recordEntityName)
@@ -351,20 +471,24 @@ along with this software (see the LICENSE.md file). If not, see
             for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', Array.from(userIds))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // the unread messages and the mentions of every room the user is in, in one query each
+            const unreadOf = {}, mentionsOf = {}
+            if (roomIds.length) {
+                for (const count of ec.entity.find('moqui.chat.ChatMemberUnread').condition('userId', userId).condition('leftDate', null)
+                        .condition('redactedDate', null).selectField('chatRoomId').selectField('unreadCount').list())
+                    unreadOf[count.chatRoomId] = Number(count.unreadCount || 0)
+                for (const count of ec.entity.find('moqui.chat.ChatMemberMentions').condition('userId', userId).condition('leftDate', null)
+                        .selectField('chatRoomId').selectField('mentionCount').list())
+                    mentionsOf[count.chatRoomId] = Number(count.mentionCount || 0)
+            }
             const presenceUsers = new Set()
             const text = searchText ? String(searchText).toLowerCase().trim() : ''
             for (const row of rooms) {
                 const member = memberOf[row.chatRoomId] || null
                 const isDirect = row.roomTypeEnumId === 'CrtDirect'
                 const lastRead = member ? Number(member.lastReadEventSeq || 0) : 0
-                let unreadCount = 0, mentionCount = 0
-                if (member && Number(row.lastEventSeq || 0) > lastRead) {
-                    unreadCount = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', row.chatRoomId)
-                            .condition('eventTypeEnumId', 'CetMessage').condition('eventSeq', 'greater', lastRead)
-                            .condition('redactedDate', null).condition('senderUserId', 'not-equals', userId).count()
-                    mentionCount = ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', row.chatRoomId)
-                            .condition('userId', userId).condition('eventSeq', 'greater', lastRead).count()
-                }
+                const unreadCount = member ? unreadOf[row.chatRoomId] || 0 : 0
+                const mentionCount = member ? mentionsOf[row.chatRoomId] || 0 : 0
                 const others = isDirect ? (directMembers[row.chatRoomId] || []).filter((id) => id !== userId) : []
                 const displayName = row.roomName || (isDirect ? (others.length ? others.map((id) => names[id] || id).join(', ') : names[userId] || userId) : row.chatRoomId)
                 const item = {chatRoomId: row.chatRoomId, roomTypeEnumId: row.roomTypeEnumId ?? null, roomType: CODES[row.roomTypeEnumId] || null,
@@ -410,7 +534,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A room the user may read, with its members (current ones; memberList each {userId, name, roleEnumId,
             joinedDate, lastReadEventSeq}), the user's member row and what the user may do (as get#RoomAccess). By
             chatRoomId, or by recordEntityName and recordId for the room bound to that record (room null, and no error,
-            when there is none or the user may not read it: a record's Chatter asks so).</description>
+            when there is none or the user may not read it: a record's Chatter asks so). A member whose preference
+            CHAT_READ_RECEIPTS is N has no lastReadEventSeq (null) for others.</description>
         <in-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="recordEntityName"/>
@@ -451,8 +576,14 @@ along with this software (see the LICENSE.md file). If not, see
             if (rows.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', rows.map((row) => row.userId))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // the read marker of a member who turned read receipts off is not shown to others
+            const me = ec.user.userId
+            const others = rows.map((row) => row.userId).filter((id) => id !== me)
+            const receiptsOff = new Set(others.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#ReceiptsOffUsers')
+                    .parameter('userIdList', others).call().offUserIdList || [] : [])
             memberList = rows.map((row) => ({userId: row.userId, name: names[row.userId] || row.userId, roleEnumId: row.roleEnumId ?? null,
-                joinedDate: toMillis(row.joinedDate), lastReadEventSeq: Number(row.lastReadEventSeq || 0), isAgent: row.roleEnumId === 'CmrAgent'}))
+                joinedDate: toMillis(row.joinedDate), lastReadEventSeq: receiptsOff.has(row.userId) ? null : Number(row.lastReadEventSeq || 0),
+                isAgent: row.roleEnumId === 'CmrAgent'}))
         ]]></script></actions>
     </service>
 
@@ -465,7 +596,8 @@ along with this software (see the LICENSE.md file). If not, see
             direct room every member is a member). visibilityEnumId follows the type (direct and private CrvMembers, public
             CrvUsers, record CrvRecord); a record room may be CrvMembers. Each member's notification level starts at the
             member's own default, the preference CHAT_NOTIFY_DEFAULT (all, mentions or none), else CnlAll, CnlMentions in a
-            public room; in a direct room it is CnlAll. Each new member's room list hears of it on chatUser:userId.</description>
+            public room; in a direct room it is CnlAll. Each new member's room list hears of it on chatUser:userId. No external
+            user (EXTERNAL_USER) makes or is put in a record room.</description>
         <in-parameters>
             <parameter name="roomTypeEnumId" default-value="CrtPrivate"/>
             <parameter name="roomName"/>
@@ -543,6 +675,12 @@ along with this software (see the LICENSE.md file). If not, see
             } else if (!roomName || !String(roomName).trim()) {
                 ec.message.addError('A room needs a name'); return
             }
+            // nobody external (EXTERNAL_USER) is in a room bound to a record, its maker neither
+            if (type === 'CrtRecord') {
+                const outside = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId].concat(others))
+                        .disableAuthz().call()
+                if (!outside || outside.anyExternal !== false) { ec.message.addError(`User ${(outside?.externalUserIdList || [userId]).join(', ')} may not be in a record room`); return }
+            }
             const room = ec.entity.makeValue('moqui.chat.ChatRoom')
             room.setSequencedIdPrimary()
             room.setFields({roomTypeEnumId: type, roomName: roomName ? String(roomName).trim() : (type === 'CrtRecord' ? recordId : null),
@@ -609,6 +747,21 @@ along with this software (see the LICENSE.md file). If not, see
             }
             previewUserIdList = ids.filter((id) => !hidden.has(id))
             noPreviewUserIdList = ids.filter((id) => hidden.has(id))
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="ReceiptsOffUsers" allow-remote="false">
+        <description>Internal: of userIdList, those who turned read receipts off (the preference CHAT_READ_RECEIPTS of N): their
+            read markers are not pushed to the room nor shown to others.</description>
+        <in-parameters><parameter name="userIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="offUserIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            offUserIdList = []
+            const ids = Array.from(new Set(Array.from(userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            if (ids.length) for (const row of ec.entity.find('moqui.security.UserPreference').condition('userId', 'in', ids)
+                    .condition('preferenceKey', 'CHAT_READ_RECEIPTS').disableAuthz().list()) {
+                const value = String(row.preferenceValue || '').trim()
+                if (value === 'N' || value === 'false') offUserIdList.push(row.userId)
+            }
         ]]></script></actions>
     </service>
     <service verb="notify" noun="Mention" allow-remote="false">
@@ -717,7 +870,8 @@ along with this software (see the LICENSE.md file). If not, see
             than member, or an agent's agentRef, takes a moderator (owner for CmrOwner). A user who left comes back. A new
             member starts with everything before read, at their own default notification level (the preference
             CHAT_NOTIFY_DEFAULT: all, mentions or none), else CnlAll, CnlMentions in a public room; one who comes back keeps
-            the level they had. Each is a membership event; the added users' room lists hear of it on chatUser:userId.</description>
+            the level they had. Each is a membership event; the added users' room lists hear of it on chatUser:userId. An
+            external user (EXTERNAL_USER) is never added to a record room.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="userId"/>
@@ -755,6 +909,19 @@ along with this software (see the LICENSE.md file). If not, see
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
                 const missing = targets.filter((id) => !found.has(id))
                 if (missing.length) { ec.message.addError(`User ${missing.join(', ')} not found`); return }
+                // nobody adds an external user (EXTERNAL_USER) to a room bound to a record
+                if (room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || room.recordEntityName) {
+                    const outside = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', targets)
+                            .disableAuthz().call()
+                    if (!outside || outside.anyExternal !== false) { ec.message.addError(`User ${(outside?.externalUserIdList || targets).join(', ')} may not be in a record room`); return }
+                }
+                // an agent member is an agent's own service user (AgentDefinition.chatUserId), never a person
+                if (role === 'CmrAgent') {
+                    const agents = new Set(Array.from(ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', 'in', targets)
+                            .selectField('chatUserId').disableAuthz().list()).map((row) => row.chatUserId))
+                    const people = targets.filter((id) => !agents.has(id))
+                    if (people.length) { ec.message.addError(`User ${people.join(', ')} is no agent's chat user`); return }
+                }
             }
             const now = ec.user.nowTimestamp
             const lastSeq = Number(room.lastEventSeq || 0)
@@ -864,6 +1031,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!row || row.leftDate) { ec.message.addError(`User ${userId} is not in the room`); return }
             if (!access.isOwner && (row.roleEnumId === 'CmrOwner' || role === 'CmrOwner' || role === 'CmrAgent')) {
                 ec.message.addError('Only an owner may change an owner or make an owner or agent'); return }
+            if (role === 'CmrAgent' && !ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', userId).disableAuthz().count()) {
+                ec.message.addError(`User ${userId} is no agent's chat user`); return }
             if (row.roleEnumId === 'CmrOwner' && role !== 'CmrOwner') {
                 const owners = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
                         .condition('roleEnumId', 'CmrOwner').count()
@@ -924,13 +1093,16 @@ along with this software (see the LICENSE.md file). If not, see
             Paging by eventSeq: the latest limit events; beforeSeq for the ones before it; afterSeq for the ones after it;
             aroundSeq for limit events around it (a search hit, a mention). hasMoreBefore and hasMoreAfter say whether
             there are more. The main timeline leaves thread replies out (a thread root has threadReplyCount and
-            threadLastDate); threadRootEventSeq gives that thread: the root and its replies. pinnedOnly gives the pinned
-            messages, newest first.
+            threadLastDate, threadLastEventSeq and threadLastUserId); threadRootEventSeq gives that thread: the root and its
+            replies. pinnedOnly gives the pinned messages, newest first. eventSeq gives that one event (a thread reply too),
+            or none.
 
             Shown: messages, membership, pin, call, poll and system events. Edits are applied (body is the latest, edited
             true, editedDate), reactions are aggregated (reactions [{key, count, userIds, mine}]), a redacted message is
             redacted true with no body, bodyText or attachments and removedLabel "Message removed", and a reply has replyTo
-            {eventSeq, senderUserId, senderName, snippet, redacted}. Also the room, the user's access and lastReadEventSeq,
+            {eventSeq, senderUserId, senderName, snippet, redacted}. A message has forwardOf (a forwarded message, see
+            send#Message), poll (get#PollStates, with the user's own votes), linkPreviews [{url, title, description,
+            siteName}] and, for the user's own message, clientRef. Also the room, the user's access and lastReadEventSeq,
             and memberList (as get#Room: each member's lastReadEventSeq gives the read markers).</description>
         <in-parameters>
             <parameter name="chatRoomId"/>
@@ -942,6 +1114,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="limit" type="Integer" default="50"/>
             <parameter name="threadRootEventSeq" type="Integer"/>
             <parameter name="pinnedOnly" type="Boolean" default="false"/>
+            <parameter name="eventSeq" type="Integer"/>
         </in-parameters>
         <out-parameters>
             <parameter name="room" type="Map"/>
@@ -974,13 +1147,16 @@ along with this software (see the LICENSE.md file). If not, see
             const cf = ec.entity.conditionFactory
             const base = () => {
                 let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                if (eventSeq != null) return find.condition('eventSeq', eventSeq).condition('eventTypeEnumId', 'in', SHOWN)
                 if (pinnedOnly) return find.condition('eventTypeEnumId', 'CetMessage').condition('pinnedDate', 'not-equals', null).condition('redactedDate', null)
                 if (threadRootEventSeq != null) return find.condition('eventTypeEnumId', 'CetMessage').condition(cf.makeCondition([
                     cf.makeCondition('eventSeq', 'equals', threadRootEventSeq), cf.makeCondition('threadRootEventSeq', 'equals', threadRootEventSeq)], 'or'))
                 return find.condition('eventTypeEnumId', 'in', SHOWN).condition('threadRootEventSeq', null)
             }
             let rows
-            if (pinnedOnly) {
+            if (eventSeq != null) {
+                rows = Array.from(base().list())
+            } else if (pinnedOnly) {
                 rows = Array.from(base().orderBy('-pinnedDate').limit(size + 1).list())
                 hasMoreAfter = rows.length > size
                 rows = rows.slice(0, size)
@@ -1034,6 +1210,16 @@ along with this software (see the LICENSE.md file). If not, see
                     .condition('eventSeq', 'in', replySeqs).list()) replied[Number(row.eventSeq)] = row
             const userIds = new Set()
             Object.values(replied).forEach((row) => { if (row.senderUserId) userIds.add(row.senderUserId) })
+            rows.forEach((row) => { if (row.threadLastUserId) userIds.add(row.threadLastUserId) })
+            // the polls, with my own votes
+            const pollSeqs = rows.filter((row) => row.eventTypeEnumId === 'CetMessage' && !row.redactedDate && /"poll"/.test(row.contentJson || ''))
+                    .map((row) => Number(row.eventSeq))
+            const polls = pollSeqs.length ? (ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
+                eventSeqList: pollSeqs}).call().pollMap || {}) : {}
+            const previewsOf = (row) => {
+                const value = row.linkPreviewJson ? parse(row.linkPreviewJson) : null
+                return Array.isArray(value) ? value : []
+            }
             const names = {}
             if (userIds.size) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', Array.from(userIds))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
@@ -1057,9 +1243,16 @@ along with this software (see the LICENSE.md file). If not, see
                     bodyText: redacted ? null : row.bodyText ?? null,
                     mentions: redacted ? [] : ((edit && edit.mentions) || content.mentions || []),
                     attachments: redacted ? [] : (content.attachments || []), records: redacted ? [] : (content.records || []),
+                    forwardOf: redacted || !isMessage ? null : content.forwardOf || null, poll: redacted ? null : polls[seq] || null,
+                    assist: redacted || !isMessage ? null : content.assist || null,
+                    linkPreviews: redacted || !isMessage ? [] : previewsOf(row),
+                    clientRef: row.senderUserId === me ? row.clientRef ?? null : null,
                     replyToEventSeq: row.replyToEventSeq != null ? Number(row.replyToEventSeq) : null, replyTo: null,
                     threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null,
                     threadReplyCount: Number(row.threadReplyCount || 0), threadLastDate: toMillis(row.threadLastDate),
+                    threadLastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null,
+                    threadLastUserId: row.threadLastUserId ?? null,
+                    threadLastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
                     relatesToEventSeq: row.relatesToEventSeq != null ? Number(row.relatesToEventSeq) : null,
                     edited: !!row.editedDate && !redacted, editedDate: redacted ? null : toMillis(row.editedDate),
                     redacted: redacted, redactedDate: toMillis(row.redactedDate), removedLabel: redacted ? removedLabel : null,
@@ -1076,6 +1269,73 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="find" noun="RoomThreads">
+        <description>The threads of a room, the one with the latest reply first, for a user who may read the room: each root
+            message {eventSeq, senderUserId, senderName, snippet, sentDate, redacted, threadReplyCount, threadLastDate,
+            threadLastEventSeq, threadLastUserId, threadLastUserName, lastSnippet}. mine keeps the threads the user started or
+            replied in. Paged by beforeDate (the threadLastDate of the last one listed); hasMore says whether there are more.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="limit" type="Integer" default="20"/>
+            <parameter name="beforeDate" type="Long"/>
+            <parameter name="mine" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadList" type="List"><parameter name="thread" type="Map"/></parameter>
+            <parameter name="hasMore" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const snippet = (text) => { const shown = String(text || '').replace(/\s+/g, ' ').trim(); return shown.length > 100 ? shown.slice(0, 99) + '…' : shown }
+            threadList = []; hasMore = false
+            const me = ec.user.userId
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const size = Math.max(1, Math.min(100, Number(limit) || 20))
+            const cf = ec.entity.conditionFactory
+            let find = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetMessage')
+                    .condition('threadLastDate', 'not-equals', null).condition('threadReplyCount', 'greater', 0)
+            if (beforeDate != null) find = find.condition('threadLastDate', 'less', String(beforeDate))
+            if (mine) {
+                const replied = Array.from(new Set(Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                        .condition('senderUserId', me).condition('threadRootEventSeq', 'not-equals', null).selectField('threadRootEventSeq').list())
+                        .map((row) => Number(row.threadRootEventSeq))))
+                const ors = [cf.makeCondition('senderUserId', 'equals', me)]
+                if (replied.length) ors.push(cf.makeCondition('eventSeq', 'in', replied))
+                find = find.condition(cf.makeCondition(ors, 'or'))
+            }
+            let rows = Array.from(find.orderBy('-threadLastDate').orderBy('-eventSeq').limit(size + 1).list())
+            hasMore = rows.length > size
+            rows = rows.slice(0, size)
+            if (!rows.length) return
+            const lastSeqs = rows.map((row) => row.threadLastEventSeq).filter((seq) => seq != null).map(Number)
+            const lasts = {}
+            if (lastSeqs.length) for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                    .condition('eventSeq', 'in', lastSeqs).selectField('eventSeq').selectField('bodyText').selectField('redactedDate').list())
+                lasts[Number(row.eventSeq)] = row
+            const userIds = Array.from(new Set(rows.flatMap((row) => [row.senderUserId, row.threadLastUserId]).filter((id) => id)))
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            for (const row of rows) {
+                const last = row.threadLastEventSeq != null ? lasts[Number(row.threadLastEventSeq)] : null
+                threadList.push({eventSeq: Number(row.eventSeq), senderUserId: row.senderUserId ?? null,
+                    senderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : null, sentDate: toMillis(row.sentDate),
+                    redacted: !!row.redactedDate, snippet: row.redactedDate ? null : snippet(row.bodyText),
+                    threadReplyCount: Number(row.threadReplyCount || 0), threadLastDate: toMillis(row.threadLastDate),
+                    threadLastEventSeq: row.threadLastEventSeq != null ? Number(row.threadLastEventSeq) : null, threadLastUserId: row.threadLastUserId ?? null,
+                    threadLastUserName: row.threadLastUserId ? names[row.threadLastUserId] || row.threadLastUserId : null,
+                    lastSnippet: last && !last.redactedDate ? snippet(last.bodyText) : null})
+            }
+        ]]></script></actions>
+    </service>
+
     <!-- ========== Messages ========== -->
 
     <service verb="send" noun="Message">
@@ -1087,8 +1347,22 @@ along with this software (see the LICENSE.md file). If not, see
             notified (see the file's notes); roomUrl is the notification's link. In a direct room the members who left
             are back. The message is indexed for search; the sender has read it; the counts of the members it counts for
             are published; agent members get it (deliver#AgentMessage). senderUserId sends as another user (an agent's
-            reply), only with authorization disabled. clientRef comes back as it was, for the client to match its
-            optimistic copy. Out: eventSeq and event (as pushed).</description>
+            reply), only with authorization disabled.
+
+            clientRef (^[A-Za-z0-9_.:-]{1,64}$) is the sender's own reference of the message, kept on it and in its push, so
+            a client matches its pending copy; a send with a clientRef the sender already used in the room is answered with
+            that message and duplicate true, and sends nothing (a retry after a lost answer). An @room mention (data-mention-id
+            "@room") mentions every current member, from a moderator or owner, or from anyone in a room of 20 members or
+            fewer; else it is plain text.
+
+            forwardOfChatRoomId and forwardOfEventSeq forward a message (not redacted) of a room the sender is a member of:
+            content.forwardOf {senderUserId, senderName, sentDate, body, bodyText} is made here from it, so it cannot be
+            forged, with its mentions inert (no data-mention-id) and nothing of its room; its files are copied into this
+            room, each on its own (one that cannot be copied is logged and left out). body is then an optional comment.
+
+            Once it commits, the previews of its links are fetched (fetch#LinkPreviews, pushed as an update), unless the
+            property chat_link_previews is false or the sender's preference CHAT_LINK_PREVIEWS is N. Out: eventSeq and event
+            (as pushed).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="body" allow-html="safe"/>
@@ -1099,20 +1373,25 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="roomUrl"/>
             <parameter name="senderUserId"/>
             <parameter name="clientRef"/>
+            <parameter name="forwardOfChatRoomId"/>
+            <parameter name="forwardOfEventSeq" type="Integer"/>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
             <parameter name="event" type="Map"/>
             <parameter name="clientRef"/>
+            <parameter name="duplicate" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             const decode = (text) => String(text || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
                     .replace(/&#x([0-9a-f]+);/gi, (m, hex) => String.fromCodePoint(parseInt(hex, 16))).replace(/&#(\d+);/g, (m, dec) => String.fromCodePoint(Number(dec)))
                     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
             const toText = (html) => decode(String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h[1-6]|blockquote|pre|div)>/gi, '\n')
                     .replace(/<[^>]*>/g, '')).replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
             const LEVEL_ALL = (row) => row.isMuted !== 'Y' && (row.notificationLevelEnumId || 'CnlAll') === 'CnlAll'
-            eventSeq = null; event = null
+            eventSeq = null; event = null; duplicate = false
+            const ROOM_MENTION = '@room'
             const me = ec.user.userId
             let sender = me
             if (senderUserId && senderUserId !== me) {
@@ -1126,12 +1405,60 @@ along with this software (see the LICENSE.md file). If not, see
             if (!access.isMember) { ec.message.addError('Join the room to post in it'); return }
             if (access.isArchived) { ec.message.addError('The room is archived'); return }
             const room = access.room
+            // a send tried again: the room is locked so two tries do not both pass, and the first one's message answers
+            if (clientRef != null && clientRef !== '') {
+                clientRef = String(clientRef)
+                if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(clientRef)) { ec.message.addError('A clientRef is up to 64 letters, digits and _ . : -'); return }
+                ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).one()
+                const sent = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('senderUserId', sender)
+                        .condition('clientRef', clientRef).condition('eventTypeEnumId', 'CetMessage').limit(1).list()
+                if (sent.length) {
+                    eventSeq = Number(sent[0].eventSeq)
+                    const found = ec.service.sync().name('org.moqui.impl.ChatServices.get#Timeline').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+                    event = found && found.eventList && found.eventList.length ? found.eventList[0] : null
+                    duplicate = true
+                    return
+                }
+            } else clientRef = null
             const html = body ? String(body).trim() : ''
             if (html.length > 65536) { ec.message.addError('The message is too long'); return }
             const bodyText = toText(html)
             const emptyBody = !bodyText && !/<img\b/i.test(html)
             const attachmentIds = Array.from(new Set((chatAttachmentIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
-            if (emptyBody && !attachmentIds.length) { ec.message.addError('A message needs text or a file'); return }
+
+            // a forward: made here from the message, which the sender may read as a member of its room
+            let forwardOf = null, forwardFiles = []
+            if (forwardOfChatRoomId || forwardOfEventSeq != null) {
+                if (!forwardOfChatRoomId || forwardOfEventSeq == null) { ec.message.addError('A forward names its message: forwardOfChatRoomId and forwardOfEventSeq'); return }
+                const sourceAccess = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameters({chatRoomId: forwardOfChatRoomId,
+                    userId: sender}).call()
+                if (ec.message.hasError()) return
+                const source = sourceAccess.isMember ? ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', forwardOfChatRoomId)
+                        .condition('eventSeq', forwardOfEventSeq).one() : null
+                if (!source || source.eventTypeEnumId !== 'CetMessage' || source.redactedDate) { ec.message.addError(`Message ${forwardOfEventSeq} not found`); return }
+                const sourceContent = parse(source.contentJson)
+                let sourceBody = sourceContent.body ?? null
+                if (source.lastEditEventSeq != null) {
+                    const edit = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', forwardOfChatRoomId).condition('eventSeq', source.lastEditEventSeq).one()
+                    if (edit && parse(edit.contentJson).body != null) sourceBody = parse(edit.contentJson).body
+                }
+                if (!sourceBody && sourceContent.forwardOf) {
+                    // a forward of a forward: the message first forwarded
+                    forwardOf = sourceContent.forwardOf
+                } else {
+                    let name = null
+                    if (source.senderUserId) {
+                        const account = ec.entity.find('moqui.security.UserAccount').condition('userId', source.senderUserId)
+                                .selectField('userFullName').selectField('username').disableAuthz().one()
+                        name = account ? account.userFullName || account.username || source.senderUserId : source.senderUserId
+                    }
+                    forwardOf = {senderUserId: source.senderUserId ?? null, senderName: name, sentDate: Number(source.sentDate),
+                        body: sourceBody ? String(sourceBody).replace(/\s+data-mention-id="[^"]*"/g, '') : null, bodyText: source.bodyText ?? null}
+                }
+                forwardFiles = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', forwardOfChatRoomId)
+                        .condition('eventSeq', forwardOfEventSeq).orderBy('attachmentSeq').list())
+            }
+            if (emptyBody && !attachmentIds.length && !forwardOf) { ec.message.addError('A message needs text or a file'); return }
 
             let replyTo = null, threadRoot = null
             if (replyToEventSeq != null) {
@@ -1157,30 +1484,73 @@ along with this software (see the LICENSE.md file). If not, see
                     attachmentRows.push(row)
                 }
             }
+            // the files of a forward, copied into this room: each on its own
+            if (forwardFiles.length) {
+                const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '')
+                for (const file of forwardFiles) {
+                    try {
+                        const stream = file.location ? ec.resource.getLocationReference(file.location).openStream() : null
+                        if (!stream) throw new Error('the file is missing')
+                        const copy = ec.entity.makeValue('moqui.chat.ChatAttachment')
+                        copy.setSequencedIdPrimary()
+                        const location = `${chatRoot}/${chatRoomId}/${copy.chatAttachmentId}/${file.fileName || 'file'}`
+                        try { ec.resource.getLocationReference(location).putStream(stream) } finally { stream.close() }
+                        copy.setFields({chatRoomId: chatRoomId, location: location, fileName: file.fileName ?? null, contentType: file.contentType ?? null,
+                            fileSize: file.fileSize ?? null, uploadedByUserId: sender, uploadedDate: ec.user.nowTimestamp}, true, null, null)
+                        copy.create()
+                        attachmentRows.push(copy)
+                    } catch (err) {
+                        ec.logger.error(`Could not copy chat file ${file.chatAttachmentId} (${file.location}) for a forward to room ${chatRoomId}: ${err && err.message ? err.message : err}`)
+                    }
+                }
+            }
             const records = (recordList || []).filter((record) => record && record.entity && record.id).slice(0, 20)
                     .map((record) => ({entity: String(record.entity), id: String(record.id)}))
 
             // the mentions: users, who may read the room
-            const mentioned = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
+            const mentionedAll = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
                     .filter((id) => id && id !== sender)))
+            const mentioned = mentionedAll.filter((id) => id !== ROOM_MENTION)
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
             const memberOf = {}
             memberRows.forEach((row) => { memberOf[row.userId] = row })
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             const current = (row) => row && (!row.leftDate || isDirect)
+            // a user who is not a member of a record room counts when they may see the record (asked as that user)
+            const recordReader = (id) => room.visibilityEnumId === 'CrvRecord' && !!room.recordEntityName && !!room.recordId
+                    && ec.service.sync().name('org.moqui.impl.ChatServices.check#RecordVisible').disableAuthz()
+                        .parameters({recordEntityName: room.recordEntityName, recordId: room.recordId, userId: id}).call()?.recordVisible === true
             let mentionIds = []
             if (mentioned.length) {
                 const users = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', mentioned)
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                mentionIds = mentioned.filter((id) => users.has(id) && (current(memberOf[id]) || room.visibilityEnumId === 'CrvUsers'))
+                mentionIds = mentioned.filter((id) => users.has(id) && (current(memberOf[id]) || room.visibilityEnumId === 'CrvUsers' || recordReader(id)))
+            }
+            // @room: every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer
+            if (mentionedAll.includes(ROOM_MENTION)) {
+                const everyone = memberRows.filter((row) => current(row) && row.roleEnumId !== 'CmrAgent')
+                if (access.canModerate || access.isOwner || everyone.length <= 20)
+                    for (const row of everyone) if (row.userId !== sender && !mentionIds.includes(row.userId)) mentionIds.push(row.userId)
+            }
+            // an external user (EXTERNAL_USER; a failed check counts as external) is mentioned only as a current member of a
+            // room that is not bound to a record
+            if (mentionIds.length) {
+                const outside = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', mentionIds)
+                        .disableAuthz().call()
+                const recordBound = room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || !!room.recordEntityName
+                const external = new Set(outside ? outside.externalUserIdList || [] : mentionIds)
+                mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
 
             const attachments = attachmentRows.map((row, index) => ({chatAttachmentId: row.chatAttachmentId, attachmentSeq: index + 1,
                 fileName: row.fileName ?? null, contentType: row.contentType ?? null, fileSize: row.fileSize != null ? Number(row.fileSize) : null}))
             const content = {body: html || null, mentions: mentionIds, attachments: attachments, records: records}
+            if (forwardOf) content.forwardOf = forwardOf
+            // a forward is found and shown by its text too
+            const storedText = [bodyText, forwardOf ? forwardOf.bodyText : null].filter((part) => part).join('\n') || bodyText
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetMessage', senderUserId: sender, content: content, bodyText: bodyText,
-                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot}).call()
+                eventTypeEnumId: 'CetMessage', senderUserId: sender, content: content, bodyText: storedText,
+                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef}).call()
             if (ec.message.hasError()) return
             eventSeq = appended.eventSeq
             event = appended.event
@@ -1189,6 +1559,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (rootRow) {
                 rootRow.set('threadReplyCount', Number(rootRow.threadReplyCount || 0) + 1)
                 rootRow.set('threadLastDate', now)
+                rootRow.set('threadLastEventSeq', eventSeq)
+                rootRow.set('threadLastUserId', sender)
                 rootRow.update()
             }
             // the sender has read it; in a direct room the members who left are back
@@ -1214,6 +1586,8 @@ along with this software (see the LICENSE.md file). If not, see
                     authorName: event.senderName || sender, bodyText: bodyText, roomUrl: roomUrl || null}).call()
             }
             ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            if (html) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                senderUserId: sender, body: html}).call()
             // the counts of the members whose count it changes
             const counted = new Set([sender].concat(mentionIds))
             for (const row of memberRows) if (current(row) && row.userId !== sender && LEVEL_ALL(row)) counted.add(row.userId)
@@ -1241,7 +1615,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Change the text of one's own message (not redacted) within the edit window: the property
             chat_edit_window_minutes, 1440 by default, 0 for no limit. An edit event with the new body and mentions; the
             message keeps its place, shows the new text and is edited. New mentions are counted and notified, dropped ones
-            no longer count. The search index has the new text.</description>
+            no longer count (@room as send#Message has it). The search index has the new text, and its link previews are
+            fetched again unless the sender removed them. A poll is not edited.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
@@ -1268,6 +1643,7 @@ along with this software (see the LICENSE.md file). If not, see
             const original = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
             if (!original || original.eventTypeEnumId !== 'CetMessage' || original.redactedDate) { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
             if (original.senderUserId !== me) { ec.message.addError('You may edit only your own messages'); return }
+            if (parse(original.contentJson).poll) { ec.message.addError('A poll is not edited: close it, or delete it and make another'); return }
             const windowMinutes = Number(System.getProperty('chat_edit_window_minutes') || 1440)
             if (windowMinutes > 0 && Number(ec.user.nowTimestamp) - Number(original.sentDate) > windowMinutes * 60000) {
                 ec.message.addError('This message is too old to edit'); return }
@@ -1280,13 +1656,33 @@ along with this software (see the LICENSE.md file). If not, see
             const memberOf = {}
             memberRows.forEach((row) => { memberOf[row.userId] = row })
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const mentioned = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
+            const mentionedAll = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
                     .filter((id) => id && id !== me)))
+            const mentioned = mentionedAll.filter((id) => id !== '@room')
             let mentionIds = []
             if (mentioned.length) {
                 const users = new Set(Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', mentioned)
                         .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-                mentionIds = mentioned.filter((id) => users.has(id) && ((memberOf[id] && (!memberOf[id].leftDate || isDirect)) || room.visibilityEnumId === 'CrvUsers'))
+                // as send#Message: a user who is not a member of a record room counts when they may see the record
+                const recordReader = (id) => room.visibilityEnumId === 'CrvRecord' && !!room.recordEntityName && !!room.recordId
+                        && ec.service.sync().name('org.moqui.impl.ChatServices.check#RecordVisible').disableAuthz()
+                            .parameters({recordEntityName: room.recordEntityName, recordId: room.recordId, userId: id}).call()?.recordVisible === true
+                mentionIds = mentioned.filter((id) => users.has(id) && ((memberOf[id] && (!memberOf[id].leftDate || isDirect))
+                        || room.visibilityEnumId === 'CrvUsers' || recordReader(id)))
+            }
+            if (mentionedAll.includes('@room')) {
+                const everyone = memberRows.filter((row) => (!row.leftDate || isDirect) && row.roleEnumId !== 'CmrAgent')
+                if (access.canModerate || access.isOwner || everyone.length <= 20)
+                    for (const row of everyone) if (row.userId !== me && !mentionIds.includes(row.userId)) mentionIds.push(row.userId)
+            }
+            // an external user (EXTERNAL_USER; a failed check counts as external) is mentioned only as a current member of a
+            // room that is not bound to a record
+            if (mentionIds.length) {
+                const outside = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', mentionIds)
+                        .disableAuthz().call()
+                const recordBound = room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || !!room.recordEntityName
+                const external = new Set(outside ? outside.externalUserIdList || [] : mentionIds)
+                mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
             const before = new Set(Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId))
@@ -1320,6 +1716,8 @@ along with this software (see the LICENSE.md file). If not, see
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
                 authorName: event.senderName || me, bodyText: bodyText, roomUrl: roomUrl || null}).call()
             ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            if (!parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
+                chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()
             if (added.length || dropped.length) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts')
                     .parameter('userIdList', added.concat(dropped)).call()
         ]]></script></actions>
@@ -1327,9 +1725,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="redact" noun="Message">
         <description>Delete a message: one's own, or any (not in a direct room) as a moderator or owner. Its content, its
-            edits' content and its files go, its mentions no longer count, it leaves the search index, and the timeline
-            shows "message removed" in its place (a redaction event, content {target: 'message', reason}). A thread reply
-            leaves its thread's count.</description>
+            edits' content, its files, its link previews and its poll go, its mentions no longer count, it leaves the search
+            index, and the timeline shows "message removed" in its place (a redaction event, content {target: 'message',
+            reason}). A thread reply leaves its thread's count, and its thread's last reply is the last one that stands.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
@@ -1361,19 +1759,22 @@ along with this software (see the LICENSE.md file). If not, see
             original.update()
             ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetEdit')
                     .condition('editsEventSeq', eventSeq).updateAll({contentJson: '{"redacted":true}', bodyText: null})
-            const mentioned = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
-                    .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
-            ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
-            // the files: each one on its own; a file that cannot be removed is logged
-            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
-            for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
-                try { if (file.location && String(file.location).startsWith(chatRoot)) ec.resource.getLocationReference(file.location).delete() }
-                catch (err) { ec.logger.warn(`Could not remove chat file ${file.location}: ${err && err.message ? err.message : err}`) }
-                file.delete()
-            }
+            // its mentions, files, poll, link previews and search document
+            const cleared = ec.service.sync().name('org.moqui.impl.ChatServices.clear#MessageContent').parameters({chatRoomId: chatRoomId,
+                eventSeq: eventSeq}).call()
+            if (ec.message.hasError()) return
+            const mentioned = (cleared && cleared.mentionedUserIdList) || []
             if (original.threadRootEventSeq != null) {
                 const root = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', original.threadRootEventSeq).one()
-                if (root) { root.set('threadReplyCount', Math.max(0, Number(root.threadReplyCount || 0) - 1)); root.update() }
+                if (root) {
+                    root.set('threadReplyCount', Math.max(0, Number(root.threadReplyCount || 0) - 1))
+                    const last = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('threadRootEventSeq', original.threadRootEventSeq)
+                            .condition('eventTypeEnumId', 'CetMessage').condition('redactedDate', null).orderBy('-eventSeq').limit(1).list()
+                    const reply = last.length ? last[0] : null
+                    root.setFields({threadLastEventSeq: reply ? reply.eventSeq : null, threadLastUserId: reply ? reply.senderUserId : null,
+                        threadLastDate: reply ? reply.sentDate : null}, true, null, null)
+                    root.update()
+                }
             }
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                 eventTypeEnumId: 'CetRedaction', senderUserId: me, relatesToEventSeq: eventSeq,
@@ -1390,11 +1791,40 @@ along with this software (see the LICENSE.md file). If not, see
                     lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
                 roomRow.update()
             }
-            ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, remove: true}).call()
             const counted = new Set(mentioned)
             for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
                     .condition('lastReadEventSeq', 'less', eventSeq).selectField('userId').list()) counted.add(row.userId)
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="clear" noun="MessageContent" allow-remote="false">
+        <description>Internal: what a message keeps beside its own row goes, for redact#Message and the retention
+            (clean#RoomRetention): its mentions (no longer counted), its files (each file on its own: one that cannot be
+            removed is logged), its poll's rows, its link previews and its search document. The caller has checked
+            access, and changes or deletes the message row itself. mentionedUserIdList are the users it mentioned, whose
+            counts change.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="mentionedUserIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            for (const entity of ['moqui.chat.ChatPollVote', 'moqui.chat.ChatPollOption', 'moqui.chat.ChatPoll'])
+                ec.entity.find(entity).condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            mentionedUserIdList = Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
+                    .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId)
+            ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).deleteAll()
+            // the files: each one on its own; a file that cannot be removed is logged
+            const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '') + '/'
+            for (const file of ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list()) {
+                try { if (file.location && String(file.location).startsWith(chatRoot)) ec.resource.getLocationReference(file.location).delete() }
+                catch (err) { ec.logger.warn(`Could not remove chat file ${file.location}: ${err && err.message ? err.message : err}`) }
+                file.delete()
+            }
+            ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                    .updateAll({linkPreviewJson: null})
+            ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, remove: true}).call()
         ]]></script></actions>
     </service>
 
@@ -1471,8 +1901,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="mark" noun="Read">
         <description>Move the current user's read marker in a room: to eventSeq (the room's last event by default; a marker
             only moves forward), or with markUnread to just before eventSeq ("mark unread from here"). The user's other
-            tabs hear of it on chatUser:userId and the room's members on chatRoom:id (read receipts); the user's counts are
-            published.</description>
+            tabs hear of it on chatUser:userId and the room's members on chatRoom:id (read receipts, unless the user's
+            preference CHAT_READ_RECEIPTS is N); the user's counts are published.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer"/>
@@ -1505,7 +1935,9 @@ along with this software (see the LICENSE.md file). If not, see
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
-            if (others.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
+            // no read receipt from a user who turned them off
+            const receiptsOff = ec.service.sync().name('org.moqui.impl.ChatServices.get#ReceiptsOffUsers').parameter('userIdList', [me]).call().offUserIdList || []
+            if (others.length && !receiptsOff.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: others, message: {kind: 'read', chatRoomId: chatRoomId, userId: me, lastReadEventSeq: next}}).call()
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', [me]).call()
         ]]></script></actions>
@@ -1547,7 +1979,8 @@ along with this software (see the LICENSE.md file). If not, see
             the user is in that are not archived. counted is what the room adds to total: unread in a room whose level is
             CnlAll and that is not muted, the mentions in a room whose level is CnlMentions or that is muted, nothing at
             CnlNone. unread adds up the unread of the rooms that count it, mentions the mentions of the rooms that are not
-            CnlNone, unreadRoomCount the rooms that add to total.</description>
+            CnlNone, unreadRoomCount the rooms that add to total. An external user's (EXTERNAL_USER) record rooms count
+            nothing.</description>
         <in-parameters><parameter name="userId"/></in-parameters>
         <out-parameters>
             <parameter name="total" type="Integer"/>
@@ -1565,18 +1998,28 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(`The chat counts of user ${userId} are not yours to see`); return }
             const rows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', userId).condition('leftDate', null).list())
             if (!rows.length) return
-            const rooms = {}
+            // an external user's (EXTERNAL_USER; a failed check counts as external) record rooms count nothing
+            const external = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
+                    .disableAuthz().call()?.anyExternal !== false
+            const rooms = new Set()
             for (const room of ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', rows.map((row) => row.chatRoomId))
-                    .condition('archivedDate', null).selectField('chatRoomId').selectField('lastEventSeq').list()) rooms[room.chatRoomId] = Number(room.lastEventSeq || 0)
+                    .condition('archivedDate', null).selectField('chatRoomId').selectField('roomTypeEnumId').selectField('visibilityEnumId')
+                    .selectField('recordEntityName').list()) {
+                if (external && (room.roomTypeEnumId === 'CrtRecord' || room.visibilityEnumId === 'CrvRecord' || room.recordEntityName)) continue
+                rooms.add(room.chatRoomId)
+            }
+            // the unread messages and the mentions of every room in one query each (ChatMemberUnread, ChatMemberMentions)
+            const unreadOf = {}, mentionsOf = {}
+            for (const count of ec.entity.find('moqui.chat.ChatMemberUnread').condition('userId', userId).condition('leftDate', null)
+                    .condition('redactedDate', null).selectField('chatRoomId').selectField('unreadCount').list())
+                unreadOf[count.chatRoomId] = Number(count.unreadCount || 0)
+            for (const count of ec.entity.find('moqui.chat.ChatMemberMentions').condition('userId', userId).condition('leftDate', null)
+                    .selectField('chatRoomId').selectField('mentionCount').list())
+                mentionsOf[count.chatRoomId] = Number(count.mentionCount || 0)
             for (const row of rows) {
-                if (!(row.chatRoomId in rooms)) continue
-                const lastRead = Number(row.lastReadEventSeq || 0)
-                if (rooms[row.chatRoomId] <= lastRead) continue
-                const roomUnread = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', row.chatRoomId)
-                        .condition('eventTypeEnumId', 'CetMessage').condition('eventSeq', 'greater', lastRead)
-                        .condition('redactedDate', null).condition('senderUserId', 'not-equals', userId).count()
-                const roomMentions = ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', row.chatRoomId)
-                        .condition('userId', userId).condition('eventSeq', 'greater', lastRead).count()
+                if (!rooms.has(row.chatRoomId)) continue
+                const roomUnread = unreadOf[row.chatRoomId] || 0
+                const roomMentions = mentionsOf[row.chatRoomId] || 0
                 if (!roomUnread && !roomMentions) continue
                 const level = row.notificationLevelEnumId || 'CnlAll'
                 const effective = level === 'CnlNone' ? 'CnlNone' : (row.isMuted === 'Y' ? 'CnlMentions' : level)
@@ -1592,22 +2035,31 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="signal" noun="Typing">
         <description>Tell the room's other members that the current user is typing (typing true, the default) or stopped:
-            {kind: 'typing', chatRoomId, userId, typing} on chatRoom:id. Nothing is stored; a client shows it for a few
-            seconds unless it is sent again.</description>
+            {kind: 'typing', chatRoomId, userId, typing, statusText} on chatRoom:id. Nothing is stored; a client shows it
+            for a few seconds unless it is sent again. statusText (up to 80 characters) says what the user does, as an
+            agent member's "Looking up open orders…"; userId types as another member (an agent), only with authorization
+            disabled.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="typing" type="Boolean" default="true"/>
+            <parameter name="statusText"/>
+            <parameter name="userId"/>
         </in-parameters>
         <actions><script><![CDATA[
-            const me = ec.user.userId
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            let me = ec.user.userId
+            if (userId && userId !== me) {
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('One types as oneself'); return }
+                me = userId
+            }
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameters({chatRoomId: chatRoomId, userId: me}).call()
             if (ec.message.hasError()) return
             if (!access.canPost) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
             if (others.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                userIdList: others, message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing}}).call()
+                userIdList: others, message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
+                    statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
         ]]></script></actions>
     </service>
 
@@ -1705,6 +2157,595 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="clean" noun="ChatRetention" authenticate="anonymous-all" transaction="ignore">
+        <description>The daily job of retention: in each room with retentionDays, the events older than that many days
+            are deleted (clean#RoomRetention). Each room is on its own, in its own transaction: one that fails is logged
+            and the rest go on. roomCount are the rooms done, deletedCount their events deleted, failedCount the rooms
+            that failed.</description>
+        <out-parameters>
+            <parameter name="roomCount" type="Integer"/>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            roomCount = 0; deletedCount = 0; failedCount = 0
+            const rooms = Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('retentionDays', 'greater', 0).selectField('chatRoomId')
+                    .disableAuthz().list())
+            for (const room of rooms) {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.clean#RoomRetention').parameter('chatRoomId', room.chatRoomId)
+                            .requireNewTransaction(true).disableAuthz().call()
+                    if (ec.message.hasError()) {
+                        failedCount++
+                        ec.logger.error(`Could not apply the retention of chat room ${room.chatRoomId}: ${ec.message.errorsString}`)
+                    } else {
+                        roomCount++
+                        deletedCount += Number((out && out.deletedCount) || 0)
+                    }
+                } catch (err) {
+                    failedCount++
+                    ec.logger.error(`Could not apply the retention of chat room ${room.chatRoomId}: ${err && err.message ? err.message : err}`)
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            if (deletedCount || failedCount) ec.logger.info(`Chat retention: ${deletedCount} events deleted in ${roomCount} rooms, ${failedCount} rooms failed`)
+        ]]></script></actions>
+    </service>
+
+    <service verb="clean" noun="RoomRetention" allow-remote="false">
+        <description>Internal: delete a room's events older than its retentionDays, up to limit of them (the rest go on the
+            next run). A message's mentions, files, poll, link previews and search document go with it
+            (clear#MessageContent); an edit, reaction or redaction of an event deleted goes too, even when newer. A thread
+            reply within the retention stays though its root goes. When the room's last message goes, its last message is
+            the last one that stands. The members who had unread events among them get their counts. Without
+            retentionDays nothing is deleted.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="limit" type="Integer" default="5000"/>
+        </in-parameters>
+        <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            const snippetOf = (text, attachments) => {
+                const shown = String(text || '').replace(/\s+/g, ' ').trim()
+                if (shown) return shown.length > 140 ? shown.slice(0, 139) + '…' : shown
+                const files = (attachments || []).map((file) => file.fileName).filter((name) => name)
+                return files.length ? '📎 ' + files.join(', ') : ''
+            }
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            deletedCount = 0
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).one()
+            if (!room || !(Number(room.retentionDays) > 0)) return
+            const before = Number(ec.user.nowTimestamp) - Number(room.retentionDays) * 86400000
+            const old = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('sentDate', 'less', String(before))
+                    .selectField('eventSeq').selectField('eventTypeEnumId').orderBy('eventSeq').limit(Math.max(1, limit)).list())
+            if (!old.length) return
+            const seqs = old.map((row) => Number(row.eventSeq))
+            const counted = new Set()
+            for (const row of old) {
+                if (row.eventTypeEnumId !== 'CetMessage') continue
+                const cleared = ec.service.sync().name('org.moqui.impl.ChatServices.clear#MessageContent').parameters({chatRoomId: chatRoomId,
+                    eventSeq: row.eventSeq}).call()
+                if (ec.message.hasError()) return
+                for (const id of (cleared && cleared.mentionedUserIdList) || []) counted.add(id)
+            }
+            // the edits, reactions and redactions of the events deleted, then the events, a chunk at a time
+            const doomed = new Set(seqs)
+            for (let start = 0; start < seqs.length; start += 500) {
+                const chunk = seqs.slice(start, start + 500)
+                for (const field of ['editsEventSeq', 'relatesToEventSeq'])
+                    for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition(field, 'in', chunk)
+                            .selectField('eventSeq').list()) doomed.add(Number(row.eventSeq))
+            }
+            const all = Array.from(doomed).sort((left, right) => left - right)
+            for (let start = 0; start < all.length; start += 500)
+                deletedCount += ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                        .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
+            // the room's last message is the last one that stands
+            if (room.lastMessageSeq != null && doomed.has(Number(room.lastMessageSeq))) {
+                const last = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetMessage')
+                        .condition('threadRootEventSeq', null).condition('redactedDate', null).orderBy('-eventSeq').limit(1).list()
+                const row = last.length ? last[0] : null
+                room.setFields({lastMessageSeq: row ? row.eventSeq : null, lastMessageUserId: row ? row.senderUserId : null,
+                    lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
+                room.update()
+            }
+            for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
+                    .condition('lastReadEventSeq', 'less', all[all.length - 1]).selectField('userId').list()) counted.add(row.userId)
+            if (counted.size) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="RoomFiles">
+        <description>The files of a room's messages, newest first, for a user who may read the room: each {chatAttachmentId,
+            eventSeq, attachmentSeq, fileName, contentType, fileSize, senderUserId, senderName, sentDate, threadRootEventSeq}.
+            contentTypePrefix keeps those whose type starts with it (image/ for the pictures), searchText those whose name
+            has it. Paged by beforeEventSeq; a page ends at a whole message, and nextBeforeEventSeq is where the next one
+            starts (null at the end). A redacted message's files are gone.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="contentTypePrefix"/>
+            <parameter name="searchText"/>
+            <parameter name="limit" type="Integer" default="30"/>
+            <parameter name="beforeEventSeq" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fileList" type="List"><parameter name="file" type="Map"/></parameter>
+            <parameter name="nextBeforeEventSeq" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            fileList = []; nextBeforeEventSeq = null
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const size = Math.max(1, Math.min(100, Number(limit) || 30))
+            const cf = ec.entity.conditionFactory
+            let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
+            if (beforeEventSeq != null) find = find.condition('eventSeq', 'less', beforeEventSeq)
+            if (contentTypePrefix) find = find.condition(cf.makeCondition('contentType', 'like', String(contentTypePrefix).replace(/[%_]/g, '') + '%').ignoreCase())
+            const text = String(searchText || '').trim().replace(/[%_]/g, '')
+            if (text) find = find.condition(cf.makeCondition('fileName', 'like', '%' + text + '%').ignoreCase())
+            let rows = Array.from(find.orderBy('-eventSeq').orderBy('attachmentSeq').limit(size + 1).list())
+            if (rows.length > size) {
+                rows = rows.slice(0, size)
+                // the page ends at a whole message: the files of its last message come on the next page, unless that is all of it
+                const lastSeq = Number(rows[rows.length - 1].eventSeq)
+                const whole = rows.filter((row) => Number(row.eventSeq) !== lastSeq)
+                if (whole.length) rows = whole
+                nextBeforeEventSeq = Number(rows[rows.length - 1].eventSeq)
+            }
+            if (!rows.length) return
+            const events = {}
+            for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
+                    .condition('eventSeq', 'in', Array.from(new Set(rows.map((row) => Number(row.eventSeq))))).list()) events[Number(row.eventSeq)] = row
+            const userIds = Array.from(new Set(Object.values(events).map((row) => row.senderUserId).filter((id) => id)))
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            for (const row of rows) {
+                const event = events[Number(row.eventSeq)]
+                if (!event || event.redactedDate) continue
+                fileList.push({chatAttachmentId: row.chatAttachmentId, eventSeq: Number(row.eventSeq), attachmentSeq: Number(row.attachmentSeq || 0),
+                    fileName: row.fileName ?? null, contentType: row.contentType ?? null, fileSize: row.fileSize != null ? Number(row.fileSize) : null,
+                    senderUserId: event.senderUserId ?? null, senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : null,
+                    sentDate: toMillis(event.sentDate), threadRootEventSeq: event.threadRootEventSeq != null ? Number(event.threadRootEventSeq) : null})
+            }
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== Polls ========== -->
+
+    <service verb="create" noun="Poll">
+        <description>A poll from the current user (a member of a room that is not archived): a message (send#Message, its
+            body the question, content.poll) with 2 to 10 options (optionList, each up to 200 characters, the same option
+            once), anonymous (who voted is not shown), multiple (more than one option may be chosen) and closesDate (when it
+            stops taking votes). threadRootEventSeq and clientRef as send#Message has them. Its state is pushed as an update
+            after the message (push#Update). Out: eventSeq and event, with poll.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="question" required="true"/>
+            <parameter name="optionList" type="List" required="true"/>
+            <parameter name="anonymous" type="Boolean" default="false"/>
+            <parameter name="multiple" type="Boolean" default="false"/>
+            <parameter name="closesDate" type="Timestamp"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="clientRef"/>
+            <parameter name="roomUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventSeq" type="Integer"/>
+            <parameter name="event" type="Map"/>
+            <parameter name="duplicate" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            eventSeq = null; event = null; duplicate = false
+            const me = ec.user.userId
+            const asked = String(question || '').replace(/\s+/g, ' ').trim()
+            if (!asked) { ec.message.addError('A poll needs a question'); return }
+            if (asked.length > 500) { ec.message.addError('The question is too long'); return }
+            const options = []
+            for (const option of Array.from(optionList || [])) {
+                const shown = String(option ?? '').replace(/\s+/g, ' ').trim()
+                if (!shown) continue
+                if (shown.length > 200) { ec.message.addError('An option is up to 200 characters'); return }
+                if (options.some((other) => other.toLowerCase() === shown.toLowerCase())) { ec.message.addError(`The option ${shown} is there twice`); return }
+                options.push(shown)
+            }
+            if (options.length < 2 || options.length > 10) { ec.message.addError('A poll has 2 to 10 options'); return }
+            const closes = closesDate != null ? Number(closesDate) : null
+            if (closes != null && closes <= Number(ec.user.nowTimestamp)) { ec.message.addError('A poll closes later than now'); return }
+            const sent = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters({chatRoomId: chatRoomId,
+                body: '<p>' + escape(asked) + '</p>', threadRootEventSeq: threadRootEventSeq ?? null, clientRef: clientRef || null, roomUrl: roomUrl || null}).call()
+            if (ec.message.hasError()) return
+            eventSeq = sent.eventSeq
+            event = sent.event
+            if (sent.duplicate) { duplicate = true; return }
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
+            const content = JSON.parse(row.contentJson || '{}')
+            content.poll = {question: asked}
+            row.set('contentJson', JSON.stringify(content))
+            row.update()
+            const poll = ec.entity.makeValue('moqui.chat.ChatPoll')
+            poll.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, question: asked, isAnonymous: anonymous ? 'Y' : 'N', allowMultiple: multiple ? 'Y' : 'N',
+                closesDate: closesDate ?? null, createdByUserId: me, voterCount: 0}, true, null, null)
+            poll.create()
+            options.forEach((text, index) => {
+                const option = ec.entity.makeValue('moqui.chat.ChatPollOption')
+                option.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, optionSeq: index + 1, optionText: text, voteCount: 0}, true, null, null)
+                option.create()
+            })
+            const states = ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
+                eventSeqList: [eventSeq]}).call().pollMap || {}
+            const shared = ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
+                eventSeqList: [eventSeq], shared: true}).call().pollMap || {}
+            event = Object.assign({}, event, {poll: states[eventSeq] || null})
+            ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {poll: shared[eventSeq] || null}}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="PollStates" allow-remote="false">
+        <description>Internal: the polls of these messages of a room, as pollMap eventSeq to {question, anonymous, multiple,
+            closesDate, closedDate, closed, createdByUserId, voterCount, totalVotes, options [{id, text, voteCount, voterIds,
+            mine}], mine [option ids]}. voterIds are empty for an anonymous poll. shared leaves out mine (the same state for
+            every member, as push#Update sends it); else mine is the current user's own. The caller has checked access.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeqList" type="List" required="true"/>
+            <parameter name="shared" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="pollMap" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            pollMap = {}
+            const seqs = Array.from(new Set(Array.from(eventSeqList || []).map(Number).filter((seq) => !Number.isNaN(seq))))
+            if (!seqs.length) return
+            const me = ec.user.userId
+            const now = Number(ec.user.nowTimestamp)
+            const polls = Array.from(ec.entity.find('moqui.chat.ChatPoll').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', seqs).list())
+            if (!polls.length) return
+            const options = {}, votes = {}
+            for (const row of ec.entity.find('moqui.chat.ChatPollOption').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', seqs)
+                    .orderBy('optionSeq').list()) (options[Number(row.eventSeq)] = options[Number(row.eventSeq)] || []).push(row)
+            for (const row of ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', seqs)
+                    .orderBy('votedDate').list()) (votes[Number(row.eventSeq)] = votes[Number(row.eventSeq)] || []).push(row)
+            for (const poll of polls) {
+                const seq = Number(poll.eventSeq)
+                const anonymous = poll.isAnonymous === 'Y'
+                const cast = votes[seq] || []
+                const closesAt = toMillis(poll.closesDate)
+                const state = {question: poll.question ?? null, anonymous: anonymous, multiple: poll.allowMultiple === 'Y', closesDate: closesAt,
+                    closedDate: toMillis(poll.closedDate), closed: !!poll.closedDate || (closesAt != null && closesAt <= now),
+                    createdByUserId: poll.createdByUserId ?? null, voterCount: Number(poll.voterCount || 0), totalVotes: 0,
+                    options: (options[seq] || []).map((row) => {
+                        const id = Number(row.optionSeq)
+                        const option = {id: id, text: row.optionText ?? '', voteCount: Number(row.voteCount || 0),
+                            voterIds: anonymous ? [] : cast.filter((vote) => Number(vote.optionSeq) === id).map((vote) => vote.userId)}
+                        if (!shared) option.mine = cast.some((vote) => Number(vote.optionSeq) === id && vote.userId === me)
+                        return option
+                    })}
+                state.totalVotes = state.options.reduce((sum, option) => sum + option.voteCount, 0)
+                if (!shared) state.mine = cast.filter((vote) => vote.userId === me).map((vote) => Number(vote.optionSeq))
+                pollMap[seq] = state
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="vote" noun="Poll">
+        <description>The current user's vote on a poll of a room they may post in, while it is open: optionIdList replaces the
+            user's votes (one option, or several in a poll that takes them); an empty list takes the vote back. The state is
+            pushed as an update (push#Update). Out: poll, with the user's own votes.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="optionIdList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="poll" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            poll = null
+            const me = ec.user.userId
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to vote'); return }
+            const row = ec.entity.find('moqui.chat.ChatPoll').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
+            if (!row) { ec.message.addError(`Poll ${eventSeq} not found in the room`); return }
+            const now = Number(ec.user.nowTimestamp)
+            if (row.closedDate || (row.closesDate != null && Number(row.closesDate) <= now)) { ec.message.addError('The poll is closed'); return }
+            const chosen = Array.from(new Set(Array.from(optionIdList || []).map((id) => Number(id)).filter((id) => !Number.isNaN(id))))
+            if (chosen.length > 1 && row.allowMultiple !== 'Y') { ec.message.addError('Choose one option'); return }
+            const options = Array.from(ec.entity.find('moqui.chat.ChatPollOption').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).list())
+            const byId = {}
+            options.forEach((option) => { byId[Number(option.optionSeq)] = option })
+            const unknown = chosen.filter((id) => !byId[id])
+            if (unknown.length) { ec.message.addError(`Option ${unknown.join(', ')} not found in the poll`); return }
+            const before = Array.from(ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                    .condition('userId', me).list()).map((vote) => Number(vote.optionSeq))
+            const same = before.length === chosen.length && before.every((id) => chosen.includes(id))
+            if (!same) {
+                ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).condition('userId', me).deleteAll()
+                for (const id of before) if (byId[id]) byId[id].set('voteCount', Math.max(0, Number(byId[id].voteCount || 0) - 1))
+                for (const id of chosen) {
+                    const vote = ec.entity.makeValue('moqui.chat.ChatPollVote')
+                    vote.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, userId: me, optionSeq: id, votedDate: ec.user.nowTimestamp}, true, null, null)
+                    vote.create()
+                    byId[id].set('voteCount', Number(byId[id].voteCount || 0) + 1)
+                }
+                for (const option of options) if (before.includes(Number(option.optionSeq)) || chosen.includes(Number(option.optionSeq))) option.update()
+                const voters = new Set(Array.from(ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                        .selectField('userId').list()).map((vote) => vote.userId))
+                row.set('voterCount', voters.size)
+                row.update()
+            }
+            poll = (ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId, eventSeqList: [eventSeq]})
+                    .call().pollMap || {})[eventSeq] || null
+            if (!same) ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {poll: (ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
+                    eventSeqList: [eventSeq], shared: true}).call().pollMap || {})[eventSeq] || null}}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="close" noun="Poll">
+        <description>Close a poll before its time: its creator, or a moderator or owner of the room. It takes no more votes;
+            the state is pushed as an update. Nothing when it is closed already. Out: poll.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="poll" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            poll = null
+            const me = ec.user.userId
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const row = ec.entity.find('moqui.chat.ChatPoll').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
+            if (!row) { ec.message.addError(`Poll ${eventSeq} not found in the room`); return }
+            if (!(row.createdByUserId === me && access.isMember) && !access.canModerate) { ec.message.addError('Only the poll\'s creator or a moderator may close it'); return }
+            if (!row.closedDate) {
+                row.set('closedDate', ec.user.nowTimestamp)
+                row.set('closedByUserId', me)
+                row.update()
+                ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                    fields: {poll: (ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId,
+                        eventSeqList: [eventSeq], shared: true}).call().pollMap || {})[eventSeq] || null}}).call()
+            }
+            poll = (ec.service.sync().name('org.moqui.impl.ChatServices.get#PollStates').parameters({chatRoomId: chatRoomId, eventSeqList: [eventSeq]})
+                    .call().pollMap || {})[eventSeq] || null
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== Agent cards ========== -->
+
+    <service verb="send" noun="AssistCard" allow-remote="false">
+        <description>Internal (an agent member's run, plans/LLM-A2A-Assist.md 4.13): a message of an agent member with a card,
+            content.assist {kind (approval, question or reply), runId, conversationId, itemId (the approval or question),
+            requesterUserId, requesterName, title, summary, rows (an approval's changes: field, label, current, proposed)
+            or options (a question's), state (pending, then the decision: approved, rejected, executed, expired, answered;
+            done for a reply)}, the pattern of content.poll. body is the text a client without cards shows. Sent as
+            senderUserId (the agent's chat user), only with authorization disabled; threadRootEventSeq as send#Message.
+            The card is pushed as an update after the message (push#Update, fields {assist}). Out: eventSeq.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="senderUserId" required="true"/>
+            <parameter name="body" allow-html="safe"/>
+            <parameter name="bodyText" allow-html="any"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+            <parameter name="assist" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="eventSeq" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            eventSeq = null
+            if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('An agent card is sent by the agent runtime'); return }
+            const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            const kind = String(assist.kind || '')
+            if (!['approval', 'question', 'reply'].includes(kind)) { ec.message.addError(`An agent card is an approval, a question or a reply, not ${kind}`); return }
+            const html = body ? String(body) : '<p>' + escape(bodyText || assist.summary || assist.title || kind) + '</p>'
+            const sent = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters({chatRoomId: chatRoomId,
+                senderUserId: senderUserId, body: html, threadRootEventSeq: threadRootEventSeq ?? null}).call()
+            if (ec.message.hasError()) return
+            eventSeq = sent.eventSeq
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
+            const content = JSON.parse(row.contentJson || '{}')
+            content.assist = Object.assign({}, assist, {kind: kind, state: assist.state || (kind === 'reply' ? 'done' : 'pending')})
+            row.set('contentJson', JSON.stringify(content))
+            row.update()
+            ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {assist: content.assist}}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="update" noun="AssistCard" allow-remote="false">
+        <description>Internal: change an agent card in place (its decision): fields (state, decision, decidedBy {userId,
+            name}, channel, feedback, answer) merge into content.assist, and the card is pushed as an update. Only with
+            authorization disabled. A message with no card is left alone.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="fields" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="assist" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            assist = null
+            if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('An agent card is changed by the agent runtime'); return }
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
+            if (!row || row.redactedDate) return
+            const content = JSON.parse(row.contentJson || '{}')
+            if (!content.assist) return
+            const allowed = ['state', 'decision', 'decidedBy', 'channel', 'feedback', 'answer']
+            for (const key of allowed) if (fields[key] !== undefined && fields[key] !== null) content.assist[key] = fields[key]
+            row.set('contentJson', JSON.stringify(content))
+            row.update()
+            assist = content.assist
+            ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {assist: assist}}).call()
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== Link previews ========== -->
+
+    <service verb="queue" noun="LinkPreviews" allow-remote="false">
+        <description>Internal (send#Message, edit#Message): once the transaction commits, fetch the previews of the message's
+            links (fetch#LinkPreviews, asynchronously), unless the property chat_link_previews is false, the sender's
+            preference CHAT_LINK_PREVIEWS is N, or the body has no link. Failure tolerant: a fetch that cannot be queued is
+            logged.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="senderUserId"/>
+            <parameter name="body" allow-html="any"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            if (String(System.getProperty('chat_link_previews') || '').trim() === 'false') return
+            if (!/https?:\/\//i.test(String(body || ''))) return
+            if (senderUserId) {
+                const pref = ec.entity.find('moqui.security.UserPreference').condition('userId', senderUserId).condition('preferenceKey', 'CHAT_LINK_PREVIEWS')
+                        .disableAuthz().one()
+                const value = pref ? String(pref.preferenceValue || '').trim() : ''
+                if (value === 'N' || value === 'false') return
+            }
+            try {
+                ec.service.special().name('org.moqui.impl.ChatServices.fetch#LinkPreviews').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
+            } catch (err) {
+                ec.logger.error(`Could not queue the link previews of chat message ${chatRoomId}::${eventSeq}: ${err && err.message ? err.message : err}`)
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="fetch" noun="LinkPreviews" authenticate="anonymous-all" allow-remote="false">
+        <description>Internal: the previews of a message's links (extract#LinkUrls: at most 3), each from get#LinkPreview on its
+            own (a link that cannot be read has no card, and is logged), kept on the message (linkPreviewJson) and pushed as
+            an update {linkPreviews} (push#Update) when they changed. Nothing for a message redacted or whose previews its
+            sender removed.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="linkPreviews" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            linkPreviews = []
+            ec.artifactExecution.disableAuthz()
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
+            if (!row || row.eventTypeEnumId !== 'CetMessage' || row.redactedDate || parse(row.linkPreviewJson).removed) return
+            let body = parse(row.contentJson).body
+            if (row.lastEditEventSeq != null) {
+                const edit = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', row.lastEditEventSeq).one()
+                if (edit && parse(edit.contentJson).body != null) body = parse(edit.contentJson).body
+            }
+            const urls = ec.service.sync().name('org.moqui.impl.ChatServices.extract#LinkUrls').parameter('body', body || '').call().urlList || []
+            for (const link of urls) {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#LinkPreview').parameters({url: link.url, urlHash: link.urlHash}).call()
+                    if (ec.message.hasError()) ec.logger.warn(`Could not preview ${link.url} of chat message ${chatRoomId}::${eventSeq}: ${ec.message.errorsString}`)
+                    else if (out && out.preview) linkPreviews.push(out.preview)
+                } catch (err) {
+                    ec.logger.warn(`Could not preview ${link.url} of chat message ${chatRoomId}::${eventSeq}: ${err && err.message ? err.message : err}`)
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            const next = linkPreviews.length ? JSON.stringify(linkPreviews) : null
+            if ((row.linkPreviewJson || null) === next) return
+            row.set('linkPreviewJson', next)
+            row.update()
+            ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {linkPreviews: linkPreviews}}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="LinkPreview" allow-remote="false">
+        <description>Internal: the preview of one link {url, title, description, siteName}, null when it has none (no title), from
+            the ChatLinkPreview cache when fetched in the last 24 hours (the last hour for a link that could not be read),
+            else read again with fetch#LinkPage and kept. urlHash is extract#LinkUrls's.</description>
+        <in-parameters>
+            <parameter name="url" required="true"/>
+            <parameter name="urlHash" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="preview" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            preview = null
+            const now = Number(ec.user.nowTimestamp)
+            const shown = (row) => row && row.failed !== 'Y' && row.title ? {url: url, title: row.title, description: row.description || null,
+                siteName: row.siteName || null} : null
+            let row = ec.entity.find('moqui.chat.ChatLinkPreview').condition('urlHash', urlHash).disableAuthz().one()
+            if (row && row.url === url && row.fetchedDate != null && now - Number(row.fetchedDate) < (row.failed === 'Y' ? 3600000 : 86400000)) {
+                preview = shown(row)
+                return
+            }
+            const page = ec.service.sync().name('org.moqui.impl.ChatServices.fetch#LinkPage').parameter('url', url).call()
+            const fields = {url: url, title: page.ok && page.title ? page.title : null, description: page.ok && page.description ? page.description : null,
+                siteName: page.ok && page.siteName ? page.siteName : null, failed: page.ok ? 'N' : 'Y', fetchedDate: ec.user.nowTimestamp}
+            if (row) { row.setFields(fields, true, null, null); row.update() }
+            else {
+                row = ec.entity.makeValue('moqui.chat.ChatLinkPreview')
+                row.setFields(Object.assign({urlHash: urlHash}, fields), true, null, null)
+                row.create()
+            }
+            preview = shown(row)
+        ]]></script></actions>
+    </service>
+
+    <service verb="extract" noun="LinkUrls" type="rust" location="moqui_core::service::chat_link::extract_link_urls" allow-remote="false"
+            transaction="ignore">
+        <description>Internal: the links of a message's body to preview, as urlList [{url, urlHash}]: http or https, at most 3,
+            not a /qapps link, not one with a user or password, not on a port other than 80 or 443.</description>
+        <in-parameters><parameter name="body" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="urlList" type="List"/></out-parameters>
+    </service>
+
+    <service verb="fetch" noun="LinkPage" type="rust" location="moqui_core::service::chat_link::fetch_link_page" allow-remote="false"
+            transaction="ignore">
+        <description>Internal: read the head of the page at url for its preview: no internal address (also after a redirect),
+            5 seconds, the first 512 KB, 3 redirects to any host, text/html only, no image. Out: ok, title, description,
+            siteName, error. Adds no error. The property chat_link_preview_service names a service asked in place of the
+            network (url in; status, contentType and body out), for tests.</description>
+        <in-parameters><parameter name="url" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="title"/>
+            <parameter name="description"/>
+            <parameter name="siteName"/>
+            <parameter name="error"/>
+        </out-parameters>
+    </service>
+
+    <service verb="remove" noun="LinkPreviews">
+        <description>The sender removes the link previews of their own message: they go, and are not fetched again for it (on
+            an edit). Pushed as an update {linkPreviews: []}.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
+            if (!row || row.eventTypeEnumId !== 'CetMessage' || row.redactedDate) { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
+            if (row.senderUserId !== ec.user.userId) { ec.message.addError('Only the sender removes the previews of a message'); return }
+            row.set('linkPreviewJson', '{"removed":true}')
+            row.update()
+            ec.service.sync().name('org.moqui.impl.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
+                fields: {linkPreviews: []}}).call()
+        ]]></script></actions>
+    </service>
+
     <!-- ========== Search ========== -->
 
     <service verb="search" noun="ChatEvents">
@@ -1751,6 +2792,16 @@ along with this software (see the LICENSE.md file). If not, see
                 const directIds = new Set(ids.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', ids)
                         .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').list()).map((row) => row.chatRoomId) : [])
                 myRooms = directOrCurrent.filter((row) => !row.leftDate || directIds.has(row.chatRoomId)).map((row) => row.chatRoomId)
+                // an external user (EXTERNAL_USER; a failed check counts as external): no record room, no public room not joined
+                if (ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [me]).disableAuthz()
+                        .call()?.anyExternal !== false) {
+                    includePublic = false
+                    const recordIds = new Set(myRooms.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms)
+                            .selectField('chatRoomId').selectField('roomTypeEnumId').selectField('visibilityEnumId').selectField('recordEntityName').list())
+                            .filter((row) => row.roomTypeEnumId === 'CrtRecord' || row.visibilityEnumId === 'CrvRecord' || row.recordEntityName)
+                            .map((row) => row.chatRoomId) : [])
+                    myRooms = myRooms.filter((id) => !recordIds.has(id))
+                }
             }
             const names = {}
             const roomNames = {}
@@ -1863,7 +2914,8 @@ along with this software (see the LICENSE.md file). If not, see
             has been idle for their CHAT_AUTO_AWAY_MINUTES preference (10 by default), else online. A clear-at time that
             has come clears the text and emoji and puts the status back to online (expire#UserStatuses writes it). With the
             current user among them, myStatus adds statusEnumId and status (online, away, dnd, invisible: what the user
-            chose) and autoAwayMinutes.</description>
+            chose) and autoAwayMinutes. An external current user (EXTERNAL_USER) gets only their own: others are left out of
+            statusMap.</description>
         <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
         <out-parameters>
             <parameter name="statusMap" type="Map"/>
@@ -1879,7 +2931,10 @@ along with this software (see the LICENSE.md file). If not, see
             const CODES = {UpsOnline: 'online', UpsAway: 'away', UpsDnd: 'dnd', UpsInvisible: 'invisible'}
             statusMap = {}; myStatus = null
             const me = ec.user.userId
-            const ids = Array.from(new Set((userIdList || []).map((id) => String(id || '').trim()).filter((id) => id))).slice(0, 500)
+            let ids = Array.from(new Set((userIdList || []).map((id) => String(id || '').trim()).filter((id) => id))).slice(0, 500)
+            // an external current user (EXTERNAL_USER; a failed check counts as external) sees only their own status
+            if (me && ids.some((id) => id !== me) && ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers')
+                    .parameter('userIdList', [me]).disableAuthz().call()?.anyExternal !== false) ids = ids.filter((id) => id === me)
             if (!ids.length) return
             const now = Number(ec.user.nowTimestamp)
             const rows = {}
@@ -2037,6 +3092,33 @@ along with this software (see the LICENSE.md file). If not, see
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#UserStatus').parameter('userId', me).call()
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserStatuses').parameter('userIdList', [me]).call()
             myStatus = out.myStatus
+        ]]></script></actions>
+    </service>
+
+    <service verb="disconnect" noun="UserStatus" authenticate="false" allow-remote="false">
+        <description>Internal: the last notification socket of the user on this server closed and none came back within 20
+            seconds (moqui-host notws.rs), so the user is offline now rather than when the heartbeat runs out:
+            lastSeenDate is set past the offline window (3 minutes) and the change is published on userStatus
+            (publish#UserStatus). Another user's only with authorization disabled. In a cluster the socket may be the last
+            one on this node only: a page still open on another node sends its heartbeat within a minute, and the user is
+            online again.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="published" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            published = false
+            if (userId !== ec.user.userId && !ec.artifactExecution.authzDisabled()) { ec.message.addError('You disconnect only yourself'); return }
+            const row = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).forUpdate(true).disableAuthz().one()
+            if (!row) return
+            const offlineAt = Number(ec.user.nowTimestamp) - 3 * 60000 - 1000
+            const seen = toMillis(row.lastSeenDate)
+            if (seen == null || seen > offlineAt) { row.set('lastSeenDate', String(offlineAt)); row.update() }
+            const out = ec.service.sync().name('org.moqui.impl.ChatServices.publish#UserStatus').parameter('userId', userId).call()
+            published = !!(out && out.published)
         ]]></script></actions>
     </service>
 

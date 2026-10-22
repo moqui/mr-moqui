@@ -57,11 +57,11 @@ A reviewer classifies these as intentional. Each Java type is also in the revers
 - **Swagger 2.0 and RAML.** `RestApi` output of those forms. `screen/schema.rs` writes JSON Schema only.
 - **Elasticsearch as an entity datasource.** `impl/entity/elastic/**` (`ElasticDatasourceFactory`, `ElasticEntityFind`, `ElasticEntityListIterator`, `ElasticEntityValue`, `ElasticSynchronization`). Search is the SearchFacade redesign below. The `moqui-elasticsearch` add-on is not linked.
 - **Hazelcast and session-byte replication.** `moqui-hazelcast` is not linked. `MoquiSessionListener` does not copy session bytes.
-- **LLM and A2A.** `impl/llm/**`, `org.moqui.llm/**`, `LlmFacade`, `A2AFacade`, `LlmServlet`, `A2AServlet`, `A2ACardServlet`, and `LlmServices.xml`, `LlmAdminServices.xml`, `A2AServices.xml`. Deferred; see [Remaining-Work](Remaining-Work.md).
+- **LLM and A2A.** `impl/llm/**`, `org.moqui.llm/**`, `LlmFacade`, `A2AFacade`, `LlmServlet`, `A2AServlet`, `A2ACardServlet`, and `LlmServices.xml`, `LlmAdminServices.xml`, `A2AServices.xml`. Redesigned rather than ported; see [LLM-A2A-Assist](LLM-A2A-Assist.md) and [Remaining-Work](Remaining-Work.md).
 - **Databases not in this tree.** H2 (`H2ServerToolFactory`), SQL Server, Oracle, DB2, Derby, HSQLDB. The port's drivers are Postgres, MySQL, and the browser SQLite driver.
 - **Shiro.** `shiro.ini`, `MoquiShiroRealm`, `MoquiWebSecurityManager`. Login still verifies a stored Shiro `SimpleHash` and rehashes to argon2 (`user/password.rs`).
 - **Jackrabbit, JCS, SubEtha.** `JackrabbitRunToolFactory`, `JCSCacheToolFactory`, `cache.ccf`, `SubEthaSmtpToolFactory`. The embedded SMTP server stays disabled. Inbound mail is `poll#EmailServer`, the mail client's sync, and for hosted and shared accounts the SMTP listener behind an edge gateway (the moqui-host `inbound-smtp` feature, [Mail-Inbound](../docs/Mail-Inbound.md)), which is not SubEtha's open receiver.
-- **FreeMarker, GString, and FOP as engines.** `FtlTemplateRenderer`, `GStringTemplateRenderer`, `FtlMarkdownTemplateRenderer`, and `moqui-fop` (`FopToolFactory`, `HtmlRenderer`, `HtmlRenderServlet`). Markdown files render through `moqui-lib/src/markdown.rs`. Print is `html-print` (README redesign 5); the `/fop/*` path of `MoquiFopServlet` is kept, on that renderer (`screen/mod.rs`).
+- **FreeMarker, GString, and FOP as engines.** `FtlTemplateRenderer`, `GStringTemplateRenderer`, `FtlMarkdownTemplateRenderer`, and `moqui-fop` (`FopToolFactory`, `HtmlRenderer`, `HtmlRenderServlet`). Markdown files render through `moqui-lib/src/markdown.rs`. Print is `html-print` (README redesign 4); the `/fop/*` path of `MoquiFopServlet` is kept, on that renderer (`screen/mod.rs`).
 - **vuet, vue, js render modes and `/vapps`.** `DefaultScreenMacros.vuet.ftl` and the vuet/js screen companions.
 - **Other dropped pieces.** `SimpleSgmlReader` (no SGML reader). `content://` (`ContentResourceReference`) is a named error. OAuth 1.0 and SAML (the SSO section). `MClassLoader` and `LiteStringMap` (JVM class loading and a Java map optimization). `bitronix-default-config.properties` (Bitronix is a behavior reference only). `MoquiLog4jAppender` and `log4j2.xml` as a runtime (logging is `tracing` in the host).
 
@@ -310,6 +310,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 | `screen/form.rs` | `ScreenForm.initForm` (`extends`, `auto-fields-entity`, `auto-fields-service`, `DbForm`). | Port |
 | `screen/render.rs` | `ScreenRenderImpl.internalRender`, `ScreenRender`, `WebFacadeStub` via `make_render`. | Port |
 | `screen/url.rs` | `ScreenUrlInfo.initUrl`. | Port |
+| `screen/html_text.rs`, `ScreenTui.js` | The `tui` render mode: one JSON screen model per level for the terminal client, and HTML as text blocks. Not in Java. [Screen-TUI-Impl](archive/Screen-TUI-Impl.md). | Native |
 | `screen/urls.rs` | `sri.buildUrl` and `sri.makeUrlByType`, including transition alias expansion. | Port |
 | `screen/tree.rs` | `ScreenTree.sendSubNodeJson`. | Port |
 | `screen/screen_test.rs` | `ScreenTestImpl`, `ScreenTest`. | Port |
@@ -331,11 +332,11 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 | `screen/generate.rs` | `ScreenWidgetRender` and `ScreenWidgetRenderFtl`. Generates one function per section from the JS macro module. | Port |
 | `screen/statics.rs`, `screen/static_ast.rs`, `screen/statics/report.rs` | Server-static qvt. Java `server-static` was only a `Cache-Control` hint. [QvtServerStatic](archive/QvtServerStatic.md). | Redesign |
 | `screen/vue_check.rs` | Vue 3 compiler check of a qvt template, in QuickJS. Gate 3. | Native |
-| `screen/pdf.rs`, `moqui-host/src/pdf.rs`, `moqui-host/src/pdf/cdp.rs` | PDF bytes for `html-print`, its resource-location images inlined as `data:` URLs first (Java's FOP resolved them through the resource facade). `pdf.rs` in the host keeps one Chromium process. `pdf/cdp.rs` is the DevTools socket (`chromiumoxide` was not used). `xsl-fo` as a stored mode name selects this. README redesign 5. | Redesign |
+| `screen/pdf.rs`, `moqui-host/src/pdf.rs`, `moqui-host/src/pdf/cdp.rs` | PDF bytes for `html-print`, its resource-location images inlined as `data:` URLs first (Java's FOP resolved them through the resource facade). `pdf.rs` in the host keeps one Chromium process. `pdf/cdp.rs` is the DevTools socket (`chromiumoxide` was not used). `xsl-fo` as a stored mode name selects this. README redesign 4. | Redesign |
 | `screen/xlsx.rs` | moqui-poi `FormListExcelRender`, `ScreenWidgetRenderExcel`. `ScreenXlsx.js` fills the book through `sri.xlsx*`. | Port |
 | `screen/dispatch.rs` | Rust bodies for the `rest.xml` transitions (`login`, and the other transitions that file declares in Rust). | Native |
 | `screen/schema.rs` | `RestSchemaUtil` documents served from screens: `entity.json`, `master.json`. `service.swagger` is not the Swagger 2 document. YAML and RAML stay unbuilt. | Partial |
-| `screen/mod.rs` | `ScreenFacade`. Also the screen-path half of `MoquiAuthFilter` (anonymous 401, Basic challenge), and `MoquiFopServlet` (`/fop/<path>` as PDF). | Partial |
+| `screen/mod.rs` | `ScreenFacade`. Also the request around the servlets (session, sign in, lifecycle actions, filter chain), the screen-path half of `MoquiAuthFilter` (anonymous 401, with no challenge, as Java; `AuthFilter.js` and git send a Basic one), and `MoquiFopServlet` (`/fop/<path>` as PDF). | Partial |
 
 ### Macro libraries
 
@@ -358,29 +359,31 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 | `DefaultScreenMacros.any.ftl` | — | Excluded |
 | `TestScreenHtmlMacros.ftl` | — | Excluded |
 
-`html-print` emits HTML with print CSS. A direct `.xsl-fo` request still returns FO XML. A stored caller that passes render mode `xsl-fo` to mean PDF renders `html-print` and hands it to `PdfRenderer`.
+`html-print` emits HTML with print CSS. `xsl-fo` is an alias of `html-print`, so a direct `.xsl-fo` request returns that HTML (Parity-Diffs P6-06). A stored caller that passes render mode `xsl-fo` to mean PDF renders `html-print` and hands it to `PdfRenderer`.
 
 ## Web and the HTTP host
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `moqui-core/src/web/mod.rs` | `WebFacadeImpl` as an owned request and response: parameters, body, headers, session cookie, redirect checks (`WebUtilities.isSameOriginRedirect`), IP match, CORS origin, credential stripping. No servlet types. | Port |
+| `moqui-core/src/web/mod.rs` | `WebFacadeImpl` as an owned request and response: parameters, body, headers, session cookie, redirect checks (`WebUtilities.isSameOriginRedirect`), IP match, CORS origin (a refused one is 401 before the request runs, `MoquiServlet.handleCors`), credential stripping. No servlet types. | Port |
+| `moqui-core/src/web/servlet.rs` | The `webapp` `servlet`, `filter` and `listener` elements as `MoquiContextListener` registers them, mapped by URL pattern as the Servlet spec has it, and the lifecycle actions of `WebappInfo` (`before-request` and the rest). A servlet, filter or listener is a script whose value is a handler object; the Java classes the port has natively (`MoquiServlet`, `MoquiFopServlet`, `MoquiAuthFilter`, `ElasticRequestLogFilter`, `MoquiSessionListener`) map to it. [Web-Scripts](../docs/Web-Scripts.md). | Redesign |
+| `moqui-core/src/web/upstream.rs` | Response bodies a script opened with `ec.service.rest()...send()`, kept on the server and streamed on by `response.forward`. No Java counterpart (Jetty's proxy streamed in Java). | Native |
+| `moqui-core/src/script/runtime/web_host.rs` | `HttpServletRequest`, `HttpServletResponse` and `FilterChain` for scripts (`ec.web.request`, `ec.web.response`), and the call of a handler object. | Redesign |
 | `moqui-core/src/web/multipart.rs` | Multipart bodies and `WebUtilities.isExecutable` on an upload. | Port |
 | `moqui-core/src/web/error_info.rs` | The `errorThrowable` facts `error/*.xml` reads. | Partial |
 | `moqui-core/src/web/address.rs` | The client address behind `client-ip-header` (`WebFacadeImpl.getClientIp`), with `trusted-proxies` and CIDR ranges added. | Partial |
 | `moqui-core/src/outbound.rs` | Outbound HTTP for `remote-rest` and `http` resources. The server uses `moqui-lib` `RestClient`. The browser installs `fetch`. | Partial |
-| `moqui-host/src/http.rs` | `MoquiServlet` and the public HTTP and HTTPS listeners. Screen work runs on the request pool. | Port |
+| `moqui-host/src/http.rs` | The public HTTP and HTTPS listeners; `MoquiServlet` is the screen servlet of `web/servlet.rs` behind them. Screen work runs on the request pool. | Port |
 | `moqui-host/src/logging.rs` | `LoggerFacadeImpl`, `ElasticSearchLogger`, `ElasticRequestLogFilter` (ship `moqui_logs` and `moqui_http_log`). File names match Java. Console color is new. | Partial |
 | `moqui-host/src/guard.rs` | Web protection at the edge (`web-protection` in the webapp conf): per-client connection caps, rate limits, bans, client, method, path and user-agent rules. Not the ArtifactTarpit. [Web-Protection](proposals/Web-Protection.md). | Native |
 | `moqui-host/src/notws.rs` | `NotificationEndpoint` at `GET /notws`. The socket does not hold an execution context. | Port |
-| `moqui-host/src/search_proxy.rs` | Jetty `ElasticSearchProxy` and `KibanaProxy` servlets declared in `MoquiDefaultConf.xml`, behind the `MoquiAuthFilter` rules. OpenSearch only. | Port |
 | `moqui-host/src/tls.rs` | Public HTTPS certificates from `runtime/cert`. Java terminated TLS at a proxy. | Native |
 | `moqui-host/src/edge.rs` | Tokio runtime for PDF, SSH, SSO, and IPP. An execution-context thread never enters it. | Native |
 | `moqui-host/src/cluster_edge.rs` | Cluster HTTPS listener and peer client. [Cluster](archive/Cluster.md). | Redesign |
 | `moqui-host/src/lib.rs` | Process commands (`run`, `load`, `save-db`, `load-save`, `test`, `lint`, `types`, `convert`). | Partial |
 | `moqui/src/main.rs` | Binary entry. Calls `moqui_host::main`. Keeps linked component crates. | Native |
 
-`MoquiContextListener` is factory startup inside `moqui-host/src/lib.rs`. `MoquiAbstractEndpoint` and `NotificationWebSocketListener` are the servlet WebSocket base; `notws.rs` replaces them. `ScreenResourceNotFoundException` is a not-found error from `screen/url.rs`. `web.xml` servlet declarations are the axum routes in `http.rs`.
+`MoquiContextListener` is factory startup inside `moqui-host/src/lib.rs`, which ends with `web::servlet::started` (the listeners' `contextInitialized` and the `after-startup` actions); `stopping` runs `before-shutdown` and `contextDestroyed`. `MoquiAbstractEndpoint` and `NotificationWebSocketListener` are the servlet WebSocket base; `notws.rs` replaces them. `ScreenResourceNotFoundException` is a not-found error from `screen/url.rs`. The fixed routes of `http.rs` are `/health`, `/metrics`, the sockets and `/git`; every other path goes to the conf's servlets (`web/servlet.rs`). The Jetty `ElasticSearchProxy` and `KibanaProxy` servlets are now `webroot/script/ProxyServlet.js` on `/search` and `/dashboard`, behind `webroot/script/AuthFilter.js`.
 
 ## Search
 
@@ -447,6 +450,7 @@ The service section names the Rust service bodies. This section is where the add
 | `typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
 | `moqui-host/src/types.rs` | `moqui types`. | Native |
 | `moqui-host/src/qvt_report.rs` | `moqui lint --screens --qvt-static`. The report is `screen/statics/report.rs`. | Native |
+| `moqui-host/src/tui.rs`, `tui_remote.rs`, `tui_cmd.rs`, `crates/moqui-tui` | `moqui tui`: the in-process and HTTP screen links and the terminal client on Revue. Not in Java. [Screen-TUI-Impl](archive/Screen-TUI-Impl.md), [TUI](../docs/TUI.md). | Native |
 | `native.rs` | Component JAR on the classpath: linked Rust services, tools, resource schemes, template renderers. [Native-Components](archive/Native-Components.md). | Native |
 
 ## Browser host
@@ -598,13 +602,13 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `util/SimpleSigner.java` | `moqui-lib/src/signer.rs` | Port |
 | `util/UserSecurityChecks.groovy` | `service/security_checks.rs` | Port |
 | `util/SimpleSgmlReader.groovy`, `MoquiShiroRealm.groovy`, `MoquiWebSecurityManager.groovy` | — | Excluded |
-| `webapp/MoquiServlet.groovy` | `moqui-host/src/http.rs` | Port |
-| `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `moqui-host/src/search_proxy.rs` | Port |
-| `webapp/MoquiContextListener.groovy` | `moqui-host/src/lib.rs` | Partial |
+| `webapp/MoquiServlet.groovy` | `moqui-host/src/http.rs`, `screen/mod.rs`, `web/servlet.rs` | Port |
+| `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `runtime/base-component/webroot/script/AuthFilter.js` | Port |
+| `webapp/MoquiContextListener.groovy` | `moqui-host/src/lib.rs`, `web/servlet.rs` (servlets, filters, listeners, after-startup and before-shutdown) | Partial |
 | `webapp/NotificationEndpoint.groovy`, `NotificationWebSocketListener.groovy`, `MoquiAbstractEndpoint.groovy` | `moqui-host/src/notws.rs` | Port |
 | `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/logging.rs` | Port |
 | `webapp/MoquiFopServlet.groovy` | `screen/mod.rs` (`/fop/<path>`: the screen as `html-print`, sent as PDF by `PdfRenderer`; PDF only) | Partial |
-| `webapp/GroovyShellEndpoint.groovy`, `LlmServlet.groovy`, `A2AServlet.groovy`, `A2ACardServlet.groovy` | — | Excluded |
+| `webapp/GroovyShellEndpoint.groovy`, `LlmServlet.groovy`, `A2AServlet.groovy`, `A2ACardServlet.groovy` | — (their conf entries are removed) | Excluded |
 | `webapp/MoquiSessionListener.groovy` | `user/session.rs` does not copy session bytes | Excluded |
 | `webapp/ScreenResourceNotFoundException.groovy` | `screen/url.rs`, `context/error.rs` | Port |
 | `llm/**` | — | Excluded |

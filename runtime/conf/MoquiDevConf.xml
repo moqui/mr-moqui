@@ -9,10 +9,11 @@
     <default-property name="webapp_allow_origins" value="*"/>
     <default-property name="entity_empty_db_load" value="all"/>
     <default-property name="entity_lock_track" value="true"/>
+    <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
+        every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/TUI.md "Over SSH" -->
+    <default-property name="ssh_port" value="2222"/>
 
-    <!-- Dump full LLM interactions, leaving on for easier testing until llm-client branch stabilizes -->
-    <default-property name="llm_trace_dump" value="true"/>
-    <!-- Local LLM Endpoint (OpenAI-compatible) for Assist / LlmClient testing -->
+    <!-- A local model server (OpenAI-compatible, LM Studio's port) for the default llm-facade endpoint; set the model -->
     <default-property name="llm_openai_url" value="http://127.0.0.1:1234"/>
     <default-property name="llm_openai_model" value=""/>
 
@@ -22,7 +23,8 @@
     <default-property name="entity_ds_password" value="moquiroot"/>
     <default-property name="entity_ds_sslmode" value="disable"/>
     -->
-    <!-- minimal overrides for testing on local postgres:
+    <!-- minimal overrides for testing on local postgres (docker run -d -e POSTGRES_USER=moqui
+        -e POSTGRES_PASSWORD=moqui -e POSTGRES_DB=moqui -p 127.0.0.1:5432:5432 postgres:18):
     <default-property name="entity_ds_db_conf" value="postgres"/>
     <default-property name="entity_ds_user" value="moqui"/>
     <default-property name="entity_ds_password" value="moqui"/>
@@ -65,14 +67,6 @@
         <artifact-stats type="AT_ENTITY" persist-bin="true"/>
     </server-stats>
 
-    <webapp-list>
-        <webapp name="webroot">
-            <servlet name="H2Console" class="org.h2.server.web.JakartaWebServlet" load-on-startup="1">
-                <!-- <init-param name="webAllowOthers" value=""/><init-param name="trace" value=""/> -->
-                <url-pattern>/h2/*</url-pattern>
-            </servlet>
-        </webapp>
-    </webapp-list>
     <artifact-execution-facade>
         <!-- turn off tarpit in dev mode -->
         <artifact-execution type="AT_XML_SCREEN" tarpit-enabled="false"/>
@@ -88,20 +82,20 @@
     </screen-facade>
 
     <llm-facade>
-        <!-- For the assist profile timeout-seconds and max-iterations need to be somewhat high for skill learning R&D loops -->
-        <profile name="assist" timeout-seconds="900" max-iterations="100" allow-vue-sfc="true"/>
-        <!-- Example test settings for Qwen in LM Studio:
-        <profile name="assist" timeout-seconds="900" max-iterations="100" allow-vue-sfc="true" log-content="true"
-                url="http://127.0.0.1:1234" api-key="" model="qwen3.8-27b-imatrix-nvfp4-mtp">
-            <api-config>
-                <base>{"chat_template_kwargs":{"preserve_thinking":true}}</base>
-                <low>{"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":false}}</low>
-                <medium>{"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}</medium>
-                <high>{"reasoning_effort":"medium","chat_template_kwargs":{"enable_thinking":true}}</high>
-            </api-config>
-        </profile>
+        <!-- The default endpoint is on this machine -->
+        <endpoint id="default" local="true"/>
+        <!-- Example settings for Qwen in LM Studio, with the content of calls kept for testing:
+        <model id="default" endpoint="default" name="qwen3.8-27b-imatrix-nvfp4-mtp" tier="balanced" context-window="32768"
+                max-output="6144" prompt-variant="small" result-cap-chars="4000" list-limit="10" reasoning-replay="none"
+                max-concurrency="1" temperature="0.3" max-tool-calls="12">
+            <api-config>{"chat_template_kwargs":{"preserve_thinking":true}}</api-config>
+            <reasoning level="low">{"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":false}}</reasoning>
+            <reasoning level="medium">{"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}</reasoning>
+            <reasoning level="high">{"reasoning_effort":"medium","chat_template_kwargs":{"enable_thinking":true}}</reasoning>
+        </model>
+        <limits max-run-seconds="1800" max-steps="100"/>
+        <content-log enabled="true"/>
         -->
-        <profile name="default" timeout-seconds="900"/>
     </llm-facade>
 
     <entity-facade query-stats="true">

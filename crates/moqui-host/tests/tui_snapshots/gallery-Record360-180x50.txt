@@ -1,0 +1,50 @@
+ gallery ▸ Record360                                                                                                                                            john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.4 360 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ A detail for a party seen through the app's role, here a user account: a header card with the avatar, identity, classification chips and key numbers │
+     List                │ ┃ that link into the matching lists, the app's actions, then the parts. The real 360 uses subscreens-panel type="tab" for Overview, Groups, Activity   │
+     Detail              │ ┃ and the rest; this leaf has no subscreens, so the parts are boxes. Chatter spans every tab.                                                          │
+   ▶ 360                 │ ┃ Fallbacks for §8: number-card size="sm" is the row of numbers inside the header q-card (render-mode); chatter is a box with a compose form and a     │
+     Task                │ ┃ q-timeline; the avatar is initials in a q-avatar because the framework has no party content. Every action is a no-op.                                │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ ┌─ John Doe (JD) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Split               │ │ john.doe · john.doe@moqui.org · EX_JOHN_DOE                                                                                                          │
+     Settings            │ │ [Administrators (full access)] [Administrators - Advanced] [Active]                                                                                  │
+     Wizard              │ │ ┌─ Groups ─────────────────┐ ┌─ Visits ─────────────────┐ ┌─ Hits ───────────────────┐ ┌─ Alerts ─────────────────┐                                  │
+     Dialog              │ │ │ 2                        │ │ 0                        │ │ 0                        │ │ 0                        │                                  │
+     Report              │ │ └──────────────────────────┘ └──────────────────────────┘ └──────────────────────────┘ └──────────────────────────┘                                  │
+     Panel               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Widgets             │ Send message  Add to group  Reset password  [ Disable ]  [ More ▾ ]
+     Editor              │ ┌─ Overview ──────────────────────────────────────────────────────────────┐ ┌─ Chatter ────────────────────────────────────────────────────────────────┐
+     Message             │ │ User ID . . . . . . . . . : EX_JOHN_DOE                                 │ │ Message  : │                                                             │
+     Views               │ │ User name . . . . . . . . : john.doe                                    │ │            │                                                             │
+ ▾ Home                  │ │ Full name . . . . . . . . : John Doe                                    │ │ < Post >                                                                 │
+                         │ │ Email . . . . . . . . . . : john.doe@moqui.org                          │ │ ●   Signed in from nowhere yet                                           │
+                         │ │ Locale  . . . . . . . . . : en_US                                       │ │ ● 2010-02-03  Added to Administrators (full access)                      │
+                         │ │ Time zone . . . . . . . . : US/Central                                  │ │ ● Seed data  Note: demo account of the framework                         │
+                         │ │ Disabled  . . . . . . . . : N                                           │ └──────────────────────────────────────────────────────────────────────────┘
+                         │ │ Password change required  : N                                           │
+                         │ │ Password set  . . . . . . : never                                       │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Groups ────────────────────────────────────────────────────────────────┐
+                         │ │ Add to group                                                            │
+                         │ │   Group     Description                  Type                 Since     │
+                         │ │ ────────────────────────────────────────────────────────────────────────│
+                         │ │   ADMIN     Administrators (full access) Moqui Administrators 2010-02-03│
+                         │ │   ADMIN_ADV Administrators - Advanced    Moqui Administrators 2010-02-03│
+                         │ │   Rows 1–2 of 2 · Page 1/1                                              │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Activity: last 20 artifact hits ───────────────────────────────────────┐
+                         │ │   When Type Artifact ms Error                                           │
+                         │ │ ──────────────────────────────                                          │
+                         │ │   No rows match                                                         │
+                         │ │   Rows 0 of 0                                                           │
+                         │ └─────────────────────────────────────────────────────────────────────────┘
+                         │ ┌─ Notifications ─────────────────────────────────────────────────────────┐
+                         │ │   ID Sent Viewed                                                        │
+                         │ │ ─────────────────                                                       │
+                         │ │   No rows match                                                         │
+                         │ │   Rows 0 of 0                                                           │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

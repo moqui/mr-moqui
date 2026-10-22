@@ -20,13 +20,12 @@
 
 mod parse;
 
-pub use parse::{XmlEvent, XmlEvents};
+pub use parse::{FlatElement, XmlEvent, XmlEvents};
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::Path;
 use std::rc::{Rc, Weak};
-
-use indexmap::IndexMap;
 
 use crate::error::Error;
 
@@ -36,13 +35,19 @@ pub struct MNode {
     inner: Rc<RefCell<NodeInner>>,
 }
 
+/// Attribute names (interned) and values, in document order. A node has few, so a list is smaller and as quick to
+/// search as a map.
+pub(crate) type Attributes = Vec<(Rc<str>, Box<str>)>;
+
 pub(crate) struct NodeInner {
-    name: String,
-    attributes: IndexMap<String, String>,
-    text: Option<String>,
+    /// Interned: the elements of one name share it, as Java's `MNode` interns its names.
+    name: Rc<str>,
+    attributes: Attributes,
+    text: Option<Box<str>>,
     children: Vec<MNode>,
     parent: Option<Weak<RefCell<NodeInner>>>,
-    location: Option<String>,
+    /// Shared by the nodes of one document.
+    location: Option<Rc<str>>,
     line: u32,
     column: u32,
 }
@@ -50,15 +55,36 @@ pub(crate) struct NodeInner {
 /// Called with the base node and the override node when a merge visits both.
 type NodeMerger<'a> = dyn FnMut(&MNode, &MNode) + 'a;
 
+/// Distinct names kept per thread. Past this a name is not interned, so a document of made-up names cannot grow the
+/// set without bound.
+const NAMES_CAP: usize = 16_384;
+
+thread_local! {
+    static NAMES: RefCell<HashSet<Rc<str>>> = RefCell::new(HashSet::new());
+}
+
+/// The one `Rc` of `name` on this thread, element and attribute names alike.
+pub(crate) fn intern(name: &str) -> Rc<str> {
+    NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        if let Some(known) = names.get(name) {
+            return Rc::clone(known);
+        }
+        let made: Rc<str> = Rc::from(name);
+        if names.len() < NAMES_CAP {
+            names.insert(Rc::clone(&made));
+        }
+        made
+    })
+}
+
 impl MNode {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn from_parts(
-        name: String,
-        attributes: IndexMap<String, String>,
-        text: Option<String>,
+        name: Rc<str>,
+        attributes: Attributes,
+        text: Option<Box<str>>,
         children: Vec<MNode>,
-        parent: Option<Weak<RefCell<NodeInner>>>,
-        location: Option<String>,
+        location: Option<Rc<str>>,
         line: u32,
         column: u32,
     ) -> Self {
@@ -68,21 +94,29 @@ impl MNode {
                 attributes,
                 text,
                 children: Vec::new(),
-                parent,
+                parent: None,
                 location,
                 line,
                 column,
             })),
         };
-        for child in children {
-            node.append_node(child);
+        if !children.is_empty() {
+            let parent = Rc::downgrade(&node.inner);
+            for child in &children {
+                let mut inner = child.inner.borrow_mut();
+                inner.parent = Some(Weak::clone(&parent));
+                if inner.location.is_none() {
+                    inner.location.clone_from(&node.inner.borrow().location);
+                }
+            }
+            node.inner.borrow_mut().children = children;
         }
         node
     }
 
     /// Build an element. Used by tests and by code that assembles a tree without a file.
     pub fn new(name: impl Into<String>) -> Self {
-        Self::from_parts(name.into(), IndexMap::new(), None, Vec::new(), None, None, 0, 0)
+        Self::from_parts(intern(&name.into()), Vec::new(), None, Vec::new(), None, 0, 0)
     }
 
     pub fn parse_text(location: &str, text: &str) -> Result<Self, Error> {
@@ -93,6 +127,12 @@ impl MNode {
     /// data loader reads field text this way, as Java's does.
     pub fn parse_text_raw(location: &str, text: &str) -> Result<Self, Error> {
         parse::parse_document_with(Some(location), text, false, true)
+    }
+
+    /// The root of `text` when it has no child elements, its name and attributes borrowed from the text, without a
+    /// node; `None` when it has child elements. The document is checked as [`Self::parse_text_raw`] checks it.
+    pub fn parse_flat<'a>(location: &str, text: &'a str) -> Result<Option<FlatElement<'a>>, Error> {
+        parse::parse_flat(Some(location), text)
     }
 
     pub fn parse_root_only(location: &str, text: &str) -> Result<Self, Error> {
@@ -107,15 +147,25 @@ impl MNode {
     }
 
     pub fn name(&self) -> String {
-        self.inner.borrow().name.clone()
+        self.inner.borrow().name.to_string()
+    }
+
+    /// `body` with the element's name, borrowed.
+    pub fn with_name<R>(&self, body: impl FnOnce(&str) -> R) -> R {
+        body(&self.inner.borrow().name)
+    }
+
+    /// Whether the element is named `name`, without copying its name.
+    pub fn has_name(&self, name: &str) -> bool {
+        *self.inner.borrow().name == *name
     }
 
     pub fn set_name(&self, name: impl Into<String>) {
-        self.inner.borrow_mut().name = name.into();
+        self.inner.borrow_mut().name = intern(&name.into());
     }
 
     pub fn file_location(&self) -> Option<String> {
-        self.inner.borrow().location.clone()
+        self.inner.borrow().location.as_deref().map(str::to_string)
     }
 
     pub fn line(&self) -> u32 {
@@ -127,7 +177,22 @@ impl MNode {
     }
 
     pub fn attribute(&self, name: &str) -> Option<String> {
-        self.inner.borrow().attributes.get(name).cloned()
+        self.with_attribute(name, |value| value.map(str::to_string))
+    }
+
+    /// `body` with the value of attribute `name`, borrowed.
+    pub fn with_attribute<R>(&self, name: &str, body: impl FnOnce(Option<&str>) -> R) -> R {
+        let inner = self.inner.borrow();
+        body(find_attribute(&inner.attributes, name))
+    }
+
+    /// Whether attribute `name` is `value`, without copying it.
+    pub fn attribute_is(&self, name: &str, value: &str) -> bool {
+        self.with_attribute(name, |held| held == Some(value))
+    }
+
+    pub fn has_attribute(&self, name: &str) -> bool {
+        self.with_attribute(name, |held| held.is_some())
     }
 
     pub fn attributes(&self) -> Vec<(String, String)> {
@@ -135,29 +200,50 @@ impl MNode {
             .borrow()
             .attributes
             .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
     }
 
+    /// Each attribute in document order, borrowed: [`Self::attributes`] without the copies.
+    pub fn for_each_attribute(&self, mut body: impl FnMut(&str, &str)) {
+        for (name, value) in &self.inner.borrow().attributes {
+            body(name, value);
+        }
+    }
+
     pub fn set_attribute(&self, name: impl Into<String>, value: impl Into<String>) {
-        self.inner.borrow_mut().attributes.insert(name.into(), value.into());
+        let name = name.into();
+        let value: Box<str> = value.into().into_boxed_str();
+        let mut inner = self.inner.borrow_mut();
+        match inner.attributes.iter_mut().find(|(key, _)| **key == *name) {
+            Some(slot) => slot.1 = value,
+            None => inner.attributes.push((intern(&name), value)),
+        }
     }
 
     /// Copy attribute values from `other` onto this node. Existing attributes not in `other` stay.
     pub fn copy_attributes_from(&self, other: &MNode) {
-        let pairs = other.attributes();
+        if Rc::ptr_eq(&self.inner, &other.inner) {
+            return;
+        }
+        let other = other.inner.borrow();
         let mut inner = self.inner.borrow_mut();
-        for (key, value) in pairs {
-            inner.attributes.insert(key, value);
+        for (key, value) in &other.attributes {
+            match inner.attributes.iter_mut().find(|(held, _)| **held == **key) {
+                Some(slot) => slot.1.clone_from(value),
+                None => inner.attributes.push((Rc::clone(key), value.clone())),
+            }
         }
     }
 
     pub fn text(&self) -> Option<String> {
-        self.inner.borrow().text.clone()
+        self.inner.borrow().text.as_deref().map(str::to_string)
     }
 
     pub fn set_text(&self, text: Option<String>) {
-        self.inner.borrow_mut().text = text.filter(|value| !value.trim().is_empty());
+        self.inner.borrow_mut().text = text
+            .filter(|value| !value.trim().is_empty())
+            .map(String::into_boxed_str);
     }
 
     pub fn parent(&self) -> Option<MNode> {
@@ -173,12 +259,25 @@ impl MNode {
         self.inner.borrow().children.clone()
     }
 
+    /// Each child in order, without copying the list. `body` may read the children, and this node, but not change
+    /// this node.
+    pub fn for_each_child(&self, mut body: impl FnMut(&MNode)) {
+        for child in &self.inner.borrow().children {
+            body(child);
+        }
+    }
+
+    /// How many children the element has.
+    pub fn child_count(&self) -> usize {
+        self.inner.borrow().children.len()
+    }
+
     pub fn children_named(&self, name: &str) -> Vec<MNode> {
         self.inner
             .borrow()
             .children
             .iter()
-            .filter(|child| child.name() == name)
+            .filter(|child| child.has_name(name))
             .cloned()
             .collect()
     }
@@ -188,19 +287,30 @@ impl MNode {
     }
 
     pub fn first_named(&self, name: &str) -> Option<MNode> {
-        self.children_named(name).into_iter().next()
+        self.inner
+            .borrow()
+            .children
+            .iter()
+            .find(|child| child.has_name(name))
+            .cloned()
     }
 
     pub fn first_named_attrs(&self, name: &str, attrs: &[(&str, &str)]) -> Option<MNode> {
-        self.children_named(name).into_iter().find(|child| {
-            attrs
-                .iter()
-                .all(|(key, value)| child.attribute(key).as_deref() == Some(*value))
-        })
+        self.inner
+            .borrow()
+            .children
+            .iter()
+            .find(|child| child.has_name(name) && attrs.iter().all(|(key, value)| child.attribute_is(key, value)))
+            .cloned()
     }
 
+    /// The first child `pred` takes. `pred` may read the children, and this node, but not change this node.
     pub fn first_where(&self, mut pred: impl FnMut(&MNode) -> bool) -> Option<MNode> {
-        self.children().into_iter().find(|child| pred(child))
+        let count = self.child_count();
+        (0..count).find_map(|index| {
+            let child = self.inner.borrow().children.get(index).cloned()?;
+            pred(&child).then_some(child)
+        })
     }
 
     pub fn append(&self, name: impl Into<String>) -> MNode {
@@ -210,10 +320,11 @@ impl MNode {
     }
 
     pub fn append_node(&self, child: MNode) {
-        child.inner.borrow_mut().parent = Some(Rc::downgrade(&self.inner));
-        if let Some(location) = self.file_location() {
-            if child.file_location().is_none() {
-                child.inner.borrow_mut().location = Some(location);
+        {
+            let mut held = child.inner.borrow_mut();
+            held.parent = Some(Rc::downgrade(&self.inner));
+            if held.location.is_none() {
+                held.location.clone_from(&self.inner.borrow().location);
             }
         }
         self.inner.borrow_mut().children.push(child);
@@ -290,12 +401,16 @@ impl MNode {
         let column = inner.column;
         drop(inner);
         let copied_children: Vec<MNode> = children.iter().map(MNode::deep_copy).collect();
-        Self::from_parts(name, attributes, text, copied_children, None, location, line, column)
+        Self::from_parts(name, attributes, text, copied_children, location, line, column)
     }
 
     /// Same structure, ignoring file location and shared identity.
     pub fn same_structure(&self, other: &MNode) -> bool {
-        if self.name() != other.name() || self.attributes() != other.attributes() || self.text() != other.text() {
+        let same_node = {
+            let (mine, theirs) = (self.inner.borrow(), other.inner.borrow());
+            mine.name == theirs.name && mine.attributes == theirs.attributes && mine.text == theirs.text
+        };
+        if !same_node {
             return false;
         }
         let left = self.children();
@@ -403,12 +518,13 @@ impl MNode {
         for _ in 0..level {
             out.push_str("    ");
         }
-        let name = self.name();
+        // Read in place: a child is its own cell, so this node's borrow is held across the children's.
+        let inner = self.inner.borrow();
         out.push('<');
-        out.push_str(&name);
-        for (key, value) in self.attributes() {
+        out.push_str(&inner.name);
+        for (key, value) in &inner.attributes {
             out.push(' ');
-            out.push_str(&key);
+            out.push_str(key);
             out.push_str("=\"");
             for ch in value.chars() {
                 match ch {
@@ -420,17 +536,23 @@ impl MNode {
             }
             out.push('"');
         }
-        let text = self.text();
-        let children = self.children();
-        if text.is_some() || !children.is_empty() {
+        let children = &inner.children;
+        if inner.text.is_some() || !children.is_empty() {
             out.push('>');
-            if let Some(text) = text {
+            if let Some(text) = &inner.text {
                 out.push_str("<![CDATA[");
-                out.push_str(&text.replace("]]>", "]]]]><![CDATA[>"));
+                let mut pieces = text.split("]]>");
+                if let Some(first) = pieces.next() {
+                    out.push_str(first);
+                }
+                for piece in pieces {
+                    out.push_str("]]]]><![CDATA[>");
+                    out.push_str(piece);
+                }
                 out.push_str("]]>");
             }
             if !children.is_empty() {
-                for child in &children {
+                for child in children {
                     out.push('\n');
                     child.write_into(out, level + 1);
                 }
@@ -442,12 +564,19 @@ impl MNode {
                 }
             }
             out.push_str("</");
-            out.push_str(&name);
+            out.push_str(&inner.name);
             out.push('>');
         } else {
             out.push_str("/>");
         }
     }
+}
+
+fn find_attribute<'a>(attributes: &'a Attributes, name: &str) -> Option<&'a str> {
+    attributes
+        .iter()
+        .find(|(key, _)| **key == *name)
+        .map(|(_, value)| &**value)
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -660,18 +789,6 @@ mod tests {
             .first_named_attrs("artifact-execution", &[("type", "AT_XML_SCREEN")])
             .unwrap();
         assert_eq!(screen.attribute("tarpit-enabled").as_deref(), Some("false"));
-
-        let webapp = base
-            .first_named("webapp-list")
-            .unwrap()
-            .first_named_attrs("webapp", &[("name", "webroot")])
-            .unwrap();
-        let servlet = webapp.first_named_attrs("servlet", &[("name", "H2Console")]).unwrap();
-        assert_eq!(
-            servlet.attribute("class").as_deref(),
-            Some("org.h2.server.web.JakartaWebServlet")
-        );
-        assert!(servlet.first_named("url-pattern").is_some());
     }
 
     #[test]

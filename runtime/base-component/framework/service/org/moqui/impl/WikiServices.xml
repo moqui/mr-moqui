@@ -946,9 +946,9 @@ along with this software (see the LICENSE.md file). If not, see
             or local for a git repository; a clone is written, so not a mirror). With copyHistory the pages keep their
             versions: every file under the base space is replayed oldest version first into the new storage (one commit
             each on git, each with its own author and date and a note naming where it came from), and the WikiPage,
-            WikiPageHistory, user, alias and category rows follow with the new version names; without it each page is
-            written once with its current text (clone#WikiPage). The space's members are copied, and the cloning user
-            is an admin of the new space.</description>
+            WikiPageHistory, user, alias and category rows follow with the new version names (copy#WikiPageRows);
+            without it each page is written once with its current text (clone#WikiPage). The space's members are
+            copied, and the cloning user is an admin of the new space.</description>
         <in-parameters>
             <parameter name="baseWikiSpaceId" required="true"/>
             <parameter name="wikiSpaceId" required="true">
@@ -1039,51 +1039,25 @@ along with this software (see the LICENSE.md file). If not, see
                     const basePages = Array.from(ec.entity.find('moqui.resource.wiki.WikiPage').condition('wikiSpaceId', baseWikiSpaceId).list())
                     const newIds = {}
                     const made = []
+                    // each page's rows with the new version names (copy#WikiPageRows), with its aliases, as the new space has none
                     for (const basePage of basePages) {
-                        const map = versionMaps[basePage.pagePath || ''] || {}
-                        // the copied file at the page's exact path, not a page of that name elsewhere
-                        const newPath = ec.service.sync().name('org.moqui.impl.WikiServices.get#WikiPageFile')
-                                .parameters({rootPageLocation: rootPageLocation, pagePath: basePage.pagePath || ''}).call()?.pageReference
-                        const current = newPath?.exists && newPath.supportsVersion() ? newPath.getCurrentVersion()?.versionName : null
-                        const published = basePage.publishedVersionName ? (map[basePage.publishedVersionName] ?? null) : (publishNew ? current : null)
-                        const page = ec.entity.makeValue('moqui.resource.wiki.WikiPage')
-                        page.setFields({wikiSpaceId: wikiSpaceId, pagePath: basePage.pagePath || null, sequenceNum: basePage.sequenceNum ?? null,
-                            createdByUserId: basePage.createdByUserId || null, publishedVersionName: published,
-                            restrictView: basePage.restrictView || null, restrictUpdate: basePage.restrictUpdate || null}, true, null, null)
-                        page.setSequencedIdPrimary()
-                        page.create()
-                        newIds[basePage.wikiPageId] = page.wikiPageId
-                        made.push([basePage, page])
-                        for (const row of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageHistory').condition('wikiPageId', basePage.wikiPageId).list())) {
-                            const copy = row.cloneValue()
-                            copy.wikiPageId = page.wikiPageId
-                            if (copy.versionName) copy.versionName = map[copy.versionName] ?? null
-                            copy.create()
-                        }
-                        for (const entityName of ['moqui.resource.wiki.WikiPageUser', 'moqui.resource.wiki.WikiPageCategoryMember']) {
-                            for (const row of Array.from(ec.entity.find(entityName).condition('wikiPageId', basePage.wikiPageId).list())) {
-                                const copy = row.cloneValue()
-                                copy.wikiPageId = page.wikiPageId
-                                copy.create()
-                            }
-                        }
+                        const out = ec.service.sync().name('org.moqui.impl.WikiServices.copy#WikiPageRows').parameters({baseWikiPageId: basePage.wikiPageId,
+                            wikiSpaceId: wikiSpaceId, rootPageLocation: rootPageLocation, pagePath: basePage.pagePath || null,
+                            versionMap: versionMaps[basePage.pagePath || ''] || {}, publishNew: publishNew, copyAliases: true, copyCategories: true}).call()
+                        if (ec.message.hasError()) return
+                        newIds[basePage.wikiPageId] = out.wikiPageId
+                        made.push([basePage, out.wikiPageId])
                     }
-                    // the parents, by the new ids; the aliases of the base space, when the new space has none at that path
-                    for (const [basePage, page] of made) {
+                    // the parents, by the new ids
+                    for (const [basePage, newId] of made) {
                         if (basePage.parentWikiPageId && newIds[basePage.parentWikiPageId]) {
+                            const page = ec.entity.find('moqui.resource.wiki.WikiPage').condition('wikiPageId', newId).one()
                             page.parentWikiPageId = newIds[basePage.parentWikiPageId]
                             page.update()
                         }
                     }
-                    for (const alias of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageAlias').condition('wikiSpaceId', baseWikiSpaceId).list())) {
-                        if (!newIds[alias.wikiPageId]) continue
-                        const copy = alias.cloneValue()
-                        copy.wikiSpaceId = wikiSpaceId
-                        copy.wikiPageId = newIds[alias.wikiPageId]
-                        copy.create()
-                    }
-                    for (const [, page] of made) {
-                        ec.service.sync().name('org.moqui.impl.WikiServices.index#WikiPageLinks').parameter('wikiPageId', page.wikiPageId).call()
+                    for (const [, newId] of made) {
+                        ec.service.sync().name('org.moqui.impl.WikiServices.index#WikiPageLinks').parameter('wikiPageId', newId).call()
                     }
                 ]]></script>
             </then><else>
@@ -1111,25 +1085,55 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="clone" noun="WikiPage">
+        <description>Copy a page into a space. pageName names the copy (the source page's name when omitted). withChildren also
+            copies the pages under it (off by default, so clone#WikiSpace, which walks the files itself, is unchanged): the
+            files under the page (get#WikiPageChildren), so a page that is only a file is copied too, leaving out one the
+            user may not view. copyAliases copies WikiPageAlias rows (on by default). Attachments are written on the new
+            page's path. With copyHistory the page keeps its versions: its file and attachments are replayed oldest version
+            first (copy#WikiPageFiles, one commit or history row each with its own author and date and a note naming where
+            it came from, versionNote or "Copied from SPACE/path"), and its history, user and alias rows follow with the new
+            version names (copy#WikiPageRows); a published version stays published. Without it the copy is one version, with
+            versionNote, of the latest text, or with usePublished of the published version's text (the latest when the page
+            has none). An attachment, or a version, that is not copied is logged and named in failedFiles; a page under
+            this one that is not copied is an error.</description>
         <in-parameters>
             <parameter name="baseWikiSpaceId" required="true"><description>Source/base wiki space</description></parameter>
             <parameter name="wikiSpaceId" required="true"><description>Destination/target wiki space</description></parameter>
             <parameter name="pagePath"><description>Source page path</description></parameter>
             <parameter name="parentPath"><description>Path of parent page in target space (wikiSpaceId), if not specified use the same pagePath as the source</description></parameter>
+            <parameter name="pageName"><description>Name of the copy. Default: the source page's name.</description></parameter>
 
             <parameter name="copyAttachments" type="Boolean" default="true"/>
             <parameter name="publishNew" type="Boolean" default="true"/>
+            <parameter name="withChildren" type="Boolean" default="false"><description>Also copy each page directly under
+                this one, then the pages under those. Off unless asked.</description></parameter>
+            <parameter name="copyAliases" type="Boolean" default="true"><description>Copy this page's WikiPageAlias
+                rows. On unless asked.</description></parameter>
+            <parameter name="copyHistory" type="Boolean" default="false"><description>Replay the page's versions into the
+                copy, and its history rows with them. Off unless asked.</description></parameter>
+            <parameter name="usePublished" type="Boolean" default="false"><description>Without copyHistory, copy the text
+                of the page's published version, not its latest</description></parameter>
+            <parameter name="versionNote"><description>The note of the copy's version; with copyHistory the line added to
+                each replayed version's note</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="basePageInfo" type="Map"/>
             <parameter name="wikiPageId"/>
             <parameter name="pagePath"/>
+            <parameter name="versionCount" type="Integer"><description>With copyHistory, the versions written</description></parameter>
+            <parameter name="failedFiles" type="List"><description>The files not copied (an attachment's name, or with
+                copyHistory a file that lost a version, by its path under the page), a page under this one's prefixed by its
+                name</description></parameter>
         </out-parameters>
         <actions>
             <log message="Cloning WikiPage ${pagePath} from space ${baseWikiSpaceId} to space ${wikiSpaceId} with parentPath ${parentPath}"/>
+            <set field="versionCount" from="0"/>
+            <set field="failedFiles" from="[]"/>
+            <set field="historyCopied" from="false"/>
 
             <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="basePageInfo"
                     in-map="{wikiSpaceId:baseWikiSpaceId, pagePath:pagePath}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- <log level="warn" message="basePageInfo: ${basePageInfo}"/> -->
 
             <!-- copy page resource text, create new WikiPage record -->
@@ -1148,21 +1152,70 @@ along with this software (see the LICENSE.md file). If not, see
                     </if>
                 </else></if>
 
+                <!-- the copy's name: the one asked for, or the source page's -->
+                <if condition="!pageName"><set field="pageName" from="basePageInfo.pageName"/></if>
+
                 <!-- make sure page doesn't already exist -->
                 <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="existingPageInfo"
-                        in-map="{wikiSpaceId:wikiSpaceId, pagePath:((parentPath ? parentPath+'/' : '') + (basePageInfo.pageName||''))}"/>
+                        in-map="{wikiSpaceId:wikiSpaceId, pagePath:((parentPath ? parentPath+'/' : '') + (pageName||''))}"/>
                 <if condition="existingPageInfo.pageReference?.exists">
-                    <return type="danger" message="Page already exists in space ${wikiSpaceId} at ${parentPath||''}/${basePageInfo.pageName}"/></if>
+                    <return type="danger" message="Page already exists in space ${wikiSpaceId} at ${parentPath||''}/${pageName}"/></if>
 
+                <if condition="copyHistory &amp;&amp; basePageInfo.pageReference?.exists"><then>
+                    <!-- the versions: the user adds pages to the target space, as update#WikiPage checks for a new page -->
+                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageAccess" out-map="targetAccess" in-map="{wikiSpaceId:wikiSpaceId}"/>
+                    <if condition="!targetAccess.canView"><return error="true" message="Space not found"/></if>
+                    <if condition="targetAccess.readOnly"><return error="true" message="This space is a read-only mirror: its pages change where it is copied from"/></if>
+                    <if condition="!targetAccess.canUpdate"><return error="true" message="You may not add pages to this space"/></if>
+                    <set field="newPath" from="(parentPath ? parentPath + '/' : '') + pageName"/>
+                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageFile" out-map="targetFileOut"
+                            in-map="{wikiSpaceId:wikiSpaceId, pagePath:newPath, wikiType:(basePageInfo.wikiType || 'md')}"/>
+                    <if condition="ec.message.hasError()"><return/></if>
+                    <!-- the page and its attachments only: the pages under it are copied one by one below -->
+                    <service-call name="org.moqui.impl.WikiServices.copy#WikiPageFiles" out-map="copyOut"
+                            in-map="{sourceLocation:basePageInfo.pageLocation, targetLocation:targetFileOut.pageLocation, withHistory:true, pageOnly:true,
+                                originNote:(versionNote ? String(versionNote).trim() : ('Copied from ' + baseWikiSpaceId + '/' + basePageInfo.pagePath)),
+                                skipNames:(copyAttachments ? [] : ['_attachments'])}"/>
+                    <if condition="ec.message.hasError()"><return/></if>
+                    <set field="versionCount" from="copyOut.versionCount || 0"/>
+                    <script><![CDATA[
+                        for (const failure of Array.from(copyOut.failureList || [])) {
+                            const name = failure.path || targetFileOut.pageReference.fileName
+                            if (!failedFiles.includes(name)) failedFiles.push(name)
+                        }
+                        const parentRows = Array.from(ec.entity.find('moqui.resource.wiki.WikiPage').condition('wikiSpaceId', wikiSpaceId)
+                                .condition('pagePath', parentPath || null).list())
+                        parentWikiPageId = parentRows.length ? parentRows[0].wikiPageId : null
+                    ]]></script>
+                    <service-call name="org.moqui.impl.WikiServices.copy#WikiPageRows" out-map="rowsOut"
+                            in-map="{baseWikiPageId:basePageInfo.wikiPageId, wikiSpaceId:wikiSpaceId, pagePath:newPath, parentWikiPageId:parentWikiPageId,
+                                versionMap:(copyOut.versionMaps?.[''] || {}), publishNew:publishNew, copyAliases:copyAliases, copyCategories:false}"/>
+                    <if condition="ec.message.hasError()"><return/></if>
+                    <service-call name="org.moqui.impl.WikiServices.index#WikiPageLinks" in-map="{wikiPageId:rowsOut.wikiPageId}"/>
+                    <service-call name="org.moqui.impl.WikiServices.resolve#WikiPageLinksTo" in-map="{wikiPageId:rowsOut.wikiPageId}"/>
+                    <set field="historyCopied" from="true"/>
+                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="newPageInfo"
+                            in-map="{wikiSpaceId:wikiSpaceId, wikiPageId:rowsOut.wikiPageId}"/>
+                </then><else>
+                    <!-- the latest text, or with usePublished the published version's (the latest when it cannot be read) -->
+                    <set field="pageText" from="basePageInfo.pageReference.getText()"/>
+                    <if condition="usePublished &amp;&amp; basePageInfo.publishedVersionName &amp;&amp; basePageInfo.pageReference.supportsVersion()">
+                        <set field="publishedText" from="basePageInfo.pageReference.getText(basePageInfo.publishedVersionName)"/>
+                        <if condition="publishedText != null"><then>
+                            <set field="pageText" from="publishedText"/>
+                        </then><else>
+                            <log level="warn" message="Published version ${basePageInfo.publishedVersionName} of ${baseWikiSpaceId}/${basePageInfo.pagePath} not read, copying its latest text"/>
+                        </else></if>
+                    </if>
+                    <service-call name="org.moqui.impl.WikiServices.update#WikiPage" out-map="newPageOut"
+                            in-map="{wikiSpaceId:wikiSpaceId, pageName:pageName,
+                                parentPath:parentPath, wikiType:basePageInfo.wikiType,
+                                pageText:pageText, versionNote:versionNote}"/>
+                    <if condition="ec.message.hasError()"><return/></if>
 
-                <!-- TODO FUTURE this gets the latest text for the page; consider getting published version based on parameter, if there is a published version for this page -->
-                <service-call name="org.moqui.impl.WikiServices.update#WikiPage" out-map="newPageOut"
-                        in-map="{wikiSpaceId:wikiSpaceId, pageName:basePageInfo.pageName,
-                            parentPath:parentPath, wikiType:basePageInfo.wikiType,
-                            pageText:basePageInfo.pageReference.getText()}"/>
-
-                <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="newPageInfo"
-                        in-map="{wikiSpaceId:wikiSpaceId, pagePath:newPageOut.pagePath}"/>
+                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="newPageInfo"
+                            in-map="{wikiSpaceId:wikiSpaceId, pagePath:newPageOut.pagePath}"/>
+                </else></if>
 
                 <!-- <log level="warn" message="newPageOut: ${newPageOut}"/> -->
             </then><else>
@@ -1176,63 +1229,172 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- <log level="warn" message="newPageInfo: ${newPageInfo}"/> -->
             <set field="wikiPageId" from="newPageInfo.wikiPageId"/>
 
-            <if condition="publishNew &amp;&amp; wikiPageId &amp;&amp; newPageInfo?.currentVersionName">
-                <service-call name="update#moqui.resource.wiki.WikiPage"
-                        in-map="{wikiPageId:wikiPageId, publishedVersionName:newPageInfo.currentVersionName}"/>
+            <!-- with copyHistory copy#WikiPageFiles and copy#WikiPageRows did the publish, attachments, users and aliases -->
+            <if condition="!historyCopied">
+                <if condition="publishNew &amp;&amp; wikiPageId &amp;&amp; newPageInfo?.currentVersionName">
+                    <service-call name="update#moqui.resource.wiki.WikiPage"
+                            in-map="{wikiPageId:wikiPageId, publishedVersionName:newPageInfo.currentVersionName}"/>
+                </if>
+
+                <!-- copy attachments: one that is not copied is logged and named in failedFiles -->
+                <if condition="copyAttachments">
+                    <iterate list="basePageInfo.attachmentList" entry="attachmentInfo">
+                        <service-call name="org.moqui.impl.WikiServices.get#WikiPageAttachment" out-map="baseAttachOut"
+                                in-map="{wikiSpaceId:baseWikiSpaceId, pagePath:basePageInfo.pagePath, filename:attachmentInfo.filename}"/>
+                        <service-call name="org.moqui.impl.WikiServices.get#WikiPageAttachment" out-map="attachOut"
+                                in-map="{wikiSpaceId:wikiSpaceId, pagePath:newPageInfo.pagePath, filename:attachmentInfo.filename}"/>
+                        <log message="Copying attachment from ${baseAttachOut?.attachmentReference?.location} to ${attachOut?.attachmentReference?.location}"/>
+                        <script><![CDATA[
+                            try {
+                                if (baseAttachOut.attachmentReference == null || attachOut.attachmentReference == null) throw new Error('no place for the file')
+                                attachOut.attachmentReference.copyFrom(baseAttachOut.attachmentReference)
+                            } catch (e) {
+                                ec.logger.error(`Attachment ${attachmentInfo.filename} of ${baseWikiSpaceId}/${basePageInfo.pagePath} not copied to ${wikiSpaceId}/${newPageInfo.pagePath}: ${e && e.message ? e.message : e}`)
+                                failedFiles.push(attachmentInfo.filename)
+                            }
+                        ]]></script>
+                    </iterate>
+                </if>
+
+                <if condition="basePageInfo.wikiPageId &amp;&amp; wikiPageId">
+                    <!-- copy WikiPageUser records -->
+                    <entity-find entity-name="moqui.resource.wiki.WikiPageUser" list="baseWikiPageUserList">
+                        <econdition field-name="wikiPageId" from="basePageInfo.wikiPageId"/></entity-find>
+                    <iterate list="baseWikiPageUserList" entry="baseWikiPageUser">
+                        <set field="wikiPageUser" from="baseWikiPageUser.cloneValue()"/>
+                        <set field="wikiPageUser.wikiPageId" from="wikiPageId"/>
+                        <entity-create value-field="wikiPageUser"/>
+                    </iterate>
+
+                    <!-- copy WikiPageAlias records, only if alias doesn't exist; off when copyAliases is false -->
+                    <if condition="copyAliases">
+                        <entity-find entity-name="moqui.resource.wiki.WikiPageAlias" list="baseWikiPageAliasList">
+                            <econdition field-name="wikiSpaceId" from="baseWikiSpaceId"/>
+                            <econdition field-name="wikiPageId" from="basePageInfo.wikiPageId"/>
+                        </entity-find>
+                        <iterate list="baseWikiPageAliasList" entry="baseWikiPageAlias">
+                            <entity-find-one entity-name="moqui.resource.wiki.WikiPageAlias" value-field="existingAlias">
+                                <field-map field-name="wikiSpaceId"/>
+                                <field-map field-name="aliasPath" from="baseWikiPageAlias.aliasPath"/>
+                            </entity-find-one>
+                            <if condition="existingAlias == null"><then>
+                                <set field="wikiPageAlias" from="baseWikiPageAlias.cloneValue()"/>
+                                <set field="wikiPageAlias.wikiSpaceId" from="wikiSpaceId"/>
+                                <set field="wikiPageAlias.wikiPageId" from="wikiPageId"/>
+                                <entity-create value-field="wikiPageAlias"/>
+                            </then><else>
+                                <message type="warning">Not copying wiki page alias ${baseWikiPageAlias.aliasPath}, already exists in space ${wikiSpaceId}</message>
+                            </else></if>
+                        </iterate>
+                    </if>
+                </if>
             </if>
 
-            <!-- copy attachments -->
-            <if condition="copyAttachments">
-                <iterate list="basePageInfo.attachmentList" entry="attachmentInfo">
-                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageAttachment" out-map="baseAttachOut"
-                            in-map="{wikiSpaceId:baseWikiSpaceId, pagePath:basePageInfo.pagePath, filename:attachmentInfo.filename}"/>
-                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageAttachment" out-map="attachOut"
-                            in-map="{wikiSpaceId:wikiSpaceId, pagePath:basePageInfo.pagePath, filename:attachmentInfo.filename}"/>
-                    <log message="Copying attachment from ${baseAttachOut?.attachmentReference?.location} to ${attachOut?.attachmentReference?.location}"/>
+            <!-- direct children: the page files under the source page (get#WikiPageChildren), with a WikiPage row or not,
+                 leaving out one the user may not view. Each is copied under the new page, then its own children, so a
+                 parent exists before its child. One that fails is an error. -->
+            <if condition="withChildren">
+                <service-call name="org.moqui.impl.WikiServices.get#WikiPageChildren" out-map="childrenOut"
+                        in-map="{wikiSpaceId:baseWikiSpaceId, pagePath:(basePageInfo.pagePath || null)}"/>
+                <if condition="ec.message.hasError()"><return/></if>
+                <iterate list="childrenOut.childPageInfoList" entry="childInfo">
+                    <if condition="!childInfo.pageName || childInfo.pageName.startsWith('.')"><continue/></if>
+                    <service-call name="org.moqui.impl.WikiServices.get#WikiPageId" out-map="childIdOut" out-map-add-to-existing="false"
+                            in-map="{wikiSpaceId:baseWikiSpaceId, pagePath:childInfo.pagePath}"/>
+                    <if condition="childIdOut.wikiPage != null &amp;&amp; (childIdOut.wikiPage.pagePath || '') == childInfo.pagePath">
+                        <service-call name="org.moqui.impl.WikiServices.get#WikiPageAccess" out-map="childAccess" out-map-add-to-existing="false"
+                                in-map="{wikiPageId:childIdOut.wikiPageId}"/>
+                        <if condition="!childAccess.canView"><continue/></if>
+                    </if>
+                    <set field="childSourcePath" from="childInfo.pagePath"/>
+                    <service-call name="org.moqui.impl.WikiServices.clone#WikiPage" out-map="childCloneOut" out-map-add-to-existing="false"
+                            in-map="{baseWikiSpaceId:baseWikiSpaceId, wikiSpaceId:wikiSpaceId, pagePath:childInfo.pagePath,
+                                parentPath:(newPageInfo.pagePath || null), pageName:childInfo.pageName, withChildren:true,
+                                copyAttachments:copyAttachments, publishNew:publishNew, copyAliases:copyAliases,
+                                copyHistory:copyHistory, usePublished:usePublished}"/>
+                    <if condition="!childCloneOut?.wikiPageId">
+                        <return error="true" message="Page ${childSourcePath} was not copied"/></if>
                     <script><![CDATA[
-                        if (baseAttachOut.attachmentReference != null && attachOut.attachmentReference != null)
-                            attachOut.attachmentReference.copyFrom(baseAttachOut.attachmentReference)
+                        versionCount += childCloneOut.versionCount || 0
+                        for (const name of Array.from(childCloneOut.failedFiles || [])) failedFiles.push(`${childInfo.pageName}/${name}`)
                     ]]></script>
                 </iterate>
             </if>
-
-            <if condition="basePageInfo.wikiPageId &amp;&amp; wikiPageId">
-                <!-- copy WikiPageUser records -->
-                <entity-find entity-name="moqui.resource.wiki.WikiPageUser" list="baseWikiPageUserList">
-                    <econdition field-name="wikiPageId" from="basePageInfo.wikiPageId"/></entity-find>
-                <iterate list="baseWikiPageUserList" entry="baseWikiPageUser">
-                    <set field="wikiPageUser" from="baseWikiPageUser.cloneValue()"/>
-                    <set field="wikiPageUser.wikiPageId" from="wikiPageId"/>
-                    <entity-create value-field="wikiPageUser"/>
-                </iterate>
-
-                <!-- copy WikiPageAlias records, only if alias doesn't exist -->
-                <entity-find entity-name="moqui.resource.wiki.WikiPageAlias" list="baseWikiPageAliasList">
-                    <econdition field-name="wikiSpaceId" from="baseWikiSpaceId"/>
-                    <econdition field-name="wikiPageId" from="basePageInfo.wikiPageId"/>
-                </entity-find>
-                <iterate list="baseWikiPageAliasList" entry="baseWikiPageAlias">
-                    <entity-find-one entity-name="moqui.resource.wiki.WikiPageAlias" value-field="existingAlias">
-                        <field-map field-name="wikiSpaceId"/>
-                        <field-map field-name="aliasPath" from="baseWikiPageAlias.aliasPath"/>
-                    </entity-find-one>
-                    <if condition="existingAlias == null"><then>
-                        <set field="wikiPageAlias" from="baseWikiPageAlias.cloneValue()"/>
-                        <set field="wikiPageAlias.wikiSpaceId" from="wikiSpaceId"/>
-                        <set field="wikiPageAlias.wikiPageId" from="wikiPageId"/>
-                        <entity-create value-field="wikiPageAlias"/>
-                    </then><else>
-                        <message type="warning">Not copying wiki page alias ${baseWikiPageAlias.aliasPath}, already exists in space ${wikiSpaceId}</message>
-                    </else></if>
-                </iterate>
-            </if>
-
-            <!-- TODO FUTURE copy history, optional based on parameter; complex because underlying ResourceReference impl needs to support on its side -->
 
             <!-- set out parameters -->
             <set field="pagePath" from="newPageInfo.pagePath"/>
             <set field="wikiPageId" from="newPageInfo.wikiPageId"/>
         </actions>
+    </service>
+    <service verb="copy" noun="WikiPageRows" allow-remote="false">
+        <description>The rows of a page copied with its history (clone#WikiSpace and clone#WikiPage with copyHistory, after
+            copy#WikiPageFiles): a new WikiPage at pagePath in wikiSpaceId with the base page's order, author and view and
+            update restrictions, and its published version by its new name (versionMap: each old version name to the new);
+            a page the base had not published gets the copy's current version with publishNew. The base page's
+            WikiPageHistory rows follow with their new version names (one not in the map loses its name) and its
+            WikiPageUser rows; with copyCategories its category rows, and with copyAliases its WikiPageAlias rows, each
+            where the space has no alias at that path. A base page that is only a file (no baseWikiPageId) gets a new row
+            by the current user. The links are not indexed here: the caller does that once its pages are all there.</description>
+        <in-parameters>
+            <parameter name="baseWikiPageId"/>
+            <parameter name="wikiSpaceId" required="true"/>
+            <parameter name="pagePath"><description>The copy's path; empty for the root page</description></parameter>
+            <parameter name="rootPageLocation"><description>The space's root page, else read from its WikiSpace</description></parameter>
+            <parameter name="parentWikiPageId"/>
+            <parameter name="versionMap" type="Map"/>
+            <parameter name="publishNew" type="Boolean" default="true"/>
+            <parameter name="copyAliases" type="Boolean" default="true"/>
+            <parameter name="copyCategories" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions><script><![CDATA[
+            const map = versionMap || {}
+            const basePage = baseWikiPageId ? ec.entity.find('moqui.resource.wiki.WikiPage').condition('wikiPageId', baseWikiPageId).one() : null
+            if (baseWikiPageId && basePage == null) { ec.message.addError(`No page ${baseWikiPageId} to copy`); return }
+            // the copied file at the page's exact path, not a page of that name elsewhere
+            const newRef = ec.service.sync().name('org.moqui.impl.WikiServices.get#WikiPageFile')
+                    .parameters({rootPageLocation: rootPageLocation || null, wikiSpaceId: wikiSpaceId, pagePath: pagePath || ''}).call()?.pageReference
+            if (ec.message.hasError()) return
+            const current = newRef?.exists && newRef.supportsVersion() ? (newRef.getCurrentVersion()?.versionName ?? null) : null
+            const published = basePage?.publishedVersionName ? (map[basePage.publishedVersionName] ?? null) : (publishNew ? current : null)
+            // a path that was only an alias of a moved page is the new page's
+            if (pagePath) ec.entity.find('moqui.resource.wiki.WikiPageAlias').condition('wikiSpaceId', wikiSpaceId).condition('aliasPath', pagePath).deleteAll()
+            const page = ec.entity.makeValue('moqui.resource.wiki.WikiPage')
+            page.setFields({wikiSpaceId: wikiSpaceId, pagePath: pagePath || null, parentWikiPageId: parentWikiPageId || null,
+                sequenceNum: basePage?.sequenceNum ?? null, createdByUserId: (basePage ? basePage.createdByUserId : ec.user.userId) || null,
+                publishedVersionName: published, restrictView: basePage?.restrictView || null, restrictUpdate: basePage?.restrictUpdate || null}, true, null, null)
+            page.setSequencedIdPrimary()
+            page.create()
+            wikiPageId = page.wikiPageId
+            if (basePage == null) return
+            for (const row of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageHistory').condition('wikiPageId', basePage.wikiPageId).list())) {
+                const copy = row.cloneValue()
+                copy.wikiPageId = wikiPageId
+                if (copy.versionName) copy.versionName = map[copy.versionName] ?? null
+                copy.create()
+            }
+            const rowEntities = ['moqui.resource.wiki.WikiPageUser'].concat(copyCategories ? ['moqui.resource.wiki.WikiPageCategoryMember'] : [])
+            for (const entityName of rowEntities) {
+                for (const row of Array.from(ec.entity.find(entityName).condition('wikiPageId', basePage.wikiPageId).list())) {
+                    const copy = row.cloneValue()
+                    copy.wikiPageId = wikiPageId
+                    copy.create()
+                }
+            }
+            if (copyAliases) {
+                for (const alias of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageAlias').condition('wikiSpaceId', basePage.wikiSpaceId)
+                        .condition('wikiPageId', basePage.wikiPageId).list())) {
+                    if (ec.entity.find('moqui.resource.wiki.WikiPageAlias').condition('wikiSpaceId', wikiSpaceId).condition('aliasPath', alias.aliasPath).one() != null) {
+                        ec.message.addMessage(`Not copying wiki page alias ${alias.aliasPath}, already exists in space ${wikiSpaceId}`, 'warning')
+                        continue
+                    }
+                    const copy = alias.cloneValue()
+                    copy.wikiSpaceId = wikiSpaceId
+                    copy.wikiPageId = wikiPageId
+                    copy.create()
+                }
+            }
+        ]]></script></actions>
     </service>
     <service verb="delete" noun="WikiPage">
         <description>Delete a page (not a space's root page) with the framework rows of it: its aliases, categories,
@@ -1890,6 +2052,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="withHistory" type="Boolean" default="true"/>
             <parameter name="originNote"><description>Where the copy comes from, as "Moved from SPACE/path"</description></parameter>
             <parameter name="skipNames" type="List"><description>Directory names to leave out, as _attachments</description></parameter>
+            <parameter name="pageOnly" type="Boolean" default="false"><description>Only the page and its _attachments
+                directory, not the pages under it (clone#WikiPage copies those one by one)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="versionMaps" type="Map"/>
@@ -1915,6 +2079,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const entry of dir.getDirectoryEntries()) {
                     const name = entry.fileName
                     if (name === '.gitkeep' || skip.has(name)) continue
+                    if (pageOnly && depth === 0 && name !== '_attachments') continue
                     const rel = base ? `${base}/${name}` : name
                     if (entry.isDirectory()) walk(entry.location, `${target}/${name}`, rel, depth + 1)
                     else files.push({source: entry.location, target: `${target}/${name}`, rel: rel})

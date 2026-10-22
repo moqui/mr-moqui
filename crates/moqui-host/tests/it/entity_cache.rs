@@ -92,7 +92,9 @@ fn first_enter_sim_starts_the_overlay_and_stop_removes_it() {
     enter_sim(&facade).unwrap();
     assert!(overlay.started());
     let sim_dir = overlay.data_dir().unwrap();
-    assert!(sim_dir.starts_with(main_dir.join(format!("sim-{}", std::process::id()))));
+    // The cluster canonicalizes its directory: on macOS /tmp resolves to /private/tmp.
+    let main_real = std::fs::canonicalize(&main_dir).unwrap();
+    assert!(sim_dir.starts_with(main_real.join(format!("sim-{}", std::process::id()))));
     assert!(
         !sim_dir.parent().unwrap().join("install").exists(),
         "the overlay shares the entity install"

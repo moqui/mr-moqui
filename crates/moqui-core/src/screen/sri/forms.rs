@@ -21,7 +21,7 @@ use moqui_lib::object::Value;
 
 use super::sections::guarded;
 use super::{active_def, FormRows, Runner};
-use crate::context::Error;
+use crate::context::{Error, ExecutionContext};
 use crate::screen::definition::ScreenDef;
 use crate::screen::form::{self, FormInstance};
 use crate::screen::generate::{Unit, UnitRequest};
@@ -94,10 +94,42 @@ pub fn user_form_list_finds(state: &RenderState, name: &str) -> Result<Vec<Value
         return Ok(Vec::new());
     };
     let location = crate::screen::saved_finds::form_location(&def.location, form.list, name);
+    let node = form.node.node()?;
     crate::screen::saved_finds::user_form_list_finds(&crate::screen::saved_finds::saved_find_location(
         &location,
         form.dynamic,
+        &node,
     ))
+}
+
+/// `sri.getSavedFindFullLocation(name)`: the location saved finds of this form are kept under.
+/// Empty when the active screen has no form of that name.
+///
+/// # Errors
+///
+/// Returns an error when the form's source XML does not parse.
+pub fn saved_find_full_location(state: &RenderState, name: &str) -> Result<String, Error> {
+    let def = active_def(state);
+    let Some(form) = def.forms.get(name) else {
+        return Ok(String::new());
+    };
+    let location = crate::screen::saved_finds::form_location(&def.location, form.list, name);
+    let node = form.node.node()?;
+    Ok(crate::screen::saved_finds::saved_find_location(
+        &location,
+        form.dynamic,
+        &node,
+    ))
+}
+
+/// `sri.getFormListFindScreenScheduled(formListFindId)`: the newest schedule of a saved find for the user or one of the
+/// user's groups, with its cron description.
+///
+/// # Errors
+///
+/// Returns an error when the records cannot be read.
+pub fn form_list_find_screen_scheduled(find_id: &str) -> Result<Option<Value>, Error> {
+    crate::screen::saved_finds::form_list_find_screen_scheduled(find_id)
 }
 
 /// `sri.getUserDefaultFormListFindId()`: the user's default saved find of the active screen.
@@ -122,7 +154,8 @@ pub fn render_user_columns_form(state: &RenderState, runner: &dyn Runner, name: 
         return Ok(false);
     };
     let location = crate::screen::saved_finds::form_location(&def.location, form_def.list, name);
-    let saved = crate::screen::saved_finds::saved_find_location(&location, form_def.dynamic);
+    let source = form_def.node.node()?;
+    let saved = crate::screen::saved_finds::saved_find_location(&location, form_def.dynamic, &source);
     let Some(columns) = crate::screen::saved_finds::user_columns(&location, &saved)? else {
         return Ok(false);
     };
@@ -246,14 +279,65 @@ fn form_rows(form: &FormInstance) -> Result<Vec<IndexMap<String, Value>>, Error>
         rows.push(row);
     }
     if let Some(aggregation) = &form.aggregation {
-        rows = aggregation.apply(rows, |row, name| {
+        let shown = if aggregation.group_fields.is_empty() {
+            None
+        } else {
+            Some(shown_list_fields(form)?)
+        };
+        rows = aggregation.apply(rows, shown.as_ref(), |row, name| {
             row.get(name)
                 .cloned()
                 .or_else(|| script::context_value(name))
                 .unwrap_or(Value::Null)
         });
     }
+    // After aggregation, so a scheduled screen can abort on the rows that were shown. A bare name does not see this
+    // map; ScreenServices reads `ec.context.sharedMap`.
+    note_form_list_rows(rows.len());
     Ok(rows)
+}
+
+/// The fields of a form-list Java's `getListObject` passes as `includeFields`: the columns of the request's `_uiType`
+/// less those whose `hide` holds, evaluated once in the screen context, and for an `entity-find` list the hidden
+/// fields with a `default-field`. The node already holds the user's column choice (`render_user_columns_form`).
+fn shown_list_fields(form: &FormInstance) -> Result<std::collections::HashSet<String>, Error> {
+    let node = form.node()?;
+    let ui_type = script::context_value("_uiType").map(|value| moqui_lib::object::to_plain_string(&value));
+    let mut shown = std::collections::HashSet::new();
+    for (name, hide) in form::list_column_fields(&node, ui_type.as_deref()) {
+        if let Some(hide) = hide {
+            if script::eval_condition(&hide)? {
+                continue;
+            }
+        }
+        shown.insert(name);
+    }
+    if form.entity_find.is_some() {
+        shown.extend(form::hidden_list_fields_with_default(&node));
+    }
+    Ok(shown)
+}
+
+/// `_formListRendered` and `_formListResultCount` on the shared map, as Java's `getListObject`. Several lists add.
+fn note_form_list_rows(count: usize) {
+    let _ = ExecutionContext::with_current(|ec| {
+        let mut shared = ec.shared_map();
+        let previous = shared.get("_formListResultCount").map(shared_count).unwrap_or(0);
+        shared.insert("_formListRendered".to_string(), Value::Bool(true));
+        let added = i64::try_from(count).unwrap_or(i64::MAX);
+        shared.insert(
+            "_formListResultCount".to_string(),
+            Value::I64(previous.saturating_add(added)),
+        );
+    });
+}
+
+fn shared_count(value: &Value) -> i64 {
+    match value {
+        Value::I64(number) => *number,
+        Value::I32(number) => i64::from(*number),
+        _ => 0,
+    }
 }
 
 /// `sri.formListSubRowCount(info, index)`: the number of sub-list rows of a row of an aggregated form-list.

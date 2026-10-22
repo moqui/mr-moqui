@@ -14,7 +14,9 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="elFinder" default-menu-index="1">
+        default-menu-title="elFinder" default-menu-index="1" render-modes="html,qvt">
+    <!-- browser only: the screen is the elFinder file manager (a jQuery widget), which has no terminal form, so tui is not
+        one of its render-modes and the terminal menu leaves it out -->
 
     <parameter name="resourceRoot"/>
     <always-actions>

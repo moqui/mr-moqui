@@ -301,6 +301,7 @@ impl Runtime {
             self.0.join("framework"),
             BootOptions {
                 executor: Executor::Inline,
+                ..BootOptions::default()
             },
         )
     }
@@ -719,6 +720,7 @@ fn shutdown_waits_for_workers_before_closing_tools() {
         runtime.0.join("framework"),
         BootOptions {
             executor: Executor::Threads,
+            ..BootOptions::default()
         },
     )
     .unwrap();

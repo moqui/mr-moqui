@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hidden parameters, pass-through, and all-checked. The template reads the scope. The values stay in the package. -->
+<screen require-authentication="false" server-static="qvt">
+    <parameter name="partyId"/>
+    <parameter name="password"/>
+    <actions>
+        <set field="statusId" value="Active"/>
+    </actions>
+    <transition name="save"><default-response type="none"/></transition>
+    <transition name="go"><default-response url="."/></transition>
+    <widgets>
+        <form-single name="EditForm" transition="save" pass-through-parameters="true">
+            <hidden-parameters>
+                <parameter name="partyId"/>
+                <parameter name="fromStatus" from="statusId"/>
+            </hidden-parameters>
+            <field name="name"><default-field><text-line/></default-field></field>
+            <field name="flags">
+                <default-field>
+                    <check all-checked="true">
+                        <option key="A"/>
+                        <option key="B"/>
+                    </check>
+                </default-field>
+            </field>
+            <field name="go"><default-field><submit text="Save"/></default-field></field>
+        </form-single>
+        <form-list name="RowList" list="rowList" transition="save" multi="true">
+            <hidden-parameters>
+                <parameter name="partyId"/>
+            </hidden-parameters>
+            <field name="rowId"><default-field><text-line/></default-field></field>
+        </form-list>
+        <form-list name="SingleRows" list="rowList" transition="save">
+            <hidden-parameters>
+                <parameter name="partyId"/>
+            </hidden-parameters>
+            <field name="rowId">
+                <header-field><text-find/></header-field>
+                <default-field><text-line/></default-field>
+            </field>
+        </form-list>
+        <link url="go" text="Open" pass-through-parameters="true"/>
+        <link url="go" text="Plain"/>
+    </widgets>
+</screen>

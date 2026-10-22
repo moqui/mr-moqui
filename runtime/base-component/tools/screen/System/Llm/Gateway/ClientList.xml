@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The API clients: who each calls as, its credential's kind (never the credential), its scopes, aliases and limits,
+    and its last use; a new client from an app password or a login key of its user (store#LlmApiClient). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Clients" default-menu-index="1">
+
+    <transition name="clientDetail"><default-response url="../ClientDetail"/></transition>
+    <transition name="createClient"><service-call name="org.moqui.agent.AgentAdminServices.store#LlmApiClient"/>
+        <default-response url="../ClientDetail" parameter-map="{clientId:clientId}"/>
+        <error-response url="."/></transition>
+
+    <widgets>
+        <container-dialog id="CreateClientDialog" button-text="New Client">
+            <form-single name="CreateClient" transition="createClient">
+                <field name="clientId"><default-field title="Client ID" tooltip="Empty for a generated id"><text-line size="20"/></default-field></field>
+                <field name="userId"><default-field title="User ID" tooltip="The user the client calls as"><text-line size="20"/></default-field></field>
+                <field name="description"><default-field><text-line size="40"/></default-field></field>
+                <field name="appPasswordId"><default-field title="App Password ID" tooltip="One of the user's app passwords (My Account)"><text-line size="20"/></default-field></field>
+                <field name="loginKey"><default-field title="Login Key" tooltip="Or one of the user's login keys; it is kept only as its hash"><password size="40"/></default-field></field>
+                <field name="scopes" from="'gateway'"><default-field tooltip="a2a, mcp, gateway (comma separated)"><text-line size="30"/></default-field></field>
+                <field name="allowedAliases"><default-field title="Allowed Aliases" tooltip="Comma separated; empty for all the user may use"><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+        <form-list name="ClientList" list="clientList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.llm.LlmApiClient" list="clientList">
+                <search-form-inputs default-order-by="clientId"/></entity-find>
+            <field name="clientId"><header-field title="Client" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="clientDetail" text="${clientId}" link-type="anchor"/></default-field></field>
+            <field name="description"><default-field><display/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="8" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username ?? userId}"/></default-field></field>
+            <field name="credential"><header-field title="Credential"/><default-field>
+                <display text="${appPasswordId ? 'app password ' + appPasswordId : (loginKey ? 'login key' : 'none')}"/></default-field></field>
+            <field name="scopes"><header-field title="Scopes"><text-find size="8" hide-options="true"/></header-field><default-field><display/></default-field></field>
+            <field name="allowedAliases"><header-field title="Aliases"/><default-field><display/></default-field></field>
+            <field name="dailyTokens"><header-field title="Tokens a Day"/><default-field><display/></default-field></field>
+            <field name="dailyCost"><header-field title="Cost a Day"/><default-field><display/></default-field></field>
+            <field name="requestsPerMinute"><header-field title="Per Minute"/><default-field><display/></default-field></field>
+            <field name="lastUsedDate"><header-field title="Last Used" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="disabled"><header-field title="Disabled"/><default-field><display/></default-field></field>
+            <field name="loginKey"><default-field><ignored/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

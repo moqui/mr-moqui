@@ -67,7 +67,7 @@ struct Material {
 }
 
 /// `cluster_bind_address`, else every interface: a member on another host must reach this one.
-fn bind_address() -> Result<IpAddr, HostError> {
+pub(crate) fn bind_address() -> Result<IpAddr, HostError> {
     let raw = moqui_lib::env::get_prop_or_env("cluster_bind_address");
     if raw.trim().is_empty() {
         return Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
@@ -374,7 +374,13 @@ pub(crate) fn apply_topic_patiently(
 
 /// Check and count one topic message. The error is the HTTP status: 404 an unknown topic, 400 a bad body.
 fn accept_topic(posts: &Mutex<Vec<String>>, topic: &str, body: &[u8]) -> Result<TopicMessage, u16> {
-    if topic != moqui_core::notify::ENTITY_CACHE_INVALIDATE && topic != moqui_core::notify::NOTIFICATION_MESSAGE {
+    if ![
+        moqui_core::notify::ENTITY_CACHE_INVALIDATE,
+        moqui_core::notify::NOTIFICATION_MESSAGE,
+        moqui_core::notify::COLLAB_UPDATE,
+    ]
+    .contains(&topic)
+    {
         return Err(404);
     }
     let message = topic_message(body).map_err(|err| {
@@ -395,7 +401,13 @@ fn cluster_topic<'a>(method: &str, path: &'a str) -> Option<&'a str> {
         return None;
     }
     let topic = path.strip_prefix("/cluster/")?;
-    if topic == moqui_core::notify::ENTITY_CACHE_INVALIDATE || topic == moqui_core::notify::NOTIFICATION_MESSAGE {
+    if [
+        moqui_core::notify::ENTITY_CACHE_INVALIDATE,
+        moqui_core::notify::NOTIFICATION_MESSAGE,
+        moqui_core::notify::COLLAB_UPDATE,
+    ]
+    .contains(&topic)
+    {
         Some(topic)
     } else {
         None

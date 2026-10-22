@@ -205,7 +205,9 @@ fn postgres_driver(conf: &DatasourceConf) -> Result<super::postgres::PostgresDri
         &conf.database,
         &conf.host,
         conf.port.unwrap_or(POSTGRES_PORT),
-        conf.tls,
+        conf.tls
+            .then(|| super::pg_tls::TlsOptions::new(conf.tls_verify, &conf.tls_root_cert))
+            .as_ref(),
     )?;
     // Java puts the datasource's `schema-name` in front of each table name. Here the session's search path names
     // it first, with `public` after it for the extensions there.
@@ -235,11 +237,11 @@ fn search_path(schema: &str) -> Result<Option<String>, Error> {
 
 /// A driver for a Postgres server this process did not start: the entity datasource, a search
 /// `postgres` url, and its read replica. As in libpq, a host that is an absolute path is the
-/// server's Unix socket directory. Otherwise TCP, with TLS unless `tls` is false.
+/// server's Unix socket directory. Otherwise TCP, with TLS as `tls` says, or none.
 ///
 /// # Errors
 ///
-/// Returns an error when the TLS configuration cannot be built.
+/// Returns an error when the root certificate file cannot be read or the TLS configuration cannot be built.
 #[cfg(feature = "postgres")]
 pub fn postgres_server_driver(
     user: &str,
@@ -247,7 +249,7 @@ pub fn postgres_server_driver(
     database: &str,
     host: &str,
     port: u16,
-    tls: bool,
+    tls: Option<&super::pg_tls::TlsOptions>,
 ) -> Result<super::postgres::PostgresDriver, Error> {
     use super::postgres::PostgresDriver;
 
@@ -264,8 +266,8 @@ pub fn postgres_server_driver(
         {
             unreachable!("a socket host is unix only")
         }
-    } else if tls {
-        PostgresDriver::external(user, database, host, port)?
+    } else if let Some(tls) = tls {
+        PostgresDriver::external_with(user, database, host, port, tls)?
     } else {
         PostgresDriver::tcp_no_tls(user, database, host, port)
     };

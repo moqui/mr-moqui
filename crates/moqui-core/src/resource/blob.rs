@@ -13,7 +13,7 @@
  */
 
 //! Large content in the database: a `moqui.resource.ContentBlob` per content, by its SHA-256 (so the same bytes are
-//! stored once), its bytes `ContentBlobChunk` rows of `blob_chunk_size` (1 MiB). Git LFS objects, the large objects
+//! stored once), its bytes `ContentBlobChunk` rows of `resource-facade` `blob-chunk-size` (1 MiB). Git LFS objects, the large objects
 //! of `db` git repositories and the binary files of `dbresource://` are blobs; a row refers to one by its `blobId`.
 //! No Java counterpart. Guide: `docs/Git-Hosting.md`, Storage.
 //!
@@ -121,8 +121,7 @@ fn guard() -> Option<crate::context::AuthzGuard> {
 
 impl BlobStore {
     pub fn new(entity: EntityFacade) -> Self {
-        let chunk_size = moqui_lib::env::get_prop_or_env("blob_chunk_size")
-            .trim()
+        let chunk_size = super::setting("blob-chunk-size")
             .parse::<usize>()
             .ok()
             .filter(|size| *size >= 4096)

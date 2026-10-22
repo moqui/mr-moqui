@@ -217,3 +217,139 @@ mod tests {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
     }
 }
+
+/// The second-factor services of the login screens and the REST login (`framework/service/.../UserServices.xml`).
+pub(crate) const FACTOR_INFO: &str = "org.moqui.impl.UserServices.get#ExternalUserAuthcFactorInfo";
+pub(crate) const VALIDATE_CODE: &str = "org.moqui.impl.UserServices.validate#ExternalUserAuthcCode";
+pub(crate) const SEND_CODE: &str = "org.moqui.impl.UserServices.send#ExternalAuthcCode";
+pub(crate) const CODE_NOT_VALID: &str = "Authentication code is not valid";
+
+/// What a login with a password and maybe a code came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodeLogin {
+    LoggedIn,
+    /// The password was right and the account needs a code: `text` says which factors take one (or that the code given
+    /// was not valid), and `sendable` are the factors a code can be sent to.
+    CodeNeeded {
+        text: String,
+        sendable: Vec<SendableFactor>,
+    },
+}
+
+/// A factor that gets a code sent (email, SMS): its `factorId` and the masked address or number to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendableFactor {
+    pub factor_id: String,
+    pub label: String,
+}
+
+/// A login outside an HTTP request that takes a second factor's code as `/rest/login` does: [`super::login_user`],
+/// then, when the account needs a factor, `validate#ExternalUserAuthcCode` on `code` and [`super::internal_login_user`]
+/// on the user it verified. With no code, or one that is not valid, the answer names the factors and logs no one in.
+///
+/// # Errors
+///
+/// Returns the login errors (a wrong password, a locked account) and the service errors.
+pub fn login_with_code(username: &str, password: &str, code: &str) -> Result<CodeLogin, Error> {
+    super::login_user(username, password)?;
+    if !super::session::session_attribute_flag(super::AUTHC_FACTOR_REQUIRED) {
+        return match super::current_user_id()? {
+            Some(id) if !id.is_empty() => Ok(CodeLogin::LoggedIn),
+            _ => Err(Error::new("Login failed")),
+        };
+    }
+    let mut wrong = false;
+    if !code.is_empty() {
+        let validated = factor_service(VALIDATE_CODE, &[("code", code)])?;
+        if validated.get("verified").is_some_and(truthy) {
+            let verified = validated
+                .get("username")
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default();
+            super::internal_login_user(&verified)?;
+            return Ok(CodeLogin::LoggedIn);
+        }
+        wrong = true;
+    }
+    let info = factor_service(FACTOR_INFO, &[])?;
+    let kinds: Vec<String> = list_of(info.get("factorTypeDescriptions"))
+        .iter()
+        .map(moqui_lib::object::to_plain_string)
+        .filter(|text| !text.is_empty())
+        .collect();
+    let sendable = list_of(info.get("sendableFactors"))
+        .iter()
+        .filter_map(|factor| {
+            let Value::Map(map) = factor else {
+                return None;
+            };
+            let text = |name: &str| {
+                map.get(name)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            };
+            let factor_id = text("factorId");
+            let option = text("factorOption");
+            (!factor_id.is_empty()).then(|| SendableFactor {
+                label: if option.is_empty() { factor_id.clone() } else { option },
+                factor_id,
+            })
+        })
+        .collect();
+    let text = if wrong {
+        crate::l10n::localize(CODE_NOT_VALID).unwrap_or_else(|_| CODE_NOT_VALID.to_string())
+    } else if kinds.is_empty() {
+        "Enter the authentication code".to_string()
+    } else {
+        format!("Enter the authentication code ({})", kinds.join(", "))
+    };
+    Ok(CodeLogin::CodeNeeded { text, sendable })
+}
+
+/// Send a code to `factor_id` for a login the password starts here, as `/rest/login` then `sendOtp` do in one
+/// session.
+///
+/// # Errors
+///
+/// Returns the login errors, an error when the account needs no code, and the service's errors.
+pub fn send_login_code(username: &str, password: &str, factor_id: &str) -> Result<(), Error> {
+    super::login_user(username, password)?;
+    if !super::session::session_attribute_flag(super::AUTHC_FACTOR_REQUIRED) {
+        return Err(Error::new("This account needs no authentication code"));
+    }
+    factor_service(SEND_CODE, &[("factorId", factor_id)]).map(|_| ())
+}
+
+/// A factor service's out-parameters; the errors it left are the error, and are cleared.
+fn factor_service(name: &str, pairs: &[(&str, &str)]) -> Result<std::collections::BTreeMap<String, Value>, Error> {
+    let parameters = pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+        .collect();
+    let result = crate::service::sync(name, &parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors_text();
+        ec.message().clear_errors();
+        text
+    })
+    .unwrap_or_default();
+    if !errors.is_empty() {
+        return Err(Error::new(errors.join("\n")));
+    }
+    result
+}
+
+fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Bool(flag) => *flag,
+        Value::String(text) => text == "true",
+        _ => false,
+    }
+}
+
+fn list_of(value: Option<&Value>) -> &[Value] {
+    match value {
+        Some(Value::List(items)) => items,
+        _ => &[],
+    }
+}

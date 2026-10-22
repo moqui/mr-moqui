@@ -114,15 +114,45 @@ pub fn attach_search(
             }
             backend = backend.with_semantic(&conf.semantic)?;
             let facade = SearchFacade::new(Arc::new(backend), entity.clone());
-            if conf.semantic.enabled && conf.semantic.embedder.as_deref() == Some("hash") {
-                facade.set_embedder(Some(Arc::new(moqui_core::search::semantic::HashEmbedder::new(
-                    conf.semantic.dimensions,
-                ))));
+            if conf.semantic.enabled {
+                facade.set_embedder(embedder_of(factory, &conf.semantic));
             }
             moqui_core::search::install(factory, facade);
             Ok(store)
         }
     }
+}
+
+/// The embedder `semantic embedder` names: `hash` (development only), or `llm` / `llm:<modelId>`, the LLM embedder
+/// over the model the `llm-facade` binds to `embed` (or names), which calls that model's `/v1/embeddings`. Another
+/// name, or `llm` in a build without the `llm` feature, is logged and installs none.
+fn embedder_of(
+    factory: &ExecutionContextFactory,
+    semantic: &moqui_core::search::semantic::SemanticConf,
+) -> Option<moqui_core::search::semantic::SharedEmbedder> {
+    let name = semantic.embedder.as_deref()?;
+    if name == "hash" {
+        return Some(Arc::new(moqui_core::search::semantic::HashEmbedder::new(semantic.dimensions)));
+    }
+    #[cfg(feature = "llm")]
+    if let Some(with) = moqui_core::llm::embed::EmbedWith::parse(name) {
+        let embedder = moqui_core::llm::embed::LlmEmbedder::for_factory(factory, with, Some(semantic.dimensions));
+        if embedder.is_none() {
+            tracing::error!("search-facade semantic embedder {name}: the llm-facade is off, so no embedder is installed");
+        }
+        return embedder.map(|embedder| Arc::new(embedder) as moqui_core::search::semantic::SharedEmbedder);
+    }
+    #[cfg(not(feature = "llm"))]
+    let _ = factory;
+    tracing::error!("search-facade semantic embedder {name} is not hash, llm or llm:<modelId> (in a build with the llm feature); no embedder is installed");
+    None
+}
+
+/// The TLS of a search url: none for `sslmode=disable`, else what its `sslmode` and `sslrootcert` say.
+#[cfg(feature = "postgres")]
+fn url_tls(url: &moqui_core::search::conf::PostgresUrl) -> Option<crate::db::pg_tls::TlsOptions> {
+    url.tls
+        .then(|| crate::db::pg_tls::TlsOptions::new(url.tls_verify, &url.tls_root_cert))
 }
 
 #[cfg(feature = "postgres")]
@@ -134,7 +164,7 @@ fn external_tx(url: &str, user: Option<&str>, password: Option<&str>) -> Result<
         &url.database,
         &url.host,
         url.port,
-        url.tls,
+        url_tls(&url).as_ref(),
     )?;
     TransactionManager::new(Arc::new(driver), search_pool())
 }
@@ -152,7 +182,7 @@ fn read_tx(url: &str, conf: &moqui_core::search::conf::PostgresConf) -> Result<T
         &parsed.database,
         &parsed.host,
         parsed.port,
-        parsed.tls,
+        url_tls(&parsed).as_ref(),
     )?
     .options(format!(
         "-c default_transaction_read_only=on -c statement_timeout={timeout_ms}"
@@ -210,9 +240,9 @@ fn attach_opensearch(
     let mut store = SearchStore::default();
     if !backend.reachable() {
         let dir = factory.runtime_dir().join("opensearch");
-        if run_local_opensearch(&dir, &cluster.url) {
+        if run_local_opensearch(factory, &dir, &cluster.url) {
             store.opensearch = Some(OpenSearchProcess::start(&dir)?);
-            wait_for(&backend, &dir)?;
+            wait_for(factory, &backend, &dir)?;
         }
     }
     moqui_core::search::install(factory, SearchFacade::new(Arc::new(backend), entity.clone()));
@@ -298,11 +328,14 @@ fn signal(args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
     Command::new("kill").args(args).stderr(Stdio::null()).status()
 }
 
-/// Start the install in `dir` when: `opensearch_run` is not false, `dir/bin` exists, there is no
-/// `dir/pid` (a node started with `-p pid` is managed outside this process, as Java leaves it), and
+/// Start the install in `dir` when: the `search-facade` `cluster` `run` (`opensearch_run`) is not false, `dir/bin`
+/// exists, there is no `dir/pid` (a node started with `-p pid` is managed outside this process, as Java leaves it), and
 /// the cluster url is this host.
-fn run_local_opensearch(dir: &Path, url: &str) -> bool {
-    let run = moqui_lib::env::get_prop_or_env("opensearch_run");
+fn run_local_opensearch(factory: &ExecutionContextFactory, dir: &Path, url: &str) -> bool {
+    let mut run = factory.conf_setting("search-facade/cluster", "run");
+    if run.is_empty() {
+        run = moqui_lib::env::get_prop_or_env("opensearch_run");
+    }
     if run.trim().eq_ignore_ascii_case("false") {
         return false;
     }
@@ -365,12 +398,13 @@ fn switchable_owner(_dir: &Path) -> Option<String> {
     None
 }
 
-/// Wait for the started node to answer, up to `opensearch_start_wait` seconds (default 120).
-fn wait_for(backend: &moqui_core::search::opensearch::OpenSearchBackend, dir: &Path) -> Result<(), Error> {
-    let seconds = moqui_lib::env::get_prop_or_env("opensearch_start_wait")
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(120);
+/// Wait for the started node to answer, up to the `search-facade` `cluster` `start-wait` seconds (default 120).
+fn wait_for(
+    factory: &ExecutionContextFactory,
+    backend: &moqui_core::search::opensearch::OpenSearchBackend,
+    dir: &Path,
+) -> Result<(), Error> {
+    let seconds = factory.conf_number("search-facade/cluster", "start-wait", 120u64);
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
         if backend.reachable() {

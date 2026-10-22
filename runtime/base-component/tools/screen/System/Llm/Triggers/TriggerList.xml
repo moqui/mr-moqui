@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Every agent trigger: its kind, agent, run-as user, window and limits, its breaker and its last run. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Triggers" default-menu-index="1">
+
+    <transition name="triggerDetail"><default-response url="../TriggerDetail"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+    <transition name="createTrigger"><service-call name="org.moqui.agent.AgentTriggerServices.store#AgentTrigger"/>
+        <default-response url="../TriggerDetail" parameter-map="{triggerId:triggerId}"/></transition>
+
+    <actions>
+        <entity-find entity-name="moqui.agent.AgentDefinition" list="agentList"><order-by field-name="agentName"/></entity-find>
+    </actions>
+    <widgets>
+        <container-dialog id="CreateTriggerDialog" button-text="New Trigger">
+            <form-single name="CreateTrigger" transition="createTrigger">
+                <field name="triggerId"><default-field title="Trigger ID"><text-line size="20"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><drop-down><list-options list="agentList" key="${agentId}"
+                        text="${agentName ?? agentId}"/></drop-down></default-field></field>
+                <field name="triggerTypeEnumId"><default-field title="Kind"><drop-down><entity-options key="${enumId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentTriggerType"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                <field name="description"><default-field><text-line size="40"/></default-field></field>
+                <field name="paused" from="'Y'"><default-field title="Paused" tooltip="A new trigger starts paused"><drop-down>
+                    <option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+        <form-list name="TriggerList" list="triggerList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.agent.AgentTrigger" list="triggerList">
+                <search-form-inputs default-order-by="triggerId"/></entity-find>
+            <field name="triggerId"><header-field title="Trigger" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="triggerDetail" text="${triggerId}" link-type="anchor"/></default-field></field>
+            <field name="description"><default-field><display/></default-field></field>
+            <field name="agentId"><header-field title="Agent"><text-find size="8" hide-options="true"/></header-field><default-field><display/></default-field></field>
+            <field name="triggerTypeEnumId"><header-field title="Kind"/><default-field>
+                <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="cronExpression"><header-field title="Schedule"/><default-field><display/></default-field></field>
+            <field name="dataDocumentId"><header-field title="Document"/><default-field><display/></default-field></field>
+            <field name="runAsUserId"><header-field title="Runs As"/><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username ?? userId}"/></default-field></field>
+            <field name="paused"><header-field title="Paused"/><default-field><display/></default-field></field>
+            <field name="breakerState"><header-field title="Breaker"/><default-field><display/></default-field></field>
+            <field name="failureCount"><header-field title="Failures"/><default-field><display/></default-field></field>
+            <field name="lastRunId"><header-field title="Last Run"/><default-field>
+                <link url="runDetail" text="${lastRunId}" parameter-map="{runId:lastRunId}" link-type="anchor" condition="lastRunId"/></default-field></field>
+            <field name="lastRunDate"><header-field title="Last Run Date"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

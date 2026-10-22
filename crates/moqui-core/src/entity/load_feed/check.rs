@@ -30,6 +30,7 @@ use moqui_lib::object::{basic_convert, compare_obj, to_plain_string, Value};
 
 use super::loader::{convert_fields, inherit_pk_fields, load_entity_data, load_entity_xml_text, Record};
 use super::{DataFileService, LoadOptions};
+use crate::entity::FieldMap;
 use crate::entity::facade::EntityFacade;
 use crate::entity::EntityValue;
 
@@ -244,7 +245,7 @@ pub(super) fn skip_service(service: &DataFileService) {
 fn list_tree(
     facade: &EntityFacade,
     record: &Record,
-    ancestor: &BTreeMap<String, Value>,
+    ancestor: &FieldMap,
     values: &mut Vec<EntityValue>,
 ) -> Result<u64, Error> {
     let mut fields = record.fields.clone();
@@ -259,7 +260,7 @@ fn list_tree(
     })?;
     let pk: Vec<(String, Value)> = pk_names
         .iter()
-        .map(|name| (name.clone(), fields.get(name).cloned().unwrap_or(Value::Null)))
+        .map(|name| (name.clone(), fields.get(name.as_str()).cloned().unwrap_or(Value::Null)))
         .collect();
     let mut value = facade.make_value(&record.entity)?;
     for (name, field) in fields {
@@ -275,8 +276,12 @@ fn list_tree(
 }
 
 /// The keys a record passes to its nested records: its own primary key, then those of the records it is in.
-fn shared_keys(pk: Vec<(String, Value)>, ancestor: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
-    let mut shared: BTreeMap<String, Value> = pk.into_iter().filter(|(_, value)| !value.is_null()).collect();
+fn shared_keys(pk: Vec<(String, Value)>, ancestor: &FieldMap) -> FieldMap {
+    let mut shared: FieldMap = pk
+        .into_iter()
+        .filter(|(_, value)| !value.is_null())
+        .map(|(name, value)| (std::sync::Arc::from(name), value))
+        .collect();
     for (name, value) in ancestor {
         if !value.is_null() {
             shared.entry(name.clone()).or_insert_with(|| value.clone());
@@ -317,7 +322,7 @@ impl Findings {
 fn check_tree(
     facade: &EntityFacade,
     record: &Record,
-    ancestor: &BTreeMap<String, Value>,
+    ancestor: &FieldMap,
     found: &mut Findings,
 ) -> Result<u64, Error> {
     let mut fields = record.fields.clone();
@@ -335,7 +340,7 @@ fn check_tree(
     })?;
     let pk: Vec<(String, Value)> = pk_names
         .iter()
-        .map(|name| (name.clone(), fields.get(name).cloned().unwrap_or(Value::Null)))
+        .map(|name| (name.clone(), fields.get(name.as_str()).cloned().unwrap_or(Value::Null)))
         .collect();
     let pk_text = pk_display(&pk);
     let db = if pk.iter().any(|(_, value)| value.is_null()) {
@@ -355,7 +360,7 @@ fn check_tree(
                 Value::Map(
                     fields
                         .iter()
-                        .map(|(name, value)| (name.clone(), value.clone()))
+                        .map(|(name, value)| (name.to_string(), value.clone()))
                         .collect(),
                 ),
             );
@@ -368,7 +373,7 @@ fn check_tree(
         Some(db) => {
             for name in &non_pk_names {
                 found.fields_checked = found.fields_checked.saturating_add(1);
-                let Some(check) = fields.get(name).filter(|value| !value.is_null()) else {
+                let Some(check) = fields.get(name.as_str()).filter(|value| !value.is_null()) else {
                     continue;
                 };
                 let stored = db.get(name).cloned().unwrap_or(Value::Null);

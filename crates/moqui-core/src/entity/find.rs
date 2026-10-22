@@ -17,8 +17,8 @@
 use std::sync::Arc;
 
 use moqui_db::sql::{
-    count_view, count_with, select_view_with, select_with, Condition, ConditionValues, FieldRef, LimitOffset, OrderBy,
-    SelectOptions,
+    count_view, count_with, select_view_with, select_with, select_with_head, Condition, ConditionValues, FieldRef,
+    LimitOffset, OrderBy, SelectOptions,
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
@@ -282,9 +282,9 @@ impl EntityFind {
         let condition = self.combined();
         let lookup = self.lookup(&condition);
         if let Some(schema) = self.sim_view_schema(false)? {
-            let plan = self.plan(false)?;
+            let plan = self.plan(false, condition)?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
-            let values = self.rows_to_values(&plan, &rows)?;
+            let values = self.rows_to_values(&plan, rows)?;
             return Ok(self.attach_l10n(EntityList::new(values)));
         }
         let bypass = self.bypasses_cache();
@@ -298,10 +298,10 @@ impl EntityFind {
             return Ok(EntityList::new(Vec::new()));
         }
         self.require_transaction_for_lock()?;
-        let plan = self.plan(false)?;
+        let plan = self.plan(false, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         after_statement(&self.facade, &plan.tx, false);
-        let values = self.rows_to_values(&plan, &rows)?;
+        let values = self.rows_to_values(&plan, rows)?;
         let list = EntityList::new(values);
         if !bypass {
             // The rows were read; a cache that cannot hold them only costs the next read.
@@ -381,58 +381,57 @@ impl EntityFind {
         if list.len() > 1 {
             tracing::trace!(entity = %entity_name, rows = list.len(), "found more than one result for find one");
         }
-        Ok(list.values().first().cloned())
+        Ok(list.into_values().into_iter().next())
     }
 
     /// A primary key field compared to null or an empty value, as Java's `hasEmptyPk`.
     fn has_empty_pk(&self) -> bool {
-        let Ok(pk_names) = self.facade.with_entity(&self.entity_name, |entity, _, _| {
-            Ok(entity
-                .pk_field_names()
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect::<Vec<_>>())
-        }) else {
-            return false;
-        };
-        self.conditions.iter().any(|condition| match condition {
-            Condition::Equals(field, value) => {
-                field.entity_alias.is_none() && pk_names.contains(&field.name) && moqui_lib::object::is_empty(value)
-            }
-            Condition::IsNull(field) => field.entity_alias.is_none() && pk_names.contains(&field.name),
-            _ => false,
-        })
+        self.facade
+            .with_entity(&self.entity_name, |entity, _, _| {
+                let is_pk = |name: &str| pk_names(entity).any(|pk| pk == name);
+                Ok(self.conditions.iter().any(|condition| match condition {
+                    Condition::Equals(field, value) => {
+                        field.entity_alias.is_none() && is_pk(&field.name) && moqui_lib::object::is_empty(value)
+                    }
+                    Condition::IsNull(field) => field.entity_alias.is_none() && is_pk(&field.name),
+                    _ => false,
+                }))
+            })
+            .unwrap_or(false)
     }
 
     /// Java `oneInternal`: a find one whose field equalities hold the full primary key, with more besides (a
     /// `condition(context)` puts every field of the context in, nulls as `IS NULL`), finds by the primary key alone.
     /// Other kinds of condition stay.
     fn narrow_to_full_pk(&mut self) {
-        let pk_names: Vec<String> = match self.facade.with_entity(&self.entity_name, |entity, _, _| {
-            Ok(entity.pk_field_names().iter().map(|name| (*name).to_string()).collect())
-        }) {
-            Ok(names) => names,
-            Err(_) => return,
-        };
         let equals_on = |condition: &Condition, name: &str| match condition {
             Condition::Equals(field, value) => {
                 field.entity_alias.is_none() && field.name == name && !moqui_lib::object::is_empty(value)
             }
             _ => false,
         };
-        let has_full_pk = !pk_names.is_empty()
-            && pk_names
-                .iter()
-                .all(|name| self.conditions.iter().any(|condition| equals_on(condition, name)));
         // A null in the map is an `IS NULL` here; Java keeps it in the same simple map as the equalities.
         let equalities = self
             .conditions
             .iter()
             .filter(|condition| matches!(condition, Condition::Equals(..) | Condition::IsNull(..)))
             .count();
-        if !has_full_pk || equalities <= pk_names.len() {
+        // Most finds have no more equalities than key fields, and leave here without copying the key names.
+        let narrows = self.facade.with_entity(&self.entity_name, |entity, _, _| {
+            let count = pk_names(entity).count();
+            let has_full_pk = count > 0
+                && pk_names(entity).all(|name| self.conditions.iter().any(|condition| equals_on(condition, name)));
+            Ok(has_full_pk && equalities > count)
+        });
+        if !narrows.unwrap_or(false) {
             return;
         }
+        let pk_names: Vec<String> = match self.facade.with_entity(&self.entity_name, |entity, _, _| {
+            Ok(pk_names(entity).map(str::to_string).collect())
+        }) {
+            Ok(names) => names,
+            Err(_) => return,
+        };
         let mut kept: Vec<Condition> = Vec::new();
         for condition in std::mem::take(&mut self.conditions) {
             if let Condition::IsNull(field) = &condition {
@@ -463,7 +462,7 @@ impl EntityFind {
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", "count")?;
         cache::sim_check_find(&self.facade, &self.entity_name)?;
         if let Some(schema) = self.sim_view_schema(true)? {
-            let plan = self.plan(true)?;
+            let plan = self.plan(true, self.combined())?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
             return count_of(&rows);
         }
@@ -476,7 +475,7 @@ impl EntityFind {
         if !self.facade.table_ready(&self.entity_name) {
             return Ok(0);
         }
-        let plan = self.plan(true)?;
+        let plan = self.plan(true, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         after_statement(&self.facade, &plan.tx, false);
         let count = count_of(&rows)?;
@@ -552,7 +551,7 @@ impl EntityFind {
             ));
         }
         self.require_transaction_for_lock()?;
-        let plan = self.plan(false)?;
+        let plan = self.plan(false, condition)?;
         plan.tx
             .with_connection(|conn| conn.open_stream(&plan.sql, &plan.params))?;
         after_statement(&self.facade, &plan.tx, false);
@@ -577,13 +576,23 @@ impl EntityFind {
 
     fn lookup(&self, condition: &Option<Condition>) -> FindLookup {
         FindLookup {
-            filtered: *condition != self.unfiltered(),
+            filtered: !self.is_unfiltered(condition.as_ref()),
             entity_name: self.entity_name.clone(),
             use_cache: self.use_cache,
             condition: condition.clone(),
             order: self.order.clone(),
             limit: self.limit,
             offset: self.offset,
+        }
+    }
+
+    /// Whether `condition` is [`Self::unfiltered`], compared without making that.
+    fn is_unfiltered(&self, condition: Option<&Condition>) -> bool {
+        match (self.conditions.as_slice(), condition) {
+            ([], None) => true,
+            ([only], Some(condition)) => only == condition,
+            (all, Some(Condition::And(list))) if all.len() > 1 => all == list.as_slice(),
+            _ => false,
         }
     }
 
@@ -604,8 +613,8 @@ impl EntityFind {
         crate::user::apply_entity_filters(&self.entity_name, condition)
     }
 
-    fn plan(&self, count_only: bool) -> Result<ReadPlan, Error> {
-        let condition = self.combined();
+    /// `condition` is [`Self::combined`], which the caller has made already.
+    fn plan(&self, count_only: bool, condition: Option<Condition>) -> Result<ReadPlan, Error> {
         let page = LimitOffset {
             limit: self.limit,
             offset: self.offset,
@@ -666,6 +675,28 @@ impl EntityFind {
                     (statement, view_columns(entity))
                 } else if count_only {
                     (count_with(entity, dialect, condition.as_ref(), &options)?, Vec::new())
+                } else if select_fields.is_empty() && !options.distinct {
+                    // Every field: the columns and the select list are the entity's, rendered once.
+                    let shape = super::sql_cache::read_shape(&self.facade, entity, dialect);
+                    let statement = match lone_pk_equals(entity, condition.as_ref(), &order, page, &options) {
+                        Some(pk) => moqui_db::sql::Statement {
+                            sql: shape
+                                .select_pk(|| {
+                                    let head = &shape.head;
+                                    Ok(select_with_head(head, entity, dialect, condition.as_ref(), &order, page, &options)?
+                                        .sql)
+                                })?
+                                .to_string(),
+                            params: vec![pk.clone()],
+                        },
+                        None => select_with_head(&shape.head, entity, dialect, condition.as_ref(), &order, page, &options)?,
+                    };
+                    return Ok(ReadPlan {
+                        sql: statement.sql,
+                        params: statement.params,
+                        columns: Arc::clone(&shape.columns),
+                        tx: tx.clone(),
+                    });
                 } else {
                     let fields: Vec<FieldRef> = entity
                         .fields
@@ -684,20 +715,21 @@ impl EntityFind {
                 Ok(ReadPlan {
                     sql: statement.sql,
                     params: statement.params,
-                    columns,
+                    columns: columns.into(),
                     tx: tx.clone(),
                 })
             })
     }
 
-    fn rows_to_values(&self, plan: &ReadPlan, rows: &[DbRow]) -> Result<Vec<EntityValue>, Error> {
+    fn rows_to_values(&self, plan: &ReadPlan, rows: Vec<DbRow>) -> Result<Vec<EntityValue>, Error> {
         let facade = self.facade.clone();
         self.facade.with_entity(&self.entity_name, |entity, _, _| {
             let mut values = Vec::with_capacity(rows.len());
+            let name: Arc<str> = Arc::from(entity.full_name.as_str());
             for row in rows {
                 let mapped = map_row(&plan.columns, row);
                 let adjusted = field_rw::decrypt_stored(&facade, entity, mapped)?;
-                values.push(EntityValue::from_fields(entity.full_name.clone(), adjusted));
+                values.push(EntityValue::from_fields(Arc::clone(&name), adjusted));
             }
             Ok(values)
         })
@@ -769,13 +801,28 @@ impl ConditionValues for FindValues {
     }
 }
 
-/// The localized fields of `entity_name`, for the values a find of it returns.
+/// The localized fields of `entity_name`, built once per entity and then shared. A raw read sees the stored values
+/// and does not fill the cache.
 fn find_l10n(facade: &EntityFacade, entity_name: &str) -> Option<Arc<field_rw::L10nTargets>> {
-    facade
+    if field_rw::raw_read() {
+        return None;
+    }
+    // Read before the definition, so a view built again meanwhile is not kept under the older count.
+    let generation = super::derived::generation(facade);
+    let known = facade.with_slot_read(L10nCache::default, |cache| cache.get(entity_name, generation));
+    if let Some(known) = known {
+        return known;
+    }
+    let built = facade
         .with_entity(entity_name, |entity, _, _| Ok(field_rw::l10n_targets(facade, entity)))
         .ok()
-        .flatten()
+        .flatten();
+    facade.with_slot(L10nCache::default, |cache| cache.insert(entity_name, generation, built.clone()));
+    built
 }
+
+/// The localized fields of each entity a find read. `None` means the entity was checked and has none.
+type L10nCache = super::derived::ByDefinition<Option<Arc<field_rw::L10nTargets>>>;
 
 /// The number a count query returned.
 fn count_of(rows: &[DbRow]) -> Result<i64, Error> {
@@ -790,6 +837,45 @@ fn count_of(rows: &[DbRow]) -> Result<i64, Error> {
     }
 }
 
+/// The primary key field names, or for a view the aliases of member primary keys, as `pk_field_names` without the
+/// list.
+fn pk_names(entity: &moqui_db::model::EntityDefinition) -> impl Iterator<Item = &str> + '_ {
+    let view = entity.is_view;
+    let aliases = entity.aliases.iter().filter(move |alias| view && alias.is_pk).map(|alias| alias.name.as_str());
+    let fields = entity.fields.iter().filter(move |field| !view && field.is_pk).map(|field| field.name.as_str());
+    aliases.chain(fields)
+}
+
+/// A find of every column by the single primary key, with no order or page. Its SQL does not change with the key, which
+/// is bound as given; text for a key that is not text is left to the full render, which converts it.
+fn lone_pk_equals<'a>(
+    entity: &moqui_db::model::EntityDefinition,
+    condition: Option<&'a Condition>,
+    order: &[OrderBy],
+    page: LimitOffset,
+    options: &SelectOptions,
+) -> Option<&'a Value> {
+    if !order.is_empty() || page.is_set() || options.distinct || options.for_update || options.having.is_some() {
+        return None;
+    }
+    let mut keys = entity.fields.iter().filter(|field| field.is_pk);
+    let (Some(key), None) = (keys.next(), keys.next()) else {
+        return None;
+    };
+    match condition {
+        Some(Condition::Equals(field, value))
+            if field.entity_alias.is_none()
+                && field.expr.is_none()
+                && field.name == key.name
+                && !value.is_null()
+                && (!matches!(value, Value::String(_)) || key.is_text()) =>
+        {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
 fn authorization_filters() -> bool {
     if !crate::user::context_entered() {
         return false;
@@ -800,7 +886,8 @@ fn authorization_filters() -> bool {
 struct ReadPlan {
     sql: String,
     params: Vec<Value>,
-    columns: Vec<(String, String)>,
+    /// Field name and Java type of each column, shared by the finds of an entity that read every field.
+    columns: Arc<[(Arc<str>, String)]>,
     tx: TransactionManager,
 }
 
@@ -811,7 +898,7 @@ struct ReadPlan {
 pub struct EntityListIterator {
     facade: EntityFacade,
     entity_name: String,
-    columns: Vec<(String, String)>,
+    columns: Arc<[(Arc<str>, String)]>,
     tx: Option<TransactionManager>,
     open: bool,
     /// In memory: every row.
@@ -834,7 +921,7 @@ impl EntityListIterator {
     fn stream(
         facade: EntityFacade,
         entity_name: String,
-        columns: Vec<(String, String)>,
+        columns: Arc<[(Arc<str>, String)]>,
         tx: TransactionManager,
         scrollable: bool,
     ) -> Self {
@@ -861,7 +948,7 @@ impl EntityListIterator {
         Self {
             facade,
             entity_name,
-            columns: Vec::new(),
+            columns: Arc::new([]),
             tx: None,
             open: false,
             memory: Some(list.into_values()),
@@ -1047,13 +1134,13 @@ impl EntityListIterator {
         match row {
             Some(row) => {
                 self.consumed += 1;
-                let mapped = map_row(&self.columns, &row);
+                let mapped = map_row(&self.columns, row);
                 let facade = self.facade.clone();
                 let hook = facade.clone();
                 let adjusted = facade.with_entity(&self.entity_name, |entity, _, _| {
                     field_rw::after_read(&hook, entity, mapped)
                 })?;
-                Ok(Some(EntityValue::from_fields(self.entity_name.clone(), adjusted)))
+                Ok(Some(EntityValue::from_fields(Arc::from(self.entity_name.as_str()), adjusted)))
             }
             None => {
                 self.close()?;

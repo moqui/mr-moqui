@@ -1,0 +1,50 @@
+ gallery ▸ Editor                                                                                                                                               john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.13 Editor ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ A document the user writes: the page list at the side, the rendered page with its title and version in a title row, and History, Compare, Restore    │
+     List                │ ┃ and Publish as actions in a dialog, not tabs. The body is a text-area with editor-type md (the co-editing component of §8 is not built). Unlike the  │
+     Detail              │ ┃ other gallery screens these actions write, into the demo spaces only.                                                                                │
+     360                 │ ┃ Two storages under one resource API: the EXAMPLE space keeps its pages as dbresource files (each past version a reverse delta), the EXGIT space as   │
+     Task                │ ┃ files in a git repository in the database (each version a commit). The compare is rendered on the server.                                            │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ ┌─ Example wiki (dbresource) ────────────────────┐ Welcome
+     Split               │ │ Home                                           │ Version 02 · 2 versions in dbresource history · published 01
+     Settings            │ │ Welcome                                        │ [ Edit… ]  [ History… ]
+     Wizard              │ │ Notes                                          │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Dialog              │ └────────────────────────────────────────────────┘ │ Welcome                                                                                          │
+     Report              │ ┌─ Spaces ───────────────────────────────────────┐ │ This page has two versions. Open History to see them, then diff prev on the newest to compare.   │
+     Panel               │ │ dbresource: EXAMPLE                            │ │ Revisions                                                                                        │
+     Widgets             │ │ Create the git space                           │ │ • Each save keeps the text it replaced.                                                          │
+   ▶ Editor              │ └────────────────────────────────────────────────┘ │ • Older text is stored as a reverse delta.                                                       │
+     Message             │                                                    │ • Any version can be viewed, compared, restored or published.                                    │
+     Views               │                                                    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ▾ Home                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

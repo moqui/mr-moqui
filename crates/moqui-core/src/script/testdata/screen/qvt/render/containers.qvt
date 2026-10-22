@@ -13,8 +13,8 @@
 <m-container-dialog id="Dlg" color="primary" width="500" button-text="Open" button-icon="fa fa-plus" title="Open"><span class="text-inline">dialog body</span>
 </m-container-dialog>
 <m-dynamic-container id="Dyn" url="/load?p=1&amp;_dynamic_container_id=Dyn"></m-dynamic-container>
-<m-dynamic-dialog id="DynDlg" url="/edit?id=R7" color="primary" button-text="Edit" title="Edit"></m-dynamic-dialog><q-btn-dropdown dense unelevated no-caps class="m-btn-tonal text-info"><template v-slot:label><i class="fa fa-cog q-icon on-left"></i>Actions</template><q-list><q-item clickable v-close-popup><q-item-section><a href="/one" class="m-link-text">One</a>
-</q-item-section></q-item><q-item clickable v-close-popup><q-item-section><a href="/two" data-confirm="Sure?" class="m-link-text">Two</a>
+<m-dynamic-dialog id="DynDlg" url="/edit?id=R7" color="primary" button-text="Edit" title="Edit"></m-dynamic-dialog><q-btn-dropdown dense unelevated no-caps class="m-btn-tonal text-info"><template v-slot:label><i class="fa fa-cog q-icon on-left"></i>Actions</template><q-list><q-item clickable><q-item-section><a href="/one" class="m-link-text">One</a>
+</q-item-section></q-item><q-item clickable><q-item-section><a href="/two" data-confirm="Sure?" class="m-link-text">Two</a>
 </q-item-section></q-item></q-list></q-btn-dropdown>
 <m-tree-top id="Nodes" items="/treeItems" open-path="a/b" :parameters="{'root':'a'}"></m-tree-top>
 <m-editable id="Ed" label-type="span" label-value="Ada" url="/save" :url-parameters="{}" parameter-name="name" widget-type="textarea" indicator="Saving" tooltip="Click to edit" cancel="Cancel" submit="Save"></m-editable><a href="/go" target="_blank"><q-btn dense unelevated no-caps class="m-btn-tonal text-positive m-link"><q-tooltip>Go now</q-tooltip><i class="fa fa-go q-icon on-left"></i> Go &amp; see <q-badge class="on-right" transparent>3</q-badge></q-btn></a>

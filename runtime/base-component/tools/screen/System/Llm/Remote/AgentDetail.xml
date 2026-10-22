@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One remote A2A agent: its card URL, the agents that may delegate, its limits, its credential (set, never shown) and
+    a test that reads its card as a delegation would. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Remote Agent" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="remoteId" required="true"/>
+
+    <transition name="storeAgent"><service-call name="org.moqui.agent.RemoteAgentServices.store#AgentRemoteA2a"/>
+        <default-response url="." parameter-map="{remoteId:remoteId}"/></transition>
+    <transition name="setCredential"><service-call name="org.moqui.agent.RemoteAgentServices.store#AgentRemoteA2a"
+            in-map="{remoteId:remoteId, authKind:authKind, authSecret:authSecret, authUsername:authUsername, authHeader:authHeader}"/>
+        <default-response url="." parameter-map="{remoteId:remoteId}"/></transition>
+    <transition name="testAgent"><actions>
+            <service-call name="org.moqui.agent.RemoteAgentServices.test#AgentRemoteA2a" in-map="{remoteId:remoteId}" out-map="tested"/>
+            <message>${tested?.ok == 'Y' ? 'Card read: ' + tested.message + ' (' + tested.binding + ' ' + tested.interfaceUrl + ')' : 'Card not read: ' + tested?.message}</message></actions>
+        <default-response url="." parameter-map="{remoteId:remoteId}"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentRemoteA2a" value-field="remote"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Remote Agent ${remoteId} (tool a2a__${remoteId})"/><box-toolbar>
+            <link url="testAgent" text="Read Card"/></box-toolbar><box-body>
+            <form-single name="EditAgent" map="remote" transition="storeAgent">
+                <field name="remoteId"><default-field><display/></default-field></field>
+                <field name="remoteName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="description"><default-field tooltip="What the model reads of it; else the card's, as untrusted text"><text-area rows="3" cols="80"/></default-field></field>
+                <field name="cardUrl"><default-field title="Card URL" tooltip="https, never an internal address unless Allow Private Network"><text-line size="80"/></default-field></field>
+                <field name="allowedAgents"><default-field title="Allowed Agents" tooltip="Comma separated agent ids, * for all, empty for none"><text-line size="60"/></default-field></field>
+                <field name="allowPrivateNetwork"><default-field title="Allow Private Network" tooltip="Loopback or LAN addresses, and http"><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="timeoutSeconds"><default-field title="Timeout Seconds" tooltip="Else the conf's a2a client-timeout"><text-line size="6"/></default-field></field>
+                <field name="disabled"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="credential"><default-field title="Credential">
+                    <display text="${remote?.authJson ? 'set' : 'none'}"/></default-field></field>
+                <field name="authJson"><default-field><ignored/></default-field></field>
+                <field name="cardJson"><default-field><ignored/></default-field></field>
+                <field name="cardReadDate"><default-field title="Card Read"><display/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Credential"/><box-body>
+            <form-single name="SetCredential" transition="setCredential">
+                <field name="remoteId"><default-field><hidden/></default-field></field>
+                <field name="authKind"><default-field title="Kind"><drop-down><option key="bearer"/><option key="basic"/>
+                    <option key="header"/><option key="none"/></drop-down></default-field></field>
+                <field name="authUsername"><default-field title="Username" tooltip="For basic"><text-line size="30"/></default-field></field>
+                <field name="authHeader"><default-field title="Header Name" tooltip="For header"><text-line size="30"/></default-field></field>
+                <field name="authSecret"><default-field title="Secret" tooltip="The key, password or header value; kept encrypted, never shown"><password size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

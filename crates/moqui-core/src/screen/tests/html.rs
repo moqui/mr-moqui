@@ -88,6 +88,18 @@ fn form_lists() {
     check("lists", &[]);
 }
 
+/// A rich text-area is the cleaned note, not a textarea of the tags. `editor-type="html"` stays a textarea
+/// (`html-fields`).
+#[test]
+fn a_rich_text_area_is_the_note() {
+    let html = render_path("rich-text", "", &[]);
+    assert!(html.contains("m-rich-text-content"), "{html}");
+    assert!(html.contains("<strong>there</strong>"), "{html}");
+    assert!(html.contains("data-rich-text"), "{html}");
+    assert!(!html.contains("<textarea"), "{html}");
+    assert!(!html.contains("<script"), "{html}");
+}
+
 #[test]
 fn subscreen_menus_tabs_and_panels() {
     check_path("Menu", "", "menu-one", &[]);

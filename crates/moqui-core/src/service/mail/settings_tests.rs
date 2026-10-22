@@ -28,7 +28,7 @@ use moqui_lib::sync::lock;
 use super::fake_servers::{FakeImap, FakeSmtp};
 use super::sync_tests::{
     alice, by_message_id, call, errors, field, folder_id, imap_account, login, mail, now, ok, one, out_number,
-    out_text, row, rows, setup, stamp, sync, text, update, user,
+    out_text, row, rows, setup, setup_with, stamp, sync, text, update, user,
 };
 use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
@@ -53,6 +53,21 @@ const STUBS: &str = r#"<services>
     <service verb="fail" noun="Contacts">
         <in-parameters><parameter name="userId"/><parameter name="emailAddressList" type="List"/></in-parameters>
         <actions><script><![CDATA[ ec.message.addError('the contacts are away') ]]></script></actions>
+    </service>
+    <service verb="record" noun="RuleAction">
+        <in-parameters><parameter name="emailMessageId"/><parameter name="emailAccountId"/><parameter name="emailRuleId"/>
+            <parameter name="ruleOwnerUserId"/><parameter name="value"/></in-parameters>
+        <out-parameters><parameter name="stopProcessing" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            const message = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).one()
+            message.set('snippet', [value, emailAccountId === message.emailAccountId ? 'account' : 'other', emailRuleId, ruleOwnerUserId].join('|'))
+            message.update()
+            stopProcessing = value === 'stop'
+        ]]></script></actions>
+    </service>
+    <service verb="fail" noun="RuleAction">
+        <in-parameters><parameter name="emailMessageId"/><parameter name="value"/></in-parameters>
+        <actions><script><![CDATA[ ec.message.addError('the app is away') ]]></script></actions>
     </service>
 </services>"#;
 
@@ -950,6 +965,159 @@ fn a_rule_is_tried_on_recent_mail_without_acting() {
     );
 }
 
+/// An action an app adds to the rules (an EmailRuleAction enumeration naming its service in optionValue) is accepted in a
+/// rule and run with the message, account, rule and owner; it may stop the rules; one that reports an error is logged and
+/// the rule's other actions go on; an action no app makes is skipped; an unknown action is refused in a rule.
+#[test]
+fn an_app_action_of_a_rule_runs_the_service_its_enumeration_names() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    let dir = stub_dir("rule-actions");
+    install_with(Some(&dir));
+    alice(&facade);
+    row(
+        &facade,
+        "moqui.basic.EnumerationType",
+        &[
+            ("enumTypeId", text("EmailRuleAction")),
+            ("description", text("Email Rule Action")),
+        ],
+    );
+    for (id, code, service) in [
+        ("TestRecordIt", "recordIt", "test.MailStub.record#RuleAction"),
+        ("TestFailIt", "failIt", "test.MailStub.fail#RuleAction"),
+    ] {
+        row(
+            &facade,
+            "moqui.basic.Enumeration",
+            &[
+                ("enumId", text(id)),
+                ("enumTypeId", text("EmailRuleAction")),
+                ("enumCode", text(code)),
+                ("optionValue", text(service)),
+                ("description", text(code)),
+            ],
+        );
+    }
+    let account = out_text(
+        &ok("create#EmailAccount", &[("emailAddress", text("alice@example.com"))]),
+        "emailAccountId",
+    );
+    message(
+        &facade,
+        &account,
+        "T1",
+        "EfkInbox",
+        3 * DAY,
+        &[("subject", text("Ticket one"))],
+    );
+    message(
+        &facade,
+        &account,
+        "T2",
+        "EfkInbox",
+        2 * DAY,
+        &[("subject", text("Ticket halt"))],
+    );
+    message(&facade, &account, "T3", "EfkInbox", DAY, &[("subject", text("Lunch"))]);
+    let action = |name: &str, value: &str| {
+        let mut map = IndexMap::new();
+        map.insert("action".to_string(), text(name));
+        if !value.is_empty() {
+            map.insert("value".to_string(), text(value));
+        }
+        Value::Map(map)
+    };
+    // a rule with an app's action is accepted; an action nobody makes is not
+    let halt = out_text(
+        &ok(
+            "create#EmailRule",
+            &[
+                ("ruleName", text("Halt")),
+                ("emailAccountId", text(&account)),
+                ("sequenceNum", Value::I64(1)),
+                ("conditionList", conditions(&[("subject", "contains", "halt")])),
+                ("actionList", Value::List(vec![action("recordIt", "stop")])),
+            ],
+        ),
+        "emailRuleId",
+    );
+    let tickets = out_text(
+        &ok(
+            "create#EmailRule",
+            &[
+                ("ruleName", text("Tickets")),
+                ("emailAccountId", text(&account)),
+                ("sequenceNum", Value::I64(2)),
+                ("conditionList", conditions(&[("subject", "contains", "ticket")])),
+                (
+                    "actionList",
+                    Value::List(vec![action("recordIt", "P1"), action("markRead", "")]),
+                ),
+            ],
+        ),
+        "emailRuleId",
+    );
+    refused(
+        "create#EmailRule",
+        &[
+            ("ruleName", text("Nope")),
+            ("emailAccountId", text(&account)),
+            ("conditionList", conditions(&[("subject", "contains", "x")])),
+            ("actionList", Value::List(vec![action("nope", "")])),
+        ],
+        "Unknown rule action nope",
+    );
+    // an app action that fails, and one no app makes (written before the app left), each beside an action that goes on
+    row(
+        &facade,
+        "moqui.basic.email.EmailRule",
+        &[
+            ("emailRuleId", text("LUNCH")),
+            ("ownerUserId", text("alice")),
+            ("emailAccountId", text(&account)),
+            ("ruleName", text("Lunch")),
+            ("sequenceNum", Value::I64(3)),
+            ("enabled", text("Y")),
+            (
+                "conditionsJson",
+                text(r#"[{"field": "subject", "operator": "contains", "value": "lunch"}]"#),
+            ),
+            (
+                "actionsJson",
+                text(r#"[{"action": "failIt"}, {"action": "createTask"}, {"action": "flag"}]"#),
+            ),
+        ],
+    );
+    let inbox = folder_id(&facade, &account, "EfkInbox");
+    let ran = ok("run#EmailRules", &[("emailFolderId", text(&inbox))]);
+    let message_of = |id: &str| one(&facade, MESSAGE, "emailMessageId", id);
+    assert_eq!(
+        field(&message_of("T1"), "snippet"),
+        format!("P1|account|{tickets}|alice"),
+        "{ran:?}"
+    );
+    assert_eq!(field(&message_of("T1"), "isRead"), "Y");
+    // the halt rule's action stopped the rules for its message: Tickets did not run on it
+    assert_eq!(
+        field(&message_of("T2"), "snippet"),
+        format!("stop|account|{halt}|alice")
+    );
+    assert_eq!(field(&message_of("T2"), "isRead"), "N");
+    // the failure is the rule's, named; the action no app makes is skipped; the flag went on
+    let rule_errors = out_text(&ran, "ruleErrorList");
+    assert!(
+        rule_errors.contains("Lunch") && rule_errors.contains("failIt") && rule_errors.contains("the app is away"),
+        "{rule_errors}"
+    );
+    assert!(!rule_errors.contains("createTask"), "{rule_errors}");
+    assert_eq!(field(&message_of("T3"), "isFlagged"), "Y");
+    assert_eq!(field(&message_of("T3"), "snippet"), "Body of T3");
+    assert_eq!(out_number(&ran, "matchedCount"), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A removed account whose mail was kept is listed to its owner only (includeRemoved) and deleted by them, with its mail.
 #[test]
 fn a_removed_account_is_deleted_by_its_owner_only() {
@@ -1024,7 +1192,8 @@ type Seen = (std::time::Instant, IndexMap<String, Value>, Vec<String>);
 #[test]
 fn a_sync_sends_its_progress() {
     let _lock = crate::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    // two a session: the first sync fetches two of the three, the next the third
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client sync-batch="2"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install_with(None);
     alice(&facade);
@@ -1071,8 +1240,6 @@ fn a_sync_sends_its_progress() {
         }),
     )
     .unwrap();
-    // two a session: the first sync fetches two of the three, the next the third
-    let batch = Property::set("email_sync_batch", "2");
     let out = sync(&account);
     assert_eq!(out_number(&out, "newCount"), 2);
     let sent = lock(&seen).clone();
@@ -1107,7 +1274,6 @@ fn a_sync_sends_its_progress() {
     let (_, first, _) = &sent[0];
     assert_eq!(get(first, "folderKept"), "2", "{first:?}");
     assert_eq!(get(first, "folderPending"), "1");
-    drop(batch);
     // nothing to fetch: nothing sent
     lock(&seen).clear();
     sync(&account);

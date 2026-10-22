@@ -414,8 +414,9 @@ fn load(spec: &SpecFile) -> Result<Plan, Box<Failure>> {
     Ok(plan)
 }
 
-/// The prelude and the host calls it uses, in this thread's outermost engine.
-fn install_prelude() -> Result<(), Error> {
+/// The prelude and the host calls it uses, in this thread's outermost engine. The agent specs ([`super::agents`])
+/// take its helpers too.
+pub(crate) fn install_prelude() -> Result<(), Error> {
     crate::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
     crate::script::with_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))
 }

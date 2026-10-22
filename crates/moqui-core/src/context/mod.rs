@@ -33,7 +33,7 @@ pub use component::ComponentInfo;
 pub use conf::{load_merged_conf, merge_component_confs, merge_conf};
 pub use error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use factory::{
-    default_framework_dir, BootOptions, ContextGuard, ExecutionContext, ExecutionContextFactory, Executor,
+    default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext, ExecutionContextFactory, Executor,
 };
 pub(crate) use hits::{secret_parameter, Hit};
 pub use locate::{framework_dir, locate};

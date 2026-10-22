@@ -533,8 +533,7 @@ fn install_sftp(setup: &Setup) {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// Wait for the asynchronous consume of every received message of the type. The in-memory database commits a table
-/// whole, so a consume still open when the test writes the table would put back its own copy of it.
+/// Wait until every received message of the type has been consumed. The consume runs on a service worker.
 fn consumed(facade: &EntityFacade, type_id: &str) -> bool {
     wait_until(|| {
         facade

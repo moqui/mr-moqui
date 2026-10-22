@@ -243,6 +243,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="entityName" type="text-medium"/>
         <field name="primaryKey" type="text-medium"/>
         <field name="operation" type="text-short"/>
+        <field name="originAgentId" type="id"><description>The agent whose run made every write of the record in the
+            transaction (the ExecutionContext's agent origin), so an agent trigger does not fire on its own agent's
+            writes; empty when any write came from elsewhere</description></field>
     </entity>
     <view-entity entity-name="DataFeedAndDocument" package="moqui.entity.feed">
         <member-entity entity-alias="DTFD" entity-name="moqui.entity.feed.DataFeed"/>

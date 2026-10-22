@@ -686,7 +686,7 @@ fn find_entity(
                 row.fields()
                     .iter()
                     .filter(|(_, value)| !value.is_null())
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|(name, value)| (name.to_string(), value.clone()))
                     .collect(),
             )),
         }
@@ -816,9 +816,20 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
 }
 
 /// What the parameter schemas of one document read: the entity model and the enumeration ids.
-struct Schemas<'a> {
+pub(crate) struct Schemas<'a> {
     facade: Option<&'a EntityFacade>,
     enums: Option<crate::entity::FieldEnums<'a>>,
+}
+
+impl<'a> Schemas<'a> {
+    /// Schemas that read the entities of `facade` (none reads no enumeration ids).
+    #[cfg(feature = "llm")]
+    pub(crate) fn new(facade: Option<&'a EntityFacade>) -> Self {
+        Self {
+            facade,
+            enums: facade.map(crate::entity::FieldEnums::new),
+        }
+    }
 }
 
 fn collect_paths(
@@ -991,7 +1002,7 @@ fn parameter_object(name: &str, location: &str, required: bool, schema: IndexMap
 }
 
 /// Java's `getJsonSchemaMapIn` and `getJsonSchemaMapOut`.
-fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> Value {
+pub(crate) fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> Value {
     let mut properties = IndexMap::new();
     let mut required = Vec::new();
     for param in params {
@@ -1011,7 +1022,7 @@ fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> Value {
 
 /// Java's `getJsonSchemaPropMap`: the type and format, the description, the default, the first nested parameter as an
 /// array's items or the nested parameters as an object's properties, and otherwise the enumeration ids.
-fn param_schema(param: &ParamDef, schemas: &mut Schemas<'_>) -> IndexMap<String, Value> {
+pub(crate) fn param_schema(param: &ParamDef, schemas: &mut Schemas<'_>) -> IndexMap<String, Value> {
     let json_type = json_type(&param.java_type);
     let mut map = IndexMap::new();
     map.insert("type".to_string(), Value::string(json_type));
@@ -1073,6 +1084,43 @@ fn parameter_enums(param: &ParamDef, schemas: &mut Schemas<'_>) -> Option<Vec<Va
             None
         }
     }
+}
+
+/// The in-parameters of an entity-auto service with no declared ones, from its entity (Java's `EntityDefinition` JSON
+/// schema of the REST API): each field but `lastUpdatedStamp` with its type and format; the primary key required for an
+/// update, a store and a delete (a delete takes only the key), and for a create when the key has more than one field
+/// (a single one is sequenced when it is left out). `None` when the entity is not defined.
+#[cfg(feature = "llm")]
+pub(crate) fn entity_auto_schema(facade: &EntityFacade, verb: &str, entity: &str) -> Option<Value> {
+    facade
+        .with_entity(entity, |definition, _, _| {
+            let pk = definition.pk_field_names();
+            let key_required = verb != "create" || pk.len() > 1;
+            let mut properties = IndexMap::new();
+            let mut required = Vec::new();
+            for field in &definition.fields {
+                if field.name == "lastUpdatedStamp" || (verb == "delete" && !field.is_pk) {
+                    continue;
+                }
+                let mut schema = IndexMap::new();
+                schema.insert("type".to_string(), Value::string(json_type(&field.java_type)));
+                if let Some(format) = json_format(&field.java_type) {
+                    schema.insert("format".to_string(), Value::string(format));
+                }
+                properties.insert(field.name.clone(), Value::Map(schema));
+                if field.is_pk && key_required {
+                    required.push(Value::string(&field.name));
+                }
+            }
+            let mut map = IndexMap::new();
+            map.insert("type".to_string(), Value::string("object"));
+            map.insert("properties".to_string(), Value::Map(properties));
+            if !required.is_empty() {
+                map.insert("required".to_string(), Value::List(required));
+            }
+            Ok(Value::Map(map))
+        })
+        .ok()
 }
 
 /// Java's `RestApi.getJsonType`, by the class name after the last `.`.

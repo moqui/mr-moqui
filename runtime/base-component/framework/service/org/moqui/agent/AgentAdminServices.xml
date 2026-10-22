@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The admin services of the models and their usage (plans/LLM-A2A-Assist.md 4.18 and 6; the System > LLM screens).
+    The bodies are Rust: crates/moqui-core/src/llm/services.rs, in builds with the llm feature (a build without it says
+    so). The configuration services need AgentAdmin. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="EffectiveConfig" type="rust" location="moqui_core::llm::services::get_effective_config"
+            transaction="ignore">
+        <description>The endpoints, models and feature bindings in effect: the llm-facade conf with the LlmEndpoint,
+            LlmModel and LlmFeatureBinding rows over it (a row's fields replace the conf's by id). Keys are masked. Each
+            entry says where it came from (source: conf, database, or conf and database); a model says whether it can take
+            a call (usable: yes, or why not) and a binding which model it resolves to. problemList names the conf entries
+            and rows that did not read.</description>
+        <out-parameters>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="endpointList" type="List"/>
+            <parameter name="modelList" type="List"/>
+            <parameter name="bindingList" type="List"/>
+            <parameter name="problemList" type="List"/>
+            <parameter name="limits" type="Map"/>
+            <parameter name="contentLog" type="Map"/>
+        </out-parameters>
+    </service>
+
+    <service verb="test" noun="Endpoint" type="rust" location="moqui_core::llm::services::test_endpoint" transaction="ignore">
+        <description>One small call to a model (modelId, or the first model of endpointId), recorded as an LlmCall with
+            source test.</description>
+        <in-parameters>
+            <parameter name="modelId"/>
+            <parameter name="endpointId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="httpStatus" type="Integer"/>
+            <parameter name="latencyMs" type="Long"/>
+            <parameter name="replyText"/>
+            <parameter name="callId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="probe" noun="Model" type="rust" location="moqui_core::llm::services::probe_model" transaction="ignore">
+        <description>Tiny live requests for each capability (tools, parallel-tools, json-schema, streaming,
+            reasoning-replay, prompt-caching), each verdict stored in LlmModelCapability with its evidence. An admin's
+            verdict is kept.</description>
+        <in-parameters><parameter name="modelId" required="true"/></in-parameters>
+        <out-parameters><parameter name="capabilityList" type="List"/></out-parameters>
+    </service>
+
+    <service verb="set" noun="ModelCapability" type="rust" location="moqui_core::llm::services::set_model_capability">
+        <description>An admin's verdict on a capability of a model (yes, no or partial), which no probe replaces; an empty
+            verdict removes the stored one, so the next probe decides.</description>
+        <in-parameters>
+            <parameter name="modelId" required="true"/>
+            <parameter name="capability" required="true"/>
+            <parameter name="verdict"/>
+            <parameter name="evidence"/>
+        </in-parameters>
+    </service>
+
+    <service verb="rollup" noun="LlmUsage" type="rust" location="moqui_core::llm::services::rollup_usage"
+            authenticate="false" transaction="ignore">
+        <description>Recompute the LlmUsageDaily rows of usageDate, or of today and the days before it, from LlmCall: a
+            day's rows are replaced whole, each day in its own transaction, and a day that fails does not stop the
+            others. The job rollup_LlmUsage runs it every 15 minutes.</description>
+        <in-parameters>
+            <parameter name="usageDate" type="Date"/>
+            <parameter name="days" type="Integer" default="1"><description>With no usageDate, the days before today</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="rowCount" type="Integer"/></out-parameters>
+    </service>
+
+    <service verb="clean" noun="LlmCallContent" type="rust" location="moqui_core::llm::services::clean_call_content"
+            authenticate="false" transaction-timeout="600">
+        <description>Clear the request and response content of the calls older than retentionDays (default the
+            llm-facade content-log retention-days). The job clean_LlmCallContent_daily runs it.</description>
+        <in-parameters><parameter name="retentionDays" type="Integer"/></in-parameters>
+        <out-parameters><parameter name="clearedCount" type="Long"/></out-parameters>
+    </service>
+
+    <service verb="check" noun="LlmQuota" type="rust" location="moqui_core::llm::services::check_quota" transaction="ignore">
+        <description>Whether a user (default the current one; another user's needs AgentAdmin) may make more calls in a
+            scope (all, agent, gateway, api): the user's LlmQuota row, else the largest of their groups', else the
+            llm-facade limits, against today's calls (and the month's for a monthly quota).</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="scope" default-value="all"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="withinQuota" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="period"/>
+            <parameter name="usedTokens" type="Long"/>
+            <parameter name="usedCost" type="BigDecimal"/>
+            <parameter name="maxTokens" type="Long"/>
+            <parameter name="maxCost" type="BigDecimal"/>
+            <parameter name="limitFrom"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="LlmCallContent" type="rust" location="moqui_core::llm::services::get_call_content">
+        <description>The request and response JSON of an LlmCall (kept only with content logging, redacted): for the
+            call's own user, or for a user with AgentAudit, whose read is written to AgentAuditLog. Anyone else gets no
+            content (contentShown false, with the reason).</description>
+        <in-parameters>
+            <parameter name="callId" required="true"/>
+            <parameter name="reason"><description>Why an auditor reads it, for the audit log</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentShown" type="Boolean"/>
+            <parameter name="audited" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="requestJson"/>
+            <parameter name="responseJson"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="DashboardTotals" type="rust" location="moqui_core::llm::services::get_dashboard_totals">
+        <description>For System > LLM > Dashboard: the calls, tokens and cost of today (from LlmCall) and of this month
+            (the rollup of its earlier days and today) over all users, as maps with callCount, errorCount, inputTokens,
+            cachedInputTokens, outputTokens, totalTokens, cost and currencyUomId; and the runs submitted today, waiting
+            for input or authorization, and failed today.</description>
+        <out-parameters>
+            <parameter name="today" type="Map"/>
+            <parameter name="month" type="Map"/>
+            <parameter name="runsToday" type="Long"/>
+            <parameter name="runsWaiting" type="Long"/>
+            <parameter name="runsFailedToday" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="PromptPreview" type="rust" location="moqui_core::llm::services::get_prompt_preview"
+            transaction="ignore">
+        <description>For System > LLM > PromptPreview: the frozen prefix an agent's new conversation would get on a
+            surface and prompt variant for a user (agentId, default assist; surface, default the agent's first; variant,
+            default the model's; userId, default the current user), and the tail of a sample page: each section with its
+            characters, calibrated tokens, cap and share of the model's budget, the tools with their schema sizes, the
+            system text, the tail, and the request as the model's protocol would send it with a sample message
+            (requestJson, "copy as sent"). The model is modelId, else the agent's feature or tier. The user's memory is
+            shown only for the viewer's own user. Nothing is stored.</description>
+        <in-parameters>
+            <parameter name="agentId" default-value="assist"/>
+            <parameter name="surface"><description>drawer, chat, a2a, mcp, job or tui</description></parameter>
+            <parameter name="variant"><description>standard or small</description></parameter>
+            <parameter name="modelId"/>
+            <parameter name="userId"/>
+            <parameter name="samplePath"><description>The page of the sample tail</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="agentId"/>
+            <parameter name="surface"/>
+            <parameter name="variant"/>
+            <parameter name="modelId"/>
+            <parameter name="systemText"/>
+            <parameter name="tailText"/>
+            <parameter name="toolsHash"/>
+            <parameter name="sectionList" type="List"/>
+            <parameter name="toolList" type="List"/>
+            <parameter name="catalogList" type="List"><description>The catalog entries (name, description, kind) of a
+                conversation started on the sample page; System > LLM > Skills > RetrievalTest shows the scores</description></parameter>
+            <parameter name="catalogMore" type="Long"><description>The skills past the catalog's lines</description></parameter>
+            <parameter name="totals" type="Map"/>
+            <parameter name="requestJson"/>
+            <parameter name="memoryShown" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="AgentToolExposure" type="rust" location="moqui_core::llm::services::store_tool_exposure">
+        <description>Create or change a tool exposure (System > LLM > Tools): a service offered to the agents as a tool of
+            the lazy catalog. lockVersion is the version the editor read: a row changed since then is not saved (the
+            editor reloads it), and each save moves it on, so a run that asked for an approval of the old version
+            notices. The tool name is checked (not a prefix kept for MCP and A2A tools), the service must be defined,
+            and the classification, preview mode and schema override must read. Out: the new lockVersion and the
+            classification the service has of its own.</description>
+        <in-parameters>
+            <parameter name="toolName" required="true"/>
+            <parameter name="serviceName"/>
+            <parameter name="title"/>
+            <parameter name="description"/>
+            <parameter name="schemaOverrideJson"/>
+            <parameter name="classificationEnumId"/>
+            <parameter name="exposeAssistant"/>
+            <parameter name="exposeMcp"/>
+            <parameter name="previewMode"/>
+            <parameter name="disabled"/>
+            <parameter name="lockVersion" type="Long"><description>The version read; empty for a new row</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="lockVersion" type="Long"/>
+            <parameter name="serviceClassification"/>
+        </out-parameters>
+    </service>
+
+    <service verb="sync" noun="AgentSkills" type="rust" location="moqui_core::llm::skills::services::sync_agent_skills"
+            transaction="ignore">
+        <description>For System > LLM > Skills: sync the skill files (skill/**/*.md of the framework and each component,
+            in load order) into AgentSkill rows now, as startup does. Each file is its own transaction; a file that does
+            not read, or names a skill an earlier file named, is a problem naming the file and the others go on; a row
+            whose file is gone is retired. Needs AgentAdmin.</description>
+        <out-parameters>
+            <parameter name="added" type="Long"/>
+            <parameter name="changed" type="Long"/>
+            <parameter name="unchanged" type="Long"/>
+            <parameter name="retired" type="Long"/>
+            <parameter name="problemList" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="AgentSkill" type="rust" location="moqui_core::llm::skills::services::store_agent_skill">
+        <description>Create or change a skill from its Markdown with front matter (skillText): a site skill (needs
+            AgentAdmin) or, with personal=Y, the caller's own personal skill (AgentUse), which shadows the site skill of
+            its name unless that one is locked. A skill from a file takes only locked (its text is the file's); a site
+            skill of a file's name needs overrides: name in its front matter. One site skill a name, one personal skill a
+            name for each owner. A front matter error is the message, naming what is wrong. Out: the skill and its
+            version.</description>
+        <in-parameters>
+            <parameter name="skillId"><description>Empty for a new skill</description></parameter>
+            <parameter name="skillText"><description>The Markdown, front matter first</description></parameter>
+            <parameter name="personal"><description>Y for a personal skill of the caller (a new skill only)</description></parameter>
+            <parameter name="statusId"><description>AgskDraft, AgskPublished (the default) or AgskRetired</description></parameter>
+            <parameter name="locked"><description>Y or N</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="skillId"/>
+            <parameter name="versionNum" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="AgentSkill" type="rust" location="moqui_core::llm::skills::services::get_agent_skill"
+            transaction="ignore">
+        <description>For System > LLM > Skills > SkillDetail: a skill's Markdown with its front matter as an editor shows
+            it, its sections (name#slug, title, purpose, size), the risk that counts (only a skill a person wrote lowers
+            one), whether it comes from a file, and the id of the skill in effect for its name (for its owner when
+            personal, else for the site): another one when this one is shadowed or overridden. Needs AgentAdmin.</description>
+        <in-parameters><parameter name="skillId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="skillText"/>
+            <parameter name="introChars" type="Long"/>
+            <parameter name="bodyChars" type="Long"/>
+            <parameter name="sectionList" type="List"/>
+            <parameter name="risk"/>
+            <parameter name="fromFile"/>
+            <parameter name="inEffectSkillId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="review" noun="AgentLesson" type="rust" location="moqui_core::llm::skills::services::review_agent_lesson">
+        <description>For System > LLM > Lessons: approve a lesson for every user (statusId AglApproved), reject a proposed
+            one or withdraw an approved one (AglRejected). A lesson is its author's alone until approved, and shows only
+            with a skill load or a screen answer on its anchor, as untrusted text. Needs AgentAdmin.</description>
+        <in-parameters>
+            <parameter name="lessonId" required="true"/>
+            <parameter name="statusId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="SkillRetrieval" type="rust" location="moqui_core::llm::skills::services::get_skill_retrieval"
+            transaction="ignore">
+        <description>For System > LLM > Skills > RetrievalTest: the skills a query finds for a user (default the
+            caller, with their personal skills), agent (default assist) and surface (default drawer), best first, each
+            with its score (the lexical score, or the fused one when an embedder is installed), the semantic cosine, whether
+            it is a strong match and what matched; the answer the skill tool gives to find with the query; the tail line
+            a later message would carry; and the catalog a conversation that starts with the query on page lists. Needs
+            AgentAdmin.</description>
+        <in-parameters>
+            <parameter name="query"/>
+            <parameter name="page"><description>The page path, a retrieval boost for skills that name it</description></parameter>
+            <parameter name="userId"/>
+            <parameter name="agentId" default-value="assist"/>
+            <parameter name="surface"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="resultList" type="List"/>
+            <parameter name="findText"/>
+            <parameter name="tailLine"/>
+            <parameter name="catalogText"/>
+            <parameter name="skillCount" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="AgentAuditView" type="rust" location="moqui_core::llm::assist::audit::get_audit_view"
+            transaction="ignore">
+        <description>For System > LLM > Conversations, Runs and Approvals: the content of a conversation (its
+            transcript, messageList, and its runs), a run (stepList; toolCallList with arguments and results; eventList
+            with payloads; approvalList) or an approval (with its arguments, snapshot, changes and edited arguments).
+            Shown (shown true) for the content's own user, or for a user with AgentAudit, whose every read is logged in
+            AgentAuditLog with the reason; for anyone else only the runs, steps and the tool calls' names and statuses
+            come back, with the reason why. AgentAdmin alone does not show another user's content (D12).</description>
+        <in-parameters>
+            <parameter name="conversationId"/>
+            <parameter name="runId"/>
+            <parameter name="approvalId"/>
+            <parameter name="reason"><description>Why the auditor reads it, for the log</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="shown" type="Boolean"/>
+            <parameter name="audited" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="conversation" type="Map"/>
+            <parameter name="messageList" type="List"/>
+            <parameter name="runList" type="List"/>
+            <parameter name="stepList" type="List"/>
+            <parameter name="toolCallList" type="List"/>
+            <parameter name="eventList" type="List"/>
+            <parameter name="approvalList" type="List"/>
+            <parameter name="approval" type="Map"/>
+        </out-parameters>
+    </service>
+
+    <service verb="cancel" noun="AgentRun" type="rust" location="moqui_core::llm::assist::audit::cancel_run_admin"
+            transaction="ignore">
+        <description>Stop any user's run (System > LLM > Runs), as the user's own Stop does: the partial answer is kept.
+            It stops the run and acts for no one. Needs AgentAdmin.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+
+    <service verb="store" noun="LlmApiClient" type="rust" location="moqui_core::llm::gateway::store_api_client">
+        <description>Create or change a client of the A2A server, the MCP server or the LLM gateway (System > LLM >
+            Gateway; docs/Gateway.md). Its credential is an app password of its user (appPasswordId) or one of the user's
+            login keys (loginKey: the key itself, kept only as its hash and never shown again); a new client needs one.
+            Refused: a user that does not exist, a credential that is not the user's, a scope that is not a2a, mcp or
+            gateway, and a second client with the gateway scope for the same credential. A field left out keeps its
+            value. Needs AgentAdmin.</description>
+        <in-parameters>
+            <parameter name="clientId"/>
+            <parameter name="userId"/>
+            <parameter name="description"/>
+            <parameter name="appPasswordId"/>
+            <parameter name="loginKey"/>
+            <parameter name="scopes"/>
+            <parameter name="allowedAgents"/>
+            <parameter name="allowedAliases"/>
+            <parameter name="dailyTokens"/>
+            <parameter name="dailyCost"/>
+            <parameter name="requestsPerMinute"/>
+            <parameter name="disabled"/>
+        </in-parameters>
+        <out-parameters><parameter name="clientId"/></out-parameters>
+    </service>
+</services>

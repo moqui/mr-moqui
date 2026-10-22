@@ -26,9 +26,11 @@
 //!    3.1.3.7) are checked, its address must be the account's unless the user said a change is fine, and the refresh
 //!    token is stored. The page posts the outcome (never a token) to the opener on this page's own origin and on a
 //!    BroadcastChannel, and the outcome stays in the session for `get#OAuthStatus`.
-//! 3. [`access_token`] gives a current access token, refreshing it (one refresh at a time per server) a minute before it
-//!    expires. A refresh token the provider refuses (revoked, expired: `invalid_grant`) marks the server's accounts
-//!    EasAuthFailed ("sign in again"), logged once; any other failure is temporary. Access tokens live in memory only.
+//! 3. [`access_token`] gives a current access token, refreshing it (one refresh at a time per server, across a cluster
+//!    too: the EmailServer row is locked for update) a minute before it expires. A refresh token the provider refuses
+//!    (revoked, expired: `invalid_grant`) marks the server's accounts EasAuthFailed ("sign in again"), logged once; any
+//!    other failure is temporary. Access tokens are kept in memory and encrypted on `EmailServerAccessToken`, where the
+//!    other servers of a cluster find them.
 //! 4. Removing an account or signing out revokes the refresh token at the provider when it has a revocation endpoint,
 //!    after the commit, best effort and logged, unless another server here holds a sign-in of the same address (the
 //!    provider revokes the whole grant), and deletes it here.
@@ -52,7 +54,7 @@ use sha2::{Digest, Sha256};
 
 use super::implementation::{find_one, force_new, note_error};
 use super::inbound::stamp_millis;
-use super::sync::{value_number, ACCOUNT, SERVER};
+use super::sync::{value_millis, value_number, ACCOUNT, SERVER};
 use crate::context::ExecutionContext;
 use crate::entity::{Condition, EntityFacade, EntityValue};
 use crate::service::util::{field_text, now_millis, param_text, take_errors_string};
@@ -61,6 +63,8 @@ use crate::user::session::{current_user_id, session_attribute, update_session_at
 const PROVIDER: &str = "moqui.basic.email.EmailOAuthProvider";
 const ENUMERATION: &str = "moqui.basic.Enumeration";
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
+/// The stored access token of an EatOAuth2 server, shared by the servers of a cluster.
+const TOKEN: &str = "moqui.basic.email.EmailServerAccessToken";
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 /// The authentication type of a server that signs in with OAuth.
 pub(super) const OAUTH: &str = "EatOAuth2";
@@ -282,10 +286,14 @@ pub(super) fn load_providers(facade: &EntityFacade) -> Result<Vec<Provider>, Lib
         .collect())
 }
 
-/// The redirect URI registered at the providers: `email_oauth_redirect_uri`, else the webroot webapp's URL from the
-/// conf with `/emailOAuth/callback`. Never from a request.
+/// The redirect URI registered at the providers: the conf's `email-client` `oauth-redirect-uri`
+/// (`email_oauth_redirect_uri`), else the webroot webapp's URL from the conf with `/emailOAuth/callback`. Never from a
+/// request.
 pub(super) fn redirect_uri() -> String {
-    let configured = moqui_lib::env::get_prop_or_env("email_oauth_redirect_uri");
+    let mut configured = super::client_setting("oauth-redirect-uri");
+    if configured.is_empty() {
+        configured = moqui_lib::env::get_prop_or_env("email_oauth_redirect_uri");
+    }
     if !configured.trim().is_empty() {
         return configured.trim().to_string();
     }
@@ -388,9 +396,11 @@ fn json_text(value: Option<&Json>) -> String {
     }
 }
 
+/// No provider call: a sim session, or the read fence (which keeps the refusal).
 fn sim() -> bool {
     ExecutionContext::with_current(|ec| ec.factory().entity().is_some_and(|facade| facade.sim_active()))
         .unwrap_or(false)
+        || crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "a mail sign-in provider")
 }
 
 /// The answer of a provider endpoint: its status and JSON body.
@@ -451,11 +461,30 @@ fn get_bearer(url: &str, token: &str) -> Result<Answer, String> {
 
 // ---- access tokens ----
 
-/// An access token in memory, with the refresh token it came from (by digest) and when it expires.
+/// An access token in memory or on `EmailServerAccessToken`, with the refresh token it came from (by digest) and when
+/// it expires.
 struct Cached {
     token: String,
     expires: i64,
     refresh: String,
+}
+
+impl Cached {
+    fn new(token: &str, expires_in: i64, refresh: &str) -> Self {
+        let expires_in = if expires_in > 0 { expires_in } else { 3600 };
+        Self {
+            token: token.to_string(),
+            expires: now_millis() + expires_in.saturating_mul(1000),
+            refresh: digest(refresh),
+        }
+    }
+
+    /// Current for the refresh token `refresh` (not about to expire) and not the `rejected` one.
+    fn usable(&self, refresh: &str, rejected: Option<&str>) -> bool {
+        self.refresh == digest(refresh)
+            && self.expires - EARLY_MILLIS > now_millis()
+            && rejected.is_none_or(|rejected| rejected != self.token)
+    }
 }
 
 fn cache() -> &'static Mutex<HashMap<String, Cached>> {
@@ -463,45 +492,89 @@ fn cache() -> &'static Mutex<HashMap<String, Cached>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// One refresh at a time per server.
+/// One refresh at a time per server in this process; across a cluster the refresh locks the EmailServer row too.
 fn server_lock(server_id: &str) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     Arc::clone(lock(locks).entry(server_id.to_string()).or_default())
 }
 
-fn remember(server_id: &str, token: &str, expires_in: i64, refresh: &str) {
-    let expires_in = if expires_in > 0 { expires_in } else { 3600 };
-    lock(cache()).insert(
-        server_id.to_string(),
-        Cached {
-            token: token.to_string(),
-            expires: now_millis() + expires_in.saturating_mul(1000),
-            refresh: digest(refresh),
-        },
-    );
+fn remember(server_id: &str, cached: Cached) {
+    lock(cache()).insert(server_id.to_string(), cached);
 }
 
-/// Drop the access token kept for a server.
-pub(super) fn forget(server_id: &str) {
+/// Drop the access token of a server: the one kept in memory and the stored one.
+pub(super) fn forget(facade: &EntityFacade, server_id: &str) {
+    forget_local(server_id);
+    let deleted = facade
+        .find(TOKEN)
+        .and_then(|find| find.eq("emailServerId", Value::string(server_id)).delete_all());
+    if let Err(err) = deleted {
+        tracing::error!("Email server {server_id}: could not delete its stored OAuth access token: {err}");
+    }
+}
+
+/// Drop the access token kept in memory for a server, as another server of the cluster that has none.
+pub(super) fn forget_local(server_id: &str) {
     lock(cache()).remove(server_id);
 }
 
-/// Make the access token kept for a server one that expires now, as an hour later.
+/// Make the access token of a server, in memory and stored, one that expires now, as an hour later.
 #[cfg(test)]
-pub(super) fn age_cached(server_id: &str) {
+pub(super) fn age_cached(facade: &EntityFacade, server_id: &str) {
     if let Some(found) = lock(cache()).get_mut(server_id) {
         found.expires = now_millis();
     }
+    facade
+        .find(TOKEN)
+        .and_then(|find| {
+            find.eq("emailServerId", Value::string(server_id))
+                .update_all([("expiresDate".to_string(), stamp_millis(now_millis()))])
+        })
+        .unwrap();
 }
 
 fn cached(server_id: &str, refresh: &str, rejected: Option<&str>) -> Option<String> {
     let cache = lock(cache());
     let found = cache.get(server_id)?;
-    (found.refresh == digest(refresh)
-        && found.expires - EARLY_MILLIS > now_millis()
-        && rejected.is_none_or(|rejected| rejected != found.token))
-    .then(|| found.token.clone())
+    found.usable(refresh, rejected).then(|| found.token.clone())
+}
+
+/// The stored access token of a server when it is usable; a row that will not decrypt is as none.
+fn stored_row(row: &EntityValue, server_id: &str, refresh: &str, rejected: Option<&str>) -> Option<Cached> {
+    let stored = Cached {
+        token: field_text(row, "accessToken"),
+        expires: value_millis(row.get("expiresDate"))?,
+        refresh: field_text(row, "refreshTokenDigest"),
+    };
+    if stored.token.is_empty() || !stored.usable(refresh, rejected) {
+        return None;
+    }
+    if stored.token == DECRYPT_FAILED {
+        tracing::warn!("Email server {server_id}: the stored OAuth access token cannot be decrypted; it is refreshed");
+        return None;
+    }
+    Some(stored)
+}
+
+/// The stored access token, kept in memory too, when another server of the cluster (or this one before a restart)
+/// refreshed it.
+fn stored(facade: &EntityFacade, server_id: &str, refresh: &str, rejected: Option<&str>) -> Option<String> {
+    let row = match facade.find(TOKEN).and_then(|find| {
+        find.eq("emailServerId", Value::string(server_id))
+            .use_cache(false)
+            .one()
+    }) {
+        Ok(row) => row?,
+        Err(err) => {
+            tracing::warn!("Email server {server_id}: could not read its stored OAuth access token: {err}");
+            return None;
+        }
+    };
+    let found = stored_row(&row, server_id, refresh, rejected)?;
+    let token = found.token.clone();
+    remember(server_id, found);
+    Some(token)
 }
 
 /// Why there is no access token.
@@ -521,9 +594,19 @@ impl fmt::Display for TokenError {
     }
 }
 
+/// What a refresh under the EmailServer lock came to.
+enum Refresh {
+    /// A new token, or the one another server of the cluster refreshed meanwhile.
+    Token(Cached),
+    /// The user must sign in again: the text and the detail logged. The accounts are marked after the transaction.
+    SignIn(String, String),
+    Failed(TokenError),
+}
+
 /// A current access token for an EatOAuth2 server, refreshed when it expires within a minute (or is `rejected`, the
-/// one a server just refused). One refresh at a time per server; a new refresh token the provider sends replaces the
-/// stored one.
+/// one a server just refused): the one kept in memory, else the stored one (refreshed by another server of the
+/// cluster), else a refresh. One refresh at a time per server, in this process and across the cluster (the EmailServer
+/// row locked for update); a new refresh token the provider sends replaces the stored one in the same transaction.
 pub(super) fn access_token(
     facade: &EntityFacade,
     server_id: &str,
@@ -542,11 +625,12 @@ pub(super) fn access_token(
     };
     let server = read()?;
     let refresh = field_text(&server, "oauthRefreshToken");
-    if let Some(token) = (!refresh.is_empty())
-        .then(|| cached(server_id, &refresh, rejected))
-        .flatten()
-    {
-        return Ok(token);
+    if !refresh.is_empty() && refresh != DECRYPT_FAILED {
+        if let Some(token) =
+            cached(server_id, &refresh, rejected).or_else(|| stored(facade, server_id, &refresh, rejected))
+        {
+            return Ok(token);
+        }
     }
     let guard = server_lock(server_id);
     let _turn = lock(&guard);
@@ -563,10 +647,7 @@ pub(super) fn access_token(
         return Err(TokenError::SignIn(text));
     }
     if refresh == DECRYPT_FAILED {
-        tracing::error!("Email server {server_id}: the stored OAuth refresh token cannot be decrypted");
-        return Err(TokenError::Unavailable(format!(
-            "The sign-in of email server {server_id} cannot be decrypted (entity_ds_crypt_pass changed?)"
-        )));
+        return Err(undecryptable(server_id));
     }
     if let Some(token) = cached(server_id, &refresh, rejected) {
         return Ok(token);
@@ -576,6 +657,86 @@ pub(super) fn access_token(
             "Sign-in with {} is not set up on this server (its OAuth client)",
             provider.name
         )));
+    }
+    // a token the POST got, kept when the transaction that stores it fails
+    let mut got: Option<Cached> = None;
+    let refreshed = force_new(facade, || {
+        refresh_locked(facade, server_id, &provider, rejected, &mut got)
+    });
+    match refreshed {
+        Ok(Refresh::Token(fresh)) => {
+            let token = fresh.token.clone();
+            remember(server_id, fresh);
+            Ok(token)
+        }
+        Ok(Refresh::SignIn(text, detail)) => {
+            // after the transaction: the marking is a transaction of its own, which waits on this one's lock
+            mark_sign_in_needed(facade, server_id, &text, &detail);
+            Err(TokenError::SignIn(text))
+        }
+        Ok(Refresh::Failed(err)) => Err(err),
+        Err(err) => match got {
+            Some(fresh) => {
+                tracing::error!("Email server {server_id}: could not store the refreshed OAuth access token: {err}");
+                let token = fresh.token.clone();
+                remember(server_id, fresh);
+                Ok(token)
+            }
+            None => Err(TokenError::Unavailable(format!(
+                "Could not refresh the {} sign-in of email server {server_id}: {err}",
+                provider.name
+            ))),
+        },
+    }
+}
+
+fn undecryptable(server_id: &str) -> TokenError {
+    tracing::error!("Email server {server_id}: the stored OAuth refresh token cannot be decrypted");
+    TokenError::Unavailable(format!(
+        "The sign-in of email server {server_id} cannot be decrypted (entity_ds_crypt_pass changed?)"
+    ))
+}
+
+/// The refresh, in the caller's transaction: the EmailServer row locked for update (one refresh at a time across the
+/// cluster), the stored token used when another server refreshed it meanwhile, else the POST, and the token and a new
+/// refresh token stored. The token the POST got is put in `got` before it is stored.
+fn refresh_locked(
+    facade: &EntityFacade,
+    server_id: &str,
+    provider: &Provider,
+    rejected: Option<&str>,
+    got: &mut Option<Cached>,
+) -> Result<Refresh, LibError> {
+    let Some(server) = facade
+        .find(SERVER)?
+        .eq("emailServerId", Value::string(server_id))
+        .use_cache(false)
+        .for_update(true)
+        .one()?
+    else {
+        return Ok(Refresh::Failed(TokenError::Unavailable(format!(
+            "Email server {server_id} not found"
+        ))));
+    };
+    let refresh = field_text(&server, "oauthRefreshToken");
+    if refresh.is_empty() {
+        return Ok(Refresh::SignIn(
+            format!("Not signed in with {}; sign in to sync this account", provider.name),
+            "no refresh token is stored".to_string(),
+        ));
+    }
+    if refresh == DECRYPT_FAILED {
+        return Ok(Refresh::Failed(undecryptable(server_id)));
+    }
+    if let Some(row) = facade
+        .find(TOKEN)?
+        .eq("emailServerId", Value::string(server_id))
+        .use_cache(false)
+        .one()?
+    {
+        if let Some(found) = stored_row(&row, server_id, &refresh, rejected) {
+            return Ok(Refresh::Token(found));
+        }
     }
     let mut pairs = vec![
         ("grant_type".to_string(), "refresh_token".to_string()),
@@ -587,12 +748,15 @@ pub(super) fn access_token(
         &provider.refresh_params,
         &provider.scope_for(pop_server(&server)),
     ));
-    let answer = post_form(&provider.token_url, &pairs).map_err(|err| {
-        TokenError::Unavailable(format!(
-            "Could not refresh the {} sign-in of email server {server_id}: {err}",
-            provider.name
-        ))
-    })?;
+    let answer = match post_form(&provider.token_url, &pairs) {
+        Ok(answer) => answer,
+        Err(err) => {
+            return Ok(Refresh::Failed(TokenError::Unavailable(format!(
+                "Could not refresh the {} sign-in of email server {server_id}: {err}",
+                provider.name
+            ))))
+        }
+    };
     if !answer.ok() {
         let (code, description) = answer.refusal();
         let detail = if description.is_empty() {
@@ -605,8 +769,7 @@ pub(super) fn access_token(
                 "The sign-in with {} ended (revoked or expired); sign in again to sync this account",
                 provider.name
             );
-            mark_sign_in_needed(facade, server_id, &text, &detail);
-            return Err(TokenError::SignIn(text));
+            return Ok(Refresh::SignIn(text, detail));
         }
         if matches!(code.as_str(), "invalid_client" | "unauthorized_client") {
             tracing::error!(
@@ -614,61 +777,43 @@ pub(super) fn access_token(
                 provider.name
             );
         }
-        return Err(TokenError::Unavailable(format!(
+        return Ok(Refresh::Failed(TokenError::Unavailable(format!(
             "{} refused to refresh the sign-in of email server {server_id}: {detail}",
             provider.name
-        )));
+        ))));
     }
     let token = json_text(answer.json.get("access_token"));
     if token.is_empty() {
-        return Err(TokenError::Unavailable(format!(
+        return Ok(Refresh::Failed(TokenError::Unavailable(format!(
             "{} sent no access token for email server {server_id}",
             provider.name
-        )));
+        ))));
     }
     let expires_in = value_number(Some(&moqui_lib::json::from_json(
         answer.json.get("expires_in").unwrap_or(&Json::Null),
     )))
     .unwrap_or(3600);
+    *got = Some(Cached::new(&token, expires_in, &refresh));
+    // a provider that rotates refresh tokens (Microsoft): keep the new one; the row is locked, so the one used is still
+    // the stored one
     let rotated = json_text(answer.json.get("refresh_token"));
     let current = if !rotated.is_empty() && rotated != refresh {
-        // a provider that rotates refresh tokens (Microsoft): keep the new one, unless a new sign-in replaced the one
-        // used meanwhile
-        match store_rotated(facade, server_id, &refresh, &rotated) {
-            Ok(true) => rotated,
-            Ok(false) => refresh,
-            Err(err) => {
-                tracing::error!("Email server {server_id}: could not keep the new refresh token: {err}");
-                refresh
-            }
-        }
+        let mut update = facade.make_value(SERVER)?;
+        update.set("emailServerId", Value::string(server_id));
+        update.set("oauthRefreshToken", Value::string(&rotated));
+        update.update(facade)?;
+        rotated
     } else {
         refresh
     };
-    remember(server_id, &token, expires_in, &current);
-    Ok(token)
-}
-
-fn store_rotated(facade: &EntityFacade, server_id: &str, used: &str, rotated: &str) -> Result<bool, LibError> {
-    force_new(facade, || {
-        let Some(row) = facade
-            .find(SERVER)?
-            .eq("emailServerId", Value::string(server_id))
-            .use_cache(false)
-            .for_update(true)
-            .one()?
-        else {
-            return Ok(false);
-        };
-        if field_text(&row, "oauthRefreshToken") != used {
-            return Ok(false);
-        }
-        let mut update = facade.make_value(SERVER)?;
-        update.set("emailServerId", Value::string(server_id));
-        update.set("oauthRefreshToken", Value::string(rotated));
-        update.update(facade)?;
-        Ok(true)
-    })
+    let fresh = Cached::new(&token, expires_in, &current);
+    let mut row = facade.make_value(TOKEN)?;
+    row.set("emailServerId", Value::string(server_id));
+    row.set("accessToken", Value::string(&fresh.token));
+    row.set("expiresDate", stamp_millis(fresh.expires));
+    row.set("refreshTokenDigest", Value::string(&fresh.refresh));
+    row.create_or_update(facade)?;
+    Ok(Refresh::Token(fresh))
 }
 
 /// The server's active accounts need a new sign-in: EasAuthFailed with `text`, logged once (when an account changes).
@@ -872,6 +1017,7 @@ pub(super) fn start_sign_in(
         note_error("Email sign-in is disabled in LLM sim session");
         return Ok(out);
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::RemoteCall, "start#OAuthSignIn")?;
     let user = user_id();
     if user.is_empty() {
         note_error("Sign in to the app first");
@@ -1240,7 +1386,10 @@ fn finish_pending(parameters: &BTreeMap<String, Value>, facade: &EntityFacade, p
     };
     match stored {
         Ok((account_id, server_id)) => {
-            remember(&server_id, &tokens.access, tokens.expires_in, &tokens.refresh);
+            remember(
+                &server_id,
+                Cached::new(&tokens.access, tokens.expires_in, &tokens.refresh),
+            );
             Outcome {
                 status: "success".to_string(),
                 message: format!("Signed in with {} as {address}.", provider.name),
@@ -1935,6 +2084,7 @@ pub(super) fn find_provider_service(
         && flag(parameters, "lookupMx")
         && super::discover::lookup_domain(&domain)
         && !facade.sim_active()
+        && !crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "an MX lookup")
     {
         let mx = super::discover::mx_hosts(&domain);
         found = detect(&providers, &domain, &[], &mx).map(|provider| (provider, "mx"));
@@ -1992,7 +2142,7 @@ fn revoke_server(facade: &EntityFacade, server_id: &str, clear: bool) -> Result<
     else {
         return Ok(false);
     };
-    forget(server_id);
+    forget(facade, server_id);
     let token = field_text(&server, "oauthRefreshToken");
     if clear && !token.is_empty() {
         let mut update = facade.make_value(SERVER)?;

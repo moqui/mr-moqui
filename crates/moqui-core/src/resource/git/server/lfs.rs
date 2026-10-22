@@ -39,7 +39,7 @@ use super::{
 use crate::context::Error;
 use crate::entity::EntityValue;
 use crate::resource::blob::{is_blob_id, BlobStore, Expected};
-use crate::resource::git::{RepositoryKind, GIT_ARTIFACT_TYPE};
+use crate::resource::git::RepositoryKind;
 use crate::resource::source::READ_WINDOW;
 
 pub const GIT_LFS_OBJECT: &str = "moqui.resource.GitLfsObject";
@@ -70,9 +70,9 @@ pub struct LfsHttpRequest {
     pub client_ip: String,
 }
 
-/// `git_lfs_max_object_size`: the largest object, 5 GiB.
+/// The conf's `git-server` `lfs-max-object-size`: the largest object, 5 GiB.
 pub fn max_object_size() -> u64 {
-    property("git_lfs_max_object_size")
+    crate::resource::git::setting("lfs-max-object-size")
         .parse::<u64>()
         .ok()
         .filter(|size| *size > 0)
@@ -110,8 +110,15 @@ fn now_seconds() -> i64 {
 }
 
 /// A token key: set, and not the placeholder the conf ships.
-fn key(name: &str) -> Option<String> {
-    Some(property(name)).filter(|key| !key.is_empty() && !key.ends_with("CHANGEME"))
+/// The `git-server` attribute `name` (`lfs-token-key`), else the property `property`; None when empty or not yet set.
+fn key(name: &str, property_name: &str) -> Option<String> {
+    let configured = crate::resource::git::setting(name);
+    let key = if configured.is_empty() {
+        property(property_name)
+    } else {
+        configured
+    };
+    Some(key).filter(|key| !key.is_empty() && !key.ends_with("CHANGEME"))
 }
 
 fn tag(key: &str, payload: &str) -> Result<Vec<u8>, Error> {
@@ -123,7 +130,7 @@ fn tag(key: &str, payload: &str) -> Result<Vec<u8>, Error> {
 
 /// The `Authorization` header value of a token for `username` to `operation` on `repository`, for `seconds`.
 fn issue(username: &str, repository: &str, operation: Operation, seconds: i64) -> Result<String, Error> {
-    let key = key("git_lfs_token_key").ok_or_else(|| Error::new("git_lfs_token_key is not set"))?;
+    let key = key("lfs-token-key", "git_lfs_token_key").ok_or_else(|| Error::new("git_lfs_token_key is not set"))?;
     issue_with(&key, username, repository, operation, seconds)
 }
 
@@ -152,10 +159,13 @@ fn issue_with(
 /// The token of a `MoquiLfs` header: `None` for another kind of header, an error for a token that is not good (a
 /// wrong signature, expired).
 fn read_token(header: &str) -> Option<Result<Token, Refusal>> {
-    let keys: Vec<String> = [key("git_lfs_token_key"), key("git_lfs_token_key_previous")]
-        .into_iter()
-        .flatten()
-        .collect();
+    let keys: Vec<String> = [
+        key("lfs-token-key", "git_lfs_token_key"),
+        key("lfs-token-key-previous", "git_lfs_token_key_previous"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     read_token_with(&keys, header)
 }
 
@@ -752,7 +762,7 @@ impl Lfs {
                     "the lock is another user's; force unlocking it needs the delete permission",
                 ));
             }
-            if crate::user::authorize(GIT_ARTIFACT_TYPE, &self.repository, "delete").is_err() {
+            if !super::permitted(&self.repository, "delete") {
                 return Err(message(
                     403,
                     "force unlocking another user's lock needs the delete permission",

@@ -1,0 +1,9 @@
+{
+    "t": "component",
+    "name": "calendar",
+    "props": {
+        "source": "events",
+        "events": "events",
+        "month": "month"
+    }
+}

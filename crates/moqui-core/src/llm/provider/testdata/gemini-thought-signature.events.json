@@ -1,0 +1,92 @@
+{
+  "events": [
+    {
+      "id": "Vz8xaPq3BvG2nvgP0eTzkAk",
+      "model": "gemini-3.8-flash",
+      "type": "started"
+    },
+    {
+      "call_id": "function-call-11542086410217632716",
+      "index": 0,
+      "name": "get_weather",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"city\":\"Paris\"}",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "index": 0,
+      "type": "tool_end"
+    },
+    {
+      "item": {
+        "call_id": "function-call-11542086410217632716",
+        "fields": {
+          "extra_content": {
+            "google": {
+              "thought_signature": "CvcBAdHtim9mZ3Vz0kQ2c2lnbmF0dXJlLWZvci1nZXRfd2VhdGhlcg=="
+            }
+          }
+        },
+        "kind": "tool-call-extra"
+      },
+      "type": "replay"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 96,
+      "output": 75,
+      "reasoning": 57,
+      "type": "usage"
+    },
+    {
+      "finish": "tool_calls",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "gemini-3.8-flash",
+    "reasoning": "",
+    "replay": [
+      {
+        "call_id": "function-call-11542086410217632716",
+        "fields": {
+          "extra_content": {
+            "google": {
+              "thought_signature": "CvcBAdHtim9mZ3Vz0kQ2c2lnbmF0dXJlLWZvci1nZXRfd2VhdGhlcg=="
+            }
+          }
+        },
+        "kind": "tool-call-extra"
+      }
+    ],
+    "response_id": "Vz8xaPq3BvG2nvgP0eTzkAk",
+    "text": "",
+    "text_deltas": 0,
+    "tool_calls": [
+      {
+        "arguments": {
+          "city": "Paris"
+        },
+        "id": "function-call-11542086410217632716",
+        "name": "get_weather"
+      }
+    ],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 96,
+      "output": 75,
+      "reasoning": 57
+    }
+  }
+}

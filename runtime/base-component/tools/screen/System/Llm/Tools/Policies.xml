@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- An agent's tool policy: its rules in sequence order, the first whose pattern matches a tool (or a catalog name)
+    deciding. A tool no rule matches is offered with its writes asked for; a destructive one needs a rule that allows it.
+    A rule naming a lazy add-on tool exactly pins it, so it is a tool of its own. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Policies" default-menu-index="3">
+
+    <parameter name="agentId"/>
+
+    <transition name="storePolicy"><service-call name="store#moqui.agent.AgentToolPolicy"/>
+        <default-response url="." parameter-map="{agentId:agentId}"/></transition>
+    <transition name="deletePolicy"><service-call name="delete#moqui.agent.AgentToolPolicy"/>
+        <default-response url="." parameter-map="{agentId:agentId}"/></transition>
+
+    <actions>
+        <set field="agentId" from="agentId || 'assist'"/>
+        <entity-find entity-name="moqui.agent.AgentDefinition" list="agentList"><order-by field-name="agentName"/></entity-find>
+        <entity-find entity-name="moqui.agent.AgentToolPolicy" list="policyList">
+            <econdition field-name="agentId"/><order-by field-name="sequenceNum"/></entity-find>
+    </actions>
+    <widgets>
+        <form-single name="SelectAgent" transition="." focus-field="agentId">
+            <field name="agentId"><default-field title="Agent"><drop-down submit-on-select="true">
+                <list-options list="agentList" key="${agentId}" text="${agentName ?? agentId}"/></drop-down></default-field></field>
+        </form-single>
+        <container-box><box-header title="Tool Policy of ${agentId}"/><box-toolbar>
+            <container-dialog id="AddPolicyDialog" button-text="Add Rule">
+                <form-single name="AddPolicy" transition="storePolicy">
+                    <field name="agentId" from="agentId"><default-field><hidden/></default-field></field>
+                    <field name="sequenceNum"><default-field title="Sequence"><text-line size="5"/></default-field></field>
+                    <field name="toolPattern"><default-field title="Tool Pattern" tooltip="A tool or catalog name, or a pattern with * (mcp__*, *)">
+                        <text-line size="30"/></default-field></field>
+                    <field name="classificationEnumId"><default-field title="Ceiling" tooltip="The highest class it may run; empty is any">
+                        <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                            <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentClassification"/>
+                                <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="approvalModeEnumId"><default-field title="Approval" tooltip="ask: the user decides each write; policy: no one is asked (background agents only); never: not offered">
+                        <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                            <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentApprovalMode"/>
+                                <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="allowDestructive"><default-field title="Destructive"><drop-down allow-empty="true">
+                        <option key="Y"/><option key="N"/></drop-down></default-field></field>
+                    <field name="callsPerRun"><default-field title="Calls per Run"><text-line size="5"/></default-field></field>
+                    <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <form-list name="PolicyList" list="policyList" transition="storePolicy">
+                <field name="agentId"><default-field><hidden/></default-field></field>
+                <field name="sequenceNum"><default-field title="Sequence"><display/></default-field></field>
+                <field name="toolPattern"><default-field title="Tool Pattern"><text-line size="25"/></default-field></field>
+                <field name="classificationEnumId"><default-field title="Ceiling">
+                    <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                        <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentClassification"/>
+                            <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                <field name="approvalModeEnumId"><default-field title="Approval">
+                    <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                        <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentApprovalMode"/>
+                            <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                <field name="allowDestructive"><default-field title="Destructive"><drop-down allow-empty="true">
+                    <option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="callsPerRun"><default-field title="Calls per Run"><text-line size="5"/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                <field name="deleteLink"><default-field title=""><link url="deletePolicy" text="Remove"
+                        parameter-map="{agentId:agentId, sequenceNum:sequenceNum}" confirmation="Remove this rule?"/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

@@ -25,6 +25,10 @@ pub(crate) fn publish_names(
 ) -> Result<crate::script::ContextFrame, crate::context::Error> {
     let frame = crate::script::ContextFrame::push();
     for (name, value) in values {
+        // `context` names the context itself; a parameter of that name (a commit status's) is in `parameters`
+        if name == "context" {
+            continue;
+        }
         crate::script::set_context_name(name, value.clone())?;
     }
     Ok(frame)

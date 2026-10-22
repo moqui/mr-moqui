@@ -412,6 +412,22 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="description" type="text-medium"/>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
+    <entity entity-name="UserAppPassword" package="moqui.security" use="transactional" cache="never">
+        <description>A password for one device or app of a user: the CalDAV, CardDAV and WebDAV servers and the SFTP drives
+            take it (with the username) where the web login does not, so an account with a second factor can sync and
+            losing a phone means revoking one password. Shown once when made (create#UserAppPassword); only
+            passwordHash is kept, the SHA-256 of the password without dashes in lower case, as for a login key.</description>
+        <field name="appPasswordId" type="id" is-pk="true"/>
+        <field name="userId" type="id" not-null="true"/>
+        <field name="name" type="text-medium"><description>What the user called it: the device or app</description></field>
+        <field name="passwordHash" type="text-medium" not-null="true"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"><description>Written at most once a minute</description></field>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="USER_APP_PW_HASH" unique="true"><index-field name="passwordHash"/></index>
+        <index name="USER_APP_PW_USER"><index-field name="userId"/></index>
+    </entity>
     <entity entity-name="UserSshKey" package="moqui.security" use="configuration" cache="never">
         <description>A public key a user logs in with on the built-in SSH server (ssh_port). The key is matched by its
             SHA-256 fingerprint, filled from publicKey when the record is created.</description>

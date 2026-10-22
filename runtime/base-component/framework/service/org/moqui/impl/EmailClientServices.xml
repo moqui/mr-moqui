@@ -51,7 +51,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     Settings: an account's server may have an SMTP sign-in of its own (smtpUsername, smtpPassword); update#EmailAccount
     changes its kind (personal and shared); update#EmailFolder maps a folder to a kind and subscribes it; the automatic
-    reply has an audience (everyone, contacts through the app's hook filter#ContactAddresses, internal only);
+    reply has an audience (everyone, contacts through the app's hook filter#ContactAddresses, internal only) and more
+    domains that count as internal (internalDomains); send#TestMessage sends a message from an account to itself;
     test#EmailRule tries a rule on recent mail without acting; a removed account whose mail was kept is listed to its
     owner (get#EmailAccountAccess includeRemoved) and deleted by them (delete#EmailAccount); a sync sends its progress on
     the topic emailSyncProgress.
@@ -521,8 +522,10 @@ along with this software (see the LICENSE.md file). If not, see
             ec.entity.find('moqui.basic.email.EmailAccountUser').condition('emailAccountId', emailAccountId).deleteAll()
             ec.entity.find('moqui.basic.email.EmailRemoteChange').condition('emailAccountId', emailAccountId).deleteAll()
             account.delete()
-            if (ownedServer && ec.entity.find('moqui.basic.email.EmailAccount').condition('emailServerId', ownedServer).count() === 0)
+            if (ownedServer && ec.entity.find('moqui.basic.email.EmailAccount').condition('emailServerId', ownedServer).count() === 0) {
+                ec.entity.find('moqui.basic.email.EmailServerAccessToken').condition('emailServerId', ownedServer).deleteAll()
                 ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', ownedServer).deleteAll()
+            }
         ]]></script></actions>
     </service>
     <service verb="delete" noun="AccountMessages" transaction="ignore">
@@ -627,11 +630,19 @@ along with this software (see the LICENSE.md file). If not, see
                     folderUnread[row.emailFolderId] = (folderUnread[row.emailFolderId] || 0) + 1
                 }
             }
+            // the Internal account has labels and no folders
+            if (internalEmailAccountId) {
+                for (const label of ec.entity.find('moqui.basic.email.EmailLabel').condition('emailAccountId', internalEmailAccountId)
+                        .orderBy('sequenceNum,labelName').list()) {
+                    (labelsByAccount[label.emailAccountId] ||= []).push({emailLabelId: label.emailLabelId, labelName: label.labelName ?? null,
+                        color: label.color ?? null, sequenceNum: label.sequenceNum ?? null})
+                }
+            }
             for (const account of access.accountList) {
                 const item = Object.assign({}, account)
                 if (account.isInternal) {
                     Object.assign(item, {unreadCount: null, draftCount: 0, outboxCount: 0, outboxErrorCount: 0,
-                        folderList: [], labelList: [], identityList: []})
+                        folderList: [], labelList: labelsByAccount[account.emailAccountId] || [], identityList: []})
                     accountList.push(item)
                     continue
                 }
@@ -757,6 +768,66 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.service.sync().name('update#moqui.basic.email.EmailAccount').parameters({emailAccountId: emailAccountId,
                     statusId: 'EasActive', lastSyncError: null}).disableAuthz().call()
             }
+        ]]></script></actions>
+    </service>
+    <service verb="send" noun="TestMessage">
+        <description>Send a test message from an account to its own address (send permission; not the Internal account),
+            through its SMTP server as a message the user sends (deliver#DraftMessage), from its default identity. The
+            subject starts with "[Test]". Sent, it is in Sent, and the next sync brings it to the Inbox, which shows the
+            account both sends and receives. A send that fails answers sent false with sendError and leaves nothing in the
+            Outbox: the test message is removed.</description>
+        <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="sendError"/>
+            <parameter name="emailMessageId"><description>The test message, when it was sent</description></parameter>
+            <parameter name="toAddress"/>
+            <parameter name="subject"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const MESSAGE = 'moqui.basic.email.EmailMessage'
+            sent = false
+            sendError = null
+            emailMessageId = null
+            toAddress = null
+            subject = null
+            const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess')
+                    .parameter('emailAccountId', emailAccountId).call()
+            if (ec.message.hasError()) return
+            if (!(access.level >= 1)) { ec.message.addError(`Email account ${emailAccountId} not found`); return }
+            if (access.account.isInternal) { ec.message.addError('The Internal account has no server'); return }
+            if (!access.account.canSend) { ec.message.addError(`You may not send from email account ${emailAccountId}`); return }
+            const account = access.account
+            const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId).one() : null
+            if (server == null || !server.smtpHost) { ec.message.addError(`Email account ${account.accountName || emailAccountId} has no outgoing (SMTP) server`); return }
+            if (!account.emailAddress || !String(account.emailAddress).includes('@')) { ec.message.addError(`Email account ${emailAccountId} has no email address`); return }
+            const identities = Array.from(ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', emailAccountId)
+                    .orderBy('emailIdentityId').list())
+            const identity = identities.find((candidate) => candidate.isDefault === 'Y') || identities[0] || null
+            toAddress = account.emailAddress
+            const name = account.accountName || account.emailAddress
+            subject = `[Test] ${ec.l10n.localize('A test message from')} ${name}`
+            const sentAt = ec.l10n.format(new Date(Number(ec.user.nowTimestamp)), 'yyyy-MM-dd HH:mm')
+            const bodyText = `${ec.l10n.localize('This message tests that the account sends mail through its outgoing server and receives it back.')}\n\n` +
+                    `${ec.l10n.localize('Account')}: ${name} <${account.emailAddress}>\n${ec.l10n.localize('Outgoing server')}: ${server.smtpHost}\n${ec.l10n.localize('Sent')}: ${sentAt}`
+            const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            const body = bodyText.split('\n\n').map((part) => `<p>${escape(part).replace(/\n/g, '<br>')}</p>`).join('')
+            const message = ec.entity.makeValue(MESSAGE)
+            message.setSequencedIdPrimary()
+            message.setFields({statusId: 'ES_DRAFT', emailAccountId: emailAccountId, emailServerId: account.emailServerId,
+                emailIdentityId: identity ? identity.emailIdentityId : null,
+                fromAddress: identity?.emailAddress || account.emailAddress, fromName: identity ? (identity.displayName ?? null) : (account.accountName ?? null),
+                toAddresses: account.emailAddress, subject: subject, contentType: 'text/html', body: body, bodyText: bodyText,
+                snippet: bodyText.substring(0, 137), isRead: 'Y', messageDate: ec.user.nowTimestamp, hasAttachment: 'N'}, true, null, null)
+            message.create()
+            const result = ec.service.sync().name('org.moqui.impl.EmailClientServices.deliver#DraftMessage')
+                    .parameters({emailMessageId: message.emailMessageId, fromStatusIdList: ['ES_DRAFT']}).disableAuthz().call()
+            if (ec.message.hasError()) return
+            sent = result.sent === true
+            if (sent) { emailMessageId = message.emailMessageId; return }
+            sendError = result.sendError || ec.l10n.localize('The message was not sent')
+            // a test that failed leaves nothing waiting in the Outbox
+            ec.entity.find(MESSAGE).condition('emailMessageId', message.emailMessageId).deleteAll()
         ]]></script></actions>
     </service>
 
@@ -888,7 +959,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="create" noun="EmailLabel">
-        <description>A label of an account (manage permission); the name is unique in the account.</description>
+        <description>A label of an account, including the Internal account (manage permission); the name is unique in the
+            account. An internal message is labeled with it through mantle.party.communication.CommunicationEventPartyLabel.</description>
         <in-parameters>
             <parameter name="emailAccountId" required="true"/>
             <parameter name="labelName" required="true"/>
@@ -902,7 +974,6 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) return
             if (!(access.level >= 1)) { ec.message.addError(`Email account ${emailAccountId} not found`); return }
             if (access.level < 3) { ec.message.addError(`You may not add labels to email account ${emailAccountId}`); return }
-            if (access.account.isInternal) { ec.message.addError('Internal messages are labeled by the app that keeps them'); return }
             labelName = String(labelName).trim()
             if (!labelName) { ec.message.addError('A label needs a name'); return }
             if (ec.entity.find('moqui.basic.email.EmailLabel').condition('emailAccountId', emailAccountId).list()
@@ -1067,11 +1138,11 @@ along with this software (see the LICENSE.md file). If not, see
             label:, in:, is:, before:, after:, larger: and the others) are conditions here, an in: choosing the view (or the
             folders of that name), and its free text (every word, the last one as a prefix, each "phrase", none of the
             -words) is searched in the MoquiEmailMessage document of the search index (subject, from, to, cc, body and
-            labels; at most the newest searchLimit matches, 2000 by default) when search is configured and the index
-            is there; otherwise, or when the search fails (logged), each word must be in the subject, body or addresses
-            (LIKE). searchMode says which ran: index or text. The search is a view like any other (the Inbox passes view
-            all for a search, as Gmail searches all mail), and both the search and the find are limited to the accounts
-            the user reaches.
+            labels; read searchLimit matches at a time, 2000 by default, newest first from the page's cursor, so a view
+            with any number of matches pages) when search is configured and the index is there; otherwise, or when the
+            search fails (logged), each word must be in the subject, body or addresses (LIKE). searchMode says which
+            ran: index or text. The search is a view like any other (the Inbox passes view all for a search, as Gmail
+            searches all mail), and both the search and the find are limited to the accounts the user reaches.
 
             Paging: pageSize rows, then beforeDate, the sortDate of the last row shown (nextBeforeDate), for the next page.
             A row is {store (email), threadId and rootEmailMessageId (the root's id), lastEmailMessageId (the thread's
@@ -1104,8 +1175,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadMode" type="Boolean" default="true"/>
             <parameter name="beforeDate" type="Timestamp"/>
             <parameter name="pageSize" type="Integer" default="50"/>
-            <parameter name="searchLimit" type="Integer" default="2000"><description>The most index matches of the free text
-                (the newest)</description></parameter>
+            <parameter name="searchLimit" type="Integer" default="2000"><description>How many index matches of the free
+                text one read of the index takes (the newest first); the list reads on past them as it pages</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="threadList" type="List"><parameter name="thread" type="Map"/></parameter>
@@ -1314,7 +1385,54 @@ along with this software (see the LICENSE.md file). If not, see
             }
 
             // the free text: through the search index when it is there, else in the subject, body and addresses
-            let textIds = null
+            const beforeMillis = toMillis(beforeDate)
+            // the index's matches (newest first), and one read of them: the ids matching filters, at most limit
+            let indexQuery = null
+            const indexIds = (filters, limit) => Array.from(ec.search.search({documentType: 'MoquiEmailMessage', query: indexQuery,
+                    filter: {bool: {all: [{field: {name: 'emailAccountId', op: 'in', values: accountIds}}].concat(filters)}},
+                    sort: ['-messageDate'], limit: limit, consistency: 'readYourWrites', freshTimeout: 2000}).hits).map((hit) => String(hit.id))
+            // The index's matches in windows of searchLimit, newest first from the page's cursor (beforeDate), so a view
+            // of any size pages: a full window holds the matches dated after the oldest one it read, and the next window
+            // reads from that date again. Each window is {ids}; without the index the one window is {ids: null}, the view.
+            const indexBatch = searchLimit > 0 ? searchLimit : 2000
+            let windowEnd = beforeMillis
+            let windowsDone = false
+            const readIndexWindow = () => {
+                const ids = Array.from(new Set(indexIds(windowEnd == null ? [] : [{field: {name: 'messageDate', op: 'range', lt: windowEnd}}], indexBatch)))
+                if (ids.length < indexBatch) { windowsDone = true; return {ids: ids} }
+                // the dates as stored, so each window ends where the next begins
+                const dated = Array.from(ec.entity.find(MESSAGE).condition('emailMessageId', 'in', ids).selectField('emailMessageId')
+                        .selectField('messageDate').list()).map((row) => ({id: row.emailMessageId, at: toMillis(row.messageDate)}))
+                        .filter((row) => row.at != null)
+                if (!dated.length) {
+                    ec.logger.warn(`The mail search index matched ${ids.length} messages that are not stored; the search ends there`)
+                    windowsDone = true
+                    return {ids: []}
+                }
+                const floor = Math.min.apply(null, dated.map((row) => row.at))
+                const newer = dated.filter((row) => row.at > floor).map((row) => row.id)
+                if (!newer.length) {
+                    // a whole window dated one millisecond: take it, and go on before it
+                    ec.logger.warn(`The mail search matched more than ${indexBatch} messages dated ${floor}; the ones past those are left out`)
+                    windowEnd = floor
+                    return {ids: dated.map((row) => row.id)}
+                }
+                windowEnd = floor + 1
+                return {ids: newer}
+            }
+            let firstWindow = null
+            let viewWindowDone = false
+            const nextWindow = () => {
+                if (indexQuery == null) { if (viewWindowDone) return null; viewWindowDone = true; return {ids: null} }
+                if (firstWindow != null) { const window = firstWindow; firstWindow = null; return window }
+                if (windowsDone) return null
+                try { return readIndexWindow() }
+                catch (err) {
+                    ec.logger.error(`The mail search index failed reading past ${windowEnd}; the list ends there: ${err.message || err}`)
+                    windowsDone = true
+                    return null
+                }
+            }
             const TEXT_FIELDS = ['subject', 'body', 'bodyText', 'fromAddress', 'fromName', 'toAddresses', 'ccAddresses']
             if (search.hasFreeText) {
                 const DOCUMENT = 'MoquiEmailMessage'
@@ -1329,12 +1447,12 @@ along with this software (see the LICENSE.md file). If not, see
                         const all = words.map((word, position) => ({text: {terms: word, fields: FIELDS, match: position === words.length - 1 ? 'prefix' : 'term'}}))
                         for (const phrase of search.phraseList || []) all.push({text: {terms: phrase, fields: FIELDS, match: 'phrase'}})
                         const none = (search.excludeList || []).map((text) => ({text: {terms: text, fields: FIELDS, match: /\s/.test(text) ? 'phrase' : 'term'}}))
-                        const page = ec.search.search({documentType: DOCUMENT, query: {bool: {all: all.length ? all : ['match_all'], none: none}},
-                            filter: {field: {name: 'emailAccountId', op: 'in', values: accountIds}}, sort: ['-messageDate'],
-                            limit: searchLimit > 0 ? searchLimit : 2000, consistency: 'readYourWrites', freshTimeout: 2000})
-                        textIds = Array.from(new Set(page.hits.map((hit) => String(hit.id))))
+                        indexQuery = {bool: {all: all.length ? all : ['match_all'], none: none}}
+                        // the first window here, so an index that fails falls back to the text search
+                        firstWindow = readIndexWindow()
                         searchMode = 'index'
                     } catch (err) {
+                        indexQuery = null
                         ec.logger.warn(`The mail search index failed, searching the messages instead: ${err.message || err}`)
                     }
                 }
@@ -1343,8 +1461,6 @@ along with this software (see the LICENSE.md file). If not, see
                     for (const word of search.wordList || []) termConditions.push(anyLike(TEXT_FIELDS, word, false))
                     for (const phrase of search.phraseList || []) termConditions.push(anyLike(TEXT_FIELDS, phrase, false))
                     for (const text of search.excludeList || []) termConditions.push(anyLike(TEXT_FIELDS, text, true))
-                } else {
-                    termConditions.push(idsIn(textIds, false))
                 }
             }
             const notTrashJunk = () => trashJunk.length ? cf.makeCondition('emailFolderId', 'not-in', trashJunk, true) : null
@@ -1397,10 +1513,12 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const conditions = viewConditions()
             if (conditions == null) return
-            const makeFind = () => {
+            // the view's messages; with windowIds (an index window), only those
+            const makeFind = (windowIds) => {
                 let find = ec.entity.find(MESSAGE).condition('emailAccountId', 'in', accountIds)
                         .condition(cf.makeCondition('messageDate', 'not-equals', null))
                 for (const condition of conditions) find = find.condition(condition)
+                if (windowIds != null) find = find.condition(cf.makeCondition('emailMessageId', 'in', windowIds))
                 return find
             }
 
@@ -1462,13 +1580,16 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const field of LIST_FIELDS) out[field] = row[field] ?? null
                 return out
             }
-            const beforeMillis = toMillis(beforeDate)
             const withCursor = (find) => beforeMillis == null ? find : find.condition(cf.makeCondition('messageDate', 'less', new Date(beforeMillis)))
 
             if (!threadMode) {
-                let find = withCursor(makeFind())
-                for (const field of LIST_FIELDS) find = find.selectField(field)
-                const rows = Array.from(find.orderBy('-messageDate').orderBy('-emailMessageId').limit(pageSize + 1).list()).map(plain)
+                const rows = []
+                for (let window = nextWindow(); window != null && rows.length <= pageSize; window = nextWindow()) {
+                    if (window.ids != null && !window.ids.length) continue
+                    let find = withCursor(makeFind(window.ids))
+                    for (const field of LIST_FIELDS) find = find.selectField(field)
+                    for (const row of find.orderBy('-messageDate').orderBy('-emailMessageId').limit(pageSize + 1 - rows.length).list()) rows.push(plain(row))
+                }
                 hasMore = rows.length > pageSize
                 const page = rows.slice(0, pageSize)
                 const labelMap = labelsOf(page.map((row) => row.emailMessageId))
@@ -1478,54 +1599,69 @@ along with this software (see the LICENSE.md file). If not, see
                 return
             }
 
-            // threads: scan the view's messages newest first; a thread comes at its newest one
+            // threads: scan the view's messages newest first, window by window; a thread comes at its newest one
             const chunkSize = Math.max(pageSize * 2, 50)
             const seen = new Set()
             const accepted = []
-            let offset = 0
-            while (accepted.length <= pageSize) {
-                const rows = Array.from(withCursor(makeFind()).selectField('emailMessageId').selectField('rootEmailMessageId')
-                        .selectField('messageDate').orderBy('-messageDate').orderBy('-emailMessageId').offset(offset).limit(chunkSize).list())
-                offset += rows.length
-                const fresh = []
-                for (const row of rows) {
-                    const threadId = row.rootEmailMessageId || row.emailMessageId
-                    if (seen.has(threadId)) continue
-                    seen.add(threadId)
-                    fresh.push({threadId: threadId, viewMessageId: row.emailMessageId, sortDate: toMillis(row.messageDate)})
-                }
-                if (fresh.length) {
-                    const ids = fresh.map((candidate) => candidate.threadId)
-                    const inThreads = () => cf.makeCondition([cf.makeCondition('emailMessageId', 'in', ids), cf.makeCondition('rootEmailMessageId', 'in', ids)], 'or')
-                    // a thread with a message in the view at or after the cursor was on an earlier page
-                    let shownBefore = new Set()
-                    if (beforeMillis != null) {
-                        shownBefore = new Set(Array.from(makeFind().condition(inThreads()).condition(cf.makeCondition('messageDate', 'greater-equals',
-                            new Date(beforeMillis))).selectField('emailMessageId').selectField('rootEmailMessageId').list())
-                            .map((row) => row.rootEmailMessageId || row.emailMessageId))
+            const inThreads = (ids) => cf.makeCondition([cf.makeCondition('emailMessageId', 'in', ids), cf.makeCondition('rootEmailMessageId', 'in', ids)], 'or')
+            // the threads of ids with a message in the view at or after the cursor, which were on an earlier page; with the
+            // index, those messages must match its free text too
+            const shownAtCursor = (ids) => {
+                const rows = Array.from(makeFind(null).condition(inThreads(ids)).condition(cf.makeCondition('messageDate', 'greater-equals',
+                        new Date(beforeMillis))).selectField('emailMessageId').selectField('rootEmailMessageId').list())
+                let matching = rows
+                if (indexQuery != null && rows.length) {
+                    const matched = new Set()
+                    const messageIds = rows.map((row) => row.emailMessageId)
+                    for (let start = 0; start < messageIds.length; start += indexBatch) {
+                        const part = messageIds.slice(start, start + indexBatch)
+                        for (const id of indexIds([{field: {name: 'emailMessageId', op: 'in', values: part}}], part.length)) matched.add(id)
                     }
-                    const candidates = fresh.filter((candidate) => !shownBefore.has(candidate.threadId))
-                    if (candidates.length) {
-                        let find = ec.entity.find(MESSAGE).condition('emailAccountId', 'in', accountIds).condition(inThreads())
-                                .condition(cf.makeCondition('messageDate', 'not-equals', null))
-                        if (anywhere) { /* every folder */ }
-                        else if (inTrashView) find = find.condition(cf.makeCondition('emailFolderId', 'in', trashJunk))
-                        else if (trashJunk.length) find = find.condition(notTrashJunk())
-                        for (const field of LIST_FIELDS) find = find.selectField(field)
-                        const byThread = {}
-                        for (const row of find.orderBy('messageDate').orderBy('emailMessageId').list()) {
-                            (byThread[row.rootEmailMessageId || row.emailMessageId] ||= []).push(plain(row))
-                        }
-                        const labelMap = labelsOf(Object.values(byThread).flat().map((row) => row.emailMessageId))
-                        for (const candidate of candidates) {
-                            const messages = byThread[candidate.threadId]
-                            if (!messages || !messages.length) continue
-                            accepted.push(summarize(candidate.threadId, messages, candidate.viewMessageId, candidate.sortDate, labelMap))
-                            if (accepted.length > pageSize) break
+                    matching = rows.filter((row) => matched.has(row.emailMessageId))
+                }
+                return new Set(matching.map((row) => row.rootEmailMessageId || row.emailMessageId))
+            }
+            for (let window = nextWindow(); window != null && accepted.length <= pageSize; window = nextWindow()) {
+                if (window.ids != null && !window.ids.length) continue
+                let offset = 0
+                while (accepted.length <= pageSize) {
+                    const rows = Array.from(withCursor(makeFind(window.ids)).selectField('emailMessageId').selectField('rootEmailMessageId')
+                            .selectField('messageDate').orderBy('-messageDate').orderBy('-emailMessageId').offset(offset).limit(chunkSize).list())
+                    offset += rows.length
+                    const fresh = []
+                    for (const row of rows) {
+                        const threadId = row.rootEmailMessageId || row.emailMessageId
+                        if (seen.has(threadId)) continue
+                        seen.add(threadId)
+                        fresh.push({threadId: threadId, viewMessageId: row.emailMessageId, sortDate: toMillis(row.messageDate)})
+                    }
+                    if (fresh.length) {
+                        const ids = fresh.map((candidate) => candidate.threadId)
+                        // a thread with a message in the view at or after the cursor was on an earlier page
+                        const shownBefore = beforeMillis != null ? shownAtCursor(ids) : new Set()
+                        const candidates = fresh.filter((candidate) => !shownBefore.has(candidate.threadId))
+                        if (candidates.length) {
+                            let find = ec.entity.find(MESSAGE).condition('emailAccountId', 'in', accountIds).condition(inThreads(ids))
+                                    .condition(cf.makeCondition('messageDate', 'not-equals', null))
+                            if (anywhere) { /* every folder */ }
+                            else if (inTrashView) find = find.condition(cf.makeCondition('emailFolderId', 'in', trashJunk))
+                            else if (trashJunk.length) find = find.condition(notTrashJunk())
+                            for (const field of LIST_FIELDS) find = find.selectField(field)
+                            const byThread = {}
+                            for (const row of find.orderBy('messageDate').orderBy('emailMessageId').list()) {
+                                (byThread[row.rootEmailMessageId || row.emailMessageId] ||= []).push(plain(row))
+                            }
+                            const labelMap = labelsOf(Object.values(byThread).flat().map((row) => row.emailMessageId))
+                            for (const candidate of candidates) {
+                                const messages = byThread[candidate.threadId]
+                                if (!messages || !messages.length) continue
+                                accepted.push(summarize(candidate.threadId, messages, candidate.viewMessageId, candidate.sortDate, labelMap))
+                                if (accepted.length > pageSize) break
+                            }
                         }
                     }
+                    if (rows.length < chunkSize) break
                 }
-                if (rows.length < chunkSize) break
             }
             hasMore = accepted.length > pageSize
             threadList = accepted.slice(0, pageSize)
@@ -1724,7 +1860,7 @@ along with this software (see the LICENSE.md file). If not, see
             here), labels (stored as IMAP keywords), keywords (addKeywordList, removeKeywordList, such as $Junk), delete
             (where the message is on the server is kept with the change, as its row goes), sent (APPEND to Sent, unless
             the server keeps a copy of what it sends), createFolder or renameFolder (emailFolderId). The sync makes them,
-            in order, at the start and end of each session, and right after the commit when email_sync_push_now is on
+            in order, at the start and end of each session, and right after the commit when email-client sync-push-now is on
             (the default). A change made from the message's state when applied, so later changes need no merging.
             fromFolderMap and oldName are accepted for the callers, which ignore its errors.</description>
         <in-parameters>
@@ -1749,8 +1885,8 @@ along with this software (see the LICENSE.md file). If not, see
             job and the IDLE workers (authorization disabled). The queued local changes go to the server first; then
             LIST maps the server's folders (INBOX and the special-use attributes onto the account's folders, never over a
             kind a user chose with update#EmailFolder), and each subscribed folder (subscribed N is not read), the Inbox
-            first, brings its new mail (within syncWindowDays; at most email_sync_batch a
-            folder a session), its flags (CONDSTORE CHANGEDSINCE when offered, else a scan every email_flag_scan
+            first, brings its new mail (within syncWindowDays; at most email-client sync-batch a
+            folder a session), its flags (CONDSTORE CHANGEDSINCE when offered, else a scan every email-client flag-scan
             minutes) and its expunges (QRESYNC VANISHED, else by UID). A message is stored once, by folder and UID and
             by Message-ID across folders (a move keeps the row and its links); its files are DbResource files under
             dbresource://email/; it is threaded by In-Reply-To and References; received mail is ES_RECEIVED, the Sent
@@ -1769,7 +1905,7 @@ along with this software (see the LICENSE.md file). If not, see
             to the account's owner and members (not persisted, no alert), at most one a second while a folder has mail to
             fetch, with {emailAccountId, done, folderCount, foldersDone, folderName, folderPath, folderKept,
             folderFetched, folderToFetch, folderPending, fetched, toFetch, pending}, and one last with done true,
-            outcome, message and newCount. A session fetches at most email_sync_batch a folder (folderToFetch);
+            outcome, message and newCount. A session fetches at most email-client sync-batch a folder (folderToFetch);
             folderPending is all its new mail in the sync window (later sessions bring the rest) and folderKept what was
             kept of it before, so a first sync shows "{folderKept + folderFetched} of {folderKept + folderPending}"
             across its sessions; toFetch and pending add up the folders read so far. A sync with nothing to fetch sends
@@ -1795,8 +1931,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="sync" noun="DueEmailAccounts" type="rust" location="moqui_core::service::mail::sync_due_accounts"
             transaction="ignore" authenticate="anonymous-all" allow-remote="false">
         <description>The ServiceJob sync_EmailAccounts_frequent: sync each account with an incoming server whose last sync
-            is older than its interval (syncIntervalMinutes, else the email_sync_interval property, 5 minutes; three times
-            as long after an error), or whose last sync stopped at email_sync_batch with mail left on the server (at every
+            is older than its interval (syncIntervalMinutes, else email-client sync-interval in the conf, 5 minutes; three times
+            as long after an error), or whose last sync stopped at email-client sync-batch with mail left on the server (at every
             run of the job, so a large first sync goes on a batch a minute), each on its own. Paused accounts, those whose
             sign-in failed and those syncing now are left.</description>
         <out-parameters>
@@ -1808,7 +1944,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="discover" noun="EmailServer" type="rust" location="moqui_core::service::mail::discover_server"
             transaction="ignore" allow-remote="false">
         <description>The servers for an address, for the MailAccounts wizard, within a few seconds: Thunderbird autoconfig
-            (autoconfig.domain, the domain's .well-known URL, then the ISPDB; email_autoconfig_urls replaces the list),
+            (autoconfig.domain, the domain's .well-known URL, then the ISPDB; email-client autoconfig-urls replaces the list),
             then DNS SRV records (RFC 6186), else the guesses imap.domain and smtp.domain. The best of each, as the fields
             create#EmailAccount takes, and every one found in incomingList and outgoingList. oauthOnly when the provider
             signs in only with OAuth. oauthProviderEnumId is the EmailOAuthProvider the mail is at (by the address's
@@ -3027,7 +3163,13 @@ along with this software (see the LICENSE.md file). If not, see
         size greater or less (bytes, or with K or M). matchAllEnumId ErmAll (the default) or ErmAny. Each action is
         {action, value}: moveToFolder (a folder id, name or path), addLabel (a label id or name, made when missing),
         markRead, flag, forwardTo (addresses, sent through the account), delete (to Trash), markSpam (to Junk, keyword
-        $Junk), stopProcessing; createTask and createRequest are for an app to add. -->
+        $Junk), stopProcessing; and the actions apps add: an EmailRuleAction enumeration whose enumCode (else enumId) is the
+        action and whose optionValue is the service that does it (Mantle's createRequest and createWorkItem), so the
+        framework runs them without knowing the app. The service gets emailMessageId, emailAccountId, emailRuleId,
+        ruleOwnerUserId and the action's value, with authorization disabled and in a transaction of its own, and checks
+        what the rule's owner may do itself; it may answer stopProcessing; an error it reports is the rule's failure,
+        logged and skipped like any other. createTask and createRequest
+        are still accepted in a rule with no app to do them, which logs and skips them. -->
     <service verb="normalize" noun="EmailRule">
         <description>Internal, for create#EmailRule, update#EmailRule and test#EmailRule: the conditions and actions of a
             rule checked and in their stored form, or an error saying what is wrong. A conditionsJson or actionsJson text is
@@ -3048,6 +3190,9 @@ along with this software (see the LICENSE.md file). If not, see
             const OPERATORS = ['contains', 'is', 'matches', 'startsWith', 'greater', 'less']
             const ACTIONS = ['moveToFolder', 'addLabel', 'markRead', 'flag', 'forwardTo', 'delete', 'markSpam', 'stopProcessing',
                 'createTask', 'createRequest']
+            // the actions apps add (EmailRuleAction: enumCode, else enumId, with the service in optionValue)
+            for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'EmailRuleAction').useCache(true).disableAuthz().list())
+                if (row.optionValue && !ACTIONS.includes(row.enumCode || row.enumId)) ACTIONS.push(row.enumCode || row.enumId)
             const listOf = (list, json, what) => {
                 if (list != null) return Array.from(list)
                 if (json == null || json === '') return []
@@ -3353,7 +3498,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const conditions = JSON.parse(row.conditionsJson || '[]'), actions = JSON.parse(row.actionsJson || '[]')
                     if (!Array.isArray(conditions) || !Array.isArray(actions) || !conditions.length) throw new Error('no conditions')
                     rules.push({id: row.emailRuleId, name: row.ruleName || row.emailRuleId, all: row.matchAllEnumId !== 'ErmAny',
-                        stop: row.stopProcessing === 'Y', conditions: conditions, actions: actions})
+                        stop: row.stopProcessing === 'Y', conditions: conditions, actions: actions, owner: row.ownerUserId ?? null})
                 } catch (err) {
                     ec.logger.log('error', `Email rule ${row.emailRuleId} of account ${accountId} is not readable, skipped: ${err.message || err}`)
                     ruleErrorList.push(`${row.ruleName || row.emailRuleId}: ${err.message || err}`)
@@ -3505,7 +3650,19 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.message.hasError()) throw new Error(ec.message.errorsString)
                 if (!sent.sent) ec.logger.warn(`Email rule forward of message ${message.emailMessageId} to ${to} waits in the Outbox: ${sent.sendError}`)
             }
-            const apply = (action, message) => {
+            // the actions apps add: the service an EmailRuleAction enumeration names (enumCode, else enumId)
+            const appActions = {}
+            for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'EmailRuleAction').useCache(true).disableAuthz().list())
+                if (row.optionValue) appActions[row.enumCode || row.enumId] = String(row.optionValue).trim()
+            // in a transaction of its own, so an app's failure is the rule's and not the whole run's (the message itself is
+            // stored by then; the app reads it and leaves it to the rules)
+            const runAppAction = (service, action, message, rule) => {
+                const out = ec.service.sync().name(service).parameters({emailMessageId: message.emailMessageId, emailAccountId: accountId,
+                    emailRuleId: rule.id, ruleOwnerUserId: rule.owner, value: action.value ?? null}).requireNewTransaction(true).disableAuthz().call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                return out?.stopProcessing === true
+            }
+            const apply = (action, message, rule) => {
                 switch (action.action) {
                     case 'moveToFolder': moveTo(message, findFolder(action.value)); return false
                     case 'delete': moveTo(message, folderOfKind('EfkTrash')); return false
@@ -3516,6 +3673,7 @@ along with this software (see the LICENSE.md file). If not, see
                     case 'forwardTo': forward(message, action.value); return false
                     case 'stopProcessing': return true
                     default:
+                        if (appActions[action.action]) return runAppAction(appActions[action.action], action, message, rule)
                         ec.logger.info(`Email rule action ${action.action} is for an app to make; skipped`)
                         return false
                 }
@@ -3559,7 +3717,7 @@ along with this software (see the LICENSE.md file). If not, see
                     for (const action of rule.actions) {
                         ec.message.pushErrors()
                         try {
-                            if (apply(action, message)) stop = true
+                            if (apply(action, message, rule)) stop = true
                             actionCount++
                         } catch (err) {
                             ec.logger.log('error', `Email rule ${rule.id} action ${action.action} on message ${id} failed: ${err.message || err}`)
@@ -4033,8 +4191,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="EmailOutOfOffice">
         <description>An account's automatic reply (read permission); outOfOffice is null when it has none. isActive is
-            whether it is on now. replyAudienceEnumId is who gets it (EraEveryone when none was chosen); contactHookService
-            the hook that says who is a contact for EraContacts (null when none is configured: every sender is one).</description>
+            whether it is on now. replyAudienceEnumId is who gets it (EraEveryone when none was chosen); internalDomains the
+            more domains whose senders are internal (a comma list); contactHookService the hook that says who is a contact
+            for EraContacts (null when none is configured: every sender is one).</description>
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="outOfOffice" type="Map"/>
@@ -4056,7 +4215,8 @@ along with this software (see the LICENSE.md file). If not, see
             const toMillis = (value) => value == null || value === '' ? null : Number(value)
             outOfOffice = {emailAccountId: emailAccountId, enabled: row.enabled === 'Y', fromDate: toMillis(row.fromDate), thruDate: toMillis(row.thruDate),
                 subject: row.subject ?? null, bodyHtml: row.bodyHtml ?? null, internalBodyHtml: row.internalBodyHtml ?? null,
-                replyOncePerDays: row.replyOncePerDays ?? null, replyAudienceEnumId: row.replyAudienceEnumId || 'EraEveryone'}
+                replyOncePerDays: row.replyOncePerDays ?? null, replyAudienceEnumId: row.replyAudienceEnumId || 'EraEveryone',
+                internalDomains: row.internalDomains || null}
             const now = Number(ec.user.nowTimestamp)
             isActive = outOfOffice.enabled && (outOfOffice.fromDate == null || outOfOffice.fromDate <= now) &&
                     (outOfOffice.thruDate == null || outOfOffice.thruDate > now)
@@ -4066,7 +4226,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Set an account's automatic reply (manage permission; not the Internal account). replyAudienceEnumId
             is who gets it: EraEveryone (the default), EraContacts (internal senders and the owner's contacts, as
             filter#ContactAddresses says; every sender when no contact hook is configured) or EraInternal (internal senders
-            only).</description>
+            only). An internal sender is a user of this system, at the domain of a hosted or shared account, or at one of
+            internalDomains: more domains of the organization, separated by commas or spaces (a leading @ is dropped);
+            they are stored in lower case, comma separated.</description>
         <in-parameters>
             <parameter name="emailAccountId" required="true"/>
             <parameter name="enabled" type="Boolean" default="true"/>
@@ -4077,6 +4239,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="internalBodyHtml" allow-html="any"/>
             <parameter name="replyOncePerDays" type="Integer" default="4"/>
             <parameter name="replyAudienceEnumId" default-value="EraEveryone"/>
+            <parameter name="internalDomains"/>
         </in-parameters>
         <actions><script><![CDATA[
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess')
@@ -4090,10 +4253,18 @@ along with this software (see the LICENSE.md file). If not, see
             if (!replyAudienceEnumId) replyAudienceEnumId = 'EraEveryone'
             if (!['EraEveryone', 'EraContacts', 'EraInternal'].includes(replyAudienceEnumId)) {
                 ec.message.addError(`Unknown automatic reply audience ${replyAudienceEnumId}`); return }
+            const domains = []
+            for (const part of String(internalDomains || '').split(/[\s,;]+/)) {
+                const domain = part.trim().toLowerCase().replace(/^@/, '')
+                if (!domain) continue
+                if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+                    ec.message.addError(`Not a domain: ${part.trim()}`); return }
+                if (!domains.includes(domain)) domains.push(domain)
+            }
             const row = ec.entity.makeValue('moqui.basic.email.EmailOutOfOffice')
             row.setFields({emailAccountId: emailAccountId, enabled: enabled ? 'Y' : 'N', fromDate: fromDate, thruDate: thruDate, subject: subject,
                 bodyHtml: bodyHtml, internalBodyHtml: internalBodyHtml, replyOncePerDays: replyOncePerDays,
-                replyAudienceEnumId: replyAudienceEnumId}, true, null, null)
+                replyAudienceEnumId: replyAudienceEnumId, internalDomains: domains.length ? domains.join(',') : null}, true, null, null)
             // the whole reply is stored: a field left empty clears what was there
             row.createOrUpdate()
             // a new automatic reply goes to everyone again
@@ -4117,7 +4288,8 @@ along with this software (see the LICENSE.md file). If not, see
             - with Auto-Submitted: auto-replied and X-Auto-Response-Suppress: All, and In-Reply-To and References to the
               mail it answers (not threaded with it, and the mail is not marked answered);
             - with internalBodyHtml, when set, to an internal sender: a user of this system (by email address) or an
-              address at the domain of a hosted or shared account (the organization's own domains);
+              address at the domain of a hosted or shared account or at one of the reply's internalDomains (the
+              organization's own domains);
             - to the reply's audience (replyAudienceEnumId): everyone; internal senders and the owner's contacts
               (EraContacts: filter#ContactAddresses asks the app's hook, the email_contact_service property or the theme
               value STRT_EMAIL_CONTACT_SERVICE; with no hook every sender counts as a contact, and a hook that fails
@@ -4207,7 +4379,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (received == null || received < sinceMillis) return 'received before the automatic reply was on'
                 return null
             }
-            // internal: a user's address, or one at the domain of a hosted or shared account
+            // internal: a user's address, or one at the domain of a hosted or shared account or of the reply's own list
             let internalDomains = null
             const internalOf = {}
             const isInternal = (address) => {
@@ -4219,6 +4391,7 @@ along with this software (see the LICENSE.md file). If not, see
                         const at = lower(row.emailAddress).lastIndexOf('@')
                         if (at > 0) internalDomains.add(lower(row.emailAddress).substring(at + 1))
                     }
+                    for (const domain of String(reply.internalDomains || '').split(',')) if (lower(domain)) internalDomains.add(lower(domain))
                 }
                 const at = address.lastIndexOf('@')
                 internalOf[address] = (at > 0 && internalDomains.has(address.substring(at + 1))) ||

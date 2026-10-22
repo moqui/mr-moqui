@@ -19,7 +19,7 @@
 //! `birthday` (`yyyy-MM-dd`, or `--MM-dd` without a year), numbered slots `email1`, `phone1`, `website1` with their
 //! `email1.label` and `phone1.label` (Home, Work, Mobile, Fax, Home Fax, Main, Pager, Other, or the Apple label; `* `
 //! before the preferred one), `address1.street`, `.street2`, `.city`, `.region`, `.postalCode`, `.country`, `.poBox`,
-//! `.formatted` and `.label`, `notes` and `groups` (comma separated). A group card (4.0 KIND:group, Apple's
+//! `.formatted` and `.label`, `notes`, `groups` (comma separated) and `uid` (the card's UID as written). A group card (4.0 KIND:group, Apple's
 //! X-ADDRESSBOOKSERVER-KIND:group) is not a contact: its name goes in the groups of its members. An organization card
 //! (KIND:org, Apple's X-ABShowAs:COMPANY) has no person names. Quoted-printable 2.1 values are read in their CHARSET.
 
@@ -272,8 +272,20 @@ pub(crate) fn parse(text: &str) -> Vec<IndexMap<String, Value>> {
             let uid = card
                 .uid()
                 .map(|uid| uid.strip_prefix("urn:uuid:").unwrap_or(&uid).to_string());
-            let member_of = uid.and_then(|uid| groups_of.get(&uid).cloned()).unwrap_or_default();
-            contact(card, member_of)
+            let member_of = uid
+                .as_ref()
+                .and_then(|uid| groups_of.get(uid).cloned())
+                .unwrap_or_default();
+            let mut contact = contact(card, member_of);
+            // the card's own UID as written, which a CardDAV server keeps for the card
+            if let Some(uid) = card
+                .uid()
+                .map(|uid| uid.trim().to_string())
+                .filter(|uid| !uid.is_empty())
+            {
+                contact.insert("uid".to_string(), Value::String(uid));
+            }
+            contact
         })
         .collect()
 }

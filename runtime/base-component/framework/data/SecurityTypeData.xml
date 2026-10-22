@@ -44,7 +44,21 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.ArtifactAuthz artifactAuthzId="SystemMessageServicesSYSMSG" userGroupId="SYSMSG_RECEIVE" artifactGroupId="SystemMessageServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 
+    <!-- The drive services a device calls through the DAV server (WebDAV) and SFTP to the drives, as the user who logged in
+        with an app password (docs/Sync.md). Each checks the drive's members and shares itself, as for the Files screens. -->
+    <moqui.security.ArtifactGroup artifactGroupId="DriveDeviceServices" description="Drive services of devices (WebDAV, SFTP)"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="DriveDeviceServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.FileServices\.(get#UserDrives|list#Folder|get#ResourceInfo|upload#Resource|create#Folder|rename#Resource|move#Resource|copy#Resource|trash#Resource)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="DriveDeviceServicesALL" userGroupId="ALL_USERS" artifactGroupId="DriveDeviceServices"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+
     <!-- Special Permissions -->
+    <!-- An outside user (an app's client contacts, a vendor's or partner's users): no room bound to a record (not as a
+        member either), no public room but as a member, no other user's presence, no records drive (screens, WebDAV, SFTP),
+        and never the agent permissions (Assist, chat agents, AI tasks, A2A, MCP, the LLM gateway), whatever else a group
+        grants; check#RecordVisible shows them no record whatever the app's hook says (crates/moqui-core user::EXTERNAL_USER,
+        ChatServices, FileServices.get#DriveAccess). Granted to no group here: an app grants it to its outside users' group. -->
+    <moqui.security.UserPermission userPermissionId="EXTERNAL_USER" description="External user (no record rooms, records drive, others' presence or agents)"/>
     <moqui.security.UserPermission userPermissionId="ADMIN_PASSWORD" description="Admin Password Update"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_PASSWORD" fromDate="0"/>
 
@@ -54,14 +68,17 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SQL_RUNNER_WEB" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="GROOVY_SHELL_WEB" description="Tools: Groovy Shell"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="GROOVY_SHELL_WEB" fromDate="0"/>
-    <!-- The built-in SSH server (ssh_port): SFTP over ssh_sftp_root, and the admin command shell, which runs JavaScript. -->
+    <!-- The built-in SSH server (ssh_port): SFTP over ssh-server sftp-root, and the admin command shell, which runs JavaScript. -->
     <moqui.security.UserPermission userPermissionId="SSH_SFTP" description="SSH: SFTP file access"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="SSH_SHELL" description="SSH: admin command shell"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SSH_SHELL" fromDate="0"/>
+    <!-- The terminal client (plans/archive/Screen-TUI-Impl.md 4.2, 4.4) needs no permission: every user gets the apps over SSH
+        and in the browser terminal, every screen is still checked as the user, and files are not downloaded. SSH_SHELL
+        adds the admin shell's prompt before them, for a login by key or password at the SSH level. -->
     <!-- git-upload-pack and git-receive-pack over SSH (git clone ssh://...); AT_GIT_REPOSITORY still gates each
-        repository. Grant it to the groups of developers. A user with only this permission logs in by key
-        (UserSshKey) unless ssh_git_password_auth is true. -->
+        repository. Grant it to the groups of developers. Git takes a connection that logged in by key (UserSshKey)
+        unless ssh-server git-password-auth is true. -->
     <moqui.security.UserPermission userPermissionId="SSH_GIT" description="SSH: git clone, fetch and push"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_GIT" fromDate="0"/>
     <!-- Git repositories (AT_GIT_REPOSITORY): view to clone, fetch and read; create and update to push new refs and

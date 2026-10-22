@@ -21,7 +21,7 @@
 //! artifact hits are counted when a frame pops, not here.
 //!
 //! [`attach_files`] opens `moqui.log` and `moqui-error.log` once the runtime directory and the
-//! default properties are known, writes the lines logged before that, and rolls the files over by
+//! conf's `logging` element are known, writes the lines logged before that, and rolls the files over by
 //! size and by day. Those files stay the plain line, with no color and no console header. Without
 //! it lines go to stderr only.
 //!
@@ -60,6 +60,9 @@ const POLL: Duration = Duration::from_millis(100);
 
 static APP_QUEUE: Mutex<VecDeque<Document>> = Mutex::new(VecDeque::new());
 static HTTP_QUEUE: Mutex<VecDeque<Document>> = Mutex::new(VecDeque::new());
+/// Set by a test that wants the HTTP entries [`queue_http_request`] would ship.
+#[cfg(test)]
+static HTTP_CAPTURE: Mutex<Option<Vec<Document>>> = Mutex::new(None);
 static SHIPPING: AtomicBool = AtomicBool::new(false);
 static STOP_SHIPPING: AtomicBool = AtomicBool::new(false);
 static SHIPPER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
@@ -82,6 +85,18 @@ pub fn install() {
 /// [`install`], with stderr limited to `console` and above while the log files still get every line at
 /// `moqui_log_level`: `moqui test` keeps its report readable this way.
 pub fn install_with_console(console: Option<Level>) {
+    install_subscriber(Some(console));
+}
+
+/// [`install`] with nothing on stderr: `moqui tui` draws on the terminal, and any stderr line would tear the screen. The
+/// log files and the [`tap`]s get every line. It has to be the first install of the process.
+pub fn install_without_console() {
+    install_subscriber(None);
+}
+
+/// `console` is None for no stderr, `Some(None)` for every line at `moqui_log_level`, `Some(Some(level))` for that level
+/// and above.
+fn install_subscriber(console: Option<Option<Level>>) {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     INSTALLED.get_or_init(|| {
         let level = match moqui_lib::env::get_prop_or_env("moqui_log_level")
@@ -102,10 +117,44 @@ pub fn install_with_console(console: Option<Level>) {
         );
         let _ = tracing::subscriber::set_global_default(LineSubscriber {
             level,
-            console: console.unwrap_or(level),
+            console: console.map(|console| console.unwrap_or(level)),
             next_span: AtomicU64::new(1),
             color,
         });
+    });
+}
+
+/// The receivers of [`tap`], each with the least level it takes. A full one drops lines rather than block the thread
+/// that logs; a dropped one is removed.
+static TAPS: Mutex<Vec<(std::sync::mpsc::SyncSender<String>, Level)>> = Mutex::new(Vec::new());
+
+/// Every log line from now on, as the files get it, on a channel that holds up to `capacity` lines: the TUI's log pane.
+/// The subscriber has no layers, so this is a third sink beside stderr and the files.
+pub fn tap(capacity: usize) -> std::sync::mpsc::Receiver<String> {
+    tap_at(capacity, Level::TRACE)
+}
+
+/// [`tap`] with only the lines at `least` and above: WARN and ERROR for the log pane of an SSH session.
+pub fn tap_at(capacity: usize, least: Level) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(capacity.max(1));
+    TAPS.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((tx, least));
+    rx
+}
+
+fn feed_taps(level: Level, line: &str) {
+    let mut taps = TAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if taps.is_empty() {
+        return;
+    }
+    // A Level orders by verbosity: ERROR is the least, so a line goes to a tap whose least level it is at or under.
+    taps.retain(|(tap, least)| {
+        level > *least
+            || !matches!(
+                tap.try_send(line.to_string()),
+                Err(std::sync::mpsc::TrySendError::Disconnected(_))
+            )
     });
 }
 
@@ -198,9 +247,44 @@ pub fn flush(facade: &moqui_core::search::SearchFacade) {
 
 /// Queue one HTTP request for `moqui_http_log`. Nothing is queued unless shipping has started.
 pub fn queue_http_request(entry: Document) {
+    #[cfg(test)]
+    if let Some(captured) = lock(&HTTP_CAPTURE).as_mut() {
+        captured.push(entry.clone());
+    }
     if SHIPPING.load(Ordering::Relaxed) {
         push(&HTTP_QUEUE, entry);
     }
+}
+
+/// Keep HTTP log entries until [`take_http_capture`]. A test holds the result across the requests.
+/// The lock is a Tokio mutex, so that hold may cross `.await`.
+#[cfg(test)]
+pub(crate) async fn begin_http_capture() -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = HTTP_TEST.lock().await;
+    *lock(&HTTP_CAPTURE) = Some(Vec::new());
+    guard
+}
+
+/// The entries queued since [`begin_http_capture`], and capture turns off.
+#[cfg(test)]
+pub(crate) fn take_http_capture() -> Vec<Document> {
+    lock(&HTTP_CAPTURE).take().unwrap_or_default()
+}
+
+#[cfg(test)]
+static HTTP_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The first queued application-log entry whose message contains `part`.
+#[cfg(test)]
+pub(crate) fn take_app_log(part: &str) -> Option<Document> {
+    let mut queue = lock(&APP_QUEUE);
+    let index = queue.iter().position(|entry| {
+        entry
+            .get("message")
+            .and_then(moqui_lib::object::Value::as_str)
+            .is_some_and(|text| text.contains(part))
+    })?;
+    queue.remove(index)
 }
 
 fn push(queue: &Mutex<VecDeque<Document>>, entry: Document) {
@@ -413,26 +497,27 @@ fn write_file_line(level: Level, line: &str) {
     }
 }
 
-/// Open the log files named by `moqui_log_dir` (a path, or a `runtime://` location; empty means no files),
-/// `moqui_log_max_size_mb` and `moqui_log_max_files`, and write the lines logged so far. The first call
-/// decides; later calls change nothing. Returns the directory when files are being written.
-pub fn attach_files(runtime_dir: &Path) -> Option<PathBuf> {
+/// Open the log files of the conf's `logging` element: `dir` (`moqui_log_dir`, a path or a `runtime://` location;
+/// empty means no files), `max-size-mb` and `max-files`; with no factory yet, `moqui_log_dir` and the defaults. Write
+/// the lines logged so far. The first call decides; later calls change nothing. Returns the directory when files are
+/// being written.
+pub fn attach_files(
+    runtime_dir: &Path,
+    factory: Option<&moqui_core::context::ExecutionContextFactory>,
+) -> Option<PathBuf> {
     let mut state = lock(&FILES);
     let FileState::Pending(pending) = &mut *state else {
         return None;
     };
     let pending = std::mem::take(pending);
-    let dir = file_dir(runtime_dir, &moqui_lib::env::get_prop_or_env("moqui_log_dir"));
-    let max_mb = moqui_lib::env::get_prop_or_env("moqui_log_max_size_mb")
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|mb| *mb > 0)
-        .unwrap_or(100);
-    let max_files = moqui_lib::env::get_prop_or_env("moqui_log_max_files")
-        .trim()
-        .parse::<usize>()
-        .unwrap_or(30);
+    let setting = |name: &str| factory.map(|factory| factory.conf_setting("logging", name)).unwrap_or_default();
+    let mut configured_dir = setting("dir");
+    if configured_dir.is_empty() {
+        configured_dir = moqui_lib::env::get_prop_or_env("moqui_log_dir");
+    }
+    let dir = file_dir(runtime_dir, &configured_dir);
+    let max_mb = setting("max-size-mb").parse::<u64>().ok().filter(|mb| *mb > 0).unwrap_or(100);
+    let max_files = setting("max-files").parse::<usize>().unwrap_or(30);
     let opened = dir.as_ref().and_then(|dir| {
         let sinks = std::fs::create_dir_all(dir).and_then(|()| {
             Ok(FileSinks {
@@ -505,8 +590,8 @@ pub fn host_name() -> &'static str {
 
 struct LineSubscriber {
     level: Level,
-    /// The lowest level written to stderr; the files take every line at `level`.
-    console: Level,
+    /// The lowest level written to stderr, or None for no stderr; the files take every line at `level`.
+    console: Option<Level>,
     next_span: AtomicU64,
     /// Stderr uses the colored console header. Decided once in [`install`].
     color: bool,
@@ -544,10 +629,12 @@ impl Subscriber for LineSubscriber {
             message: &fields.message,
             extra: &fields.extra,
         };
-        if level <= self.console {
+        if self.console.is_some_and(|console| level <= console) {
             let _ = writeln!(std::io::stderr(), "{}", console_line(&text, self.color));
         }
-        write_file_line(level, &plain_line(&text));
+        let plain = plain_line(&text);
+        feed_taps(level, &plain);
+        write_file_line(level, &plain);
 
         // Queued from the start, so the boot lines ship once search attaches.
         if level == Level::DEBUG || level == Level::TRACE || IN_SHIPPER.with(Cell::get) {
@@ -561,6 +648,20 @@ impl Subscriber for LineSubscriber {
         entry.insert("logger_name".into(), Value::string(metadata.target()));
         entry.insert("message".into(), Value::String(fields.message));
         entry.insert("source_host".into(), Value::string(host_name()));
+        if let Some((user_id, visitor_id)) = moqui_core::user::current_log_actor() {
+            if let Some(user_id) = user_id {
+                entry.insert("user_id".into(), Value::String(user_id));
+            }
+            if let Some(visitor_id) = visitor_id {
+                entry.insert("visitor_id".into(), Value::String(visitor_id));
+            }
+        }
+        if let Some((name, message)) = fields.error {
+            let mut thrown = Document::new();
+            thrown.insert("name".into(), Value::string(name));
+            thrown.insert("message".into(), Value::string(message));
+            entry.insert("thrown".into(), Value::Map(thrown));
+        }
         if !fields.extra.is_empty() {
             let mdc = fields
                 .extra
@@ -589,14 +690,26 @@ fn thread_number(thread: &std::thread::Thread) -> i64 {
 #[derive(Default)]
 struct Fields {
     message: String,
+    /// `name` and `message` of a field named `error`. It stays out of `mdc`.
+    error: Option<(String, String)>,
     extra: Vec<(String, String)>,
+}
+
+impl Fields {
+    fn record_error_field(&mut self, field: &Field, name: &str, message: String) -> bool {
+        if field.name() != "error" {
+            return false;
+        }
+        self.error = Some((name.to_string(), message));
+        true
+    }
 }
 
 impl Visit for Fields {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "message" {
             self.message = value.to_string();
-        } else {
+        } else if !self.record_error_field(field, "error", value.to_string()) {
             self.extra.push((field.name().to_string(), value.to_string()));
         }
     }
@@ -604,8 +717,14 @@ impl Visit for Fields {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
             self.message = format!("{value:?}");
-        } else {
+        } else if !self.record_error_field(field, "error", format!("{value:?}")) {
             self.extra.push((field.name().to_string(), format!("{value:?}")));
+        }
+    }
+
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        if !self.record_error_field(field, "error", value.to_string()) {
+            self.extra.push((field.name().to_string(), value.to_string()));
         }
     }
 }
@@ -744,6 +863,44 @@ fn append_extra(out: &mut String, extra: &[(String, String)], color: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tap_takes_the_lines_at_its_level_and_above() {
+        let warnings = tap_at(8, Level::WARN);
+        let all = tap(8);
+        feed_taps(Level::INFO, "an info line");
+        feed_taps(Level::WARN, "a warning");
+        feed_taps(Level::ERROR, "an error");
+        assert_eq!(warnings.try_iter().collect::<Vec<_>>(), ["a warning", "an error"]);
+        assert_eq!(all.try_iter().count(), 3);
+    }
+
+    #[test]
+    fn an_app_log_carries_the_user_the_visitor_and_the_thrown_message() {
+        install();
+        let bare = format!("log-bare-{}", std::process::id());
+        tracing::error!("{bare}");
+        let entry = take_app_log(&bare).expect("the subscriber did not queue the line");
+        assert!(
+            entry.get("user_id").is_none() && entry.get("visitor_id").is_none(),
+            "{entry:?}"
+        );
+
+        let context = moqui_core::context::ExecutionContextFactory::test_context();
+        let _entered = context.enter();
+        moqui_core::user::set_current_log_actor("user-1", "visitor-1");
+        let marked = format!("log-actor-{}", std::process::id());
+        tracing::error!(error = "disk full", "{marked}");
+        let entry = take_app_log(&marked).expect("the subscriber did not queue the line");
+        assert_eq!(entry.get("user_id").and_then(Value::as_str), Some("user-1"));
+        assert_eq!(entry.get("visitor_id").and_then(Value::as_str), Some("visitor-1"));
+        let thrown = match entry.get("thrown") {
+            Some(Value::Map(map)) => map,
+            other => panic!("thrown missing: {other:?}"),
+        };
+        assert_eq!(thrown.get("message").and_then(Value::as_str), Some("disk full"));
+        assert!(entry.get("mdc").is_none(), "{entry:?}");
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("moqui-logging-{name}-{}", std::process::id()));

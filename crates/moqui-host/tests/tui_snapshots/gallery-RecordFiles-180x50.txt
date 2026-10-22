@@ -1,0 +1,50 @@
+ gallery ▸ Files                                                                                                                                                john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Files ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   ▶ Files               │ │ The files of null null: the gallery's stand-in for BOSS's Shared/RecordFiles, loaded by the record-files element under null.                         │
+     Landing             │ │   File           Kind    Size Added     By                                                                                                           │
+     List                │ │ ─────────────────────────────────────────────────────                                                                                                │
+     Detail              │ │ ▌ spec-sheet.pdf PDF   240 KB Last week John Doe                                                                                                     │
+     360                 │ │   photo.png      Image 1.2 MB Yesterday Ada Lovelace                                                                                                 │
+     Task                │ │   Rows 1–2 of 2 · Page 1/1                                                                                                                           │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │
+     Split               │
+     Settings            │
+     Wizard              │
+     Dialog              │
+     Report              │
+     Panel               │
+     Widgets             │
+     Editor              │
+     Message             │
+     Views               │
+ ▾ Home                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F8=Page down  s=Sort  f=Find  F10=Actions  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

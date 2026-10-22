@@ -49,6 +49,82 @@ use crate::user::AuthInfo;
 
 const ENV_HEADER: &str = "# This file holds secrets and must be kept with the instance backup.\n";
 
+/// The `response-header` entries of the shipped `MoquiDefaultConf.xml` webapp, `(type, name, value, add)`, for a conf
+/// whose webapp declares none (a test conf, or one that leaves the defaults out).
+const DEFAULT_RESPONSE_HEADERS: &[(&str, &str, &str, bool)] = &[
+    (
+        "web-resource-inline",
+        "Cache-Control",
+        "max-age=86400, must-revalidate, public",
+        false,
+    ),
+    (
+        "screen-resource-binary",
+        "Cache-Control",
+        "max-age=86400, must-revalidate, public",
+        false,
+    ),
+    (
+        "screen-resource-text",
+        "Cache-Control",
+        "max-age=86400, must-revalidate, public",
+        false,
+    ),
+    (
+        "screen-resource-template",
+        "Cache-Control",
+        "no-cache, no-store, must-revalidate, private",
+        false,
+    ),
+    (
+        "screen-server-static",
+        "Cache-Control",
+        "max-age=86400, must-revalidate, public",
+        false,
+    ),
+    ("screen-secure", "Strict-Transport-Security", "max-age=31536000", false),
+    (
+        "screen-render",
+        "Cache-Control",
+        "no-cache, no-store, must-revalidate, private",
+        false,
+    ),
+    (
+        "screen-render",
+        "Content-Security-Policy",
+        "frame-ancestors 'none'; form-action 'self';",
+        false,
+    ),
+    ("screen-render", "X-Frame-Options", "sameorigin", true),
+    ("screen-render", "X-XSS-Protection", "1; mode=block", false),
+    ("screen-render", "X-Content-Type-Options", "nosniff", true),
+    ("cors-actual", "Vary", "Origin", false),
+    ("cors-actual", "Access-Control-Allow-Credentials", "true", false),
+    (
+        "cors-actual",
+        "Access-Control-Expose-Headers",
+        "Access-Control-Allow-Origin,Access-Control-Allow-Credentials,X-CSRF-Token,moquiSessionToken",
+        true,
+    ),
+    ("cors-preflight", "Vary", "Origin", false),
+    ("cors-preflight", "Access-Control-Allow-Credentials", "true", false),
+    (
+        "cors-preflight",
+        "Access-Control-Allow-Headers",
+        "Accept,Accept-Encoding,Content-Type,Content-Encoding,Origin,X-Requested-With,Access-Control-Request-Method,\
+         Access-Control-Request-Headers,api_key,login_key,X-HTTP-Method-Override,moquiSessionToken,SessionToken,\
+         X-CSRF-Token,Authorization,A2A-Version,MCP-Protocol-Version,Mcp-Method,Mcp-Name",
+        true,
+    ),
+    (
+        "cors-preflight",
+        "Access-Control-Allow-Methods",
+        "GET,PUT,POST,PATCH,DELETE,OPTIONS",
+        true,
+    ),
+    ("cors-preflight", "Access-Control-Max-Age", "3600", false),
+];
+
 /// Tarpit hit times and how long to keep them, by key, swept of idle keys as the map grows.
 struct TarpitHits {
     by_key: std::collections::HashMap<String, (Vec<i64>, i64)>,
@@ -77,6 +153,8 @@ pub struct ExecutionContextFactory {
     cache: CacheFacade,
     conf_text: String,
     conf_cache: std::sync::OnceLock<ConfCache>,
+    /// The `webroot` webapp's servlets, filters, listeners and lifecycle actions, read from the conf when first asked for.
+    webapp_scripts: std::sync::OnceLock<Arc<crate::web::servlet::WebappScripts>>,
     /// Hit times per `userId@type:name`, for tarpit counting.
     tarpit_hits: std::sync::Mutex<TarpitHits>,
     property_names: Vec<String>,
@@ -131,9 +209,24 @@ impl Default for Executor {
 }
 
 /// Options for [`ExecutionContextFactory::boot_with_options`].
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct BootOptions {
     pub executor: Executor,
+    /// Runs once the default properties and `runtime/.env` are applied, before any facade is built. An error stops the
+    /// boot. The server checks its listen ports here.
+    pub before_init: Option<BeforeInit>,
+}
+
+/// The hook in [`BootOptions::before_init`].
+pub type BeforeInit = Arc<dyn Fn() -> Result<(), Error> + Send + Sync>;
+
+impl std::fmt::Debug for BootOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BootOptions")
+            .field("executor", &self.executor)
+            .field("before_init", &self.before_init.as_ref().map(|_| ".."))
+            .finish()
+    }
 }
 
 /// The framework component beside `tools` and `webroot`, when `MOQUI_FRAMEWORK` is not set.
@@ -201,6 +294,9 @@ impl ExecutionContextFactory {
         let native = crate::native::NativeRegistry::discover(&components, &conf_node)?;
         let env_path = runtime_dir.join(".env");
         let (property_names, mut set_by_boot) = apply_default_properties(&conf_node, &env_path)?;
+        if let Some(before_init) = &options.before_init {
+            before_init()?;
+        }
         crate::l10n::init_server_time_zone();
         let entity = Arc::new(RwLock::new(None));
         let resource = ResourceFacade::new(runtime_dir.clone(), component_roots(&components), Arc::clone(&entity));
@@ -209,7 +305,7 @@ impl ExecutionContextFactory {
         tracing::info!("Cache Facade initialized");
         let conf_text = conf_node.write_string();
         let hits = super::hits::ArtifactHits::from_conf(&conf_text);
-        let flush_mode = crate::user::session::flush_mode_from_property()?;
+        let (flush_mode, max_sessions) = crate::user::session::settings_from_conf(&conf_node)?;
         let pools = match options.executor {
             Executor::Threads => crate::service::start_pools(&conf_text)?,
             Executor::Inline => crate::service::ServicePools::inline(),
@@ -229,6 +325,7 @@ impl ExecutionContextFactory {
             cache,
             conf_text,
             conf_cache: std::sync::OnceLock::new(),
+            webapp_scripts: std::sync::OnceLock::new(),
             tarpit_hits: std::sync::Mutex::default(),
             property_names,
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -236,7 +333,7 @@ impl ExecutionContextFactory {
             pools,
             requests: crate::service::RequestPool::idle(),
             executor: options.executor,
-            sessions: std::sync::Mutex::new(crate::user::session::SessionTable::new(flush_mode)),
+            sessions: std::sync::Mutex::new(crate::user::session::SessionTable::new(flush_mode, max_sessions)),
             cluster_heartbeat: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
             hits,
@@ -341,6 +438,7 @@ impl ExecutionContextFactory {
                 artifacts: RefCell::new(ArtifactStack::new()),
                 session: RefCell::new(crate::user::Memory::default()),
                 user_context: RefCell::new(std::collections::BTreeMap::new()),
+                agent_origin: RefCell::new(None),
                 shared_map: RefCell::new(indexmap::IndexMap::new()),
                 effective_time: std::cell::Cell::new(None),
                 script_authz: RefCell::new(None),
@@ -509,6 +607,12 @@ impl ExecutionContextFactory {
     /// the http ones; an empty host is `localhost`, and the default port is left out. Empty when the
     /// conf has no such webapp.
     pub fn webapp_root_url(&self, webapp_name: &str) -> String {
+        self.webapp_root_url_for(webapp_name, None)
+    }
+
+    /// [`webapp_root_url`](Self::webapp_root_url) with the scheme asked for: `Some(true)` is https when the webapp has
+    /// `https-enabled`, else http as Java's `makeWebappHost`; `Some(false)` is http; `None` follows `https-enabled`.
+    pub fn webapp_root_url_for(&self, webapp_name: &str, secure: Option<bool>) -> String {
         let conf = self.conf();
         let attr = |name: &str| {
             conf.webapp_attr(webapp_name, name)
@@ -519,7 +623,7 @@ impl ExecutionContextFactory {
         if conf.webapp_attr(webapp_name, "name").is_none() {
             return String::new();
         }
-        let https = attr("https-enabled") == "true";
+        let https = attr("https-enabled") == "true" && secure != Some(false);
         let (scheme, host, port, default_port) = if https {
             ("https", attr("https-host"), attr("https-port"), "443")
         } else {
@@ -565,6 +669,69 @@ impl ExecutionContextFactory {
             .unwrap_or_default()
     }
 
+    /// An attribute of a `webapp` child element with `${}` expanded and trimmed: `child` is the element name
+    /// (`session-config`), or `endpoint <path>` for an `endpoint` (`endpoint /notws`). Empty when the conf leaves it out.
+    pub fn webapp_child_setting(&self, webapp_name: &str, child: &str, name: &str) -> String {
+        self.conf()
+            .webapp_child_attr(webapp_name, child, name)
+            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// The `response-header` entries of a `webapp` for one response type (`screen-render`, `cors-actual`), as
+    /// `(name, value, add)` with `${}` expanded, Java's `WebappInfo.addHeaders`: an empty value is left out. A webapp that
+    /// declares none gets the shipped `MoquiDefaultConf.xml` entries, so a conf without them still sends them.
+    pub fn response_headers(&self, webapp_name: &str, kind: &str) -> Vec<(String, String, bool)> {
+        let expanded = |raw: &str| moqui_lib::env::expand(raw).unwrap_or_else(|_| raw.to_string());
+        let headers: Vec<(String, String, bool)> = match self.conf().response_headers(webapp_name) {
+            Some(entries) => entries
+                .iter()
+                .filter(|entry| entry.kind == kind)
+                .map(|entry| (entry.name.clone(), expanded(&entry.value), entry.add))
+                .collect(),
+            None => return Self::default_response_headers(kind),
+        };
+        headers
+            .into_iter()
+            .filter(|(name, value, _)| !name.is_empty() && !value.trim().is_empty())
+            .collect()
+    }
+
+    /// The shipped `response-header` entries for one response type, for [`Self::response_headers`] and for a response
+    /// made with no factory at hand.
+    pub fn default_response_headers(kind: &str) -> Vec<(String, String, bool)> {
+        DEFAULT_RESPONSE_HEADERS
+            .iter()
+            .filter(|(entry_kind, ..)| *entry_kind == kind)
+            .map(|(_, name, value, add)| ((*name).to_string(), (*value).to_string(), *add))
+            .collect()
+    }
+
+    /// An attribute of the first conf element at `path` (`ssh-server`, `search-facade/cluster`, up to three names) with
+    /// `${}` expanded and trimmed; empty when the conf leaves it out.
+    pub fn conf_setting(&self, path: &str, name: &str) -> String {
+        self.conf()
+            .element_attr(path, name)
+            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// [`Self::conf_setting`] parsed as a number, or `default` when it is empty or not one.
+    pub fn conf_number<T: std::str::FromStr>(&self, path: &str, name: &str, default: T) -> T {
+        self.conf_setting(path, name).parse().unwrap_or(default)
+    }
+
+    /// [`Self::conf_setting`] as a flag: `true` or `false`, else `default`.
+    pub fn conf_flag(&self, path: &str, name: &str, default: bool) -> bool {
+        match self.conf_setting(path, name).as_str() {
+            "true" => true,
+            "false" => false,
+            _ => default,
+        }
+    }
+
     fn conf(&self) -> &ConfCache {
         self.conf_cache.get_or_init(|| ConfCache::parse(&self.conf_text))
     }
@@ -604,6 +771,10 @@ impl ExecutionContextFactory {
         lock(&self.tarpit_hits).by_key.len()
     }
 
+    pub(crate) fn webapp_scripts_cell(&self) -> &std::sync::OnceLock<Arc<crate::web::servlet::WebappScripts>> {
+        &self.webapp_scripts
+    }
+
     pub fn conf_text(&self) -> &str {
         &self.conf_text
     }
@@ -617,6 +788,13 @@ impl ExecutionContextFactory {
     pub fn entity(&self) -> Option<EntityFacade> {
         read(&self.entity).clone()
     }
+}
+
+/// The agent and run an execution context works for ([`ExecutionContext::agent_origin`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentOrigin {
+    pub agent_id: String,
+    pub run_id: Option<String>,
 }
 
 /// One thread's execution context. It is not `Send`: it stays on the thread that made it.
@@ -633,6 +811,8 @@ struct ContextState {
     /// `ec.user.context`: values for this execution context's user, such as the organizations `setup#UserOrganizationInfo`
     /// finds, that entity filter maps read.
     user_context: RefCell<std::collections::BTreeMap<String, moqui_lib::object::Value>>,
+    /// The agent run this context works for ([`AgentOrigin`]), which entity hooks deep in a service call read.
+    agent_origin: RefCell<Option<AgentOrigin>>,
     /// `ec.context.sharedMap`: one map for the execution context, shared by every service call and script in it.
     shared_map: RefCell<indexmap::IndexMap<String, moqui_lib::object::Value>>,
     /// Java's `UserFacade.setEffectiveTime`: epoch millis that `ec.user.nowTimestamp` returns instead of the clock.
@@ -665,6 +845,16 @@ impl ExecutionContext {
     /// The `ec.user.context` map.
     pub fn user_context(&self) -> RefMut<'_, std::collections::BTreeMap<String, moqui_lib::object::Value>> {
         self.state.user_context.borrow_mut()
+    }
+
+    /// The agent run this context works for: a step job of an agent run sets it after its login, so a trigger's entity
+    /// hook can tell the agent's own writes from others' (the loop guard of plans/LLM-A2A-Assist.md 4.4, 4.14).
+    pub fn agent_origin(&self) -> Option<AgentOrigin> {
+        self.state.agent_origin.borrow().clone()
+    }
+
+    pub fn set_agent_origin(&self, origin: Option<AgentOrigin>) {
+        *self.state.agent_origin.borrow_mut() = origin;
     }
 
     /// Java's `ExecutionContext.getContext().getSharedMap()`: a map that lives as long as this execution context, whatever
@@ -703,6 +893,8 @@ impl ExecutionContext {
         parameters: Option<&std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     ) -> Result<(), Error> {
         let (last, ancestor_deny, authz_disabled) = self.stack_authz_state();
+        // A frame of an isolated check asks whether the user may (a menu item, a link), it is not a use: Java's isAccess.
+        let is_access = !self.state.artifacts.borrow().in_isolated_check();
         // The decision reads entities, which push their own frames, so no borrow is held here.
         let (permitted, info) = crate::user::is_permitted(
             artifact_type,
@@ -712,13 +904,18 @@ impl ExecutionContext {
                 requires_authz,
                 authz_disabled,
                 count_tarpit,
+                is_access,
                 parameters,
             },
             last.as_ref(),
             ancestor_deny,
         )?;
         if !permitted {
-            tracing::warn!(stack = %self.state.artifacts.borrow().names(), "artifact authorization failed");
+            if is_access {
+                tracing::warn!(stack = %self.state.artifacts.borrow().names(), "artifact authorization failed");
+            } else {
+                tracing::debug!(artifact_type, name, action, "artifact authorization check refused");
+            }
             return Err(crate::user::denied(artifact_type, name, action, &info));
         }
         self.state
@@ -733,6 +930,18 @@ impl ExecutionContext {
         let artifacts = self.state.artifacts.borrow();
         let (last, deny) = artifacts.authz_state();
         (last, deny, artifacts.authz_disabled())
+    }
+
+    /// Start an isolated check: the frames pushed from here on are decided against a fresh stack, neither inheriting from
+    /// nor denied by the frames already on it, as Java's `ScreenUrlInfo.isPermitted` builds its own stack. Returns the
+    /// base to restore with [`ExecutionContext::end_isolated_check`].
+    pub(crate) fn begin_isolated_check(&self) -> usize {
+        self.state.artifacts.borrow_mut().begin_isolated_check()
+    }
+
+    /// End an isolated check begun by [`ExecutionContext::begin_isolated_check`], after its frames are popped.
+    pub(crate) fn end_isolated_check(&self, previous: usize) {
+        self.state.artifacts.borrow_mut().end_isolated_check(previous);
     }
 
     /// Auth info of the top frame.
@@ -775,10 +984,14 @@ impl ExecutionContext {
         sub_type: Option<&str>,
         parameters: Option<&std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     ) {
-        let artifact_type = self.state.artifacts.borrow().top_type();
-        let keep = artifact_type.is_some_and(|name| self.state.factory.hits.counts(&name));
+        let keep = self
+            .state
+            .artifacts
+            .borrow()
+            .top_type()
+            .is_some_and(|name| self.state.factory.hits.counts(name));
         if let Some(hit) = self.state.artifacts.borrow_mut().top_hit_mut() {
-            hit.sub_type = sub_type.map(str::to_string);
+            hit.sub_type = sub_type.map(super::artifact::known);
             hit.parameters = parameters.filter(|_| keep).cloned();
         }
     }
@@ -811,13 +1024,17 @@ impl ExecutionContext {
 
     /// Java's `ArtifactExecutionFacade.disableAuthz()` for a script, which has no guard to hold: authorization stays
     /// disabled until [`Self::script_enable_authz`] or the context ends. Returns whether it was already disabled.
+    ///
+    /// When it was already disabled nothing is held, as Java's flag is not changed then: a script takes the idiom
+    /// `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()` and so never enables what it found disabled,
+    /// and a guard taken here under a guard of Rust code (a service called with authorization disabled, such as the
+    /// shell counts service) would outlive that guard and leave the whole context unchecked.
     pub fn script_disable_authz(&self) -> bool {
-        let already = self.authz_disabled();
-        let mut held = self.state.script_authz.borrow_mut();
-        if held.is_none() {
-            *held = Some(self.disable_authz());
+        if self.authz_disabled() {
+            return true;
         }
-        already
+        *self.state.script_authz.borrow_mut() = Some(self.disable_authz());
+        false
     }
 
     /// Java's `enableAuthz()` for a script: drops the guard of [`Self::script_disable_authz`]. A guard Rust code
@@ -947,6 +1164,15 @@ fn install_session_flush(factory: &Arc<ExecutionContextFactory>) {
         };
         if let Err(err) = crate::user::session::flush_dirty(&factory) {
             tracing::warn!("session flush failed: {err}");
+        }
+        let expired = crate::user::session::take_expired(&factory);
+        if !expired.is_empty() {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let scripts = factory.webapp_scripts();
+            for id in expired {
+                scripts.fire("sessionDestroyed", crate::user::session::session_event(&id));
+            }
         }
     });
 }
@@ -1259,9 +1485,10 @@ impl Drop for PropertyRollback {
     }
 }
 
-#[cfg(test)]
 impl ExecutionContextFactory {
-    pub(crate) fn test_context() -> ExecutionContext {
+    /// A context with no database. Tests use it when they only need an entered context.
+    #[doc(hidden)]
+    pub fn test_context() -> ExecutionContext {
         Self::test_context_with_conf("")
     }
 
@@ -1298,6 +1525,9 @@ impl ExecutionContextFactory {
             .ok()
             .filter(|root| root.name() == "moqui-conf")
             .unwrap_or_else(|| MNode::parse_text("test", "<moqui-conf/>").expect("conf"));
+        with_default_screen_outputs(&conf);
+        let conf_text = conf.write_string();
+        let conf_text = conf_text.as_str();
         let entity = Arc::new(RwLock::new(None));
         let runtime_dir = PathBuf::from(".");
         let executor = if pools.is_inline() {
@@ -1321,6 +1551,7 @@ impl ExecutionContextFactory {
             cache: CacheFacade::from_conf(&conf).expect("cache"),
             conf_text: conf_text.to_string(),
             conf_cache: std::sync::OnceLock::new(),
+            webapp_scripts: std::sync::OnceLock::new(),
             tarpit_hits: std::sync::Mutex::default(),
             property_names: Vec::new(),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -1330,6 +1561,7 @@ impl ExecutionContextFactory {
             executor,
             sessions: std::sync::Mutex::new(crate::user::session::SessionTable::new(
                 crate::user::session::FlushMode::Eventual,
+                Some(crate::user::session::DEFAULT_MAX_LIVE),
             )),
             cluster_heartbeat: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
@@ -1341,6 +1573,45 @@ impl ExecutionContextFactory {
         factory.pools.attach(&factory);
         install_hit_flush(&factory);
         factory.new_context()
+    }
+}
+
+/// Put the render modes of `MoquiDefaultConf.xml` into a test conf, as a boot merges them, before the test's own
+/// `screen-text-output` and `screen-output` entries so one of those still replaces a default of the same type.
+fn with_default_screen_outputs(conf: &MNode) {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"
+    );
+    let defaults = match MNode::parse_file(path) {
+        Ok(root) => root.first_named("screen-facade"),
+        Err(error) => {
+            tracing::warn!("No default render modes for the test conf, {path} did not load: {error}");
+            return;
+        }
+    };
+    let Some(defaults) = defaults else {
+        return;
+    };
+    let facade = conf.first_named("screen-facade").unwrap_or_else(|| {
+        let facade = MNode::new("screen-facade");
+        conf.append_node(facade.clone());
+        facade
+    });
+    let given: Vec<String> = ["screen-text-output", "screen-output"]
+        .into_iter()
+        .flat_map(|name| facade.children_named(name))
+        .filter_map(|output| output.attribute("type"))
+        .collect();
+    let mut index = 0;
+    for name in ["screen-text-output", "screen-output"] {
+        for output in defaults.children_named(name) {
+            if output.attribute("type").is_some_and(|kind| given.contains(&kind)) {
+                continue;
+            }
+            facade.insert_node(index, output.deep_copy());
+            index += 1;
+        }
     }
 }
 

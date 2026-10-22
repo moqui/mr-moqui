@@ -1,0 +1,201 @@
+@openuidev/lang-core 0.2.18: telemetry off.
+
+The parser and the prompt generator post sampled usage events to PostHog when the runtime opts in
+(OPENUI_RUNTIME_TELEMETRY_ENABLED in a Node process environment); the event reads git's origin through
+node:child_process (execFile) and the ci-info package. Moqui never sends them: postCapture, the two send and capture
+functions of each event, recordSystemPromptGeneration, prepareParserParseTelemetry, readGitOrigin,
+getRepositoryIdentifier and getProjectHash are emptied (they return at once), and getCIInfo no longer imports ci-info,
+so the bundle has no network call, no process call and no dynamic import (refresh.mjs checks the bundle for them).
+Reviewed Oct 22, 2026. Applied by libs/refresh.mjs to dist/index.mjs of the npm package before the bundle is built.
+
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -95,32 +95,10 @@
+ 	return registry[STATE_KEY];
+ }
+ function readGitOrigin(processLike) {
+-	const execFile = (processLike.getBuiltinModule?.("node:child_process"))?.execFile;
+-	if (!execFile) return Promise.resolve(void 0);
+-	return new Promise((resolve) => {
+-		try {
+-			execFile("git", [
+-				"config",
+-				"--local",
+-				"--get",
+-				"remote.origin.url"
+-			], {
+-				encoding: "utf8",
+-				timeout: 1e3,
+-				windowsHide: true
+-			}, (error, stdout) => {
+-				const origin = stdout?.trim();
+-				resolve(error || !origin ? void 0 : origin);
+-			});
+-		} catch {
+-			resolve(void 0);
+-		}
+-	});
++	return Promise.resolve(void 0);
+ }
+ async function getRepositoryIdentifier(processLike) {
+-	if (!processLike) return void 0;
+-	const rawValue = await readGitOrigin(processLike) || processLike.env?.REPOSITORY_URL || processLike.cwd?.();
+-	return rawValue ? normalizeProjectIdentity(rawValue) || void 0 : void 0;
++	return void 0;
+ }
+ function calculateProjectHash(repositoryIdentifier) {
+ 	const normalized = normalizeProjectIdentity(repositoryIdentifier);
+@@ -128,86 +106,22 @@
+ 	return sha256(normalized);
+ }
+ function getProjectHash(state, runtime) {
+-	if (runtime.name !== "node") return Promise.resolve(void 0);
+-	state.projectHash ??= Promise.resolve().then(() => getRepositoryIdentifier(runtime.process)).then((identifier) => identifier ? calculateProjectHash(identifier) : void 0).catch(() => void 0);
+-	return state.projectHash;
++	return Promise.resolve(void 0);
+ }
+ async function getCIInfo(runtime) {
+-	if (!runtime.env) return {
++	return {
+ 		id: null,
+ 		isCI: false
+ 	};
+-	try {
+-		const ciInfo = await import("ci-info");
+-		return {
+-			id: ciInfo.id,
+-			isCI: ciInfo.isCI
+-		};
+-	} catch {
+-		return {
+-			id: null,
+-			isCI: false
+-		};
+-	}
+ }
+ async function postCapture(event, properties, runtime) {
+-	const postHog = getPostHogConfig(runtime.env);
+-	await globalThis.fetch(postHog.captureUrl, {
+-		method: "POST",
+-		headers: { "content-type": "application/json" },
+-		body: JSON.stringify({
+-			api_key: postHog.apiKey,
+-			event,
+-			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+-			properties
+-		}),
+-		keepalive: true,
+-		signal: globalThis.AbortSignal.timeout(TELEMETRY_REQUEST_TIMEOUT_MS)
+-	});
++	return;
+ }
+ async function sendSystemPromptCapture(state, spec, configHash, inputShape, runtime, environment) {
+-	const [systemPromptConfigHash, projectHash, ciInfo] = await Promise.all([
+-		configHash,
+-		getProjectHash(state, runtime),
+-		getCIInfo(runtime)
+-	]);
+-	await postCapture(SYSTEM_PROMPT_EVENT_NAME, {
+-		distinct_id: state.runtimeId,
+-		$process_person_profile: false,
+-		event_id: globalThis.crypto.randomUUID(),
+-		telemetry_schema_version: 1,
+-		system_prompt_config_hash_version: 1,
+-		system_prompt_config_hash: systemPromptConfigHash,
+-		component_count: Object.keys(spec.components).length,
+-		tool_count: spec.tools?.length ?? 0,
+-		sdk_name: "@openuidev/lang-core",
+-		sdk_version: SDK_VERSION,
+-		api_surface: "generate_system_prompt",
+-		input_shape: inputShape,
+-		runtime: runtime.name,
+-		runtime_version: runtime.version,
+-		environment,
+-		ci: ciInfo.isCI,
+-		...ciInfo.id ? { ci_name: ciInfo.id } : {},
+-		sample_rate: SYSTEM_PROMPT_SAMPLE_RATE,
+-		...projectHash ? {
+-			project_hash_version: 1,
+-			project_hash: projectHash
+-		} : {}
+-	}, runtime);
++	return;
+ }
+ function recordSystemPromptGeneration(spec, inputShape) {
+-	try {
+-		const runtime = detectRuntime();
+-		if (!runtime || typeof globalThis.fetch !== "function" || !globalThis.crypto?.subtle || typeof globalThis.crypto.randomUUID !== "function" || typeof globalThis.AbortSignal?.timeout !== "function") return;
+-		const env = runtime.env;
+-		const environment = getEnvironment(env);
+-		if (!isRuntimeTelemetryEnabled(env)) return;
+-		if (Math.random() >= SYSTEM_PROMPT_SAMPLE_RATE) return;
+-		const state = getState();
+-		const configHash = calculateSystemPromptConfigHash(spec);
+-		Promise.resolve().then(() => sendSystemPromptCapture(state, spec, configHash, inputShape, runtime, environment)).catch(() => void 0);
+-	} catch {}
++	return;
+ }
+ function getValidationErrorCounts(result) {
+ 	const counts = {
+@@ -239,57 +153,16 @@
+ 	};
+ }
+ async function sendParserParseCapture(context, outcome) {
+-	const { state, runtime, environment } = context;
+-	const [projectHash, ciInfo] = await Promise.all([getProjectHash(state, runtime), getCIInfo(runtime)]);
+-	await postCapture(PARSER_PARSE_EVENT_NAME, {
+-		distinct_id: state.runtimeId,
+-		$process_person_profile: false,
+-		event_id: globalThis.crypto.randomUUID(),
+-		telemetry_schema_version: 1,
+-		sdk_name: "@openuidev/lang-core",
+-		sdk_version: SDK_VERSION,
+-		api_surface: "parser.parse",
+-		runtime: runtime.name,
+-		runtime_version: runtime.version,
+-		environment,
+-		ci: ciInfo.isCI,
+-		...ciInfo.id ? { ci_name: ciInfo.id } : {},
+-		sample_rate: PARSER_PARSE_SAMPLE_RATE,
+-		...outcome,
+-		...projectHash ? {
+-			project_hash_version: 1,
+-			project_hash: projectHash
+-		} : {}
+-	}, runtime);
++	return;
+ }
+ function prepareParserParseTelemetry() {
+-	try {
+-		const runtime = detectRuntime();
+-		if (!runtime || typeof globalThis.fetch !== "function" || typeof globalThis.crypto?.randomUUID !== "function" || typeof globalThis.AbortSignal?.timeout !== "function") return;
+-		const env = runtime.env;
+-		if (!isRuntimeTelemetryEnabled(env)) return void 0;
+-		if (Math.random() >= PARSER_PARSE_SAMPLE_RATE) return void 0;
+-		return {
+-			state: getState(),
+-			runtime,
+-			environment: getEnvironment(env)
+-		};
+-	} catch {
+-		return;
+-	}
++	return;
+ }
+ function captureParserParseResult(context, result) {
+-	if (!context) return;
+-	try {
+-		const outcome = summarizeParserParse(result);
+-		Promise.resolve().then(() => sendParserParseCapture(context, outcome)).catch(() => void 0);
+-	} catch {}
++	return;
+ }
+ function captureParserParseException(context) {
+-	if (!context) return;
+-	try {
+-		Promise.resolve().then(() => sendParserParseCapture(context, { outcome: "threw" })).catch(() => void 0);
+-	} catch {}
++	return;
+ }
+ //#endregion
+ //#region src/parser/builtins.ts

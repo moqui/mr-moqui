@@ -50,7 +50,7 @@ pub(in crate::service) fn register(
     Ok(())
 }
 
-fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+pub(super) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -58,18 +58,18 @@ fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .filter(|text| !text.trim().is_empty())
 }
 
-fn add_error(text: impl Into<String>) {
+pub(super) fn add_error(text: impl Into<String>) {
     let text = text.into();
     ExecutionContext::with_current(|ctx| ctx.message().add_error(text));
 }
 
-fn add_message(text: impl Into<String>) {
+pub(super) fn add_message(text: impl Into<String>) {
     let text = text.into();
     ExecutionContext::with_current(|ctx| ctx.message().add_message(text));
 }
 
 /// The provider and the required `repositoryId`, or the error recorded.
-fn provider_and_id(parameters: &BTreeMap<String, Value>, need_id: bool) -> Option<(GitProvider, String)> {
+pub(super) fn provider_and_id(parameters: &BTreeMap<String, Value>, need_id: bool) -> Option<(GitProvider, String)> {
     let Some(provider) = ExecutionContext::with_current(|ec| ec.factory().resource().git().cloned()).flatten() else {
         add_error("git resources are not installed (resource-reference scheme=\"git\" in the conf)");
         return None;
@@ -82,14 +82,14 @@ fn provider_and_id(parameters: &BTreeMap<String, Value>, need_id: bool) -> Optio
     Some((provider, id))
 }
 
-fn out(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<String, Value> {
+pub(super) fn out(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<String, Value> {
     entries
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect()
 }
 
-fn count(value: usize) -> Value {
+pub(super) fn count(value: usize) -> Value {
     Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
@@ -170,7 +170,7 @@ fn setup_lfs(
     let Some((provider, id)) = provider_and_id(parameters, true) else {
         return Ok(BTreeMap::new());
     };
-    if let Err(err) = crate::user::authorize(GIT_ARTIFACT_TYPE, &id, "update") {
+    if let Err(err) = crate::user::authorize_own(GIT_ARTIFACT_TYPE, &id, "update") {
         add_error(err.message());
         return Ok(BTreeMap::new());
     }
@@ -256,9 +256,13 @@ fn import_repository(
 // ---- reading a repository: refs, log, commits, diffs, files ----
 
 /// The provider and repository id when the current user may `view` it; otherwise the error recorded.
-fn viewable(parameters: &BTreeMap<String, Value>) -> Option<(GitProvider, String)> {
+pub(super) fn viewable(parameters: &BTreeMap<String, Value>) -> Option<(GitProvider, String)> {
     let (provider, id) = provider_and_id(parameters, true)?;
-    match crate::user::authorize(GIT_ARTIFACT_TYPE, &id, "view") {
+    // a drive's members see the repository the drive holds, as the git server lets them fetch it
+    if crate::resource::git::server::permitted(&id, "view") {
+        return Some((provider, id));
+    }
+    match crate::user::authorize_own(GIT_ARTIFACT_TYPE, &id, "view") {
         Ok(()) => Some((provider, id)),
         Err(err) => {
             add_error(err.message());
@@ -296,7 +300,7 @@ fn ref_value(info: &RefInfo, branch: &str) -> Value {
     ])
 }
 
-fn change_value(change: &FileChange, diff: Option<&FileDiff>) -> Value {
+pub(super) fn change_value(change: &FileChange, diff: Option<&FileDiff>) -> Value {
     let mut entries = vec![
         ("path", Value::string(&change.path)),
         ("changeType", Value::string(change.kind.name())),
@@ -321,14 +325,14 @@ fn change_value(change: &FileChange, diff: Option<&FileDiff>) -> Value {
     map(entries)
 }
 
-fn number(parameters: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
+pub(super) fn number(parameters: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
     text(parameters, key)
         .and_then(|text| text.parse().ok())
         .unwrap_or(default)
 }
 
 /// A path parameter as segments; empty for none.
-fn path_segments(parameters: &BTreeMap<String, Value>, key: &str) -> Vec<String> {
+pub(super) fn path_segments(parameters: &BTreeMap<String, Value>, key: &str) -> Vec<String> {
     text(parameters, key)
         .map(|path| {
             path.split('/')
@@ -527,7 +531,7 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 }
 
 /// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<id>.git`), and `sshUrl` when the SSH
-/// server is on (`ssh_port`), with the current user's username, as the SSH server logs in Moqui users.
+/// server is on (`ssh-server` `port`), with the current user's username, as the SSH server logs in Moqui users.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -536,15 +540,25 @@ fn get_clone_urls(
         return Ok(BTreeMap::new());
     };
     let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    // an `ssh-server` attribute, else its property
+    let ssh_setting = |name: &str, property_name: &str| {
+        let configured =
+            ExecutionContext::with_current(|ec| ec.factory().conf_setting("ssh-server", name)).unwrap_or_default();
+        if configured.is_empty() {
+            property(property_name)
+        } else {
+            configured
+        }
+    };
     let http = format!("{}/git/{id}.git", crate::resource::git::server::public_base_url());
-    let ssh_port = Some(property("ssh_public_port"))
+    let ssh_port = Some(ssh_setting("public-port", "ssh_public_port"))
         .filter(|port| !port.is_empty())
-        .unwrap_or_else(|| property("ssh_port"));
+        .unwrap_or_else(|| ssh_setting("port", "ssh_port"));
     let ssh = (!ssh_port.is_empty() && ssh_port != "0").then(|| {
         let host = [
-            property("ssh_public_host"),
+            ssh_setting("public-host", "ssh_public_host"),
             property("webapp_http_host"),
-            property("ssh_host"),
+            ssh_setting("host", "ssh_host"),
         ]
         .into_iter()
         .find(|host| !host.is_empty() && host != "0.0.0.0")
@@ -617,7 +631,7 @@ fn commit_files(
     let Some((provider, id)) = provider_and_id(parameters, true) else {
         return Ok(BTreeMap::new());
     };
-    if let Err(err) = crate::user::authorize(GIT_ARTIFACT_TYPE, &id, "update") {
+    if let Err(err) = crate::user::authorize_own(GIT_ARTIFACT_TYPE, &id, "update") {
         add_error(err.message());
         return Ok(BTreeMap::new());
     }
@@ -657,7 +671,7 @@ fn commit_files(
     }
 }
 
-fn flag(parameters: &BTreeMap<String, Value>, key: &str) -> bool {
+pub(super) fn flag(parameters: &BTreeMap<String, Value>, key: &str) -> bool {
     text(parameters, key).is_some_and(|value| matches!(value.as_str(), "true" | "Y" | "y"))
 }
 
@@ -671,7 +685,7 @@ fn gc_repositories(
         return Ok(BTreeMap::new());
     };
     let minutes = number(parameters, "timeoutMinutes", 60).max(1);
-    let options = crate::resource::git::gc::GcOptions::from_properties(
+    let options = crate::resource::git::gc::GcOptions::from_conf(
         flag(parameters, "dryRun"),
         std::time::Duration::from_secs(u64::try_from(minutes).unwrap_or(60) * 60),
     );

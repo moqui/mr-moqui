@@ -157,7 +157,8 @@ pub struct Gate {
     /// The embedded cluster directory: `data` is the socket directory, `pgpass` the password.
     pub cluster_dir: PathBuf,
     _properties: PropertyReset,
-    _serial: std::sync::RwLockWriteGuard<'static, ()>,
+    /// `None` for a second gate, which runs under the first one's lock ([`start_second`]).
+    _serial: Option<std::sync::RwLockWriteGuard<'static, ()>>,
     _runtime: DirGuard,
     _cluster: DirGuard,
 }
@@ -168,13 +169,13 @@ pub fn start(label: &str) -> Gate {
 
 /// [`start`] with one more `entity-facade-xml` document loaded after the grants, for the rows a test needs.
 pub fn start_with_data(label: &str, data: &str) -> Gate {
-    start_seeded(label, false, Some(data), "", &[], &[])
+    start_seeded(label, false, Some((data, None)), "", &[], &[], &[])
 }
 
 /// Load the seed (the framework files and each component's `data` directory), the demo users, and the grants of the fixture, then serve on an
 /// ephemeral port. With `static_fixture` a `screen-extend` marks the fixture server-static for qvt.
 pub fn start_with(label: &str, static_fixture: bool) -> Gate {
-    start_seeded(label, static_fixture, None, "", &[], &[])
+    start_seeded(label, static_fixture, None, "", &[], &[], &[])
 }
 
 /// The token of the token-route gate's public link, and of a revoked one ([`start_token_route`]).
@@ -207,13 +208,13 @@ pub fn start_token_route(label: &str) -> Gate {
         token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared with you"/>
         <token-route name="tkp" screen-location="component://example/screen/PublicLink.xml"
         token-service="org.moqui.impl.FileServices.check#PublicShareToken" post-transition="files"/></webapp></webapp-list>"#;
-    start_seeded(label, false, Some(&data), conf, &[], &[])
+    start_seeded(label, false, Some((&data, None)), conf, &[], &[], &[])
 }
 
 /// [`start`] with more conf in the runtime's `MoquiDevConf.xml`, such as a response header of this server only, and process properties
 /// that hold while the gate does. They are set once the gate has the one-server lock, and cleared when it drops.
 pub fn start_with_conf(label: &str, extra_conf: &str, properties: &[(&str, &str)]) -> Gate {
-    let mut gate = start_seeded(label, false, None, extra_conf, &[], &[]);
+    let mut gate = start_seeded(label, false, None, extra_conf, &[], &[], &[]);
     for (name, value) in properties {
         moqui_lib::env::set_property(name, (*value).to_string());
     }
@@ -225,13 +226,58 @@ pub fn start_with_conf(label: &str, extra_conf: &str, properties: &[(&str, &str)
 /// gate has the one-server lock, before the load, and cleared when the gate drops. Setting them before the lock would change
 /// the properties of a server another test still runs.
 pub fn start_with_properties(label: &str, data: Option<&str>, properties: &[(&str, &str)]) -> Gate {
-    start_seeded(label, false, data, "", properties, &[])
+    start_seeded(label, false, data.map(|text| (text, None)), "", properties, &[], &[])
+}
+
+/// [`start_with_properties`] with more conf in the runtime's `MoquiDevConf.xml` (the children of `moqui-conf`), such
+/// as `<ssh-server sftp-root="dbresource://sftp"/>`.
+pub fn start_with_conf_properties(
+    label: &str,
+    data: Option<&str>,
+    extra_conf: &str,
+    properties: &[(&str, &str)],
+) -> Gate {
+    start_seeded(label, false, data.map(|text| (text, None)), extra_conf, properties, &[], &[])
+}
+
+/// [`start_with_files`] with more conf in the runtime's `MoquiDevConf.xml` (the children of `moqui-conf`).
+pub fn start_with_conf_files(
+    label: &str,
+    data: Option<&str>,
+    extra_conf: &str,
+    properties: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> Gate {
+    start_seeded(label, false, data.map(|text| (text, None)), extra_conf, properties, files, &[])
 }
 
 /// [`start_with_properties`] with files written into the runtime directory before the server starts, by path relative
 /// to it, such as a component of the test's own (`component/<name>/component.xml` and its `service` files).
 pub fn start_with_files(label: &str, data: Option<&str>, properties: &[(&str, &str)], files: &[(&str, &str)]) -> Gate {
-    start_seeded(label, false, data, "", properties, files)
+    start_seeded(label, false, data.map(|text| (text, None)), "", properties, files, &[])
+}
+
+/// [`start_with_conf`] with symlinks created in the runtime directory before the server starts.
+///
+/// Each pair is an absolute source path and a path relative to the runtime, such as a component directory the seed
+/// template does not carry. The link is created after the runtime copy and before the server boots. `data_types`
+/// selects which documents in `data` load; `None` is the seed set.
+pub fn start_with_links(
+    label: &str,
+    extra_conf: &str,
+    data: Option<&str>,
+    data_types: Option<&[&str]>,
+    links: &[(&str, &str)],
+) -> Gate {
+    start_seeded(
+        label,
+        false,
+        data.map(|text| (text, data_types)),
+        extra_conf,
+        &[],
+        &[],
+        links,
+    )
 }
 
 /// Clears the properties a gate set, before the gate gives up the lock.
@@ -332,11 +378,13 @@ fn template_key() -> String {
     format!("{:016x}", hasher.finish())
 }
 
-/// `cp -a` of the contents of `from` into the existing directory `to`, as a reflink where the file system has them.
+/// `cp -a` of the contents of `from` into the existing directory `to`, as a reflink where the file system has them
+/// (GNU `--reflink=auto`; macOS's `cp` names a clone `-c`, which falls back to a copy off APFS).
 fn copy_dir(from: &Path, to: &Path) {
+    let reflink = if cfg!(target_os = "macos") { "-c" } else { "--reflink=auto" };
     let status = std::process::Command::new("cp")
         .arg("-a")
-        .arg("--reflink=auto")
+        .arg(reflink)
         .arg(format!("{}/.", from.display()))
         .arg(to)
         .status()
@@ -470,15 +518,37 @@ fn seed(runtime: &Path, cluster_dir: &Path, fixtures: &Template, extra_conf: &st
     load_data(runtime, &framework, cluster_dir, &grant_flags).unwrap();
 }
 
+/// A second seeded server beside the gate a test holds, on its own runtime and database: a remote for a client of the
+/// first (the A2A and MCP clients over loopback). It runs under the first gate's lock, so it takes none, and sets no
+/// process property; drop it before the first.
+#[allow(dead_code)]
+pub fn start_second(label: &str, data: Option<&str>, extra_conf: &str) -> Gate {
+    start_seeded_under(None, label, false, data.map(|text| (text, None)), extra_conf, &[], &[], &[])
+}
+
 fn start_seeded(
     label: &str,
     static_fixture: bool,
-    data: Option<&str>,
+    data: Option<(&str, Option<&[&str]>)>,
     extra_conf: &str,
     properties: &[(&str, &str)],
     files: &[(&str, &str)],
+    links: &[(&str, &str)],
 ) -> Gate {
-    let serial = serial();
+    start_seeded_under(Some(serial()), label, static_fixture, data, extra_conf, properties, files, links)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_seeded_under(
+    serial: Option<std::sync::RwLockWriteGuard<'static, ()>>,
+    label: &str,
+    static_fixture: bool,
+    data: Option<(&str, Option<&[&str]>)>,
+    extra_conf: &str,
+    properties: &[(&str, &str)],
+    files: &[(&str, &str)],
+    links: &[(&str, &str)],
+) -> Gate {
     let reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
     for (name, value) in properties {
         moqui_lib::env::set_property(name, (*value).to_string());
@@ -504,12 +574,20 @@ fn start_seeded(
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
+    for (from, to) in links {
+        let dest = runtime.join(to);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::os::unix::fs::symlink(from, &dest).unwrap();
+    }
     let framework = repo_root().join("runtime/base-component/framework");
-    if let Some(data) = data {
+    if let Some((data, data_types)) = data {
         let extra = runtime.join("test-data.xml");
         std::fs::write(&extra, data).unwrap();
         let extra_flags = LoadFlags {
             location: Some(extra.display().to_string()),
+            data_types: data_types.map(|types| types.iter().map(|kind| (*kind).to_string()).collect()),
             ..LoadFlags::default()
         };
         load_data(&runtime, &framework, &cluster_dir, &extra_flags).unwrap();

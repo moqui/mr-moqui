@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The types of the agents and the LLM bookkeeping (entity/AgentEntities.xml, entity/LlmEntities.xml): the statuses and
+    their transitions, the enumerations, the permissions, the tarpits, the notification topics, the jobs and the system
+    agent. A run's status codes are the A2A task states on the wire; crates/moqui-core/src/llm/run/state.rs has the same
+    transitions and a test compares them with the rows here. -->
+<entity-facade-xml type="seed">
+
+    <!-- ========== Run status: the A2A task states ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentRun" description="Agent Run"/>
+    <moqui.basic.StatusItem statusId="AgrSubmitted" statusTypeId="AgentRun" statusCode="TASK_STATE_SUBMITTED" sequenceNum="1" description="Submitted"/>
+    <moqui.basic.StatusItem statusId="AgrWorking" statusTypeId="AgentRun" statusCode="TASK_STATE_WORKING" sequenceNum="2" description="Working" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="AgrInputRequired" statusTypeId="AgentRun" statusCode="TASK_STATE_INPUT_REQUIRED" sequenceNum="3" description="Input Required" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AgrAuthRequired" statusTypeId="AgentRun" statusCode="TASK_STATE_AUTH_REQUIRED" sequenceNum="4" description="Auth Required" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AgrCompleted" statusTypeId="AgentRun" statusCode="TASK_STATE_COMPLETED" sequenceNum="5" description="Completed" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AgrFailed" statusTypeId="AgentRun" statusCode="TASK_STATE_FAILED" sequenceNum="6" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="AgrCanceled" statusTypeId="AgentRun" statusCode="TASK_STATE_CANCELED" sequenceNum="7" description="Canceled"/>
+    <moqui.basic.StatusItem statusId="AgrRejected" statusTypeId="AgentRun" statusCode="TASK_STATE_REJECTED" sequenceNum="8" description="Rejected" statusColor="negative"/>
+
+    <!-- Rejected: quota, permission or invalid input. Failed from a pause: the pause expired. -->
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrSubmitted" toStatusId="AgrWorking" transitionName="Start"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrSubmitted" toStatusId="AgrCanceled" transitionName="Cancel"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrSubmitted" toStatusId="AgrRejected" transitionName="Reject"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrSubmitted" toStatusId="AgrFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrWorking" toStatusId="AgrCompleted" transitionName="Complete"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrWorking" toStatusId="AgrFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrWorking" toStatusId="AgrCanceled" transitionName="Cancel"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrWorking" toStatusId="AgrInputRequired" transitionName="Ask for Input"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrWorking" toStatusId="AgrAuthRequired" transitionName="Ask for Authorization"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrInputRequired" toStatusId="AgrWorking" transitionName="Resume"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrInputRequired" toStatusId="AgrCanceled" transitionName="Cancel"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrInputRequired" toStatusId="AgrFailed" transitionName="Expire"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrAuthRequired" toStatusId="AgrWorking" transitionName="Resume"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrAuthRequired" toStatusId="AgrCanceled" transitionName="Cancel"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgrAuthRequired" toStatusId="AgrFailed" transitionName="Expire"/>
+
+    <!-- ========== Approval status ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentApproval" description="Agent Approval"/>
+    <moqui.basic.StatusItem statusId="AgaPending" statusTypeId="AgentApproval" statusCode="pending" sequenceNum="1" description="Pending" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AgaApproved" statusTypeId="AgentApproval" statusCode="approved" sequenceNum="2" description="Approved"/>
+    <moqui.basic.StatusItem statusId="AgaExecuting" statusTypeId="AgentApproval" statusCode="executing" sequenceNum="3" description="Executing" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="AgaExecuted" statusTypeId="AgentApproval" statusCode="executed" sequenceNum="4" description="Executed" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AgaFailed" statusTypeId="AgentApproval" statusCode="failed" sequenceNum="5" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="AgaRejected" statusTypeId="AgentApproval" statusCode="rejected" sequenceNum="6" description="Rejected"/>
+    <moqui.basic.StatusItem statusId="AgaExpired" statusTypeId="AgentApproval" statusCode="expired" sequenceNum="7" description="Expired"/>
+    <moqui.basic.StatusItem statusId="AgaConflict" statusTypeId="AgentApproval" statusCode="conflict" sequenceNum="8" description="Conflict" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="AgaHandedOff" statusTypeId="AgentApproval" statusCode="handed-off" sequenceNum="9" description="Handed Off"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaApproved" transitionName="Approve"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaRejected" transitionName="Reject"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaExpired" transitionName="Expire"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaConflict" transitionName="Conflict"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaHandedOff" transitionName="Edit in Screen"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaApproved" toStatusId="AgaExecuting" transitionName="Execute"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaApproved" toStatusId="AgaConflict" transitionName="Conflict"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaApproved" toStatusId="AgaFailed" transitionName="Arguments Mismatch"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaApproved" toStatusId="AgaExpired" transitionName="Run Ended"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaExecuting" toStatusId="AgaExecuted" transitionName="Done"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaExecuting" toStatusId="AgaFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaHandedOff" toStatusId="AgaExecuted" transitionName="Saved by User"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaHandedOff" toStatusId="AgaExpired" transitionName="Abandoned"/>
+
+    <!-- ========== Question status ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentQuestion" description="Agent Question"/>
+    <moqui.basic.StatusItem statusId="AgqOpen" statusTypeId="AgentQuestion" statusCode="open" sequenceNum="1" description="Open" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AgqAnswered" statusTypeId="AgentQuestion" statusCode="answered" sequenceNum="2" description="Answered" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AgqExpired" statusTypeId="AgentQuestion" statusCode="expired" sequenceNum="3" description="Expired"/>
+    <moqui.basic.StatusItem statusId="AgqCanceled" statusTypeId="AgentQuestion" statusCode="canceled" sequenceNum="4" description="Canceled"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgqOpen" toStatusId="AgqAnswered" transitionName="Answer"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgqOpen" toStatusId="AgqExpired" transitionName="Expire"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgqOpen" toStatusId="AgqCanceled" transitionName="Cancel"/>
+
+    <!-- ========== Hand-off status ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentHandoff" description="Agent Hand-off"/>
+    <moqui.basic.StatusItem statusId="AghWatching" statusTypeId="AgentHandoff" statusCode="watching" sequenceNum="1" description="Watching" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="AghSaved" statusTypeId="AgentHandoff" statusCode="saved" sequenceNum="2" description="Saved" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AghFailed" statusTypeId="AgentHandoff" statusCode="failed" sequenceNum="3" description="Failed Validation" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="AghAbandoned" statusTypeId="AgentHandoff" statusCode="abandoned" sequenceNum="4" description="Abandoned"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghWatching" toStatusId="AghSaved" transitionName="Saved"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghWatching" toStatusId="AghFailed" transitionName="Validation Error"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghWatching" toStatusId="AghAbandoned" transitionName="Abandon"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghFailed" toStatusId="AghWatching" transitionName="Watch Again"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghFailed" toStatusId="AghSaved" transitionName="Saved"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AghFailed" toStatusId="AghAbandoned" transitionName="Abandon"/>
+
+    <!-- ========== Tool call status ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentToolCall" description="Agent Tool Call"/>
+    <moqui.basic.StatusItem statusId="AgtcPending" statusTypeId="AgentToolCall" statusCode="pending" sequenceNum="1" description="Pending"/>
+    <moqui.basic.StatusItem statusId="AgtcAwaiting" statusTypeId="AgentToolCall" statusCode="awaiting-approval" sequenceNum="2" description="Awaiting Approval" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AgtcRunning" statusTypeId="AgentToolCall" statusCode="running" sequenceNum="3" description="Running" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="AgtcDone" statusTypeId="AgentToolCall" statusCode="done" sequenceNum="4" description="Done" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AgtcFailed" statusTypeId="AgentToolCall" statusCode="failed" sequenceNum="5" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="AgtcDenied" statusTypeId="AgentToolCall" statusCode="denied" sequenceNum="6" description="Denied"/>
+    <moqui.basic.StatusItem statusId="AgtcUnknownOutcome" statusTypeId="AgentToolCall" statusCode="unknown-outcome" sequenceNum="7" description="Unknown Outcome" statusColor="negative"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcPending" toStatusId="AgtcRunning" transitionName="Run"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcPending" toStatusId="AgtcAwaiting" transitionName="Ask Approval"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcPending" toStatusId="AgtcDenied" transitionName="Deny"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcPending" toStatusId="AgtcFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcAwaiting" toStatusId="AgtcRunning" transitionName="Run"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcAwaiting" toStatusId="AgtcDenied" transitionName="Deny"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcAwaiting" toStatusId="AgtcFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcRunning" toStatusId="AgtcDone" transitionName="Done"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcRunning" toStatusId="AgtcFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcRunning" toStatusId="AgtcUnknownOutcome" transitionName="Lost"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcUnknownOutcome" toStatusId="AgtcRunning" transitionName="Run Again"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgtcUnknownOutcome" toStatusId="AgtcFailed" transitionName="Fail"/>
+
+    <!-- ========== Conversation, skill, lesson and memory status ========== -->
+    <moqui.basic.StatusType statusTypeId="AgentConversation" description="Agent Conversation"/>
+    <moqui.basic.StatusItem statusId="AgcActive" statusTypeId="AgentConversation" statusCode="active" sequenceNum="1" description="Active"/>
+    <moqui.basic.StatusItem statusId="AgcArchived" statusTypeId="AgentConversation" statusCode="archived" sequenceNum="2" description="Archived"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgcActive" toStatusId="AgcArchived" transitionName="Archive"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgcArchived" toStatusId="AgcActive" transitionName="Restore"/>
+
+    <moqui.basic.StatusType statusTypeId="AgentSkill" description="Agent Skill"/>
+    <moqui.basic.StatusItem statusId="AgskDraft" statusTypeId="AgentSkill" statusCode="draft" sequenceNum="1" description="Draft"/>
+    <moqui.basic.StatusItem statusId="AgskPublished" statusTypeId="AgentSkill" statusCode="published" sequenceNum="2" description="Published" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AgskRetired" statusTypeId="AgentSkill" statusCode="retired" sequenceNum="3" description="Retired"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgskDraft" toStatusId="AgskPublished" transitionName="Publish"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgskDraft" toStatusId="AgskRetired" transitionName="Retire"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgskPublished" toStatusId="AgskDraft" transitionName="Revise"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgskPublished" toStatusId="AgskRetired" transitionName="Retire"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgskRetired" toStatusId="AgskPublished" transitionName="Publish"/>
+
+    <moqui.basic.StatusType statusTypeId="AgentLesson" description="Agent Lesson"/>
+    <moqui.basic.StatusItem statusId="AglProposed" statusTypeId="AgentLesson" statusCode="proposed" sequenceNum="1" description="Proposed" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="AglApproved" statusTypeId="AgentLesson" statusCode="approved" sequenceNum="2" description="Approved" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="AglRejected" statusTypeId="AgentLesson" statusCode="rejected" sequenceNum="3" description="Rejected"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AglProposed" toStatusId="AglApproved" transitionName="Approve"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AglProposed" toStatusId="AglRejected" transitionName="Reject"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AglApproved" toStatusId="AglRejected" transitionName="Withdraw"/>
+
+    <moqui.basic.StatusType statusTypeId="AgentMemory" description="Agent Memory"/>
+    <moqui.basic.StatusItem statusId="AgmActive" statusTypeId="AgentMemory" statusCode="active" sequenceNum="1" description="Active"/>
+    <moqui.basic.StatusItem statusId="AgmForgotten" statusTypeId="AgentMemory" statusCode="forgotten" sequenceNum="2" description="Forgotten"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgmActive" toStatusId="AgmForgotten" transitionName="Forget"/>
+
+    <!-- ========== Enumerations ========== -->
+    <moqui.basic.EnumerationType enumTypeId="AgentClassification" description="Agent Tool Classification"/>
+    <moqui.basic.Enumeration enumId="AgclRead" enumTypeId="AgentClassification" enumCode="read" sequenceNum="1" description="Read"/>
+    <moqui.basic.Enumeration enumId="AgclWrite" enumTypeId="AgentClassification" enumCode="write" sequenceNum="2" description="Write"/>
+    <moqui.basic.Enumeration enumId="AgclDestructive" enumTypeId="AgentClassification" enumCode="destructive" sequenceNum="3" description="Destructive"/>
+    <moqui.basic.Enumeration enumId="AgclExternal" enumTypeId="AgentClassification" enumCode="external" sequenceNum="4" description="External"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentSurface" description="Agent Surface"/>
+    <moqui.basic.Enumeration enumId="AgsfDrawer" enumTypeId="AgentSurface" enumCode="drawer" sequenceNum="1" description="Assist Drawer"/>
+    <moqui.basic.Enumeration enumId="AgsfChat" enumTypeId="AgentSurface" enumCode="chat" sequenceNum="2" description="Chat Room"/>
+    <moqui.basic.Enumeration enumId="AgsfA2a" enumTypeId="AgentSurface" enumCode="a2a" sequenceNum="3" description="A2A"/>
+    <moqui.basic.Enumeration enumId="AgsfMcp" enumTypeId="AgentSurface" enumCode="mcp" sequenceNum="4" description="MCP"/>
+    <moqui.basic.Enumeration enumId="AgsfJob" enumTypeId="AgentSurface" enumCode="job" sequenceNum="5" description="Job or Trigger"/>
+    <moqui.basic.Enumeration enumId="AgsfTui" enumTypeId="AgentSurface" enumCode="tui" sequenceNum="6" description="Terminal"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentTriggerType" description="Agent Trigger Type"/>
+    <moqui.basic.Enumeration enumId="AgttCron" enumTypeId="AgentTriggerType" enumCode="cron" sequenceNum="1" description="Schedule"/>
+    <moqui.basic.Enumeration enumId="AgttDocument" enumTypeId="AgentTriggerType" enumCode="document" sequenceNum="2" description="Record Change"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentPartKind" description="Agent Message Part Kind"/>
+    <moqui.basic.Enumeration enumId="AgpkText" enumTypeId="AgentPartKind" enumCode="text" sequenceNum="1" description="Text"/>
+    <moqui.basic.Enumeration enumId="AgpkData" enumTypeId="AgentPartKind" enumCode="data" sequenceNum="2" description="Data"/>
+    <moqui.basic.Enumeration enumId="AgpkFile" enumTypeId="AgentPartKind" enumCode="file" sequenceNum="3" description="File"/>
+    <moqui.basic.Enumeration enumId="AgpkToolCall" enumTypeId="AgentPartKind" enumCode="tool-call" sequenceNum="4" description="Tool Call"/>
+    <moqui.basic.Enumeration enumId="AgpkToolResult" enumTypeId="AgentPartKind" enumCode="tool-result" sequenceNum="5" description="Tool Result"/>
+    <moqui.basic.Enumeration enumId="AgpkReasoning" enumTypeId="AgentPartKind" enumCode="reasoning" sequenceNum="6" description="Reasoning"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentPauseKind" description="Agent Run Pause Kind"/>
+    <moqui.basic.Enumeration enumId="AgpsApproval" enumTypeId="AgentPauseKind" enumCode="approval" sequenceNum="1" description="Approval"/>
+    <moqui.basic.Enumeration enumId="AgpsQuestion" enumTypeId="AgentPauseKind" enumCode="question" sequenceNum="2" description="Question"/>
+    <moqui.basic.Enumeration enumId="AgpsHandoff" enumTypeId="AgentPauseKind" enumCode="handoff" sequenceNum="3" description="Hand-off"/>
+    <moqui.basic.Enumeration enumId="AgpsRemoteTask" enumTypeId="AgentPauseKind" enumCode="remote-task" sequenceNum="4" description="Remote Task"/>
+    <moqui.basic.Enumeration enumId="AgpsAuth" enumTypeId="AgentPauseKind" enumCode="auth" sequenceNum="5" description="Authentication"/>
+    <moqui.basic.Enumeration enumId="AgpsBudget" enumTypeId="AgentPauseKind" enumCode="budget" sequenceNum="6" description="Budget"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentApprovalMode" description="Agent Tool Approval Mode"/>
+    <moqui.basic.Enumeration enumId="AgamAsk" enumTypeId="AgentApprovalMode" enumCode="ask" sequenceNum="1" description="Ask the User"/>
+    <moqui.basic.Enumeration enumId="AgamPolicy" enumTypeId="AgentApprovalMode" enumCode="policy" sequenceNum="2" description="By Policy"/>
+    <moqui.basic.Enumeration enumId="AgamNever" enumTypeId="AgentApprovalMode" enumCode="never" sequenceNum="3" description="Never"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentInputKind" description="Agent Run Input Kind"/>
+    <moqui.basic.Enumeration enumId="AgikMessage" enumTypeId="AgentInputKind" enumCode="message" sequenceNum="1" description="Message"/>
+    <moqui.basic.Enumeration enumId="AgikAnswer" enumTypeId="AgentInputKind" enumCode="answer" sequenceNum="2" description="Answer"/>
+    <moqui.basic.Enumeration enumId="AgikDecision" enumTypeId="AgentInputKind" enumCode="decision" sequenceNum="3" description="Decision"/>
+    <moqui.basic.Enumeration enumId="AgikRemote" enumTypeId="AgentInputKind" enumCode="remote" sequenceNum="4" description="Remote Reply"/>
+
+    <!-- ========== Notification topics ========== -->
+    <!-- The low-rate run signals to the owner's sockets (state changes, a pause); the drawer streams the rest over SSE -->
+    <moqui.security.user.NotificationTopic topic="AgentRun" description="Agent Run" typeString="info" showAlert="N"
+            persistOnSend="N" receiveNotifications="Y"/>
+    <!-- What a background run needs a person for, or has finished: kept in the user's notifications -->
+    <moqui.security.user.NotificationTopic topic="AgentInbox" inboxEnumId="NinNotifications" description="Agent Inbox"
+            typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'Agent'}"/>
+
+    <!-- ========== Permissions ========== -->
+    <!-- ADMIN has no implicit AgentAudit: reading another user's conversations is granted on its own and logged -->
+    <moqui.security.UserPermission userPermissionId="AgentUse" description="Use the agents (Assist drawer, chat agents)"/>
+    <moqui.security.UserPermission userPermissionId="AgentAdmin" description="Configure models, agents, skills and quotas"/>
+    <moqui.security.UserPermission userPermissionId="AgentAudit" description="Read other users' agent conversations (logged)"/>
+    <moqui.security.UserPermission userPermissionId="LlmGatewayUse" description="Call models through the OpenAI-compatible gateway"/>
+    <moqui.security.UserPermission userPermissionId="A2aServerUse" description="Call agents over the A2A server"/>
+    <moqui.security.UserPermission userPermissionId="McpServerUse" description="Call tools over the MCP server"/>
+    <moqui.security.UserPermission userPermissionId="AgentSkillAuthor" description="Save skills drafted by an agent (save_skill, Save as skill)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentUse" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentAdmin" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentSkillAuthor" fromDate="0"/>
+
+    <!-- ========== Tarpits: AT_LLM counts a run (agent:<agentId>) and a gateway request (gateway:<alias>) ========== -->
+    <moqui.security.ArtifactGroup artifactGroupId="AgentRuns" description="Agent runs"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AgentRuns" artifactName="agent:.*" nameIsPattern="Y"
+            artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
+    <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="AgentRuns" maxHitsCount="30"
+            maxHitsDuration="60" tarpitDuration="300"/>
+    <moqui.security.ArtifactGroup artifactGroupId="LlmGatewayRequests" description="LLM gateway requests"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="LlmGatewayRequests" artifactName="gateway:.*" nameIsPattern="Y"
+            artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
+    <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="LlmGatewayRequests" maxHitsCount="120"
+            maxHitsDuration="60" tarpitDuration="120"/>
+    <!-- AT_LLM also counts the drawer's own model calls (assist:transcribe, assist:textAction) -->
+    <moqui.security.ArtifactGroup artifactGroupId="AssistModelCalls" description="Assist dictation and text actions"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AssistModelCalls" artifactName="assist:.*" nameIsPattern="Y"
+            artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
+    <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="AssistModelCalls" maxHitsCount="60"
+            maxHitsDuration="60" tarpitDuration="120"/>
+    <!-- AT_LLM also counts an MCP tool call (mcp:<toolName>) -->
+    <moqui.security.ArtifactGroup artifactGroupId="McpToolCalls" description="MCP tool calls"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="McpToolCalls" artifactName="mcp:.*" nameIsPattern="Y"
+            artifactTypeEnumId="AT_LLM" inheritAuthz="N"/>
+    <moqui.security.ArtifactTarpit userGroupId="ALL_USERS" artifactGroupId="McpToolCalls" maxHitsCount="120"
+            maxHitsDuration="60" tarpitDuration="120"/>
+
+    <!-- ========== Jobs ========== -->
+    <!-- Recomputes today's and yesterday's LlmUsageDaily rows from LlmCall -->
+    <moqui.service.job.ServiceJob jobName="rollup_LlmUsage" description="Roll up LLM calls into daily usage"
+            serviceName="org.moqui.agent.AgentAdminServices.rollup#LlmUsage" cronExpression="0 0/15 * * * ?" paused="N"/>
+    <!-- Clears the request and response content of calls older than the llm-facade content-log retention-days -->
+    <moqui.service.job.ServiceJob jobName="clean_LlmCallContent_daily" description="Clear old LLM call content"
+            serviceName="org.moqui.agent.AgentAdminServices.clean#LlmCallContent" cronExpression="0 0 2 * * ?" paused="N"/>
+
+    <!-- ========== Triggers ========== -->
+    <!-- The record changes of document triggers: store#AgentTrigger links each trigger's DataDocument to this feed, whose
+        services batch the documents for the triggers (the loop guard drops the trigger's own agent's writes) -->
+    <moqui.entity.feed.DataFeed dataFeedId="AgentTriggers" dataFeedTypeEnumId="DTFDTP_RT_PUSH" feedName="Agent Triggers"
+            feedReceiveServiceName="org.moqui.agent.AgentTriggerServices.receive#TriggerDocuments"
+            feedDeleteServiceName="org.moqui.agent.AgentTriggerServices.delete#TriggerDocument"/>
+
+    <!-- ========== The system agent ========== -->
+    <!-- The service user that is Assist in chat rooms (add it to a room with role agent and the agentRef
+        org.moqui.agent.AgentServices.handle#ChatMessage); it has no password, so nobody logs in as it -->
+    <moqui.security.UserAccount userId="_AGENT_ASSIST_" username="_agent_assist_" userFullName="Assist"/>
+    <moqui.agent.AgentDefinition agentId="assist" agentName="Assist" isSystem="Y" featureId="assist" reasoningLevel="low"
+            surfaces="drawer,chat,tui" startPath="/apps" chatUserId="_AGENT_ASSIST_"
+            description="The assistant of the Assist drawer: finds and opens screens, answers from data, proposes changes"
+            instructions="Scope: this site's apps and the user's work in them. Decline anything else in one friendly sentence and offer something you can do here."/>
+
+    <!-- ========== The MCP server's agent ========== -->
+    <!-- It has no model: its tool policy is the MCP server's allowlist and its role group (none here: the caller's own
+        permissions alone) bounds the tools, separate from the assistant's (llm-facade mcp agent, docs/MCP.md) -->
+    <moqui.agent.AgentDefinition agentId="mcp" agentName="MCP server" isSystem="Y" surfaces="mcp" exposeMcp="Y"
+            startPath="/apps" description="The tools of the MCP server: screens, search, data, skills and the services exposed to MCP"/>
+</entity-facade-xml>

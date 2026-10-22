@@ -13,8 +13,8 @@
  */
 
 //! The parts of `ec.resource` that drives and file browsers use (`org.moqui.impl.FileServices`): change sets, version
-//! notes, last changes and change logs, the bytes under a folder, image thumbnails, zip archives, and signed grants.
-//! Guide: `docs/Revision-Management.md`.
+//! notes, last changes and change logs, the bytes under a folder, image thumbnails, PDF and spreadsheet previews, the
+//! text of a file for search, zip archives, and signed grants. Guide: `docs/Revision-Management.md`.
 //!
 //! ```text
 //! ec.resource.makeChangeSet(root)          -> builder: write(path, content), delete(path), move(from, to), mkdir(path),
@@ -27,6 +27,13 @@
 //! ec.resource.getChangeLog(location, limit)-> [{versionName, previousVersionName, versionDate, userId, note, paths}]
 //! ec.resource.getTreeSize(location)        -> bytes
 //! ec.resource.makeThumbnail(source, target, maxSize) -> {width, height, contentType} or null (not an image)
+//! ec.resource.makePdfPreview(source, target, maxSize) -> {width, height, pages, contentType} or null (no PDF engine,
+//!                                             or the PDF does not open: logged)
+//! ec.resource.readSheetPreview(location, sheetName, maxRows, maxCols)
+//!                                          -> {sheetNames, sheetName, rows, truncated} or null (not a spreadsheet)
+//! ec.resource.extractText(location, cacheKey, maxChars, cacheOnly) -> the text of a PDF, spreadsheet or text file,
+//!                                             kept in runtime://tmp/file-text/<cacheKey>.txt; "" when it has none;
+//!                                             null with cacheOnly when it was not extracted yet
 //! ec.resource.writeZip(target, [{path, location}]) -> {count, size, failures: [{path, error}]}
 //! ec.resource.makeGrant(key, subject, ttlSeconds)  -> token;  ec.resource.checkGrant(key, subject, token) -> boolean
 //! ```
@@ -79,6 +86,13 @@ const FILES_JS: &str = r#"(function (ec, host) {
     ec.resource.getTreeSize = (location) => host.filesTreeSize(String(location));
     ec.resource.makeThumbnail = (source, target, maxSize) =>
         host.filesThumbnail(String(source), String(target), maxSize == null ? 256 : Number(maxSize));
+    ec.resource.makePdfPreview = (source, target, maxSize) =>
+        host.filesPdfPreview(String(source), String(target), maxSize == null ? 1024 : Number(maxSize));
+    ec.resource.readSheetPreview = (location, sheetName, maxRows, maxCols) =>
+        host.filesSheetPreview(String(location), sheetName == null ? "" : String(sheetName),
+            maxRows == null ? 100 : Number(maxRows), maxCols == null ? 26 : Number(maxCols));
+    ec.resource.extractText = (location, cacheKey, maxChars, cacheOnly) =>
+        host.filesExtractText(String(location), String(cacheKey), maxChars == null ? 100000 : Number(maxChars), cacheOnly === true);
     ec.resource.writeZip = (target, entries) => host.filesWriteZip(String(target), Array.from(entries || []));
     ec.resource.restoreVersion = (location, versionName, note) =>
         host.filesRestoreVersion(String(location), String(versionName), note == null ? null : String(note));
@@ -105,6 +119,9 @@ pub(super) fn install(ctx: &Ctx<'_>) -> Result<(), Error> {
     method!("filesChangeLog", files_change_log);
     method!("filesTreeSize", files_tree_size);
     method!("filesThumbnail", files_thumbnail);
+    method!("filesPdfPreview", files_pdf_preview);
+    method!("filesSheetPreview", files_sheet_preview);
+    method!("filesExtractText", files_extract_text);
     method!("filesWriteZip", files_write_zip);
     method!("filesRestoreVersion", files_restore_version);
     method!("filesVersionBytes", files_version_bytes);
@@ -451,6 +468,234 @@ pub(crate) fn thumbnail_png(bytes: &[u8], max: u32) -> Option<(u32, u32, Vec<u8>
 #[cfg(not(feature = "image"))]
 pub(crate) fn thumbnail_png(_bytes: &[u8], _max: u32) -> Option<(u32, u32, Vec<u8>)> {
     None
+}
+
+/// A whole number argument from a script, clamped to `min..=max`, else `default`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn bounded(number: f64, min: usize, max: usize, default: usize) -> usize {
+    if number.is_finite() && number >= 1.0 {
+        (number as usize).clamp(min, max)
+    } else {
+        default
+    }
+}
+
+/// The bytes at `location`, or the error naming it, without throwing into the script.
+fn read_location(ctx: &Ctx<'_>, location: &str) -> rquickjs::Result<Result<Vec<u8>, crate::context::Error>> {
+    with_ec(ctx, |ec| {
+        ec.factory()
+            .resource()
+            .get(location)
+            .and_then(|found| found.read_bytes())
+    })
+}
+
+/// Log once per process that there is no PDF engine, so PDFs get no preview and no text.
+fn log_no_pdf_engine() {
+    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!("PDF files get no preview and no extracted text: there is no PDF engine (Chromium)");
+    }
+}
+
+/// `makePdfPreview(source, target, maxSize)`: page 1 of the PDF at `source` as a PNG at `target`, no side longer than
+/// `maxSize`. Null, with no error, when there is no PDF engine or the PDF does not open (logged by location).
+fn files_pdf_preview<'js>(
+    ctx: Ctx<'js>,
+    source: String,
+    target: String,
+    max_size: f64,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        if !crate::screen::PdfRenderer::available() {
+            log_no_pdf_engine();
+            return Null.into_js(&ctx);
+        }
+        let bytes = match read_location(&ctx, &source)? {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::error!(location = %source, "PDF preview not made: {err}");
+                return Null.into_js(&ctx);
+            }
+        };
+        let max = u32::try_from(bounded(max_size, 16, 4096, 1024)).unwrap_or(1024);
+        let preview = match crate::screen::PdfRenderer::preview(&bytes, true, max, 0, 0) {
+            Ok(preview) if !preview.png.is_empty() => preview,
+            Ok(_) => {
+                tracing::error!(location = %source, "PDF preview not made: the PDF has no pages");
+                return Null.into_js(&ctx);
+            }
+            Err(err) => {
+                tracing::error!(location = %source, "PDF preview not made: {err}");
+                return Null.into_js(&ctx);
+            }
+        };
+        with_resources(&ctx, |resources| resources.write_bytes(&target, &preview.png))?;
+        let mut map = indexmap::IndexMap::new();
+        map.insert("width".to_string(), Value::I64(i64::from(preview.width)));
+        map.insert("height".to_string(), Value::I64(i64::from(preview.height)));
+        map.insert("pages".to_string(), Value::I64(i64::from(preview.pages)));
+        map.insert("contentType".to_string(), Value::string("image/png"));
+        host_to_js(&ctx, Value::Map(map))
+    })
+}
+
+/// `readSheetPreview(location, sheetName, maxRows, maxCols)`: the first rows of a sheet of the spreadsheet at
+/// `location`. Null when it is not a spreadsheet this build reads (logged by location).
+fn files_sheet_preview<'js>(
+    ctx: Ctx<'js>,
+    location: String,
+    sheet_name: String,
+    max_rows: f64,
+    max_cols: f64,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let bytes = match read_location(&ctx, &location)? {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::error!(location = %location, "spreadsheet preview not made: {err}");
+                return Null.into_js(&ctx);
+            }
+        };
+        let (max_rows, max_cols) = (bounded(max_rows, 1, 1000, 100), bounded(max_cols, 1, 200, 26));
+        match sheet_preview(&bytes, &sheet_name, max_rows, max_cols) {
+            Ok(preview) => host_to_js(&ctx, preview),
+            Err(err) => {
+                tracing::error!(location = %location, "spreadsheet preview not made: {err}");
+                Null.into_js(&ctx)
+            }
+        }
+    })
+}
+
+#[cfg(feature = "xlsx")]
+fn sheet_preview(bytes: &[u8], sheet_name: &str, max_rows: usize, max_cols: usize) -> Result<Value, String> {
+    let preview = crate::service::spreadsheet::preview_rows(bytes, sheet_name, max_rows, max_cols)
+        .map_err(|err| err.message().to_string())?;
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        "sheetNames".to_string(),
+        Value::List(preview.sheet_names.into_iter().map(Value::String).collect()),
+    );
+    map.insert("sheetName".to_string(), Value::string(preview.sheet_name));
+    map.insert(
+        "rows".to_string(),
+        Value::List(preview.rows.into_iter().map(Value::List).collect()),
+    );
+    map.insert("truncated".to_string(), Value::Bool(preview.truncated));
+    Ok(Value::Map(map))
+}
+
+#[cfg(not(feature = "xlsx"))]
+fn sheet_preview(_bytes: &[u8], _sheet_name: &str, _max_rows: usize, _max_cols: usize) -> Result<Value, String> {
+    Err("this build reads no spreadsheets (the xlsx feature)".to_string())
+}
+
+/// The extensions of the spreadsheets [`files_extract_text`] and `readSheetPreview` read.
+const SHEET_EXTENSIONS: [&str; 5] = ["xlsx", "xlsm", "xlsb", "xls", "ods"];
+/// The pages of a PDF whose text is extracted.
+const TEXT_PAGES: u32 = 50;
+
+/// `extractText(location, cacheKey, maxChars, cacheOnly)`: the text of the PDF, spreadsheet or text file at
+/// `location`, at most `maxChars`. It is kept in `runtime://tmp/file-text/<cacheKey>.txt`, or a `.none` marker when
+/// the file has none or could not be read (logged by location), so it is extracted once; `clean#DriveTempFiles` removes
+/// old ones. `""` when there is no text or the file is of another kind; with `cacheOnly`, null when nothing is kept yet.
+fn files_extract_text<'js>(
+    ctx: Ctx<'js>,
+    location: String,
+    cache_key: String,
+    max_chars: f64,
+    cache_only: bool,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        if cache_key.is_empty()
+            || cache_key.len() > 128
+            || !cache_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(Exception::throw_message(
+                &ctx,
+                "extractText needs a cacheKey of letters, digits, - and _",
+            ));
+        }
+        let kept = format!("runtime://tmp/file-text/{cache_key}.txt");
+        let none = format!("runtime://tmp/file-text/{cache_key}.none");
+        let exists = |location: &str| {
+            with_ec(&ctx, |ec| {
+                ec.factory().resource().get(location).is_ok_and(|found| found.exists())
+            })
+        };
+        if exists(&kept)? {
+            if let Ok(text) = read_location(&ctx, &kept)? {
+                return host_to_js(&ctx, Value::string(String::from_utf8_lossy(&text).into_owned()));
+            }
+        }
+        if exists(&none)? {
+            return host_to_js(&ctx, Value::string(""));
+        }
+        if cache_only {
+            return Null.into_js(&ctx);
+        }
+        let max_chars = bounded(max_chars, 1, 1_000_000, 100_000);
+        let name = location.rsplit('/').next().unwrap_or("");
+        let extension = name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .unwrap_or_default();
+        let extracted: Result<String, String> = if extension == "pdf" {
+            if crate::screen::PdfRenderer::available() {
+                read_location(&ctx, &location)?
+                    .map_err(|err| err.message().to_string())
+                    .and_then(|bytes| {
+                        crate::screen::PdfRenderer::preview(&bytes, false, 0, TEXT_PAGES, max_chars)
+                            .map(|preview| preview.text)
+                            .map_err(|err| err.message().to_string())
+                    })
+            } else {
+                log_no_pdf_engine();
+                Ok(String::new())
+            }
+        } else if SHEET_EXTENSIONS.contains(&extension.as_str()) {
+            read_location(&ctx, &location)?
+                .map_err(|err| err.message().to_string())
+                .and_then(|bytes| sheet_text(&bytes, max_chars))
+        } else if moqui_lib::resource::content_type_for_name(name)
+            .is_some_and(moqui_lib::resource::is_text_content_type)
+        {
+            read_location(&ctx, &location)?
+                .map_err(|err| err.message().to_string())
+                .map(|bytes| String::from_utf8_lossy(&bytes).chars().take(max_chars).collect())
+        } else {
+            return host_to_js(&ctx, Value::string(""));
+        };
+        let text = match extracted {
+            Ok(text) => text.trim().to_string(),
+            Err(err) => {
+                tracing::error!(location = %location, "text not extracted: {err}");
+                String::new()
+            }
+        };
+        let (target, bytes) = if text.is_empty() {
+            (&none, Vec::new())
+        } else {
+            (&kept, text.as_bytes().to_vec())
+        };
+        if let Err(err) = with_ec(&ctx, |ec| ec.factory().resource().write_bytes(target, &bytes))? {
+            tracing::warn!(location = %location, "extracted text not kept at {target}: {err}");
+        }
+        host_to_js(&ctx, Value::string(text))
+    })
+}
+
+#[cfg(feature = "xlsx")]
+fn sheet_text(bytes: &[u8], max_chars: usize) -> Result<String, String> {
+    crate::service::spreadsheet::sheet_text(bytes, max_chars).map_err(|err| err.message().to_string())
+}
+
+#[cfg(not(feature = "xlsx"))]
+fn sheet_text(_bytes: &[u8], _max_chars: usize) -> Result<String, String> {
+    Err("this build reads no spreadsheets (the xlsx feature)".to_string())
 }
 
 /// A zip of the files at the entries' locations, each under its `path`, written to `target`. An entry that cannot be

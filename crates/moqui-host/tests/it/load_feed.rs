@@ -172,12 +172,8 @@ fn load_data_stores_eca_and_inserts_pending() {
         Some("first".to_string())
     );
 
-    let try_insert = LoadOptions {
-        use_try_insert: true,
-        ..LoadOptions::default()
-    };
     assert_eq!(
-        load_entity_data(&facade, again.to_str().unwrap(), &try_insert)
+        load_entity_data(&facade, again.to_str().unwrap(), &LoadOptions::default())
             .unwrap()
             .records,
         1

@@ -146,6 +146,7 @@ mod driver {
             });
             Ok(MysqlConn {
                 stream: None,
+                stream_names: None,
                 statements: StatementLru::new(STATEMENT_CACHE_CAP),
                 kill,
                 mariadb: version.as_deref().is_some_and(is_mariadb),
@@ -171,6 +172,8 @@ mod driver {
     /// the `'static` borrow an open `stream` holds is never invalidated by a move or retag of the owner.
     pub struct MysqlConn {
         stream: Option<mysql::QueryResult<'static, 'static, 'static, mysql::Binary>>,
+        /// The open stream's column names, from its first row.
+        stream_names: Option<Arc<[Arc<str>]>>,
         statements: StatementLru<mysql::Statement>,
         kill: Arc<KillState>,
         /// The server is MariaDB, which bounds statements with `max_statement_time`.
@@ -313,6 +316,7 @@ mod driver {
         fn drop(&mut self) {
             self.kill.busy.store(false, Ordering::Release);
             drop(self.stream.take());
+            self.stream_names = None;
             let statements = std::mem::replace(&mut self.statements, StatementLru::new(1));
             for statement in statements.into_values() {
                 let _ = self.conn().close(statement);
@@ -371,6 +375,7 @@ mod driver {
             self.prep_cached(sql).map_err(mysql_err)?;
             let result = self.stream_result(sql, mysql_params)?;
             self.stream = Some(result);
+            self.stream_names = None;
             busy.keep();
             Ok(())
         }
@@ -380,7 +385,7 @@ mod driver {
                 return Ok(None);
             };
             match stream.next() {
-                Some(Ok(row)) => Ok(Some(map_row(row)?)),
+                Some(Ok(row)) => Ok(Some(map_row(row, &mut self.stream_names)?)),
                 Some(Err(err)) => Err(mysql_err(err)),
                 None => Ok(None),
             }
@@ -479,8 +484,9 @@ mod driver {
 
     fn collect_rows(iter: impl Iterator<Item = mysql::Result<mysql::Row>>) -> Result<Vec<DbRow>, Error> {
         let mut rows = Vec::new();
+        let mut names = None;
         for row in iter {
-            rows.push(map_row(row.map_err(mysql_err)?)?);
+            rows.push(map_row(row.map_err(mysql_err)?, &mut names)?);
         }
         Ok(rows)
     }
@@ -492,13 +498,22 @@ mod driver {
         Ok(())
     }
 
-    fn map_row(row: mysql::Row) -> Result<DbRow, Error> {
-        let columns: Vec<mysql::Column> = row.columns_ref().to_vec();
+    /// `names` are the column names of the result the row is from, made from its first row and shared by the rest.
+    fn map_row(row: mysql::Row, names: &mut Option<Arc<[Arc<str>]>>) -> Result<DbRow, Error> {
+        let columns = row.columns();
+        let names = Arc::clone(names.get_or_insert_with(|| {
+            columns
+                .iter()
+                .map(|column| Arc::from(column.name_str().as_ref()))
+                .collect()
+        }));
         let values = row.unwrap();
         let mut out = Vec::with_capacity(columns.len());
-        for (column, value) in columns.into_iter().zip(values) {
-            let name = column.name_str().into_owned();
-            let cell = match map_cell(&column, value) {
+        for (index, (column, value)) in columns.iter().zip(values).enumerate() {
+            let name = names
+                .get(index)
+                .map_or_else(|| Arc::from(column.name_str().as_ref()), Arc::clone);
+            let cell = match map_cell(column, value) {
                 Ok(cell) => cell,
                 Err(err) => {
                     return Err(Error::new(format!("mysql column {name}")).with_source(err));

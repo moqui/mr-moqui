@@ -18,10 +18,10 @@
 //!
 //! 1. Thunderbird autoconfig: `https://autoconfig.<domain>/mail/config-v1.1.xml`, the domain's
 //!    `/.well-known/autoconfig/mail/config-v1.1.xml`, then the ISPDB (`https://autoconfig.thunderbird.net/v1.1/<domain>`),
-//!    fetched at once; the first of them in that order that answers wins. `email_autoconfig_urls` replaces the list
+//!    fetched at once; the first of them in that order that answers wins. `email-client` `autoconfig-urls` replaces the list
 //!    (templates with `{domain}` and `{email}`), for a deployment with its own database and for tests.
 //! 2. DNS SRV records (RFC 6186): `_imaps._tcp`, `_imap._tcp`, `_pop3s._tcp`, `_submissions._tcp`, `_submission._tcp`,
-//!    asked of the first nameserver in `/etc/resolv.conf` (or `email_dns_server`) over UDP; the framework has no
+//!    asked of the first nameserver in `/etc/resolv.conf` (or `email-client` `dns-server`) over UDP; the framework has no
 //!    resolver library, so this is a small query of its own.
 //! 3. Guesses: `imap.<domain>` on 993 and `smtp.<domain>` on 587 with STARTTLS, for the wizard's test step to try.
 //!
@@ -130,7 +130,9 @@ pub(super) fn discover_server(
         })
     };
     let by_domain = super::oauth::detect(&providers, &domain, &[], &[]);
-    let mut suggestion = if facade.sim_active() {
+    let offline = facade.sim_active()
+        || crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "discover#EmailServer");
+    let mut suggestion = if offline {
         None
     } else {
         autoconfig(&address, local, &domain)
@@ -265,7 +267,7 @@ fn percent(text: &str) -> String {
 // ---- Thunderbird autoconfig ----
 
 fn autoconfig(address: &str, local: &str, domain: &str) -> Option<Suggestion> {
-    let configured = moqui_lib::env::get_prop_or_env("email_autoconfig_urls");
+    let configured = super::client_setting("autoconfig-urls");
     let (templates, own_list): (Vec<String>, bool) = if configured.trim().is_empty() {
         (DEFAULT_AUTOCONFIG.iter().map(|url| (*url).to_string()).collect(), false)
     } else {
@@ -460,7 +462,7 @@ const SRV_QUERIES: &[(&str, &str, &str)] = &[
 ];
 
 fn nameserver() -> Option<String> {
-    let configured = moqui_lib::env::get_prop_or_env("email_dns_server");
+    let configured = super::client_setting("dns-server");
     if !configured.trim().is_empty() {
         return Some(configured.trim().to_string());
     }

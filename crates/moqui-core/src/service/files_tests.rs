@@ -16,7 +16,7 @@
 //! permission, the personal drive on first use, uploads as one commit on git and as versions on the database tree,
 //! version notes, change sets, the git path index (modified by, history across a move), trash and restore, shares and
 //! public links (password, expiry, revoke, opened count, the upload-only drop), quotas, a records drive's folder map,
-//! an image preview, and the search documents.
+//! image, PDF and spreadsheet previews, the search documents, and their extracted text.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -2178,6 +2178,218 @@ fn drive_files_are_search_documents_kept_on_write_rename_and_trash() {
     assert_eq!(indexed_ids().len(), before, "nothing new since");
 }
 
+/// A PDF engine that previews any PDF as the same small image, with three pages and the size of the PDF as its text.
+struct FakePdf;
+
+impl crate::screen::PdfEngine for FakePdf {
+    fn render(&self, _html_print_document: &str) -> Result<Vec<u8>, crate::context::Error> {
+        Err(crate::context::Error::new("the fake engine only previews"))
+    }
+
+    fn preview(
+        &self,
+        request: &crate::screen::PdfPreviewRequest<'_>,
+    ) -> Result<crate::screen::PdfPreview, crate::context::Error> {
+        if !request.pdf.starts_with(b"%PDF") {
+            return Err(crate::context::Error::new("not a PDF"));
+        }
+        assert!(!request.library.main.is_empty() && !request.library.worker.is_empty());
+        Ok(crate::screen::PdfPreview {
+            png: if request.image {
+                b"\x89PNG\r\n\x1a\nfake".to_vec()
+            } else {
+                Vec::new()
+            },
+            width: 30,
+            height: 40,
+            pages: 3,
+            text: format!("fake pdf text {}", request.pdf.len()),
+        })
+    }
+}
+
+/// The file under `./tmp/preview` (runtime://tmp in a test) whose text holds `marker`.
+fn cached_preview(marker: &str) -> Option<std::path::PathBuf> {
+    std::fs::read_dir("tmp/preview")
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains(marker)))
+}
+
+#[test]
+fn pdf_and_spreadsheet_previews_are_cached_by_version_and_their_text_is_indexed() {
+    let _pdf = crate::screen::pdf_test_lock();
+    crate::screen::clear_pdf_engine();
+    // the async extract#DriveFileText runs at run_pending
+    let context = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::inline(),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    facade.assume_db_tables();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    seed_drive_entities(&facade);
+    let recorder = Arc::new(Recorder::default());
+    crate::search::install(
+        context.factory(),
+        crate::search::SearchFacade::new(Arc::new(RecordingBackend(Arc::clone(&recorder))), facade.clone()),
+    );
+    login("alice");
+    let team = drive("folder", "Previews", &[]);
+    // a folder of its own each run: the previews and text kept under ./tmp by an earlier run have other keys
+    let folder = format!("run{}", crate::user::now_millis());
+    let preview = |path: &str, extra: &[(&str, Value)]| {
+        let mut parameters = vec![("driveId", text(&team)), ("path", text(&format!("{folder}/{path}")))];
+        parameters.extend(extra.iter().cloned());
+        ok("get#Preview", &parameters)
+    };
+
+    // a spreadsheet: the first rows of the first sheet, then the same from the cache
+    let marker = format!("Sheet{}", std::process::id());
+    let mut book = rust_xlsxwriter::Workbook::new();
+    let sheet = book.add_worksheet().set_name(&marker).unwrap();
+    sheet.write_string(0, 0, "item").unwrap();
+    sheet.write_string(0, 1, "qty").unwrap();
+    sheet.write_string(1, 0, "Widget").unwrap();
+    sheet.write_number(1, 1, 4.0).unwrap();
+    book.add_worksheet()
+        .set_name("Other")
+        .unwrap()
+        .write_string(0, 0, "elsewhere")
+        .unwrap();
+    ok(
+        "upload#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&folder)),
+            ("file", upload("Budget.xlsx", &book.save_to_buffer().unwrap())),
+        ],
+    );
+    let sheet = preview("Budget.xlsx", &[]);
+    assert_eq!(out_text(&sheet, "kind"), "spreadsheet");
+    assert_eq!(out_text(&sheet, "sheetName"), marker);
+    assert_eq!(
+        sheet.get("sheetNames"),
+        Some(&Value::List(vec![text(&marker), text("Other")]))
+    );
+    assert_eq!(
+        sheet.get("rows"),
+        Some(&Value::List(vec![
+            Value::List(vec![text("item"), text("qty")]),
+            Value::List(vec![text("Widget"), Value::I32(4)]),
+        ]))
+    );
+    let cached = cached_preview(&marker).expect("the cached sheet preview");
+    let kept = std::fs::read_to_string(&cached).unwrap();
+    std::fs::write(&cached, kept.replace("Widget", "Gadget")).unwrap();
+    let again = preview("Budget.xlsx", &[]);
+    assert!(
+        format!("{:?}", again.get("rows")).contains("Gadget"),
+        "the second preview reads the cache"
+    );
+    let _ = std::fs::remove_file(&cached);
+    let other = preview("Budget.xlsx", &[("sheetName", text("Other"))]);
+    assert_eq!(
+        other.get("rows"),
+        Some(&Value::List(vec![Value::List(vec![text("elsewhere")])]))
+    );
+
+    // a PDF with no engine: kind pdf, no image, no error
+    ok(
+        "upload#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&folder)),
+            ("file", upload("Report.pdf", b"%PDF-1.4 first")),
+        ],
+    );
+    let bare = preview("Report.pdf", &[("size", Value::I64(400))]);
+    assert_eq!(out_text(&bare, "kind"), "pdf");
+    assert!(bare.get("previewLocation").is_none_or(Value::is_null), "{bare:?}");
+
+    // with an engine: page 1 as an image and the page count; a new version gets a new image
+    crate::screen::install_pdf_engine(Arc::new(FakePdf));
+    let drawn = preview("Report.pdf", &[("size", Value::I64(400))]);
+    assert_eq!(out_text(&drawn, "kind"), "pdf");
+    assert_eq!(out_text(&drawn, "contentType"), "image/png");
+    assert_eq!(number(drawn.get("pages")), 3);
+    assert_eq!((number(drawn.get("width")), number(drawn.get("height"))), (30, 40));
+    let first = out_text(&drawn, "previewLocation");
+    assert!(read(&first).contains("fake"));
+    assert_eq!(
+        out_text(&preview("Report.pdf", &[("size", Value::I64(400))]), "previewLocation"),
+        first,
+        "the cached page"
+    );
+    ok(
+        "upload#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&folder)),
+            ("file", upload("Report.pdf", b"%PDF-1.4 second version")),
+        ],
+    );
+    let newer = preview("Report.pdf", &[("size", Value::I64(400))]);
+    assert_ne!(out_text(&newer, "previewLocation"), first, "a new version, a new key");
+    assert_eq!(number(newer.get("pages")), 3);
+
+    // extracted text: index#DriveFiles queues what is not cached, extract#DriveFileText fills it and indexes again
+    ok(
+        "upload#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&folder)),
+            ("file", upload("Notes.pdf", b"%PDF-1.4 notes body")),
+        ],
+    );
+    let text_of = |path: &str| -> Option<String> {
+        moqui_lib::sync::lock(&recorder.indexed)
+            .iter()
+            .rev()
+            .find(|(id, _)| id == &format!("{team}:{folder}/{path}"))
+            .and_then(|(_, body)| {
+                body.get("extractedText")
+                    .filter(|value| !value.is_null())
+                    .map(to_plain_string)
+            })
+    };
+    assert_eq!(text_of("Notes.pdf"), None, "not extracted yet");
+    assert!(context.factory().run_pending() > 0);
+    assert_eq!(text_of("Notes.pdf").as_deref(), Some("fake pdf text 19"));
+    assert!(
+        text_of("Budget.xlsx").is_some_and(|text| text.contains("Widget\t4")),
+        "{:?}",
+        text_of("Budget.xlsx")
+    );
+    // indexed again from the cache, with nothing queued
+    ok(
+        "rename#Resource",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&format!("{folder}/Notes.pdf"))),
+            ("newName", text("Kept.pdf")),
+        ],
+    );
+    assert_eq!(context.factory().run_pending(), 1, "a new path, a new key");
+    assert_eq!(text_of("Kept.pdf").as_deref(), Some("fake pdf text 19"));
+    ok(
+        "set#Tags",
+        &[
+            ("driveId", text(&team)),
+            ("path", text(&format!("{folder}/Kept.pdf"))),
+            ("tagNameList", Value::List(vec![text("t")])),
+        ],
+    );
+    assert_eq!(context.factory().run_pending(), 0, "the text comes from the cache");
+    assert_eq!(text_of("Kept.pdf").as_deref(), Some("fake pdf text 19"));
+    crate::screen::clear_pdf_engine();
+}
+
 /// What `send` wrote to the response: status, headers and body; the response is cleared for the next one.
 fn sent(send: impl FnOnce()) -> (u16, Vec<(String, String)>, Vec<u8>) {
     crate::web::clear_output();
@@ -2431,4 +2643,164 @@ fn the_drive_temporary_files_older_than_a_day_are_removed() {
     assert!(!tmp.join("a1b2").exists(), "the folder its last file left");
     assert!(tmp.join("new.zip").exists(), "a file of today stays");
     let _ = std::fs::remove_dir_all(&tmp);
+}
+/// An external user (the permission EXTERNAL_USER, an app's client contacts) reaches no records drive, whatever its
+/// membership and the record visibility hook say: not listed among the user's drives (the WebDAV and SFTP home), no
+/// level at its top or in a record folder the hook shows, no list or file. An internal member keeps the record folders.
+#[test]
+fn an_external_user_reaches_no_records_drive() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    let dir = std::env::temp_dir().join(format!("moqui-files-external-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("service/test")).unwrap();
+    std::fs::write(dir.join("service/test/DriveStub.xml"), RECORD_HOOK).unwrap();
+    let framework = crate::context::framework_dir().join("service/org/moqui");
+    let failures = crate::service::lint(&[
+        framework.join("impl/FileServices.xml"),
+        framework.join("impl/GitServices.xml"),
+        framework.join("impl/ChatServices.xml"),
+        dir.join("service/test/DriveStub.xml"),
+    ])
+    .unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    users(&facade);
+    user(&facade, "outsider");
+    row(
+        &facade,
+        "moqui.security.UserPermission",
+        &[("userPermissionId", text("EXTERNAL_USER"))],
+    );
+    row(
+        &facade,
+        "moqui.security.UserGroup",
+        &[("userGroupId", text("FX_OUTSIDE"))],
+    );
+    row(
+        &facade,
+        "moqui.security.UserGroupMember",
+        &[
+            ("userGroupId", text("FX_OUTSIDE")),
+            ("userId", text("outsider")),
+            ("fromDate", Value::I64(0)),
+        ],
+    );
+    row(
+        &facade,
+        "moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", text("FX_OUTSIDE")),
+            ("userPermissionId", text("EXTERNAL_USER")),
+            ("fromDate", Value::I64(0)),
+        ],
+    );
+    row(
+        &facade,
+        "moqui.screen.ScreenThemeResource",
+        &[
+            ("screenThemeId", text("DEFAULT_QUASAR")),
+            ("sequenceNum", Value::I64(990)),
+            ("resourceTypeEnumId", text("STRT_RECORD_VISIBLE_SERVICE")),
+            ("resourceValue", text("test.DriveStub.check#Visible")),
+        ],
+    );
+    let records = {
+        let _authz = context.disable_authz();
+        login("alice");
+        out_text(
+            &ok(
+                "create#Drive",
+                &[
+                    ("driveName", text("Records")),
+                    ("driveKindEnumId", text("RdkRecords")),
+                    ("rootLocation", text("dbresource://mantle/content")),
+                    (
+                        "memberList",
+                        Value::List(vec![
+                            Value::Map(IndexMap::from([
+                                ("userGroupId".to_string(), text("ALL_USERS")),
+                                ("permissionEnumId".to_string(), text("RdpEdit")),
+                            ])),
+                            Value::Map(IndexMap::from([
+                                ("userId".to_string(), text("outsider")),
+                                ("permissionEnumId".to_string(), text("RdpManage")),
+                            ])),
+                        ]),
+                    ),
+                ],
+            ),
+            "driveId",
+        )
+    };
+    row(
+        &facade,
+        "moqui.resource.ResourceDriveRecordFolder",
+        &[
+            ("driveId", text(&records)),
+            ("folderPath", text("party")),
+            ("recordEntityName", text("mantle.party.Party")),
+            ("idField", text("partyId")),
+            ("label", text("Parties")),
+            ("sequenceNum", Value::I64(1)),
+        ],
+    );
+    context
+        .factory()
+        .resource()
+        .write_bytes(
+            "dbresource://mantle/content/party/OPEN1/content_1/shared.pdf",
+            b"%PDF shared",
+        )
+        .unwrap();
+    let drive_ids = || -> Vec<String> {
+        maps(&ok("get#UserDrives", &[]), "driveList")
+            .iter()
+            .map(|drive| field(drive, "driveId"))
+            .collect()
+    };
+
+    // an internal member: the drive is listed and the record folder the hook shows is reached
+    login("carol");
+    assert!(drive_ids().contains(&records));
+    assert!(level(&records, Some("party/OPEN1/content_1/shared.pdf")) >= 1);
+    assert_eq!(
+        names(&ok(
+            "list#Folder",
+            &[("driveId", text(&records)), ("path", text("party"))]
+        )),
+        ["OPEN1"]
+    );
+
+    // the external user, a manager by membership: nothing
+    login("outsider");
+    assert!(!drive_ids().contains(&records));
+    assert_eq!(level(&records, None), 0);
+    assert_eq!(level(&records, Some("")), 0);
+    assert_eq!(level(&records, Some("party/OPEN1/content_1/shared.pdf")), 0);
+    let visible = crate::service::sync(
+        "org.moqui.impl.ChatServices.check#RecordVisible",
+        &BTreeMap::from([
+            ("recordEntityName".to_string(), text("mantle.party.Party")),
+            ("recordId".to_string(), text("OPEN1")),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(visible.get("recordVisible"), Some(&Value::Bool(false)));
+    for (name, parameters) in [
+        (
+            "list#Folder",
+            vec![("driveId", text(&records)), ("path", text("party"))],
+        ),
+        (
+            "get#ResourceInfo",
+            vec![
+                ("driveId", text(&records)),
+                ("path", text("party/OPEN1/content_1/shared.pdf")),
+            ],
+        ),
+    ] {
+        let _ = call(name, &parameters);
+        assert!(!errors().is_empty(), "{name} answered the external user");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

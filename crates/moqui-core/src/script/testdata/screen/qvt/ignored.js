@@ -13,7 +13,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
         // as Java: the image child in the place of the text
         sri.write($text);
         sri.write(($badge ? "<q-badge class=\"on-right\" transparent>" + $v.t($badge) + "</q-badge>" : "") + "</template><q-list>");
-        sri.write("<q-item clickable v-close-popup><q-item-section>");
+        sri.write("<q-item clickable><q-item-section>");
         sri.write("</q-item-section></q-item>");
         sri.write("</q-list></q-btn-dropdown>\n");
     }

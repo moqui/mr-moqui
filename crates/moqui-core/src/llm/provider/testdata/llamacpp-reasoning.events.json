@@ -1,0 +1,73 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-pRfJx2WmZ9aQ",
+      "model": "gpt-oss-20b",
+      "type": "started"
+    },
+    {
+      "delta": "Count the rows",
+      "type": "reasoning"
+    },
+    {
+      "delta": " in the result.",
+      "type": "reasoning"
+    },
+    {
+      "delta": "There are ",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "delta": "12 open orders.",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "item": {
+        "kind": "reasoning-content",
+        "text": "Count the rows in the result."
+      },
+      "type": "replay"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 1792,
+      "input": 1830,
+      "output": 21,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "finish": "stop",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "stop",
+      "type": "finish"
+    },
+    "model": "gpt-oss-20b",
+    "reasoning": "Count the rows in the result.",
+    "replay": [
+      {
+        "kind": "reasoning-content",
+        "text": "Count the rows in the result."
+      }
+    ],
+    "response_id": "chatcmpl-pRfJx2WmZ9aQ",
+    "text": "There are 12 open orders.",
+    "text_deltas": 2,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 1792,
+      "input": 1830,
+      "output": 21,
+      "reasoning": 0
+    }
+  }
+}

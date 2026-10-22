@@ -101,6 +101,11 @@ pub struct DatasourceConf {
     pub password: String,
     /// False only when the conf says `sslmode`/`sslMode` disable(d). Embedded never uses TLS.
     pub tls: bool,
+    /// What a TLS connection checks of the server's certificate, from `sslmode`.
+    pub tls_verify: TlsVerify,
+    /// `sslrootcert`: a PEM file of the certificate authorities to trust in place of the public ones. Empty is the
+    /// public ones.
+    pub tls_root_cert: String,
     pub pool: PoolConfig,
     /// `startup-add-missing`, else the database's `default-startup-add-missing`: check every table at startup.
     pub startup_add_missing: bool,
@@ -124,6 +129,8 @@ impl std::fmt::Debug for DatasourceConf {
             .field("user", &self.user)
             .field("password", &"<redacted>")
             .field("tls", &self.tls)
+            .field("tls_verify", &self.tls_verify)
+            .field("tls_root_cert", &self.tls_root_cert)
             .field("pool", &self.pool)
             .field("startup_add_missing", &self.startup_add_missing)
             .field("runtime_add_missing", &self.runtime_add_missing)
@@ -193,6 +200,8 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         user: String::new(),
         password: String::new(),
         tls: true,
+        tls_verify: TlsVerify::Full,
+        tls_root_cert: String::new(),
         pool,
         // As Java's `EntityFacadeImpl` and `EntityDbMeta`.
         startup_add_missing: match expanded(&datasource, "startup-add-missing").as_str() {
@@ -253,6 +262,7 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
         acquire_timeout: Duration::from_secs(u64::from(number("pool-time-wait", 30)?)),
         idle_timeout: Some(Duration::from_secs(u64::from(number("pool-time-idle", 60)?))),
         test_query,
+        test_after_idle: Duration::from_secs(1),
     })
 }
 
@@ -272,7 +282,10 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
         conf.database = get(&["databaseName"]);
         conf.user = get(&["user"]);
         conf.password = get(&["password"]);
-        conf.tls = tls_wanted(&get(&["sslmode", "sslMode"]));
+        let mode = get(&["sslmode", "sslMode"]);
+        conf.tls = tls_wanted(&mode);
+        conf.tls_verify = tls_verify(&mode);
+        conf.tls_root_cert = get(&["sslrootcert", "sslRootCert"]);
         let url = get(&["url", "URL"]);
         if conf.host.is_empty() && !url.is_empty() {
             jdbc_uri(conf, &url)?;
@@ -289,9 +302,9 @@ fn connection(conf: &mut DatasourceConf, inline: &MNode) -> Result<(), Error> {
 }
 
 /// `jdbc:postgresql://host[:port]/db[?k=v&...]` or the `jdbc:mysql:` form. Java hands every parameter to the JDBC
-/// driver. Those with an equivalent in this port's drivers are read: `sslmode`/`sslMode` and MySQL's `useSSL` for TLS,
-/// and Postgres `currentSchema` (one plain name) as the schema when the datasource has no `schema-name`. Any other is
-/// logged and left out.
+/// driver. Those with an equivalent in this port's drivers are read: `sslmode`/`sslMode`, `sslrootcert` and MySQL's
+/// `useSSL` for TLS, and Postgres `currentSchema` (one plain name) as the schema when the datasource has no
+/// `schema-name`. Any other is logged and left out.
 fn jdbc_uri(conf: &mut DatasourceConf, uri: &str) -> Result<(), Error> {
     let rest = uri
         .strip_prefix("jdbc:postgresql://")
@@ -312,6 +325,9 @@ fn jdbc_uri(conf: &mut DatasourceConf, uri: &str) -> Result<(), Error> {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         if key.eq_ignore_ascii_case("sslmode") {
             conf.tls = tls_wanted(value);
+            conf.tls_verify = tls_verify(value);
+        } else if key.eq_ignore_ascii_case("sslrootcert") {
+            conf.tls_root_cert = value.to_string();
         } else if key.eq_ignore_ascii_case("useSSL") {
             conf.tls = !value.eq_ignore_ascii_case("false");
         } else if key == "currentSchema"
@@ -342,6 +358,29 @@ fn port(text: &str) -> Result<Option<u16>, Error> {
 /// An `sslmode` value asks for TLS unless it is `disable` or `disabled`; empty asks for it.
 pub fn tls_wanted(mode: &str) -> bool {
     !matches!(mode.to_ascii_lowercase().as_str(), "disable" | "disabled")
+}
+
+/// What a TLS connection checks of the server's certificate. TLS is always required when it is on: there is no
+/// fallback to an unencrypted connection, so libpq's `allow` and `prefer` are as strict as `verify-full`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TlsVerify {
+    /// `require`: encrypted, the certificate not checked, as libpq and pgjdbc do with no root certificate file. With
+    /// [`DatasourceConf::tls_root_cert`] it is checked as [`Self::Ca`], as libpq does when that file exists.
+    Encrypt,
+    /// `verify-ca`: signed by a trusted authority, for any host name.
+    Ca,
+    /// `verify-full`, empty, `allow` and `prefer`: signed by a trusted authority, for the host connected to.
+    #[default]
+    Full,
+}
+
+/// The [`TlsVerify`] an `sslmode` value names (MySQL's `sslMode` `REQUIRED` and `VERIFY_CA` too).
+pub fn tls_verify(mode: &str) -> TlsVerify {
+    match mode.to_ascii_lowercase().replace('_', "-").as_str() {
+        "require" | "required" => TlsVerify::Encrypt,
+        "verify-ca" => TlsVerify::Ca,
+        _ => TlsVerify::Full,
+    }
 }
 
 fn expanded(node: &MNode, name: &str) -> String {
@@ -412,6 +451,18 @@ mod tests {
         assert_eq!(ds.schema, "public");
         assert!(!ds.startup_add_missing && ds.runtime_add_missing && ds.runtime_add_fks);
         assert!(ds.tls);
+        assert_eq!((ds.tls_verify, ds.tls_root_cert.as_str()), (TlsVerify::Full, ""));
+    }
+
+    #[test]
+    fn sslmode_names_what_tls_checks() {
+        assert_eq!(tls_verify(""), TlsVerify::Full);
+        assert_eq!(tls_verify("prefer"), TlsVerify::Full);
+        assert_eq!(tls_verify("verify-full"), TlsVerify::Full);
+        assert_eq!(tls_verify("require"), TlsVerify::Encrypt);
+        assert_eq!(tls_verify("REQUIRED"), TlsVerify::Encrypt);
+        assert_eq!(tls_verify("verify-ca"), TlsVerify::Ca);
+        assert_eq!(tls_verify("VERIFY_CA"), TlsVerify::Ca);
     }
 
     #[test]
@@ -447,6 +498,17 @@ mod tests {
         );
         let ds = datasource_conf(&node, "transactional").unwrap();
         assert_eq!((ds.schema.as_str(), ds.tls), ("app", false));
+        let node = conf(
+            r#"<datasource group-name="transactional" database-conf-name="postgres">
+                <inline-jdbc jdbc-uri="jdbc:postgresql://h/db?sslmode=verify-ca&amp;sslrootcert=/etc/ssl/rds.pem"/>
+            </datasource>"#,
+        );
+        let ds = datasource_conf(&node, "transactional").unwrap();
+        assert!(ds.tls);
+        assert_eq!(
+            (ds.tls_verify, ds.tls_root_cert.as_str()),
+            (TlsVerify::Ca, "/etc/ssl/rds.pem")
+        );
         // The datasource's own schema-name wins.
         let node = conf(
             r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="own">

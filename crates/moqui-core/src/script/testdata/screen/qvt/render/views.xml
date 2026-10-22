@@ -13,6 +13,9 @@
         <set field="taskListPageMaxIndex" from="0"/>
         <set field="taskListPageRangeLow" from="1"/>
         <set field="taskListPageRangeHigh" from="3"/>
+        <set field="outlineList" from="[
+            {nodeId: 'N2', parentId: 'N1', label: 'Sign-in', points: 8, totalPoints: 8, kids: 0},
+            {nodeId: 'N1', parentId: null, label: 'Portal', points: 2, totalPoints: 10, kids: 1}]"/>
     </actions>
     <widgets>
         <markdown-view id="Notes" text="# Notes {{x}}&#10;&#10;See [the spec](spec/One) and [site](https://example.com)." base-path="/apps/wiki" strip-title="Notes" wiki-links="true" style="q-mt-sm"/>
@@ -32,6 +35,21 @@
         <form-list name="Plain" list="taskList" skip-form="true" paginate="false">
             <view-board group-field="owner"/>
             <field name="name"><default-field><display/></default-field></field>
+        </form-list>
+        <!-- group-fields (the first the default), all-rows and a peek-url -->
+        <form-list name="Grouped" list="taskList" skip-form="true" paginate="false" peek-url="open">
+            <view-board group-fields="owner,stage" transition="moveTask" all-rows="true" max-rows="50"/>
+            <field name="taskId"><default-field><hidden/></default-field></field>
+            <field name="name"><default-field title="Task"><display/></default-field></field>
+            <field name="stage"><default-field title="Stage"><display text="${stageLabel}"/></default-field></field>
+        </form-list>
+        <!-- a tree: a row per page row with its cells in a form of the row, the roll-up a column of its own -->
+        <form-list name="Outline" list="outlineList" views="tree,list" transition="open" paginate="false">
+            <view-tree parent-field="parentId" rollup-fields="totalPoints" child-count-field="kids" children-transition="planTask" transition="moveTask"/>
+            <field name="nodeId"><default-field><hidden/></default-field></field>
+            <field name="label"><default-field title="Item"><link url="open" text="${label}" parameter-map="{nodeId: nodeId}"/></default-field></field>
+            <field name="points" align="right"><default-field title="Points"><text-line size="4"/></default-field></field>
+            <field name="totalPoints" align="right"><default-field title="Total points"><display/></default-field></field>
         </form-list>
     </widgets>
 </screen>

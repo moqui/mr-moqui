@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A model: what is in effect (the conf with its row over it), its database row, Test (one call) and Probe (a live
+    request per capability, stored as verdicts with their evidence), and the capability verdicts, where an admin's
+    verdict is kept over any probe. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Model" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="modelId" required="true"/>
+
+    <transition name="modelList"><default-response url="../ModelList"/></transition>
+    <transition name="endpointDetail"><default-response url="../EndpointDetail"/></transition>
+    <transition name="storeModel"><service-call name="store#moqui.llm.LlmModel"/>
+        <default-response url="."/></transition>
+    <transition name="deleteModelRow"><service-call name="delete#moqui.llm.LlmModel"/>
+        <default-response url="../ModelList"/></transition>
+    <transition name="testModel"><service-call name="org.moqui.agent.AgentAdminServices.test#Endpoint" in-map="{modelId:modelId}"/>
+        <default-response url="."/></transition>
+    <transition name="probeModel"><service-call name="org.moqui.agent.AgentAdminServices.probe#Model" in-map="{modelId:modelId}"/>
+        <default-response url="."/></transition>
+    <transition name="setCapability"><service-call name="org.moqui.agent.AgentAdminServices.set#ModelCapability"/>
+        <default-response url="."/></transition>
+    <transition name="callList"><default-response url="../../Calls/CallList"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#EffectiveConfig" out-map="effectiveConfig"/>
+        <set field="effective" from="(effectiveConfig.modelList || []).find(model => model.modelId == modelId) || {}"/>
+        <entity-find-one entity-name="moqui.llm.LlmModel" value-field="modelRow"/>
+        <set field="modelRowMap" from="modelRow ?? {modelId: modelId}"/>
+        <entity-find entity-name="moqui.llm.LlmModelCapability" list="verdictList">
+            <econdition field-name="modelId"/></entity-find>
+        <set field="capabilityRows" from="['tools', 'parallel-tools', 'json-schema', 'streaming', 'reasoning-replay', 'prompt-caching']
+                .map(capability => { const stored = verdictList.find(row => row.capability == capability);
+                    return {modelId: modelId, capability: capability, verdict: stored?.verdict ?? '', source: stored?.source ?? '',
+                        probeDate: stored?.probeDate ?? null, evidence: stored?.evidence ?? ''} })"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Model ${modelId}"/><box-toolbar>
+            <link url="testModel" text="Test" tooltip="One small call to the model"/>
+            <link url="probeModel" text="Probe Capabilities" confirmation="Send a small live request for each capability?"/>
+            <link url="callList" text="Calls" parameter-map="{modelId:modelId}"/>
+            <link url="modelList" text="All Models"/>
+        </box-toolbar><box-body>
+            <section name="UnknownSection" condition="!effective.modelId"><widgets>
+                <label text="No model ${modelId ?? ''} is configured in the conf or the database." type="p" style="text-warning"/>
+            </widgets><fail-widgets>
+                <container-row>
+                    <row-col md="2"><label text="Endpoint" type="strong"/></row-col>
+                    <row-col md="4"><link url="endpointDetail" text="${effective.endpointId}" link-type="anchor"
+                            parameter-map="{endpointId:effective.endpointId}"/></row-col>
+                    <row-col md="2"><label text="Provider Model" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.providerModel ?? ''}"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="2"><label text="Tier" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.tier ?? ''}"/></row-col>
+                    <row-col md="2"><label text="Context / Output" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.contextWindow ?? '-'} / ${effective.maxOutput ?? '-'}"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="2"><label text="Prices per M" type="strong"/></row-col>
+                    <row-col md="4"><label text="in ${effective.priceInput ?? '-'}, cached ${effective.priceCachedInput ?? '-'}, cache write ${effective.priceCacheWrite ?? '-'}, out ${effective.priceOutput ?? '-'} ${effective.currencyUomId ?? ''}"/></row-col>
+                    <row-col md="2"><label text="Reasoning Levels" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.reasoningLevels || 'none'}"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="2"><label text="Usable" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.usable ?? ''}"/></row-col>
+                    <row-col md="2"><label text="From" type="strong"/></row-col>
+                    <row-col md="4"><label text="${effective.source ?? ''}"/></row-col>
+                </container-row>
+            </fail-widgets></section>
+        </box-body></container-box>
+
+        <container-row><row-col md="6">
+            <container-box><box-header title="Database Row"/><box-toolbar>
+                <link url="deleteModelRow" text="Remove Row" condition="modelRow" parameter-map="{modelId:modelId}"
+                        confirmation="Remove the database row of this model? A conf model of this id applies again."/>
+            </box-toolbar><box-body>
+                <label text="Each field set here replaces the conf's value of this model; an empty one keeps it." type="p"/>
+                <form-single name="ModelRow" map="modelRowMap" transition="storeModel">
+                    <field name="modelId"><default-field><hidden/></default-field></field>
+                    <auto-fields-entity entity-name="moqui.llm.LlmModel" field-type="edit" include="nonpk"/>
+                    <field name="lastUpdatedByUserId"><default-field><ignored/></default-field></field>
+                    <field name="tier"><default-field><drop-down allow-empty="true">
+                        <option key="fast"/><option key="balanced"/><option key="thorough"/></drop-down></default-field></field>
+                    <field name="toolMode"><default-field><drop-down allow-empty="true"><option key="native"/><option key="json"/></drop-down></default-field></field>
+                    <field name="promptVariant"><default-field><drop-down allow-empty="true"><option key="standard"/><option key="small"/></drop-down></default-field></field>
+                    <field name="intentPrefilter"><default-field><drop-down allow-empty="true"><option key="none"/><option key="hint"/></drop-down></default-field></field>
+                    <field name="reasoningReplay"><default-field><drop-down allow-empty="true">
+                        <option key="none"/><option key="last"/><option key="all"/></drop-down></default-field></field>
+                    <field name="reasoningJson"><default-field tooltip="A JSON patch per level: {&quot;low&quot;: {...}, &quot;high&quot;: {...}}">
+                        <text-area rows="4" cols="60"/></default-field></field>
+                    <field name="apiConfigJson"><default-field tooltip="A JSON patch applied to every request"><text-area rows="3" cols="60"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save Row"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </row-col><row-col md="6">
+            <container-box><box-header title="Capabilities"/><box-body>
+                <label text="A probe's verdict comes with its evidence; a verdict set here is the admin's and no probe replaces it (empty removes it)." type="p"/>
+                <form-list name="CapabilityList" list="capabilityRows" transition="setCapability">
+                    <field name="modelId"><default-field><hidden/></default-field></field>
+                    <field name="capability"><default-field><display/></default-field></field>
+                    <field name="verdict"><default-field><drop-down allow-empty="true">
+                        <option key="yes"/><option key="no"/><option key="partial"/></drop-down></default-field></field>
+                    <field name="source"><default-field><display/></default-field></field>
+                    <field name="probeDate"><default-field title="Date"><display/></default-field></field>
+                    <field name="evidence"><default-field><display/></default-field></field>
+                    <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+        </row-col></container-row>
+    </widgets>
+</screen>

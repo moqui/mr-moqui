@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Assist drawer's calls (plans/LLM-A2A-Assist.md 4.5; docs/Assist.md): the transitions of the webroot subscreen
+    assist (webroot/assist.xml) call call#Drawer with their name. The body is Rust (crates/moqui-core/src/llm/assist),
+    in builds with the llm feature. It is not a REST or JSON-RPC service: programs use A2A, MCP or the gateway. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="call" noun="Drawer" type="rust" location="moqui_core::llm::assist::call_drawer"
+            transaction="ignore" allow-remote="false">
+        <description>Answer one drawer call for the current user with the request's parameters (a query, a form whose
+            object values are JSON text, or a JSON body) and send the response: 200 with the call's JSON, or the error's
+            status with {errorCode, errors, code} (401 without a user, 403 without AgentUse or for a decision that is
+            not from a browser session with its token, 404 for anything that is not the user's, 409 for a state that
+            does not take the call, 429 with Retry-After from the AT_LLM tarpit, 501 for a call of a later phase). It
+            adds no message, so the transition sends nothing else.</description>
+        <in-parameters>
+            <parameter name="call" required="true"><description>bootstrap, conversations, conversation, turn, cancel,
+                retry, follow, context, submitted, decide, preview, answer, feedback, tasks, prompts, mentions,
+                attachments, transcribe, textAction, canvasState, canvasAction, canvasAdjust, canvasProblems, read</description></parameter>
+        </in-parameters>
+    </service>
+</services>

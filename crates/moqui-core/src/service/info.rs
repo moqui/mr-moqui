@@ -62,7 +62,8 @@ pub fn seca_rule_texts(service: &str) -> Vec<String> {
 }
 
 /// `ScheduledJobRunner.isLastRunBeforeLastSchedule`: true with no last run, or when the latest time `cron` came due,
-/// in the server time zone, is after `last_run_millis`. A schedule with nothing before now is not due.
+/// in the machine time zone, is after `last_run_millis`. A schedule with nothing before now is not due. Equal times
+/// are not due; the job runner's own skip still runs a job whose last run is that occurrence.
 ///
 /// # Errors
 ///
@@ -72,12 +73,34 @@ pub fn is_last_run_before_last_schedule(
     last_run_millis: Option<i64>,
     now_millis: Option<i64>,
 ) -> Result<bool, crate::context::Error> {
-    let cron = super::schedule::parse_cron(cron)?;
     let now = now_millis
         .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok())
-        .unwrap_or_else(jiff::Timestamp::now)
-        .to_zoned(jiff::tz::TimeZone::system());
-    let Ok(last_schedule) = cron.find_previous_occurrence(&now, true) else {
+        .unwrap_or_else(jiff::Timestamp::now);
+    cron_is_due(
+        cron,
+        now.as_millisecond(),
+        last_run_millis,
+        super::jobs::job_time_zone(),
+    )
+}
+
+/// True when `cron` is due at `now_millis` in `zone`: a previous occurrence exists, and `last_run_millis` is absent
+/// or strictly before it. This is the comparison [`is_last_run_before_last_schedule`] uses.
+///
+/// # Errors
+///
+/// Returns an error when the cron expression does not parse.
+pub(crate) fn cron_is_due(
+    cron: &str,
+    now_millis: i64,
+    last_run_millis: Option<i64>,
+    zone: jiff::tz::TimeZone,
+) -> Result<bool, crate::context::Error> {
+    let cron = super::schedule::parse_cron(cron)?;
+    let Ok(now) = jiff::Timestamp::from_millisecond(now_millis) else {
+        return Ok(false);
+    };
+    let Ok(last_schedule) = cron.find_previous_occurrence(&now.to_zoned(zone), true) else {
         return Ok(false);
     };
     Ok(last_run_millis.is_none_or(|last_run| last_run < last_schedule.timestamp().as_millisecond()))
@@ -94,7 +117,7 @@ pub fn cron_description(cron: &str) -> Result<String, crate::context::Error> {
 }
 
 /// The first time a Quartz cron expression (seconds field first) is due strictly after `after_millis`, as epoch
-/// millis, as Quartz's `CronExpression.getNextValidTimeAfter` in the server's time zone. `None` when it is never due
+/// millis, as Quartz's `CronExpression.getNextValidTimeAfter` in the machine's time zone. `None` when it is never due
 /// again.
 ///
 /// # Errors
@@ -105,7 +128,7 @@ pub fn next_cron_execution(cron: &str, after_millis: i64) -> Result<Option<i64>,
     let Ok(after) = jiff::Timestamp::from_millisecond(after_millis) else {
         return Ok(None);
     };
-    let zoned = after.to_zoned(jiff::tz::TimeZone::system());
+    let zoned = after.to_zoned(super::jobs::job_time_zone());
     Ok(cron
         .find_next_occurrence(&zoned, false)
         .ok()
@@ -231,4 +254,27 @@ fn service_xml(def: &define::ServiceDef) -> String {
         }
     }
     node.write_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    /// 2026-10-19 12:00Z is 06:00 in America/Denver (MDT, UTC−6) and 12:00 in UTC. A `0 0 6 * * ?` job last run at
+    /// 06:00Z is due in Denver (that slot is 12:00Z, after the last run) and not due in UTC (that slot is 06:00Z,
+    /// equal to the last run, and equal is not due).
+    #[test]
+    fn a_six_am_job_is_due_in_the_zone_where_it_is_six() {
+        let now = jiff::Timestamp::from_str("2026-10-19T12:00:00Z")
+            .unwrap()
+            .as_millisecond();
+        let last = jiff::Timestamp::from_str("2026-10-19T06:00:00Z")
+            .unwrap()
+            .as_millisecond();
+        let due = |zone: &str| {
+            super::cron_is_due("0 0 6 * * ?", now, Some(last), jiff::tz::TimeZone::get(zone).unwrap()).unwrap()
+        };
+        assert!(due("America/Denver"));
+        assert!(!due("UTC"));
+    }
 }

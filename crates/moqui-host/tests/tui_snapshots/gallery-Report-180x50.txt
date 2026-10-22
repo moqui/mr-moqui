@@ -1,0 +1,50 @@
+ gallery ▸ Report                                                                                                                                               john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.12 Report ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ Parameters in the URL (the form submits to this screen), number cards, two charts and a result table with exports and a totals row over the whole    │
+     List                │ ┃ filtered set, over moqui.server.ArtifactHitBin. ArtifactHitBin has no rows, so the data is an inline sample and the type list comes from it.         │
+     Detail              │ ┃ Fallbacks for style-guide section 8: number cards are q-card with text-overline and text-h5 until number-card exists; the muted caption class is     │
+     360                 │ ┃ text-grey-7/text-grey-5 by mode until m-muted exists; chart colors are read from the --q-* brand variables when the chart draws.                     │
+     Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Board               │ Bin period . . : [ __________] – [___________]
+     Calendar            │ Artifact type  : [                    ▾]
+     Split               │ Artifact name  : [____________________]
+     Settings            │ < Run >
+     Wizard              │ ┌─ Hits ───────────────┐ ┌─ Artifacts ──────────┐ ┌─ Average time ───────┐ ┌─ Slow hits (over 2.6─┐
+     Dialog              │ │ 1,512 in 49 bins     │ │ 7 distinct names     │ │ 27.9 ms, max 244 ms  │ │ 14                   │
+   ▶ Report              │ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘
+     Panel               │ ┌─ Hits by artifact type ─────────────────────────────────────────────────┐ ┌─ Hits and average time by day ──────────────────────────────────────────┐
+     Widgets             │ │                      Hits                                               │ │        Hits  Average ms                                                 │
+     Editor              │ │ AT_XML_SCREEN         377  ████████████████████████████████████         │ │ <today-6>   203       32.40  ██████████████████████████████████████         │
+     Message             │ │ AT_XML_SCREEN_TRANS   221  █████████████████████                        │ │ <today-5>   194          27  ████████████████████████████████████           │
+     Views               │ │ AT_SERVICE            216  █████████████████████                        │ │ <today-4>   225       25.60  ██████████████████████████████████████████     │
+ ▾ Home                  │ │ AT_ENTITY             457  ████████████████████████████████████████████ │ │ <today-3>   216       27.60  ████████████████████████████████████████       │
+                         │ │ AT_REST_PATH          241  ███████████████████████                      │ │ <today-2>   247       28.80  ██████████████████████████████████████████████ │
+                         │ └─────────────────────────────────────────────────────────────────────────┘ │ <today-1>   238       27.20  ████████████████████████████████████████████   │
+                         │                                                                             │ <today>   189       26.60  ███████████████████████████████████            │
+                         │                                                                             └─────────────────────────────────────────────────────────────────────────┘
+                         │   Bin start           Type                Sub type    Artifact                              Hits Total ms Avg ms Max ms Slow
+                         │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                         │   <today-6> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.List              14      126    9.0     36    0
+                         │   <today-6> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.Detail            19      418   22.0     88    0
+                         │   <today-6> 09:00:00 AT_XML_SCREEN_TRANS transition  webroot.qapps.gallery.List.searchEnum   24      840   35.0    140    0
+                         │   <today-6> 09:00:00 AT_SERVICE          entity-auto update#moqui.basic.Enumeration          29    1,392   48.0    192    2
+                         │   <today-6> 09:00:00 AT_ENTITY           list        moqui.basic.Enumeration                 34    2,074   61.0    244    0
+                         │   <today-6> 09:00:00 AT_ENTITY           one         moqui.security.UserAccount              39      546   14.0     56    0
+                         │   <today-6> 09:00:00 AT_REST_PATH        get         rest/e1/moqui.basic.Geo                 44    1,188   27.0    108    0
+                         │   <today-5> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.List              47      376    8.0     32    0
+                         │   <today-5> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.Detail            12      252   21.0     84    0
+                         │   <today-5> 09:00:00 AT_XML_SCREEN_TRANS transition  webroot.qapps.gallery.List.searchEnum   17      578   34.0    136    0
+                         │   <today-5> 09:00:00 AT_SERVICE          entity-auto update#moqui.basic.Enumeration          22    1,034   47.0    188    2
+                         │   <today-5> 09:00:00 AT_ENTITY           list        moqui.basic.Enumeration                 27    1,620   60.0    240    0
+                         │   <today-5> 09:00:00 AT_ENTITY           one         moqui.security.UserAccount              32      416   13.0     52    0
+                         │   <today-5> 09:00:00 AT_REST_PATH        get         rest/e1/moqui.basic.Geo                 37      962   26.0    104    0
+                         │   <today-4> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.List              40      280    7.0     28    0
+                         │   <today-4> 09:00:00 AT_XML_SCREEN       screen      webroot.qapps.gallery.Detail            45      900   20.0     80    0
+                         │   <today-4> 09:00:00 AT_XML_SCREEN_TRANS transition  webroot.qapps.gallery.List.searchEnum   50    1,650   33.0    132    0
+                         │   <today-4> 09:00:00 AT_SERVICE          entity-auto update#moqui.basic.Enumeration          15      690   46.0    184    2
+                         │   <today-4> 09:00:00 AT_ENTITY           list        moqui.basic.Enumeration                 20    1,180   59.0    236    0
+                         │   <today-4> 09:00:00 AT_ENTITY           one         moqui.security.UserAccount              25      300   12.0     48    0
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bin period
+ F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

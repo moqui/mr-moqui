@@ -26,14 +26,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         // the remote image is this server's own, by its full address, so the browser test can see it load once allowed
-        // (the configured base URL, else the request's host: http on this machine, https elsewhere)
-        let rootUrl = ''
-        try { rootUrl = ec.web ? String(ec.web.getWebappRootUrl(true, null) || '') : '' } catch (err) { rootUrl = '' }
-        if (!/^https?:\/\//.test(rootUrl)) {
-            let host = ''
-            try { host = ec.web ? String(ec.web.getHostName(true) || '') : '' } catch (err) { host = '' }
-            rootUrl = host ? (/^(localhost|127\.|\[::1\])/.test(host) ? 'http://' : 'https://') + host : 'https://images.example.com'
-        }
+        // (the request's host with its port: http on this machine, https elsewhere; getWebappRootUrl is the conf URL since P8-08)
+        let host = ''
+        try { host = ec.web ? String(ec.web.getHostName(true) || '') : '' } catch (err) { host = '' }
+        let rootUrl = host ? (/^(localhost|127\.|\[::1\])/.test(host) ? 'http://' : 'https://') + host : 'https://images.example.com'
         rootUrl = rootUrl.replace(/\/$/, '')
         trustedSender = trusted === 'Y'
         cidMap = {'logo@gallery': '/images/MoquiLogoSmall.png'}

@@ -29,6 +29,7 @@ use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 
+use super::value::FieldMap;
 use super::cache;
 use super::facade::EntityFacade;
 use super::value::EntityValue;
@@ -246,7 +247,7 @@ impl ViewPlan {
         &self,
         facade: &EntityFacade,
         from: &Member,
-        rows: Vec<BTreeMap<String, Value>>,
+        rows: Vec<FieldMap>,
         visited: &mut HashSet<String>,
         copied: &mut usize,
     ) -> Result<(), Error> {
@@ -278,7 +279,7 @@ impl ViewPlan {
                 .filter_map(|row| {
                     pairs
                         .iter()
-                        .map(|(mine, _)| row.get(mine).filter(|value| !value.is_null()).cloned())
+                        .map(|(mine, _)| row.get(mine.as_str()).filter(|value| !value.is_null()).cloned())
                         .collect::<Option<Vec<Value>>>()
                 })
                 .filter(|tuple| seen.insert(tuple.iter().map(to_plain_string).collect::<Vec<_>>()))

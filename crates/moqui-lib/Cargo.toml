@@ -21,12 +21,13 @@ sha1-digest-011 = { workspace = true }
 rand_core = { workspace = true }
 getrandom = { workspace = true }
 reqwest = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
 pulldown-cmark = { workspace = true }
 tracing = { workspace = true }
 
 [features]
 # A lib-only program leaves this off. Phase 6 enables it on the crate that calls HTTP.
-http = ["dep:reqwest"]
+http = ["dep:reqwest", "dep:bytes"]
 
 [lints]
 workspace = true

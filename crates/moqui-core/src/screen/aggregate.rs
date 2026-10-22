@@ -21,6 +21,7 @@
 //! `_moquiRowType: "total"`.
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 use moqui_lib::format::Decimal;
@@ -86,7 +87,17 @@ impl Aggregation {
             let show_total = match field.attribute("show-total").as_deref() {
                 None | Some("" | "false") => None,
                 Some("true") => Some(Function::Sum),
-                Some(other) => Function::of(other),
+                Some(other) => {
+                    let function = Function::of(other);
+                    // Java's AggregateFunction.valueOf throws; here the field is logged and gets no total.
+                    if function.is_none() {
+                        tracing::error!(
+                            "Ignoring show-total {other} on field {name} in form {}, not true, false, or a valid function",
+                            form.attribute("name").unwrap_or_default()
+                        );
+                    }
+                    function
+                }
             };
             let aggregate = field.attribute("aggregate").unwrap_or_default();
             let group_by = aggregate == "group-by";
@@ -125,10 +136,12 @@ impl Aggregation {
     }
 
     /// Aggregate rows that row-actions and field `from` already made. `value_of` reads a field of a row when the row
-    /// does not hold it (Java reads the context).
+    /// does not hold it (Java reads the context). With `include`, the fields the list shows (Java's `includeFields`), a
+    /// `group-by` field that is not shown is left out of the group key; when none is shown, every row is one group.
     pub(crate) fn apply(
         &self,
         rows: Vec<IndexMap<String, Value>>,
+        include: Option<&HashSet<String>>,
         value_of: impl Fn(&IndexMap<String, Value>, &str) -> Value,
     ) -> Vec<IndexMap<String, Value>> {
         let make_sub_list = !self.group_fields.is_empty();
@@ -141,7 +154,11 @@ impl Aggregation {
             .any(|field| field.sub_list && field.show_total.is_some());
         for row in rows {
             let group_key: Vec<Value> = if make_sub_list {
-                self.group_fields.iter().map(|name| value_of(&row, name)).collect()
+                self.group_fields
+                    .iter()
+                    .filter(|name| include.is_none_or(|shown| shown.contains(*name)))
+                    .map(|name| value_of(&row, name))
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -169,6 +186,10 @@ impl Aggregation {
                             out.shift_remove(&field.name);
                         } else if field.function == Some(Function::Count) {
                             out.insert(field.name.clone(), Value::I32(1));
+                        } else if field.function == Some(Function::Avg) {
+                            // Later rows read `{name}Count` and `{name}Total`. Seeding them here keeps the
+                            // first value in the average. Copying the raw value leaves those counters empty.
+                            apply_function(Function::Avg, &mut out, &field.name, &value);
                         } else {
                             out.insert(field.name.clone(), value.clone());
                         }
@@ -397,7 +418,7 @@ mod tests {
                 ("qty", Value::I32(1)),
             ]),
         ];
-        let out = aggregation.apply(rows, |row, name| row.get(name).cloned().unwrap_or(Value::Null));
+        let out = aggregation.apply(rows, None, |row, name| row.get(name).cloned().unwrap_or(Value::Null));
         assert_eq!(out.len(), 3, "{out:?}");
         assert_eq!(out[0].get("party"), Some(&Value::string("A")));
         assert_eq!(out[0].get("amount"), Some(&d("3.75")));
@@ -414,6 +435,89 @@ mod tests {
         assert_eq!(out[2].get("amount"), Some(&d("6.75")));
     }
 
+    /// The first row of a group is part of an average. 10, 20, 30 is 20 with a count of 3.
+    #[test]
+    fn a_group_average_counts_the_first_row() {
+        let node = form(
+            r#"<form-list name="F" list="l">
+                <field name="party" aggregate="group-by"/>
+                <field name="n" aggregate="avg"/>
+            </form-list>"#,
+        );
+        let aggregation = Aggregation::of(&node).unwrap().unwrap();
+        let d = |number: i32| Value::Decimal(Decimal::from(number));
+        let rows = vec![
+            row(&[("party", Value::string("A")), ("n", d(10))]),
+            row(&[("party", Value::string("A")), ("n", d(20))]),
+            row(&[("party", Value::string("A")), ("n", d(30))]),
+        ];
+        let out = aggregation.apply(rows, None, |row, name| row.get(name).cloned().unwrap_or(Value::Null));
+        assert_eq!(out.len(), 1, "{out:?}");
+        let Value::Decimal(average) = out[0].get("n").unwrap() else {
+            panic!("{out:?}")
+        };
+        assert!(moqui_lib::object::decimal_eq(*average, Decimal::from(20)), "{average}");
+        assert_eq!(out[0].get("nCount"), Some(&d(3)));
+    }
+
+    /// A `group-by` field the list does not show is left out of the group key, as Java's `includeFields`. With none
+    /// shown, every row is one group.
+    #[test]
+    fn a_group_by_field_that_is_not_shown_is_not_in_the_group_key() {
+        let node = form(
+            r#"<form-list name="F" list="l">
+                <field name="party" aggregate="group-by"/>
+                <field name="invoice" aggregate="group-by"/>
+                <field name="amount" aggregate="sum"/>
+            </form-list>"#,
+        );
+        let aggregation = Aggregation::of(&node).unwrap().unwrap();
+        let d = |number: i32| Value::Decimal(Decimal::from(number));
+        let rows = || {
+            vec![
+                row(&[
+                    ("party", Value::string("A")),
+                    ("invoice", Value::string("i1")),
+                    ("amount", d(1)),
+                ]),
+                row(&[
+                    ("party", Value::string("A")),
+                    ("invoice", Value::string("i2")),
+                    ("amount", d(2)),
+                ]),
+                row(&[
+                    ("party", Value::string("B")),
+                    ("invoice", Value::string("i3")),
+                    ("amount", d(4)),
+                ]),
+            ]
+        };
+        let value_of = |row: &IndexMap<String, Value>, name: &str| row.get(name).cloned().unwrap_or(Value::Null);
+        assert_eq!(aggregation.apply(rows(), None, value_of).len(), 3);
+        let shown: HashSet<String> = ["party", "amount"].into_iter().map(String::from).collect();
+        let out = aggregation.apply(rows(), Some(&shown), value_of);
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert_eq!(out[0].get("amount"), Some(&d(3)));
+        assert_eq!(out[1].get("amount"), Some(&d(4)));
+        let out = aggregation.apply(rows(), Some(&HashSet::new()), value_of);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].get("amount"), Some(&d(7)));
+    }
+
+    /// A show-total that is not a function is logged and ignored, as a bad aggregate is (failure tolerance).
+    #[test]
+    fn a_bad_show_total_is_ignored_and_the_form_still_aggregates() {
+        let node = form(
+            r#"<form-list name="F" list="l">
+                <field name="party" aggregate="group-by"/>
+                <field name="n" aggregate="sum" show-total="tally"/>
+            </form-list>"#,
+        );
+        let aggregation = Aggregation::of(&node).unwrap().unwrap();
+        assert_eq!(aggregation.fields[1].show_total, None);
+        assert_eq!(aggregation.fields[1].function, Some(Function::Sum));
+    }
+
     #[test]
     fn show_total_alone_adds_a_total_row_and_aggregate_needs_a_group() {
         let node =
@@ -424,7 +528,7 @@ mod tests {
             row(&[("n", Value::I32(9))]),
             row(&[("n", Value::I32(2))]),
         ];
-        let out = aggregation.apply(rows, |row, name| row.get(name).cloned().unwrap_or(Value::Null));
+        let out = aggregation.apply(rows, None, |row, name| row.get(name).cloned().unwrap_or(Value::Null));
         assert_eq!(out.len(), 4);
         assert_eq!(out[3].get("n"), Some(&Value::I32(9)));
         assert!(

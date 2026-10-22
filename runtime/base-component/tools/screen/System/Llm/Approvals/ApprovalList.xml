@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Every user's approvals: the decision, the kind and target, who and when. The arguments, the snapshot and the outcome
+    are in ApprovalDetail, for its own user or with AgentAudit (logged). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Approvals" default-menu-index="1">
+
+    <transition name="approvalDetail"><default-response url="../ApprovalDetail"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+
+    <widgets>
+        <form-list name="ApprovalList" list="approvalList" skip-form="true" header-dialog="true" show-csv-button="true">
+            <entity-find entity-name="moqui.agent.AgentApproval" list="approvalList" use-clone="true">
+                <search-form-inputs default-order-by="-createdDate">
+                    <default-parameters createdDate_poffset="-1" createdDate_period="7d"/></search-form-inputs>
+                <select-field field-name="approvalId,runId,userId,agentId,classificationEnumId,targetKind,targetName,statusId,decisionUserId,decisionChannel,decisionDate,createdDate,expireDate,policy"/>
+            </entity-find>
+            <field name="approvalId"><header-field title="Approval" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="approvalDetail" text="${approvalId}" link-type="anchor"/></default-field></field>
+            <field name="runId"><header-field title="Run"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="runDetail" text="${runId}" link-type="anchor" condition="runId"/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+            <field name="agentId"><header-field title="Agent"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="classificationEnumId"><header-field title="Class"/><default-field>
+                <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="targetKind"><header-field title="Kind"><drop-down allow-empty="true"><option key="screen"/><option key="service"/>
+                    <option key="tool"/></drop-down></header-field><default-field><display/></default-field></field>
+            <field name="targetName"><header-field title="Target"><text-find size="15" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="statusId"><header-field title="Status" show-order-by="true"><drop-down allow-empty="true"><entity-options key="${statusId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.StatusItem"><econdition field-name="statusTypeId" value="AgentApproval"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                <default-field><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="decisionChannel"><header-field title="Channel"/><default-field><display/></default-field></field>
+            <field name="decisionDate"><header-field title="Decided"/><default-field><display/></default-field></field>
+            <field name="createdDate"><header-field title="Created" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="expireDate"><header-field title="Expires"/><default-field><display/></default-field></field>
+            <field name="policy"><header-field title="Policy"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

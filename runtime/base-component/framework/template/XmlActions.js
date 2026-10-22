@@ -308,6 +308,17 @@
                     ${assign}
                 `;
             } else callLines = `${call};`;
+            // web-send-json-response="resultList" sends that out-parameter; "true" sends the result map; "false" (the default) sends nothing.
+            const jsonAttr = attr(node, "web-send-json-response");
+            const jsonResponse = jsonAttr === "false" ? "" : jsonAttr;
+            if (jsonResponse && !isAsync && !(outMap && !isAsync)) {
+                callLines = `var call_service_result = ${call};`;
+            }
+            const sendJson = !jsonResponse || isAsync
+                ? ""
+                : jsonResponse === "true"
+                    ? "ec.web.sendJsonResponse(call_service_result);"
+                    : `ec.web.sendJsonResponse(call_service_result == null ? null : call_service_result[${jsString(jsonResponse)}]);`;
             const errorLines = attr(node, "ignore-error") === "true"
                 ? js`
                     if (ec.message.hasError()) {
@@ -316,9 +327,11 @@
                     }
                 `
                 : "if (ec.message.hasError()) return;";
+            // The JSON goes out before the error check, as in Java, so a failed call answers with its errors.
             return js`
                 if (true) {
                     ${callLines}
+                    ${sendJson}
                     ${errorLines}
                 }
             `;

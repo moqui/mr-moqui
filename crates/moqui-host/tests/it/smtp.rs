@@ -17,8 +17,9 @@
 //! connect; RCPT TO takes a hosted account's address with or without a plus tag, a shared account's address and
 //! identity, and refuses any other with 550; one message to both accounts is stored once in each Inbox with its file as
 //! a DbResource, the account rule and the email ECAs run once on each copy (a failing ECA logged, the other running);
-//! the gateway's spam verdict files in Junk; a message over `smtp_max_message_size` is refused with 552; a store that
-//! fails answers 451 and the gateway's retry does not double the account that took it.
+//! the gateway's spam verdict files in Junk; a message over `smtp-server` `max-message-size` is refused with 552; a store that
+//! fails answers 451 and the gateway's retry does not double the account that took it. In LMTP mode (with DSN) each
+//! recipient gets its own reply: a store that fails for one account is 451 for its recipient only.
 
 #![cfg(all(
     unix,
@@ -166,18 +167,16 @@ impl Client {
 
 #[test]
 fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
-    let gate = crate::common::start_with_files(
+    let gate = crate::common::start_with_conf_files(
         "smtp",
         Some(DATA),
+        r#"<smtp-server spam-headers="X-Spam-Flag,X-Spam-Status" plus-separator="+" max-message-size="200000"/>
+            <email-client idle-enabled="false"/>"#,
         &[
             ("smtp_listen_port", "0"),
             ("smtp_allowed_addresses", "127.0.0.1"),
             ("smtp_hostname", "mx.gate.test"),
             ("smtp_authserv_id", "gw.example.com"),
-            ("smtp_spam_headers", "X-Spam-Flag,X-Spam-Status"),
-            ("smtp_plus_separator", "+"),
-            ("smtp_max_message_size", "200000"),
-            ("email_idle_enabled", "false"),
         ],
         &[
             ("component/gate-smtp/component.xml", COMPONENT),
@@ -256,20 +255,30 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     inbox.set("emailFolderId", text(&folder(&broken, "EfkInbox")));
     inbox.delete(&entity).unwrap();
 
-    // an address outside the allow-list is refused at connect
+    // an address outside the allow-list is refused at connect; macOS routes only 127.0.0.1 unless lo0 has an alias
     let other = moqui_host::edge::block_on(async move {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.2:0".parse().unwrap()).unwrap();
-        socket.connect(address).await.unwrap().into_std().unwrap()
+        match socket.bind("127.0.0.2:0".parse().unwrap()) {
+            Err(err) if err.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                eprintln!("skipping the 127.0.0.2 connect: this host does not route 127.0.0.2 ({err})");
+                None
+            }
+            bound => {
+                bound.unwrap();
+                Some(socket.connect(address).await.unwrap().into_std().unwrap())
+            }
+        }
     })
     .unwrap();
-    other.set_nonblocking(false).unwrap();
-    let mut refused = Client::new(other);
-    assert_eq!(
-        refused.reply(),
-        "554 5.7.1 mx.gate.test does not take mail from this address"
-    );
-    assert_eq!(refused.reply(), "");
+    if let Some(other) = other {
+        other.set_nonblocking(false).unwrap();
+        let mut refused = Client::new(other);
+        assert_eq!(
+            refused.reply(),
+            "554 5.7.1 mx.gate.test does not take mail from this address"
+        );
+        assert_eq!(refused.reply(), "");
+    }
 
     let mut gateway = Client::connect(address);
     assert_eq!(gateway.reply(), "220 mx.gate.test ESMTP mr-moqui");
@@ -356,7 +365,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     assert_eq!(field(&junk[0], "isFlagged"), "N");
     assert_eq!(ecas().len(), 2);
 
-    // over smtp_max_message_size: refused when declared, and when sent
+    // over smtp-server max-message-size: refused when declared, and when sent
     assert_eq!(
         gateway.command("MAIL FROM:<big@example.org> SIZE=300000"),
         "552 5.3.4 Message size exceeds fixed maximum message size"
@@ -392,6 +401,101 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         1
     );
     assert!(rows("moqui.basic.email.EmailMessage", &[("emailAccountId", &broken)]).is_empty());
+    assert_eq!(gateway.command("QUIT"), "221 2.0.0 Bye");
+    assert_eq!(gateway.reply(), "");
+}
+
+#[test]
+fn the_lmtp_listener_answers_each_recipient_by_its_account() {
+    let gate = crate::common::start_with_conf_files(
+        "lmtp",
+        None,
+        r#"<smtp-server protocol="lmtp" dsn="true"/>
+            <email-client idle-enabled="false"/>"#,
+        &[
+            ("smtp_listen_port", "0"),
+            ("smtp_allowed_addresses", "127.0.0.1"),
+            ("smtp_hostname", "mx.gate.test"),
+        ],
+        &[],
+    );
+    let address = gate.server.smtp_address().expect("the LMTP listener listens");
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let entity = factory.entity().unwrap();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let _authz = context.disable_authz();
+    let account = |email: &str| {
+        out(
+            &sync(
+                "org.moqui.impl.EmailClientServices.create#EmailAccount",
+                &[("accountKindEnumId", text("EakHosted")), ("emailAddress", text(email))],
+            ),
+            "emailAccountId",
+        )
+    };
+    let sales = account("sales@example.com");
+    let broken = account("broken@example.com");
+    let rows = |conditions: &[(&str, &str)]| -> Vec<EntityValue> {
+        let mut find = entity.find("moqui.basic.email.EmailMessage").unwrap().disable_authz();
+        for (name, value) in conditions {
+            find = find.eq(name, text(value));
+        }
+        find.list().unwrap().values().to_vec()
+    };
+    // the broken account has no Inbox, so a store for it fails
+    let inbox = entity
+        .find("moqui.basic.email.EmailFolder")
+        .unwrap()
+        .disable_authz()
+        .eq("emailAccountId", text(&broken))
+        .eq("folderKindEnumId", text("EfkInbox"))
+        .one()
+        .unwrap()
+        .unwrap();
+    inbox.delete(&entity).unwrap();
+
+    let mut gateway = Client::connect(address);
+    assert_eq!(gateway.reply(), "220 mx.gate.test LMTP mr-moqui");
+    assert_eq!(
+        gateway.command("EHLO gw.example.com"),
+        "500 5.5.1 This is an LMTP server: use LHLO"
+    );
+    let lhlo = gateway.command("LHLO gw.example.com");
+    assert!(lhlo.contains("|250-CHUNKING|250-DSN|"), "{lhlo}");
+    let question =
+        "Message-ID: <lmtp@example.org>\r\nFrom: dan@example.org\r\nTo: sales@example.com, broken@example.com\r\n\
+         Subject: Question\r\n\r\nHello\r\n";
+    for _ in 0..2 {
+        assert_eq!(gateway.command("MAIL FROM:<dan@example.org> ENVID=Q1"), "250 2.1.0 Ok");
+        assert_eq!(
+            gateway.command("RCPT TO:<sales@example.com> NOTIFY=SUCCESS ORCPT=rfc822;Sales+2Blist@example.com"),
+            "250 2.1.5 Ok"
+        );
+        assert_eq!(gateway.command("RCPT TO:<broken@example.com>"), "250 2.1.5 Ok");
+        let stored = gateway.data(question);
+        assert!(
+            stored.starts_with("250 2.1.5 <sales@example.com> Ok: stored as "),
+            "{stored}"
+        );
+        assert_eq!(
+            gateway.reply(),
+            "451 4.3.0 <broken@example.com>: Message not stored, try again later"
+        );
+    }
+    let kept = rows(&[("emailAccountId", &sales), ("messageId", "<lmtp@example.org>")]);
+    assert_eq!(kept.len(), 1, "the resend is not stored twice");
+    let headers = field(&kept[0], "headersString");
+    assert!(
+        headers.contains("Original-Recipient: rfc822;Sales+list@example.com"),
+        "{headers}"
+    );
+    assert!(
+        headers.contains("by mx.gate.test (mr-moqui) with LMTP id "),
+        "{headers}"
+    );
+    assert!(rows(&[("emailAccountId", &broken)]).is_empty());
     assert_eq!(gateway.command("QUIT"), "221 2.0.0 Bye");
     assert_eq!(gateway.reply(), "");
 }

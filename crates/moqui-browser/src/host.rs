@@ -72,6 +72,7 @@ impl Browser {
             framework_dir,
             BootOptions {
                 executor: Executor::Inline,
+                ..BootOptions::default()
             },
         )
         .map_err(|err| Error::new(format!("boot: {err}")))?;
@@ -158,7 +159,6 @@ impl Browser {
             data_types: data_types.to_vec(),
             components: Vec::new(),
             only_create: false,
-            use_try_insert: false,
             dummy_fks: false,
             disable_fk_create: true,
             timeout: None,
@@ -237,7 +237,7 @@ impl Browser {
             if let Some(limit) = limit {
                 find = find.limit(limit);
             }
-            Ok(find.list()?.iter().map(|value| value.fields().clone()).collect())
+            Ok(find.list()?.iter().map(|value| moqui_core::entity::string_map(value.fields())).collect())
         })
     }
 

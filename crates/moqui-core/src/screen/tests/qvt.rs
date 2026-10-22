@@ -220,8 +220,8 @@ fn a_dashboard_lays_out_number_cards() {
 
 /// `chatter` and `record-files` are an m-chatter and an m-record-files with the request's record and hints (an expression that
 /// comes to nothing left out, a false condition nothing): the client finds the theme's subscreen of the current app root. A
-/// text-area with editor-type rich or rich-light is an m-text-area with that editor type and the mention transition's URL,
-/// which a plain text-area leaves out. The html mode writes no link without a theme value, and the text modes nothing.
+/// text-area with editor-type rich or rich-light is an m-text-area with that editor type and the mention or record
+/// transition's URL, which a plain text-area leaves out. The html mode writes no link without a theme value, and the text modes nothing.
 #[test]
 fn the_record_panels_and_the_rich_text_editors() {
     let out = check("records", &[]);
@@ -232,11 +232,13 @@ fn the_record_panels_and_the_rich_text_editors() {
         r#"editor-type="rich-light""#,
         r#"mention-url="/mentions""#,
         r#"editor-type="rich" rows="6""#,
+        r#"record-url="/records""#,
     ] {
         assert!(out.contains(expected), "{expected} in {out}");
     }
     assert_eq!(out.matches("<m-chatter").count(), 2, "{out}");
     assert_eq!(out.matches("mention-url").count(), 1, "{out}");
+    assert_eq!(out.matches("record-url").count(), 1, "{out}");
     for mode in ["html", "text", "csv", "xml"] {
         let context = ExecutionContextFactory::test_context();
         let output = make_render(context.factory())
@@ -299,6 +301,31 @@ fn the_html_view_element() {
     assert!(text.contains("Hi {{ada}} there"), "{text}");
     assert!(text.contains("Plain {{text}} & more"), "{text}");
     assert!(!text.contains("alert(1)") || !text.contains("<script"), "{text}");
+}
+
+/// `code-view` is an m-code with the code as an attribute value (so `{{` in a file is never compiled), the file name or language
+/// and the line options; a false condition writes nothing. The html and print modes write a pre of the code, escaped; the text
+/// modes the code; the tui mode a pre block of an html node.
+#[test]
+fn the_code_view_element() {
+    let out = check("codeview", &[]);
+    for expected in [
+        "<m-code id=\"Source\" text=\"fn main() {\n    let t = &quot;{{x}} &lt;b&gt;&quot;;\n}\n\" file-name=\"src/main.rs\" highlight-lines=\"2\" class=\"q-mt-sm\"></m-code>",
+        "<m-code text=\"fn main() {\n    let t = &quot;{{x}} &lt;b&gt;&quot;;\n}\n\" language=\"rust\" :line-numbers=\"false\"></m-code>",
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    assert_eq!(out.matches("<m-code").count(), 2, "{out}");
+    let html = render_mode("codeview", "", "html", &[]);
+    assert!(
+        html.contains("<pre id=\"Source\" class=\"code-view q-mt-sm\"><code>fn main() {\n    let t = &quot;{{x}} &lt;b&gt;&quot;;\n}</code></pre>"),
+        "{html}"
+    );
+    assert_eq!(html.matches("<pre").count(), 2, "{html}");
+    let text = render_mode("codeview", "", "text", &[]);
+    assert!(text.contains("fn main() {\n    let t = \"{{x}} <b>\";\n}\n"), "{text}");
+    let tui = render_mode("codeview", "", "tui", &[]);
+    assert!(tui.contains("pre") && tui.contains("{{x}} <b>"), "{tui}");
 }
 
 #[test]
@@ -570,7 +597,7 @@ fn a_qvt_render_error_is_logged_and_written_in_its_place() {
     assert!(!section.contains("inside"), "{section}");
     assert!(
         whole.contains(&format!("Error rendering screen [{whole_location}]")),
-        "{whole}"
+        "whole={whole:?}"
     );
     assert!(!whole.contains("first") && !whole.contains("{{"), "{whole}");
     assert!(whole.contains("a &#123;&#123; brace }}"), "{whole}");
@@ -602,6 +629,7 @@ fn client_components_are_precompiled() {
         &[
             &read("js/MoquiLib.js"),
             &read("js/WebrootChat.js"),
+            &read("js/WebrootAssist.js"),
             &read("js/WebrootVue.qvt.js"),
         ],
     )
@@ -693,7 +721,7 @@ fn mobile_columns_are_chosen_by_the_ui_type() {
 }
 
 /// A test context with the framework's services and a database holding the EntitySync statuses and their Default flow.
-fn status_context() -> crate::context::ExecutionContext {
+pub(super) fn status_context() -> crate::context::ExecutionContext {
     let context = ExecutionContextFactory::test_context_in(
         "",
         crate::service::ServicePools::idle(),
@@ -1075,7 +1103,43 @@ fn form_list_views_and_the_markdown_view() {
         out.contains(r#"<m-list-views id="Plain_views" form-name="Plain""#),
         "{out}"
     );
-    assert_eq!(out.matches("<template v-slot:card_").count(), 6, "{out}");
+    assert_eq!(out.matches("<template v-slot:card_").count(), 9, "{out}");
+    // group-fields: the first the default, a Group by choice of each with its title; all-rows asks the form request for up to
+    // max-rows; peek-url: the detail's path and the key field, and a list row says its index
+    for expected in [
+        "'groupField':'owner'",
+        "'groups':[{'field':'owner','label':'owner','columns':[],'flow':{}},{'field':'stage','label':'Stage'}]",
+        "'allRows':true,'rowsUrl':'/actions/Grouped','listName':'taskList','maxRows':50",
+        r#":peek="{'url':'/open','parameters':{},'keyField':'taskId'}""#,
+        r#"<div class="tr" data-row="0">"#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    assert!(
+        out.contains(r#"<div class="tr"><m-form name="Tasks_0""#),
+        "no index without a peek-url: {out}"
+    );
+    // view-tree: its settings (the columns less the roll-up, the roll-up's title, the transitions), the rows' parent, child count
+    // and roll-up, and a tree_{index} slot per row: the row's cells in a form of the row, the first with the tree's lead
+    for expected in [
+        r#":views="['tree','list']""#,
+        "'parentField':'parentId','keyFields':['nodeId'],'childCountField':'kids','rollups':[{'name':'totalPoints','label':'Total points'}]",
+        "'columns':[{'fields':['label'],'label':'Item','align':''},{'fields':['points'],'label':'Points','align':'right'}]",
+        "'childrenUrl':'/planTask'",
+        "'transition':'/moveTask'",
+        "{'nodeId':'N2','label':'Sign-in','parentId':'N1','kids':0,'totalPoints':8}",
+        r#"<template v-slot:tree_1="mqTree"><m-form name="Outline_t1" id="Outline_t1" action="/open""#,
+        r#"<div class="td"><div class="m-tree-cell row no-wrap items-center"><m-tree-lead :t="mqTree.t"></m-tree-lead><div class="m-tree-label">"#,
+        r#"<m-text-line id="Outline_points_t1""#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    let slot = &out[out.find(r#"<template v-slot:tree_0="#).unwrap()..];
+    let slot = &slot[..slot.find("</template>").unwrap()];
+    assert!(
+        !slot.contains("totalPoints_0_display") && !slot.contains("Outline_totalPoints"),
+        "the roll-up is no cell of the tree row: {slot}"
+    );
     let html = render_mode("views", "", "html", &[]);
     assert!(
         !html.contains("m-list-views") && html.contains("Write {{spec}}"),
@@ -1085,8 +1149,67 @@ fn form_list_views_and_the_markdown_view() {
         html.contains(r##"<div id="Notes" class="markdown-view q-mt-sm" style="white-space:pre-wrap"># Notes {{x}}"##),
         "{html}"
     );
+    // html: the tree, the view chosen first, is the page's rows under their parents, the first cell indented; the list as it is
+    let tree = &html[html.find(r#"id="Outline_table""#).unwrap()..];
+    assert!(
+        tree.find(">Portal<").unwrap() < tree.find(">Sign-in<").unwrap()
+            && tree.contains(r#"<tr data-level="2"><td style="padding-left:24px">"#),
+        "{tree}"
+    );
+    let list = render_mode("views", "", "html", &[("view", "list")]);
+    let list = &list[list.find(r#"id="Outline_table""#).unwrap()..];
+    assert!(
+        list.find(">Sign-in<").unwrap() < list.find(">Portal<").unwrap() && !list.contains("data-level"),
+        "{list}"
+    );
     let text = render_mode("views", "", "text", &[]);
     assert!(text.contains("See [the spec](spec/One)"), "{text}");
+}
+
+/// The part of the output from `start` to the first `end` after it.
+fn part_of<'a>(out: &'a str, start: &str, end: &str) -> &'a str {
+    let from = out.find(start).unwrap_or_else(|| panic!("no {start} in {out}"));
+    let rest = &out[from..];
+    &rest[..rest.find(end).unwrap_or(rest.len())]
+}
+
+/// A row-selection whose condition is false, or fails to evaluate, is written as a list without row-selection (no checkbox set,
+/// checkbox column or actions); a view whose move-condition is false has no transition, so its cards and rows do not move. html
+/// writes no selection either way.
+#[test]
+fn a_row_selection_condition_and_a_view_move_condition_turn_them_off() {
+    let out = check("gated", &[]);
+    assert_eq!(out.matches("<m-checkbox-set").count(), 1, "{out}");
+    let on = part_of(&out, "<m-checkbox-set", "</m-checkbox-set>");
+    assert!(
+        on.contains(r#"checkbox-parameter="taskIds""#) && on.contains(r#"id="SelOn_table""#) && on.contains("Bulk On"),
+        "{on}"
+    );
+    for (name, next) in [("SelOff", "SelBad_table"), ("SelBad", "BoardFixed_views")] {
+        let off = part_of(&out, &format!(r#"id="{name}_table""#), next);
+        assert!(
+            !off.contains("checkbox") && !off.contains("Bulk") && !off.contains(r#"<div class="td">&nbsp;</div>"#),
+            "{off}"
+        );
+        // the rows as a list's with no row-selection: the row's form first
+        assert!(
+            off.contains(&format!(r#"<div class="tr"><m-form name="{name}_0""#)),
+            "{off}"
+        );
+    }
+    let fixed = part_of(&out, r#"<m-list-views id="BoardFixed_views""#, ">");
+    assert!(fixed.contains("'transition':null,'parameters':null"), "{fixed}");
+    let moves = part_of(&out, r#"<m-list-views id="BoardMoves_views""#, ">");
+    assert!(moves.contains("'transition':'/moveTask'"), "{moves}");
+    let fixed = part_of(&out, r#"<m-list-views id="TreeFixed_views""#, ">");
+    assert!(fixed.contains("'transition':null,'parameters':null"), "{fixed}");
+    let moves = part_of(&out, r#"<m-list-views id="TreeMoves_views""#, ">");
+    assert!(moves.contains("'transition':'/moveTask'"), "{moves}");
+    let html = render_mode("gated", "", "html", &[]);
+    assert!(
+        html.contains("SelOn") && !html.contains("Bulk") && !html.contains("checkbox"),
+        "{html}"
+    );
 }
 
 /// A board by status writes the columns get#ListViewColumns answers: every status of the type of the rows' statuses in sequence

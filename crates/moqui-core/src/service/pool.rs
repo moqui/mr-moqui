@@ -286,7 +286,14 @@ pub(crate) struct CallJob {
     factory: Arc<ExecutionContextFactory>,
     /// The user who made the call; the worker acts as them.
     user_name: Option<String>,
+    /// The agent run the call was made in, which the worker works for too (the agent triggers' loop guard).
+    origin: Option<crate::context::AgentOrigin>,
     reply: Option<Sender<Result<BTreeMap<String, Value>, Error>>>,
+}
+
+/// The agent run the current context works for, carried with async work so its writes keep their origin.
+pub(crate) fn current_origin() -> Option<crate::context::AgentOrigin> {
+    ExecutionContext::with_current(|ec| ec.agent_origin()).flatten()
 }
 
 impl Work {
@@ -301,6 +308,7 @@ impl Work {
             parameters,
             factory,
             user_name,
+            origin: current_origin(),
             reply: None,
         })
     }
@@ -316,6 +324,7 @@ impl Work {
             parameters,
             factory,
             user_name: crate::user::current_username().ok().flatten(),
+            origin: current_origin(),
             reply: Some(reply),
         })
     }
@@ -789,8 +798,10 @@ fn settings(conf_text: &str) -> Result<Settings, Error> {
     })
 }
 
+/// An attribute as a number, `${}` expanded; `default` when it is missing, empty or not a number.
 fn usize_attr(node: &MNode, name: &str, default: usize) -> usize {
     node.attribute(name)
+        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
         .and_then(|text| text.trim().parse().ok())
         .unwrap_or(default)
 }
@@ -980,7 +991,7 @@ fn run_call(job: CallJob) {
         let _cleanup = WorkCleanup::new(Some(Arc::clone(&job.factory)));
         unwind_result(catch_unwind(AssertUnwindSafe(|| {
             let _flag = WorkerFlag::enter();
-            invoke(&job.factory, &job.name, &job.parameters, job.user_name.as_deref())
+            invoke(&job.factory, &job.name, &job.parameters, job.user_name.as_deref(), job.origin.as_ref())
         })))
     };
     match job.reply {
@@ -1001,12 +1012,14 @@ fn invoke(
     name: &str,
     parameters: &BTreeMap<String, Value>,
     user_name: Option<&str>,
+    origin: Option<&crate::context::AgentOrigin>,
 ) -> Result<BTreeMap<String, Value>, Error> {
     let ctx = factory.new_context();
     let _entered = ctx.enter();
     if let Some(user_name) = user_name {
         crate::user::internal_login_user(user_name)?;
     }
+    ctx.set_agent_origin(origin.cloned());
     // As Java's `AsyncServiceInfo`: authorization was checked as the caller before the call was queued.
     let options = super::call::CallOptions {
         disable_authz: true,
@@ -1025,6 +1038,7 @@ fn call_now(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap
     };
     let parameters = &parameters;
     let user_name = crate::user::current_username().ok().flatten();
+    let origin = current_origin();
     // Checked as the caller above, so the call runs with authorization disabled, as on a worker.
     let options = super::call::CallOptions {
         require_new_transaction: Some(true),
@@ -1037,6 +1051,7 @@ fn call_now(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap
         if let Some(user_name) = user_name.as_deref() {
             crate::user::internal_login_user(user_name)?;
         }
+        ctx.set_agent_origin(origin);
         super::call::sync_with(name, parameters, &options)
     }));
     unwind_result(result)
@@ -1062,7 +1077,7 @@ fn run_inline(work: Work) {
         }
         Work::Call(job) => {
             let result = catch_unwind(AssertUnwindSafe(|| {
-                invoke(&job.factory, &job.name, &job.parameters, job.user_name.as_deref())
+                invoke(&job.factory, &job.name, &job.parameters, job.user_name.as_deref(), job.origin.as_ref())
             }));
             let outcome = unwind_result(result);
             drop(cleanup);
@@ -1108,6 +1123,7 @@ fn reserved(
     let name = name.to_string();
     let parameters = parameters.clone();
     let user_name = crate::user::current_username().ok().flatten();
+    let origin = current_origin();
     // The thread ends when the call does; its slot is held until then.
     thread::Builder::new()
         .name("moqui-reserved".to_string())
@@ -1117,7 +1133,7 @@ fn reserved(
                 let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
                 unwind_result(catch_unwind(AssertUnwindSafe(|| {
                     let _flag = WorkerFlag::enter();
-                    invoke(&factory, &name, &parameters, user_name.as_deref())
+                    invoke(&factory, &name, &parameters, user_name.as_deref(), origin.as_ref())
                 })))
             };
             let _ = tx.send(outcome);
@@ -1299,9 +1315,6 @@ mod tests {
 
     #[test]
     fn a_script_on_a_service_worker_has_no_default_limit() {
-        if !moqui_lib::env::get_prop_or_env("script_timeout").is_empty() {
-            return;
-        }
         let ctx = crate::context::ExecutionContextFactory::test_context_with("", ServicePools::bounded(1, 1));
         let left = ctx
             .factory()

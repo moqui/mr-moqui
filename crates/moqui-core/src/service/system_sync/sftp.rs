@@ -44,6 +44,7 @@ pub(super) fn send(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    refuse_outside(facade, "send#SystemMessageSftp")?;
     let message_id = param_text(parameters, "systemMessageId");
     let Some(message) = find_one(facade, MESSAGE, "systemMessageId", &message_id)? else {
         add_error(format!("Could not find SystemMessage with ID {message_id}"));
@@ -122,6 +123,7 @@ pub(super) fn poll(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    refuse_outside(facade, "poll#SystemMessageSftp")?;
     let type_id = param_text(parameters, "systemMessageTypeId");
     let remote_id = param_text(parameters, "systemMessageRemoteId");
     let Some(message_type) = find_one(facade, MESSAGE_TYPE, "systemMessageTypeId", &type_id)? else {
@@ -294,6 +296,16 @@ fn existing_messages(facade: &EntityFacade, poll: &Poll<'_>, filename: &str) -> 
 }
 
 /// The client for a remote: its host, username, key (with the public key) or password, and pinned host key.
+/// Under the read fence or in a sim preview an SFTP send or poll is refused, and in sim mode denied, before it reads a
+/// message or touches a remote file (the client's connect refuses as well).
+fn refuse_outside(facade: &EntityFacade, service: &str) -> Result<(), LibError> {
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::RemoteCall, service)?;
+    if facade.sim_active() {
+        return Err(LibError::new(format!("{service} denied because sim mode is active")));
+    }
+    Ok(())
+}
+
 fn client_for(remote: &EntityValue, host: &str) -> Result<SftpClient, LibError> {
     let mut client = SftpClient::new(host, &field(remote, "username"), None)?;
     let private_key = field(remote, "privateKey");

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Tokens and cost by day, user, model and source (LlmUsageDaily, rolled up from LlmCall every 15 minutes by the job
+    rollup_LlmUsage), with the totals by model and source of the same find, and the quota of a user. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Usage" default-menu-index="3">
+
+    <transition name="rollupUsage"><service-call name="org.moqui.agent.AgentAdminServices.rollup#LlmUsage"/>
+        <default-response url="."/></transition>
+    <transition name="callList"><default-response url="../Calls/CallList"/></transition>
+    <transition name="userAccountDetail"><default-response url="../../Security/UserAccount/UserAccountDetail"/></transition>
+
+    <actions>
+        <entity-find entity-name="moqui.llm.LlmUsageSummary" list="summaryList">
+            <search-form-inputs default-order-by="modelId,source">
+                <default-parameters usageDate_poffset="-1" usageDate_period="30d"/></search-form-inputs>
+            <select-field field-name="modelId,source,currencyUomId,callCount,errorCount,inputTokens,cachedInputTokens,outputTokens,totalTokens,cost"/>
+        </entity-find>
+        <if condition="quotaUserId">
+            <service-call name="org.moqui.agent.AgentAdminServices.check#LlmQuota" in-map="{userId:quotaUserId}" out-map="quota"/>
+        </if>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Totals by Model and Source"/><box-toolbar>
+            <link url="rollupUsage" text="Roll Up Today" tooltip="Recompute today's and yesterday's rows now"/>
+            <container-dialog id="QuotaDialog" button-text="Check a Quota">
+                <form-single name="QuotaForm" transition=".">
+                    <field name="quotaUserId"><default-field title="User ID"><text-line size="20"/></default-field></field>
+                    <field name="submitButton"><default-field title="Check"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <section name="QuotaSection" condition="quota != null"><widgets>
+                <label text="Quota of ${quotaUserId ?? ''} (${quota?.limitFrom ?? ''}, ${quota?.period ?? ''}): ${quota?.usedTokens ?? 0} of ${quota?.maxTokens ?? 'no limit'} tokens, ${quota?.usedCost ?? 0} of ${quota?.maxCost ?? 'no limit'} cost. ${quota?.reason ?? 'Within the quota.'}" type="p"/>
+            </widgets></section>
+            <form-list name="SummaryList" list="summaryList" skip-form="true">
+                <field name="modelId"><default-field title="Model"><display/></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+                <field name="callCount"><default-field title="Calls"><display/></default-field></field>
+                <field name="errorCount"><default-field title="Errors"><display/></default-field></field>
+                <field name="inputTokens"><default-field title="Input"><display/></default-field></field>
+                <field name="cachedInputTokens"><default-field title="Cached"><display/></default-field></field>
+                <field name="outputTokens"><default-field title="Output"><display/></default-field></field>
+                <field name="totalTokens"><default-field title="Tokens"><display/></default-field></field>
+                <field name="cost"><default-field><display/></default-field></field>
+                <field name="currencyUomId"><default-field title="Currency"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+
+        <form-list name="UsageList" list="usageList" skip-form="true" header-dialog="true" show-csv-button="true">
+            <entity-find entity-name="moqui.llm.LlmUsageDaily" list="usageList" use-clone="true">
+                <search-form-inputs default-order-by="-usageDate,userId,modelId">
+                    <default-parameters usageDate_poffset="-1" usageDate_period="30d"/></search-form-inputs>
+            </entity-find>
+            <field name="usageDate"><header-field title="Date" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/>
+                <link url="userAccountDetail" text="${userId}" link-type="anchor" condition="userId != '_NA_'"/>
+            </default-field></field>
+            <field name="modelId"><header-field title="Model" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="callList" text="${modelId}" link-type="anchor" parameter-map="{modelId:modelId}"/></default-field></field>
+            <field name="source"><header-field show-order-by="true"><drop-down allow-empty="true">
+                    <option key="agent"/><option key="gateway"/><option key="api"/><option key="probe"/><option key="embed"/><option key="test"/>
+                </drop-down></header-field><default-field><display/></default-field></field>
+            <field name="callCount"><header-field title="Calls" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="errorCount"><header-field title="Errors"/><default-field><display/></default-field></field>
+            <field name="inputTokens"><header-field title="Input"/><default-field><display/></default-field></field>
+            <field name="cachedInputTokens"><header-field title="Cached"/><default-field><display/></default-field></field>
+            <field name="outputTokens"><header-field title="Output"/><default-field><display/></default-field></field>
+            <field name="totalTokens"><header-field title="Tokens" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="cost"><header-field show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="currencyUomId"><header-field title="Currency"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

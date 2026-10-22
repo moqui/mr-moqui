@@ -37,8 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="recordId" type="text-medium"/>
         <field name="directKey" type="text-medium"><description>For a direct room, its members' userIds sorted and joined
             with commas, so the room of a set of users is found and reused</description></field>
-        <field name="retentionDays" type="number-integer"><description>How long the room keeps its events; empty for
-            always (the retention job is later)</description></field>
+        <field name="retentionDays" type="number-integer"><description>How many days the room keeps its events; empty for
+            always. The daily job clean#ChatRetention deletes the older ones.</description></field>
         <field name="createdByUserId" type="id"/>
         <field name="createdDate" type="date-time"/>
         <field name="archivedDate" type="date-time"><description>An archived room is read only</description></field>
@@ -92,7 +92,8 @@ along with this software (see the LICENSE.md file). If not, see
             messages (deliver#AgentMessage calls it)</description></field>
         <field name="joinedDate" type="date-time"/>
         <field name="leftDate" type="date-time"/>
-        <field name="lastReadEventSeq" type="number-integer"/>
+        <field name="lastReadEventSeq" type="number-integer" default="0"><description>Never empty: the unread views compare
+            the events with it</description></field>
         <field name="lastReadDate" type="date-time"/>
         <field name="notificationLevelEnumId" type="id"/>
         <field name="isPinned" type="text-indicator"/>
@@ -122,7 +123,9 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ChatEvent" package="moqui.chat" use="transactional" cache="never">
         <description>An event of a room's timeline, numbered per room (eventSeq: 1, 2, ... in the order they happened).
             A message (CetMessage) has its content in contentJson: {body (safe HTML), mentions [userId], attachments
-            [{chatAttachmentId, attachmentSeq, fileName, contentType, fileSize}], records [{entity, id}]}; replyToEventSeq
+            [{chatAttachmentId, attachmentSeq, fileName, contentType, fileSize}], records [{entity, id}], forwardOf (a
+            forwarded message: {senderUserId, senderName, sentDate, body, bodyText}, made by the server), poll ({question}:
+            the poll's rows are ChatPoll)}; replyToEventSeq
             quotes another, threadRootEventSeq puts it in that message's thread. An edit (CetEdit, editsEventSeq the
             message, contentJson the new body and mentions), a reaction (CetReaction, relatesToEventSeq the message,
             contentJson {key}), a redaction (CetRedaction, relatesToEventSeq the message or reaction it removes), a pin
@@ -130,7 +133,8 @@ along with this software (see the LICENSE.md file). If not, see
             remove, role; userId; roleEnumId}) and a system row (CetSystem: created, renamed, topic, archived) are events
             too, so the timeline is what the WebSocket pushes. The fields after sentDate are kept on a message for the
             reads: its current text (bodyText, for search and snippets), the last edit, the redaction (whose content is
-            then cleared), the pin and its thread's reply count.</description>
+            then cleared), the pin, its thread's reply count and last reply, and its link previews. clientRef is the
+            sender's own reference of a message, so a send that is tried again is answered with the message it made.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
         <field name="eventTypeEnumId" type="id"/>
@@ -150,6 +154,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="pinnedByUserId" type="id"/>
         <field name="threadReplyCount" type="number-integer"/>
         <field name="threadLastDate" type="date-time"/>
+        <field name="threadLastEventSeq" type="number-integer"><description>The thread's last reply that stands</description></field>
+        <field name="threadLastUserId" type="id"/>
+        <field name="clientRef" type="text-medium"><description>The sender's reference of the message, ^[A-Za-z0-9_.:-]{1,64}$</description></field>
+        <field name="linkPreviewJson" type="text-very-long"><description>The previews of the message's links, a JSON list of
+            {url, title, description, siteName} (fetch#LinkPreviews), or {"removed": true} once the sender removed them</description></field>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one-nofk" title="Sender" related="moqui.security.UserAccount" short-alias="sender">
             <key-map field-name="senderUserId" related="userId"/></relationship>
@@ -159,6 +168,8 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_EVENT_RELATES"><index-field name="chatRoomId"/><index-field name="relatesToEventSeq"/></index>
         <index name="CHAT_EVENT_EDITS"><index-field name="chatRoomId"/><index-field name="editsEventSeq"/></index>
         <index name="CHAT_EVENT_UNREAD"><index-field name="chatRoomId"/><index-field name="eventTypeEnumId"/><index-field name="eventSeq"/></index>
+        <index name="CHAT_EVENT_CLIENT_REF"><index-field name="chatRoomId"/><index-field name="senderUserId"/><index-field name="clientRef"/></index>
+        <index name="CHAT_EVENT_THREAD_LAST"><index-field name="chatRoomId"/><index-field name="threadLastDate"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Event Type" enumTypeId="ChatEventType"/>
             <moqui.basic.Enumeration description="Message" enumId="CetMessage" enumCode="message" enumTypeId="ChatEventType" sequenceNum="1"/>
@@ -184,6 +195,38 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CHAT_MENTION_USER"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
     </entity>
 
+    <view-entity entity-name="ChatMemberUnread" package="moqui.chat">
+        <description>The unread messages of a member, per room in one query: the messages (not redacted) from others after
+            the member's read marker. Find it by userId with leftDate empty, select chatRoomId and unreadCount (grouped by
+            room). get#UnreadCounts and find#Rooms read it.</description>
+        <member-entity entity-alias="CRM" entity-name="moqui.chat.ChatRoomMember"/>
+        <member-entity entity-alias="CE" entity-name="moqui.chat.ChatEvent" join-from-alias="CRM">
+            <key-map field-name="chatRoomId"/></member-entity>
+        <alias entity-alias="CRM" name="chatRoomId"/>
+        <alias entity-alias="CRM" name="userId"/>
+        <alias entity-alias="CRM" name="leftDate"/><!-- filter only -->
+        <alias entity-alias="CE" name="redactedDate"/><!-- filter only -->
+        <alias entity-alias="CE" name="unreadCount" field="eventSeq" function="count"/>
+        <entity-condition>
+            <econdition entity-alias="CE" field-name="eventTypeEnumId" value="CetMessage"/>
+            <econdition entity-alias="CE" field-name="eventSeq" operator="greater" to-entity-alias="CRM" to-field-name="lastReadEventSeq"/>
+            <econdition entity-alias="CE" field-name="senderUserId" operator="not-equals" to-entity-alias="CRM" to-field-name="userId"/>
+        </entity-condition>
+    </view-entity>
+    <view-entity entity-name="ChatMemberMentions" package="moqui.chat">
+        <description>The mentions of a member after the member's read marker, per room in one query. Find it by userId with
+            leftDate empty, select chatRoomId and mentionCount (grouped by room).</description>
+        <member-entity entity-alias="CRM" entity-name="moqui.chat.ChatRoomMember"/>
+        <member-entity entity-alias="CEM" entity-name="moqui.chat.ChatEventMention" join-from-alias="CRM">
+            <key-map field-name="chatRoomId"/><key-map field-name="userId"/></member-entity>
+        <alias entity-alias="CRM" name="chatRoomId"/>
+        <alias entity-alias="CRM" name="userId"/>
+        <alias entity-alias="CRM" name="leftDate"/><!-- filter only -->
+        <alias entity-alias="CEM" name="mentionCount" field="eventSeq" function="count"/>
+        <entity-condition>
+            <econdition entity-alias="CEM" field-name="eventSeq" operator="greater" to-entity-alias="CRM" to-field-name="lastReadEventSeq"/>
+        </entity-condition>
+    </view-entity>
     <entity entity-name="ChatAttachment" package="moqui.chat" use="transactional" cache="never">
         <description>A file of a message, stored as a DbResource under dbresource://chat/(room)/(attachment)/(file name).
             upload#Attachment makes the row before the message is sent (eventSeq empty); send#Message gives it the
@@ -200,6 +243,54 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="uploadedDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <index name="CHAT_ATTACH_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
+    </entity>
+
+    <entity entity-name="ChatPoll" package="moqui.chat" use="transactional" cache="never">
+        <description>A poll: a message (CetMessage, content.poll) whose options are ChatPollOption and whose votes are
+            ChatPollVote. Anonymous: who voted is not shown. Multiple: a user may choose more than one option. It closes at
+            closesDate, or when its creator or a moderator closes it (closedDate). A redaction of the message removes it.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="question" type="text-medium"/>
+        <field name="isAnonymous" type="text-indicator"/>
+        <field name="allowMultiple" type="text-indicator"/>
+        <field name="closesDate" type="date-time"/>
+        <field name="closedDate" type="date-time"/>
+        <field name="closedByUserId" type="id"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="voterCount" type="number-integer"/>
+        <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+    </entity>
+    <entity entity-name="ChatPollOption" package="moqui.chat" use="transactional" cache="never">
+        <description>An option of a poll, with the count of its votes.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="optionSeq" type="number-integer" is-pk="true"/>
+        <field name="optionText" type="text-medium"/>
+        <field name="voteCount" type="number-integer"/>
+        <relationship type="one" related="moqui.chat.ChatPoll" short-alias="poll"/>
+    </entity>
+    <entity entity-name="ChatPollVote" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's vote for an option of a poll; vote#Poll replaces a user's votes.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="optionSeq" type="number-integer" is-pk="true"/>
+        <field name="votedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatPoll" short-alias="poll"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="ChatLinkPreview" package="moqui.chat" use="transactional" cache="never">
+        <description>The preview of a link (get#LinkPreview), kept a day, or an hour for a link that could not be read
+            (failed Y), so a link posted again is not fetched again. Text only: no image is kept or loaded.</description>
+        <field name="urlHash" type="id-long" is-pk="true"><description>The SHA-256 of the URL, hex</description></field>
+        <field name="url" type="text-very-long"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="siteName" type="text-medium"/>
+        <field name="failed" type="text-indicator"/>
+        <field name="fetchedDate" type="date-time"/>
     </entity>
 
     <entity entity-name="UserStatus" package="moqui.security" use="transactional" cache="never">

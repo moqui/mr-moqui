@@ -95,7 +95,7 @@ impl JdbcExtractor {
                     break;
                 }
             };
-            let values: BTreeMap<_, _> = row.columns.into_iter().collect();
+            let values: BTreeMap<_, _> = row.columns.into_iter().map(|(name, value)| (name.to_string(), value)).collect();
             if let Err(stop) = etl.process_entry(SimpleEntry::new(self.record_type.clone(), values)) {
                 tracing::warn!(cause = %stop.cause, "JDBC extract stopped");
                 break;

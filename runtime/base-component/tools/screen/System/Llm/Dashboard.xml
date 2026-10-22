@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Dashboard" default-menu-index="1">
+
+    <transition name="callDetail"><default-response url="../Calls/CallDetail"/></transition>
+    <transition name="callList"><default-response url="../Calls/CallList"/></transition>
+    <transition name="usage"><default-response url="../Usage"/></transition>
+    <transition name="models"><default-response url="../Models"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#DashboardTotals" out-map="totals"/>
+        <set field="today" from="totals.today || {}"/>
+        <set field="month" from="totals.month || {}"/>
+        <entity-find entity-name="moqui.agent.AgentRun" list="failedRunList" limit="10">
+            <econdition field-name="statusId" value="AgrFailed"/><order-by field-name="-endedDate"/></entity-find>
+        <entity-find entity-name="moqui.llm.LlmCall" list="failedCallList" limit="10">
+            <econdition field-name="errorClass" operator="is-not-null"/><order-by field-name="-startDate"/></entity-find>
+    </actions>
+    <widgets>
+        <container-row>
+            <row-col md="4"><container-box><box-header title="Runs"/><box-body>
+                <label text="Submitted today: ${totals.runsToday ?? 0}" type="p"/>
+                <label text="Waiting for input: ${totals.runsWaiting ?? 0}" type="p"/>
+                <label text="Failed today: ${totals.runsFailedToday ?? 0}" type="p"/>
+            </box-body></container-box></row-col>
+            <row-col md="4"><container-box><box-header title="Model Calls Today"/><box-toolbar>
+                <link url="callList" text="Calls"/></box-toolbar><box-body>
+                <label text="Calls: ${today.callCount ?? 0} (${today.errorCount ?? 0} failed)" type="p"/>
+                <label text="Tokens: ${today.totalTokens ?? 0} (${today.cachedInputTokens ?? 0} cached input)" type="p"/>
+                <label text="Cost: ${today.cost ?? 0} ${today.currencyUomId ?? ''}" type="p"/>
+            </box-body></container-box></row-col>
+            <row-col md="4"><container-box><box-header title="This Month"/><box-toolbar>
+                <link url="usage" text="Usage"/><link url="models" text="Models"/></box-toolbar><box-body>
+                <label text="Calls: ${month.callCount ?? 0}" type="p"/>
+                <label text="Tokens: ${month.totalTokens ?? 0}" type="p"/>
+                <label text="Spend: ${month.cost ?? 0} ${month.currencyUomId ?? ''}" type="p"/>
+            </box-body></container-box></row-col>
+        </container-row>
+
+        <container-box><box-header title="Recent Failed Runs"/><box-body>
+            <form-list name="FailedRunList" list="failedRunList" skip-form="true">
+                <field name="runId"><default-field><display/></default-field></field>
+                <field name="agentId"><default-field><display/></default-field></field>
+                <field name="userId"><default-field title="User">
+                    <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+                <field name="errorCode"><default-field><display/></default-field></field>
+                <field name="errorText"><default-field><display/></default-field></field>
+                <field name="endedDate"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Recent Failed Calls"/><box-body>
+            <form-list name="FailedCallList" list="failedCallList" skip-form="true">
+                <field name="callId"><default-field><link url="callDetail" text="${callId}" link-type="anchor"/></default-field></field>
+                <field name="modelId"><default-field><display/></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+                <field name="httpStatus"><default-field><display/></default-field></field>
+                <field name="errorClass"><default-field><display/></default-field></field>
+                <field name="errorText"><default-field><display/></default-field></field>
+                <field name="startDate"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

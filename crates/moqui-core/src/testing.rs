@@ -264,8 +264,18 @@ struct MemConn {
     tape: Option<Arc<Mutex<Vec<String>>>>,
     local: Option<Tables>,
     dirty: BTreeSet<String>,
+    /// Writes of this transaction, in order. Commit replays them onto the rows committed so far.
+    changes: Vec<Change>,
     /// The rows of the open stream not read yet. The select runs whole when the stream opens.
     stream: Option<std::collections::VecDeque<DbRow>>,
+}
+
+/// One write. `key` is the WHERE equality columns, when every comparison in the condition is an equality.
+struct Change {
+    table: String,
+    old: Option<Row>,
+    new: Option<Row>,
+    key: Option<Vec<String>>,
 }
 
 struct NoCancel;
@@ -283,6 +293,7 @@ impl DbDriver for MemDriver {
             tape: self.tape.clone(),
             local: None,
             dirty: BTreeSet::new(),
+            changes: Vec::new(),
             stream: None,
         }))
     }
@@ -325,6 +336,7 @@ impl DbConnection for MemConn {
             let committed = lock(&self.store).clone();
             self.local = Some(committed);
             self.dirty.clear();
+            self.changes.clear();
         }
         Ok(())
     }
@@ -334,10 +346,19 @@ impl DbConnection for MemConn {
             return Ok(());
         };
         let dirty = std::mem::take(&mut self.dirty);
+        let changes = std::mem::take(&mut self.changes);
         let mut committed = lock(&self.store);
         for table in dirty {
-            let rows = local.get(&table).cloned().unwrap_or_default();
-            committed.insert(table, rows);
+            let current = committed.get(&table).cloned().unwrap_or_default();
+            // A sequence is one row per name. Two refills of the same name keep the higher number.
+            let merged = if table == "sequence_value_item" {
+                let after = local.get(&table).cloned().unwrap_or_default();
+                merge_sequence_rows(&after, current)
+            } else {
+                let mine: Vec<&Change> = changes.iter().filter(|change| change.table == table).collect();
+                apply_changes(current, &mine)
+            };
+            committed.insert(table, merged);
         }
         Ok(())
     }
@@ -345,6 +366,7 @@ impl DbConnection for MemConn {
     fn rollback(&mut self) -> Result<(), Error> {
         self.local = None;
         self.dirty.clear();
+        self.changes.clear();
         Ok(())
     }
 
@@ -378,7 +400,7 @@ impl MemConn {
             return Ok((
                 1,
                 vec![DbRow {
-                    columns: vec![("1".to_string(), Value::I64(1))],
+                    columns: vec![("1".into(), Value::I64(1))],
                 }],
             ));
         }
@@ -422,7 +444,7 @@ impl MemConn {
             .map(|row| DbRow {
                 columns: columns
                     .iter()
-                    .map(|(column, alias)| (alias.clone(), row.get(column).cloned().unwrap_or(Value::Null)))
+                    .map(|(column, alias)| (alias.as_str().into(), row.get(column).cloned().unwrap_or(Value::Null)))
                     .collect(),
             })
             .collect();
@@ -457,7 +479,7 @@ impl MemConn {
         Ok((
             1,
             vec![DbRow {
-                columns: vec![("seq_num".to_string(), Value::I64(end))],
+                columns: vec![("seq_num".into(), Value::I64(end))],
             }],
         ))
     }
@@ -478,16 +500,39 @@ impl MemConn {
                     row.insert(column.clone(), value);
                 }
                 let mut rows = self.read_table(&table);
-                if let Some(keys) = conflict {
-                    if rows
+                if let Some((keys, updates)) = conflict {
+                    let same = rows
                         .iter()
-                        .any(|other| keys.iter().all(|key| other.get(key) == row.get(key)))
-                    {
-                        return Ok((0, Vec::new()));
+                        .position(|other| keys.iter().all(|key| other.get(key) == row.get(key)));
+                    if let Some(at) = same {
+                        if updates.is_empty() {
+                            return Ok((0, Vec::new()));
+                        }
+                        let old = rows[at].clone();
+                        for column in &updates {
+                            if let Some(value) = row.get(column) {
+                                rows[at].insert(column.clone(), value.clone());
+                            }
+                        }
+                        let new = rows[at].clone();
+                        self.put_table(&table, rows);
+                        self.record(Change {
+                            table,
+                            old: Some(old),
+                            new: Some(new),
+                            key: Some(keys),
+                        });
+                        return Ok((1, Vec::new()));
                     }
                 }
-                rows.push(row);
+                rows.push(row.clone());
                 self.put_table(&table, rows);
+                self.record(Change {
+                    table,
+                    old: None,
+                    new: Some(row),
+                    key: None,
+                });
                 Ok((1, Vec::new()))
             }
             Stmt::Update { table, columns, pred } => {
@@ -502,31 +547,53 @@ impl MemConn {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let start = columns.len();
+                let key = equality_key(&pred);
                 let mut rows = self.read_table(&table);
                 let mut count = 0_u64;
+                let mut edits = Vec::new();
                 for row in &mut rows {
                     if keep(&pred, row, params, start)? {
+                        let old = row.clone();
                         for (column, value) in columns.iter().zip(&values) {
                             row.insert(column.clone(), value.clone());
                         }
+                        edits.push((old, row.clone()));
                         count += 1;
                     }
                 }
                 self.put_table(&table, rows);
+                for (old, new) in edits {
+                    self.record(Change {
+                        table: table.clone(),
+                        old: Some(old),
+                        new: Some(new),
+                        key: key.clone(),
+                    });
+                }
                 Ok((count, Vec::new()))
             }
             Stmt::Delete { table, pred } => {
+                let key = equality_key(&pred);
                 let rows = self.read_table(&table);
                 let mut kept = Vec::new();
-                let mut count = 0_u64;
+                let mut removed = Vec::new();
                 for row in rows {
                     if keep(&pred, &row, params, 0)? {
-                        count += 1;
+                        removed.push(row);
                     } else {
                         kept.push(row);
                     }
                 }
                 self.put_table(&table, kept);
+                let count = u64::try_from(removed.len()).unwrap_or(u64::MAX);
+                for old in removed {
+                    self.record(Change {
+                        table: table.clone(),
+                        old: Some(old),
+                        new: None,
+                        key: key.clone(),
+                    });
+                }
                 Ok((count, Vec::new()))
             }
             Stmt::Select(query) => self.exec_select(&query, params),
@@ -589,9 +656,12 @@ impl MemConn {
             return Ok((
                 1,
                 vec![DbRow {
-                    columns: vec![("count".to_string(), Value::I64(n))],
+                    columns: vec![("count".into(), Value::I64(n))],
                 }],
             ));
+        }
+        if !query.group.is_empty() || query.columns.iter().any(|column| column.starts_with(COUNT_COLUMN)) {
+            matched = group_rows(matched, &query.group, &query.columns);
         }
         matched.sort_by(|left, right| sort_rows(left, right, &query.order));
         let mut idx = pred_slots(&query.pred);
@@ -619,7 +689,7 @@ impl MemConn {
             .map(|row| {
                 let mut out = project(row, &query.columns);
                 for (column, name) in out.columns.iter_mut().zip(&query.names) {
-                    column.0.clone_from(name);
+                    column.0 = name.as_str().into();
                 }
                 out
             })
@@ -636,12 +706,120 @@ impl MemConn {
     }
 
     fn put_table(&mut self, table: &str, rows: Vec<Row>) {
-        if let Some(local) = self.local.as_mut() {
-            local.insert(table.to_string(), rows);
-            self.dirty.insert(table.to_string());
+        if self.local.is_none() {
+            lock(&self.store).insert(table.to_string(), rows);
             return;
         }
-        lock(&self.store).insert(table.to_string(), rows);
+        if let Some(local) = self.local.as_mut() {
+            local.insert(table.to_string(), rows);
+        }
+        self.dirty.insert(table.to_string());
+    }
+
+    /// An autocommit write already replaced the table. A transaction replays the change at commit.
+    fn record(&mut self, change: Change) {
+        if self.local.is_some() {
+            self.changes.push(change);
+        }
+    }
+}
+
+/// Replay this transaction's writes onto the rows committed so far.
+///
+/// Replacing the whole table dropped another transaction's rows: both had copied the table, and the
+/// later commit put the earlier copy back. A write finds its row by the equality columns of its WHERE,
+/// so an update of one row keeps a concurrent update of another, and a delete removes the row even when
+/// someone else has changed its other columns.
+fn apply_changes(mut current: Vec<Row>, changes: &[&Change]) -> Vec<Row> {
+    for change in changes {
+        match (&change.old, &change.new) {
+            (None, Some(new)) => current.push(new.clone()),
+            (Some(old), None) => remove_keyed(&mut current, old, change.key.as_deref()),
+            (Some(old), Some(new)) => update_keyed(&mut current, old, new, change.key.as_deref()),
+            (None, None) => {}
+        }
+    }
+    current
+}
+
+/// The one committed row whose equality columns match `old`, or none when that is not unique.
+fn key_index(current: &[Row], old: &Row, key: Option<&[String]>) -> Option<usize> {
+    let key = key?;
+    let mut found = None;
+    for (index, row) in current.iter().enumerate() {
+        if key.iter().all(|column| row.get(column) == old.get(column)) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+        }
+    }
+    found
+}
+
+fn remove_keyed(current: &mut Vec<Row>, old: &Row, key: Option<&[String]>) {
+    let index = key_index(current, old, key).or_else(|| current.iter().position(|row| row == old));
+    if let Some(index) = index {
+        current.remove(index);
+    }
+}
+
+fn update_keyed(current: &mut [Row], old: &Row, new: &Row, key: Option<&[String]>) {
+    let index = key_index(current, old, key).or_else(|| current.iter().position(|row| row == old));
+    let Some(index) = index else {
+        return;
+    };
+    let row = &mut current[index];
+    for (column, value) in new {
+        if old.get(column) != Some(value) {
+            row.insert(column.clone(), value.clone());
+        }
+    }
+}
+
+/// Sequence rows are one per `seq_name`. A concurrent refill keeps the higher `seq_num`.
+fn merge_sequence_rows(after: &[Row], mut current: Vec<Row>) -> Vec<Row> {
+    for row in after {
+        let Some(name) = row.get("seq_name") else {
+            continue;
+        };
+        if let Some(existing) = current.iter_mut().find(|item| item.get("seq_name") == Some(name)) {
+            let ours = row.get("seq_num").and_then(|value| as_i64(value).ok()).unwrap_or(0);
+            let theirs = existing
+                .get("seq_num")
+                .and_then(|value| as_i64(value).ok())
+                .unwrap_or(0);
+            if ours >= theirs {
+                *existing = row.clone();
+            }
+        } else {
+            current.push(row.clone());
+        }
+    }
+    current
+}
+
+/// The columns of a condition that is only `column = ?` joined by AND. Anything else has no key.
+fn equality_key(pred: &Option<Pred>) -> Option<Vec<String>> {
+    let mut fields = Vec::new();
+    if !equality_fields(pred.as_ref()?, &mut fields) || fields.is_empty() {
+        return None;
+    }
+    Some(fields)
+}
+
+fn equality_fields(pred: &Pred, fields: &mut Vec<String>) -> bool {
+    match pred {
+        Pred::Cmp {
+            field,
+            op: Op::Eq,
+            upper: false,
+        } => {
+            fields.push(field.clone());
+            true
+        }
+        Pred::And(parts) => parts.iter().all(|part| equality_fields(part, fields)),
+        _ => false,
     }
 }
 
@@ -661,7 +839,7 @@ fn count_slots(pred: &Pred) -> usize {
     match pred {
         Pred::Cmp { .. } => 1,
         Pred::In { slots, .. } => *slots,
-        Pred::IsNull { .. } => 0,
+        Pred::IsNull { .. } | Pred::Fields { .. } => 0,
         Pred::And(parts) | Pred::Or(parts) => parts.iter().map(count_slots).sum(),
     }
 }
@@ -693,6 +871,11 @@ fn eval_pred(pred: &Pred, row: &Row, params: &[Value], idx: &mut usize) -> Resul
         Pred::IsNull { field, negated } => {
             let is_null = row.get(field).is_none_or(Value::is_null);
             Ok(if *negated { !is_null } else { is_null })
+        }
+        Pred::Fields { field, op, other } => {
+            let left = row.get(field).cloned().unwrap_or(Value::Null);
+            let right = row.get(other).cloned().unwrap_or(Value::Null);
+            Ok(!left.is_null() && !right.is_null() && compare(&left, *op, &right))
         }
         Pred::And(parts) => {
             let mut all = true;
@@ -836,11 +1019,46 @@ fn sort_rows(left: &Row, right: &Row, order: &[OrderKey]) -> std::cmp::Ordering 
     std::cmp::Ordering::Equal
 }
 
+/// One row per value of the `group` columns, its first row's columns and each `COUNT("field")` column the rows of the
+/// group whose field is not null. No group columns: one row of all, as `SELECT COUNT("x") FROM ...`.
+fn group_rows(rows: Vec<Row>, group: &[String], columns: &[String]) -> Vec<Row> {
+    let mut groups: Vec<(Vec<Value>, Vec<Row>)> = Vec::new();
+    for row in rows {
+        let key: Vec<Value> = group
+            .iter()
+            .map(|field| row.get(field).cloned().unwrap_or(Value::Null))
+            .collect();
+        match groups.iter_mut().find(|(seen, _)| *seen == key) {
+            Some((_, members)) => members.push(row),
+            None => groups.push((key, vec![row])),
+        }
+    }
+    if groups.is_empty() && group.is_empty() {
+        groups.push((Vec::new(), Vec::new()));
+    }
+    groups
+        .into_iter()
+        .map(|(_, members)| {
+            let mut out = members.first().cloned().unwrap_or_default();
+            for column in columns {
+                if let Some(field) = column.strip_prefix(COUNT_COLUMN) {
+                    let n = members
+                        .iter()
+                        .filter(|row| row.get(field).is_some_and(|value| !value.is_null()))
+                        .count();
+                    out.insert(column.clone(), Value::I64(i64::try_from(n).unwrap_or(i64::MAX)));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 fn project(row: &Row, columns: &[String]) -> DbRow {
     DbRow {
         columns: columns
             .iter()
-            .map(|name| (name.clone(), row.get(name).cloned().unwrap_or(Value::Null)))
+            .map(|name| (name.as_str().into(), row.get(name).cloned().unwrap_or(Value::Null)))
             .collect(),
     }
 }
@@ -864,8 +1082,9 @@ enum Stmt {
     Insert {
         table: String,
         columns: Vec<String>,
-        /// `ON CONFLICT (columns) DO NOTHING`: a row equal on these is not inserted again.
-        conflict: Option<Vec<String>>,
+        /// `ON CONFLICT (columns) DO NOTHING`, or `DO UPDATE SET column = EXCLUDED.column, ...`: a row equal on the
+        /// conflict columns is not inserted again, and gets the update columns' new values.
+        conflict: Option<(Vec<String>, Vec<String>)>,
     },
     Update {
         table: String,
@@ -889,10 +1108,15 @@ struct SelectQuery {
     alias: Option<String>,
     joins: Vec<Join>,
     pred: Option<Pred>,
+    /// `GROUP BY` columns. With them, or with a `COUNT("field")` column, the matched rows are grouped: one row each.
+    group: Vec<String>,
     order: Vec<OrderKey>,
     limit: bool,
     offset: bool,
 }
+
+/// A column that counts, `COUNT("field")`, is kept as this prefix and the field.
+const COUNT_COLUMN: &str = "COUNT ";
 
 enum Pred {
     /// `"field" op ?`, or with `upper` `UPPER("field") op UPPER(?)`, a comparison that ignores case.
@@ -911,6 +1135,12 @@ enum Pred {
     IsNull {
         field: String,
         negated: bool,
+    },
+    /// `"field" op "other"`, two columns compared (a view's `econdition` with `to-field-name`). A null never matches.
+    Fields {
+        field: String,
+        op: Op,
+        other: String,
     },
     And(Vec<Pred>),
     Or(Vec<Pred>),
@@ -992,8 +1222,25 @@ fn parse_insert(cur: &mut Cur) -> Result<Stmt, Error> {
         }
         cur.expect_symbol(b')')?;
         cur.expect_keyword("DO")?;
-        cur.expect_keyword("NOTHING")?;
-        Some(keys)
+        let mut updates = Vec::new();
+        if !cur.eat_keyword("NOTHING") {
+            cur.expect_keyword("UPDATE")?;
+            cur.expect_keyword("SET")?;
+            loop {
+                let column = cur.quoted()?;
+                cur.expect_symbol(b'=')?;
+                cur.expect_keyword("EXCLUDED")?;
+                cur.expect_symbol(b'.')?;
+                if cur.quoted()? != column {
+                    return Err(cur.fail("an upsert sets a column from its own excluded value"));
+                }
+                updates.push(column);
+                if !cur.eat_symbol(b',') {
+                    break;
+                }
+            }
+        }
+        Some((keys, updates))
     } else {
         None
     };
@@ -1039,12 +1286,13 @@ fn parse_delete(cur: &mut Cur) -> Result<Stmt, Error> {
 }
 
 fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
-    let count = if cur.eat_keyword("COUNT") {
-        cur.expect_symbol(b'(')?;
-        cur.expect_symbol(b'*')?;
+    let start = cur.i;
+    let count = if cur.eat_keyword("COUNT") && cur.eat_symbol(b'(') && cur.eat_symbol(b'*') {
         cur.expect_symbol(b')')?;
         true
     } else {
+        // a column that counts a field: parse_columns reads it
+        cur.i = start;
         false
     };
     let (columns, names): (Vec<String>, Vec<String>) = if count {
@@ -1099,6 +1347,16 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
     } else {
         None
     };
+    let mut group = Vec::new();
+    if cur.eat_keyword("GROUP") {
+        cur.expect_keyword("BY")?;
+        loop {
+            group.push(cur.quoted()?);
+            if !cur.eat_symbol(b',') {
+                break;
+            }
+        }
+    }
     let order = if cur.eat_keyword("ORDER") {
         cur.expect_keyword("BY")?;
         // `ORDER BY 1` sorts by the first column.
@@ -1144,6 +1402,7 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         alias,
         joins,
         pred,
+        group,
         order,
         limit,
         offset,
@@ -1158,7 +1417,14 @@ fn parse_columns(cur: &mut Cur) -> Result<Vec<(String, String)>, Error> {
         if cur.peek_keyword("FROM") {
             break;
         }
-        let column = cur.quoted()?;
+        let column = if cur.eat_keyword("COUNT") {
+            cur.expect_symbol(b'(')?;
+            let field = cur.quoted()?;
+            cur.expect_symbol(b')')?;
+            format!("{COUNT_COLUMN}{field}")
+        } else {
+            cur.quoted()?
+        };
         let name = if cur.eat_keyword("AS") {
             cur.quoted()?
         } else {
@@ -1252,6 +1518,16 @@ fn parse_primary(cur: &mut Cur) -> Result<Pred, Error> {
         return Ok(Pred::IsNull { field, negated });
     }
     let negated = cur.eat_keyword("NOT");
+    if !negated && !upper {
+        let start = cur.i;
+        if let Some(op) = cur.eat_op() {
+            if cur.peek_symbol(b'"') {
+                let other = cur.quoted()?;
+                return Ok(Pred::Fields { field, op, other });
+            }
+        }
+        cur.i = start;
+    }
     if cur.eat_keyword("LIKE") {
         expect_slot(cur, upper)?;
         return Ok(Pred::Cmp {
@@ -1429,5 +1705,189 @@ impl Cur<'_> {
     fn fail(&self, message: &str) -> Error {
         let rest: String = self.sql[self.i..].chars().take(160).collect();
         Error::new(format!("{message} at '{rest}'"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory() -> MemDriver {
+        MemDriver {
+            store: Arc::new(Mutex::new(BTreeMap::new())),
+            tape: None,
+        }
+    }
+
+    fn cell(row: &DbRow, name: &str) -> String {
+        row.get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    }
+
+    /// Two open transactions each change a different row. The later commit has to keep the earlier one.
+    #[test]
+    fn a_later_commit_keeps_the_other_transactions_row() {
+        let driver = memory();
+        let mut seed = driver.connect().unwrap();
+        seed.execute(
+            "INSERT INTO \"message\" (\"id\", \"status\") VALUES (?, ?)",
+            &[Value::string("out"), Value::string("sending")],
+        )
+        .unwrap();
+        seed.execute(
+            "INSERT INTO \"message\" (\"id\", \"status\") VALUES (?, ?)",
+            &[Value::string("in"), Value::string("received")],
+        )
+        .unwrap();
+        drop(seed);
+
+        let mut sent = driver.connect().unwrap();
+        let mut consuming = driver.connect().unwrap();
+        sent.begin().unwrap();
+        consuming.begin().unwrap();
+        assert_eq!(
+            sent.execute(
+                "UPDATE \"message\" SET \"status\" = ? WHERE \"id\" = ?",
+                &[Value::string("sent"), Value::string("out")],
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            consuming
+                .execute(
+                    "UPDATE \"message\" SET \"status\" = ? WHERE \"id\" = ?",
+                    &[Value::string("consuming"), Value::string("in")],
+                )
+                .unwrap(),
+            1
+        );
+        // The consume commits second. Its snapshot still has the outgoing row as sending.
+        sent.commit().unwrap();
+        consuming.commit().unwrap();
+
+        let mut check = driver.connect().unwrap();
+        let rows = check.query("SELECT \"id\", \"status\" FROM \"message\"", &[]).unwrap();
+        let mut found: Vec<(String, String)> = rows.iter().map(|row| (cell(row, "id"), cell(row, "status"))).collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                ("in".to_string(), "consuming".to_string()),
+                ("out".to_string(), "sent".to_string()),
+            ]
+        );
+    }
+
+    /// Both transactions updated the one row from the same snapshot. The later commit writes its columns onto that row.
+    #[test]
+    fn a_later_update_of_the_same_row_overlays_the_columns_it_changed() {
+        let driver = memory();
+        let mut seed = driver.connect().unwrap();
+        seed.execute(
+            "INSERT INTO \"message\" (\"id\", \"status\") VALUES (?, ?)",
+            &[Value::string("out"), Value::string("produced")],
+        )
+        .unwrap();
+        drop(seed);
+
+        let mut sending = driver.connect().unwrap();
+        let mut error = driver.connect().unwrap();
+        sending.begin().unwrap();
+        error.begin().unwrap();
+        sending
+            .execute(
+                "UPDATE \"message\" SET \"status\" = ? WHERE \"id\" = ?",
+                &[Value::string("sending"), Value::string("out")],
+            )
+            .unwrap();
+        error
+            .execute(
+                "UPDATE \"message\" SET \"status\" = ? WHERE \"id\" = ?",
+                &[Value::string("error"), Value::string("out")],
+            )
+            .unwrap();
+        sending.commit().unwrap();
+        error.commit().unwrap();
+
+        let mut check = driver.connect().unwrap();
+        let rows = check.query("SELECT \"id\", \"status\" FROM \"message\"", &[]).unwrap();
+        let found: Vec<String> = rows.iter().map(|row| cell(row, "status")).collect();
+        assert_eq!(found, vec!["error".to_string()]);
+    }
+
+    /// Two refills of one sequence name stay one row, and the higher number wins.
+    #[test]
+    fn concurrent_sequence_refills_keep_one_row_and_the_higher_number() {
+        let driver = memory();
+        let mut seed = driver.connect().unwrap();
+        seed.execute(
+            "INSERT INTO \"sequence_value_item\" (\"seq_name\", \"seq_num\") VALUES (?, ?)",
+            &[Value::string("order"), Value::I64(100)],
+        )
+        .unwrap();
+        drop(seed);
+
+        let mut low = driver.connect().unwrap();
+        let mut high = driver.connect().unwrap();
+        low.begin().unwrap();
+        high.begin().unwrap();
+        low.execute(
+            "UPDATE \"sequence_value_item\" SET \"seq_num\" = ? WHERE \"seq_name\" = ?",
+            &[Value::I64(150), Value::string("order")],
+        )
+        .unwrap();
+        high.execute(
+            "UPDATE \"sequence_value_item\" SET \"seq_num\" = ? WHERE \"seq_name\" = ?",
+            &[Value::I64(250), Value::string("order")],
+        )
+        .unwrap();
+        low.commit().unwrap();
+        high.commit().unwrap();
+
+        let mut check = driver.connect().unwrap();
+        let rows = check
+            .query("SELECT \"seq_name\", \"seq_num\" FROM \"sequence_value_item\"", &[])
+            .unwrap();
+        let found: Vec<String> = rows.iter().map(|row| cell(row, "seq_num")).collect();
+        assert_eq!(found, vec!["250".to_string()]);
+    }
+
+    /// The delete started from the row as it was, then another transaction changed that row and committed.
+    /// The delete still removes it.
+    #[test]
+    fn a_delete_removes_the_row_a_committed_update_had_changed() {
+        let driver = memory();
+        let mut seed = driver.connect().unwrap();
+        seed.execute(
+            "INSERT INTO \"message\" (\"id\", \"status\") VALUES (?, ?)",
+            &[Value::string("srv"), Value::string("token")],
+        )
+        .unwrap();
+        drop(seed);
+
+        let mut delete = driver.connect().unwrap();
+        delete.begin().unwrap();
+        let mut revise = driver.connect().unwrap();
+        revise.begin().unwrap();
+        revise
+            .execute(
+                "UPDATE \"message\" SET \"status\" = ? WHERE \"id\" = ?",
+                &[Value::string("cleared"), Value::string("srv")],
+            )
+            .unwrap();
+        revise.commit().unwrap();
+        assert_eq!(
+            delete
+                .execute("DELETE FROM \"message\" WHERE \"id\" = ?", &[Value::string("srv")])
+                .unwrap(),
+            1
+        );
+        delete.commit().unwrap();
+
+        let mut check = driver.connect().unwrap();
+        let rows = check.query("SELECT \"id\", \"status\" FROM \"message\"", &[]).unwrap();
+        assert!(rows.is_empty());
     }
 }
