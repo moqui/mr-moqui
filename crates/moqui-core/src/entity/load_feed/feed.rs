@@ -63,6 +63,9 @@ struct DocTarget {
     primary_entity: String,
     /// Relationship steps from the primary entity to this one, `(entity, relationship)` each.
     paths: Vec<Vec<(String, String)>>,
+    /// Fields of this entity whose write reaches the document, as Java `DocumentEntityInfo.fields`: the
+    /// document's fields on it and the key fields of each relationship that leaves it.
+    fields: HashSet<String>,
 }
 
 /// Note a write for the data feed when it ran inside a transaction. Call it after the statement succeeded, so a
@@ -164,7 +167,16 @@ fn insert_pending(
         let Some(fields) = &touch.fields else {
             continue;
         };
-        for hit in targets.iter().filter(|target| target.entity_name == touch.entity_name) {
+        let pk_names = facade
+            .with_entity(&touch.entity_name, |entity, _, _| {
+                Ok(entity.pk_field_names().into_iter().map(str::to_string).collect::<HashSet<_>>())
+            })
+            .unwrap_or_default();
+        for hit in targets
+            .iter()
+            .filter(|target| target.entity_name == touch.entity_name)
+            .filter(|target| touch.operation == "delete" || writes_document_field(touch, fields, &pk_names, target))
+        {
             if hit.primary {
                 let Some(id) = pk_text(facade, &touch.entity_name, fields) else {
                     continue;
@@ -255,6 +267,21 @@ fn insert_pending(
         }
     }
     Ok(inserted)
+}
+
+/// Whether a create or update wrote a field of the target, as Java `dataFeedCheckAndRegister`: a create any of
+/// them, an update one that is not a primary key. Java also skips an update that sets a field to its old value;
+/// the update here keeps no old values.
+fn writes_document_field(
+    touch: &Touch,
+    fields: &BTreeMap<String, Value>,
+    pk_names: &HashSet<String>,
+    target: &DocTarget,
+) -> bool {
+    target
+        .fields
+        .iter()
+        .any(|name| fields.contains_key(name) && (touch.operation != "update" || !pk_names.contains(name)))
 }
 
 /// Primary key values joined with `::`, or `None` when one is missing.
@@ -550,6 +577,9 @@ fn feed_targets(
             tracing::warn!(entity = %primary, document = %document_id, "data document primary entity is not defined");
             continue;
         };
+        let document_paths = paths.get(&document_id).map(Vec::as_slice).unwrap_or(&[]);
+        let mut fields = document_fields(facade, &primary_full, document_paths);
+        let mut take = |name: &str| fields.remove(name).unwrap_or_default();
         push_target(
             &mut targets,
             &mut seen,
@@ -557,14 +587,11 @@ fn feed_targets(
             &primary_full,
             &primary_full,
             None,
+            take(&primary_full),
         );
-        let related = related_entities(
-            facade,
-            &primary_full,
-            paths.get(&document_id).map(Vec::as_slice).unwrap_or(&[]),
-        );
-        for (name, steps) in related {
-            push_target(&mut targets, &mut seen, &document_id, &name, &primary_full, Some(steps));
+        for (name, steps) in related_entities(facade, &primary_full, document_paths) {
+            let entity_fields = take(&name);
+            push_target(&mut targets, &mut seen, &document_id, &name, &primary_full, Some(steps), entity_fields);
         }
     }
     Ok(targets)
@@ -578,6 +605,7 @@ fn push_target(
     entity_name: &str,
     primary_entity: &str,
     steps: Option<Vec<(String, String)>>,
+    fields: HashSet<String>,
 ) {
     if seen.insert((document_id.to_string(), entity_name.to_string())) {
         targets.push(DocTarget {
@@ -586,17 +614,48 @@ fn push_target(
             primary: steps.is_none(),
             primary_entity: primary_entity.to_string(),
             paths: steps.into_iter().collect(),
+            fields,
         });
-    } else if let Some(steps) = steps {
-        if let Some(target) = targets
-            .iter_mut()
-            .find(|target| target.data_document_id == document_id && target.entity_name == entity_name)
-        {
+    } else if let Some(target) = targets
+        .iter_mut()
+        .find(|target| target.data_document_id == document_id && target.entity_name == entity_name)
+    {
+        target.fields.extend(fields);
+        if let Some(steps) = steps {
             if !target.paths.contains(&steps) {
                 target.paths.push(steps);
             }
         }
     }
+}
+
+/// The fields of each entity of a document whose write reaches it, as Java `getDataDocumentEntityInfo`: the last
+/// element of a field path on the entity it reaches, and the key fields of each relationship on the entity it leaves.
+fn document_fields(facade: &EntityFacade, primary: &str, paths: &[String]) -> HashMap<String, HashSet<String>> {
+    let mut fields: HashMap<String, HashSet<String>> = HashMap::new();
+    for path in paths {
+        let parts: Vec<&str> = path.split(':').collect();
+        let Some((leaf, relationships)) = parts.split_last() else {
+            continue;
+        };
+        let mut current = primary.to_string();
+        let mut reached = true;
+        for rel_name in relationships {
+            let Ok((next, pairs)) = crate::entity::query_rest::relationship_pairs(facade, &current, rel_name) else {
+                reached = false;
+                break;
+            };
+            fields
+                .entry(current.clone())
+                .or_default()
+                .extend(pairs.into_iter().map(|(field, _)| field));
+            current = next;
+        }
+        if reached {
+            fields.entry(current).or_default().insert((*leaf).to_string());
+        }
+    }
+    fields
 }
 
 /// Each entity on a field path below the primary, with the `(entity, relationship)` steps that

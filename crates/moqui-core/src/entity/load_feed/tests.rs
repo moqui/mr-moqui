@@ -110,6 +110,8 @@ struct Script {
     savepoints: AtomicUsize,
     /// Rolling back to a savepoint fails while set.
     broken_rollback: AtomicBool,
+    /// The one field path of the document.
+    document_field: Mutex<&'static str>,
 }
 
 fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
@@ -120,6 +122,7 @@ fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
         definition_reads: AtomicUsize::new(0),
         savepoints: AtomicUsize::new(0),
         broken_rollback: AtomicBool::new(false),
+        document_field: Mutex::new("fooId"),
     })
 }
 
@@ -148,8 +151,9 @@ impl DbConnection for ScriptConn {
             return Ok(vec![db_row(&[("fooId", "F1")])]);
         }
         if sql.contains("data_document_field") {
-            let source = std::io::Error::other("relation \"DataDocumentField\" does not exist");
-            return Err(Error::new("postgres query").with_source(source));
+            // As Java, a write reaches a document only through one of its fields.
+            let field = *self.script.document_field.lock().expect("document field");
+            return Ok(vec![db_row(&[("dataDocumentId", "DOC1"), ("fieldPath", field)])]);
         }
         if sql.contains("data_feed_document") {
             return Ok(vec![db_row(&[("dataFeedId", "FEED1"), ("dataDocumentId", "DOC1")])]);
@@ -902,4 +906,26 @@ fn feed_definitions_are_read_once_until_one_is_written() {
     create_foo(&facade, "F6").unwrap();
     facade.commit("moqui.test.Foo").unwrap();
     assert_eq!(reads(), settled);
+}
+
+#[test]
+fn an_update_feeds_only_when_it_writes_a_document_field() {
+    // As Java `dataFeedCheckAndRegister`: the primary key of an update never changes, so only other fields count.
+    let update_text = |document_field: &'static str| {
+        let script = new_script(false, false);
+        *script.document_field.lock().expect("document field") = document_field;
+        let facade = open_with(Arc::new(ScriptDriver {
+            script: Arc::clone(&script),
+        }));
+        facade.begin("moqui.test.Foo", None).unwrap();
+        let mut value = facade.make_value("moqui.test.Foo").unwrap();
+        value.set("fooId", Value::string("F1"));
+        value.set("fooText", Value::string("changed"));
+        value.update(&facade).unwrap();
+        facade.commit("moqui.test.Foo").unwrap();
+        let fed = script.inserts.lock().expect("inserts").len();
+        fed
+    };
+    assert_eq!(update_text("fooId"), 0, "the document reads only the primary key");
+    assert_eq!(update_text("fooText"), 1, "the document reads the written field");
 }
