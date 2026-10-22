@@ -122,6 +122,8 @@ button, input[type="submit"], input[type="reset"], input[type="button"], summary
 }
 /* Java container-dialog buttons use Bootstrap btn-sm. */
 button[id$="-button"][data-dialog] { padding: 5px 10px; font-size: 12px; line-height: 1.5; border-radius: 3px; }
+/* Java's screen links and submit widgets also default to Bootstrap btn-sm. */
+[data-btn]:not([data-btn="plain"]):not([data-size]) { padding: 5px 10px; font-size: 12px; line-height: 1.5; border-radius: 3px; }
 button:hover, [data-btn]:hover, summary:hover { filter: brightness(.96); text-decoration: none; }
 [data-btn="primary"] { background: var(--primary); border-color: var(--primary); color: #fff; }
 [data-btn="success"] { background: var(--success); border-color: var(--success); color: #fff; }
@@ -155,10 +157,11 @@ details.menu li.active > a { font-weight: 600; }
 @media (min-width: 1200px) { .row > .col { --c: var(--lg, var(--md, var(--sm, var(--xs, 12)))); } }
 
 section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
-section.box > header { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap); padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--stripe); border-radius: var(--radius) var(--radius) 0 0; }
-section.box > header h5 { margin: 0; font-size: 1rem; }
-section.box > header .toolbar { margin-left: auto; }
-section.box > .body { padding: 8px 10px; }
+/* Java Bootstrap panel headings plus webroot-layout.css's toolbar/body rules. */
+section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: var(--stripe); border-radius: var(--radius) var(--radius) 0 0; }
+section.box > header h5 { display: inline-block; margin: 0; font-size: 16px; font-weight: 500; line-height: 1.1; }
+section.box > header .toolbar { position: absolute; top: 0; right: 0; }
+section.box > .body { padding: 8px; }
 section.box > .body-nopad > table { margin: 0; }
 /* status-bar: the stage chips (done checked, the current one filled in its color, the ones to come outlined) and the
    transition buttons, each in its own form */

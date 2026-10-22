@@ -29,6 +29,8 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         <button id="button">Find Options</button><button id="NewProductDialog-button" data-dialog="NewProductDialog">New Product</button><strong id="strong">Label</strong>
         <div id="invoice-status"><span class="shaded-area condensed"><ul class="float-plain condensed"><li><div><strong>Status</strong></div><div><strong>In-Process</strong></div></li><li><button>Finalize</button></li><li><button>Cancel</button></li></ul></span></div>
         <table class="form-list"><thead><tr class="nav-row"><th><nav><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
+        <section class="box" id="panel"><header id="panel-heading"><h5 id="panel-title">Payment Applications</h5><div class="toolbar" id="panel-toolbar"><button data-btn="primary" id="panel-action">New Payment</button></div></header><div class="body" id="panel-body">Applied Payments</div></section>
+        <a data-btn="primary" id="small-action">Current PDF</a><a data-btn="plain" id="plain-action">Account</a><a data-btn="primary" data-size="lg" id="large-action">Large</a>
         <pre id="result"></pre><script>
         const measure = id => {
             const row = document.getElementById(id);
@@ -76,6 +78,19 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
                 bigItemGap:getComputedStyle(document.querySelector('#wide .big-item .field')).marginBottom
             },
             lightStatus, darkStatus,
+            widgetMetrics: {
+                actionHeight:document.getElementById('small-action').getBoundingClientRect().height,
+                actionFont:getComputedStyle(document.getElementById('small-action')).fontSize,
+                plainFont:getComputedStyle(document.getElementById('plain-action')).fontSize,
+                largeFont:getComputedStyle(document.getElementById('large-action')).fontSize,
+                headingPadding:getComputedStyle(document.getElementById('panel-heading')).padding,
+                headingFont:getComputedStyle(document.getElementById('panel-title')).fontSize,
+                headingWeight:getComputedStyle(document.getElementById('panel-title')).fontWeight,
+                headingBorder:getComputedStyle(document.getElementById('panel-heading')).borderBottomColor,
+                bodyPadding:getComputedStyle(document.getElementById('panel-body')).padding,
+                toolbarTop:document.getElementById('panel-toolbar').getBoundingClientRect().top - document.getElementById('panel-heading').getBoundingClientRect().top,
+                toolbarHeightIndependent:document.getElementById('panel-heading').getBoundingClientRect().height < document.getElementById('panel-toolbar').getBoundingClientRect().height + 20
+            },
             javaMetrics: {
                 font:getComputedStyle(document.body).fontFamily, fontSize:getComputedStyle(document.body).fontSize,
                 lineHeight:getComputedStyle(document.body).lineHeight, background:getComputedStyle(document.body).backgroundColor,
@@ -107,8 +122,14 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     // Java webroot-layout.css/table-condensed and webroot-theme.css flattening, with Bootstrap typography.
+    assert.deepEqual(widgetMetrics, {
+        actionHeight:30, actionFont:'12px', plainFont:'14px', largeFont:'15.4px',
+        headingPadding:'10px 15px', headingFont:'16px', headingWeight:'500',
+        headingBorder:'rgba(0, 0, 0, 0)', bodyPadding:'8px', toolbarTop:0,
+        toolbarHeightIndependent:true
+    });
     assert.deepEqual(javaMetrics, {
         font: '"Helvetica Neue", Helvetica, Arial, sans-serif', fontSize: '14px', lineHeight: '20px',
         background: 'rgb(255, 255, 255)', color: 'rgb(34, 34, 34)', cellPadding: '5px', cellAlign: 'middle',
