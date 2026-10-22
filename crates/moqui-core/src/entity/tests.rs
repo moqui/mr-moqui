@@ -135,8 +135,8 @@ struct IterConn {
 fn test_row() -> DbRow {
     DbRow {
         columns: vec![
-            ("testId".to_string(), Value::string("T1")),
-            ("testMedium".to_string(), Value::string("kept")),
+            ("testId".into(), Value::string("T1")),
+            ("testMedium".into(), Value::string("kept")),
         ],
     }
 }
@@ -251,8 +251,8 @@ impl DbConnection for RecConn {
             if let Some(password) = tape.password.clone() {
                 return Ok(vec![DbRow {
                     columns: vec![
-                        ("instanceHostId".to_string(), Value::string("H1")),
-                        ("password".to_string(), Value::string(password)),
+                        ("instanceHostId".into(), Value::string("H1")),
+                        ("password".into(), Value::string(password)),
                     ],
                 }]);
             }
@@ -449,12 +449,12 @@ fn try_insert_seals_the_password_before_sql() {
     fields.insert("instanceHostId".to_string(), Value::string("H1"));
     fields.insert("password".to_string(), Value::string("TestEntityFieldValue"));
     facade
-        .upsert_record("moqui.server.instance.InstanceHost", &fields)
+        .upsert_record("moqui.server.instance.InstanceHost", crate::entity::field_map(fields.clone()))
         .unwrap();
     fields.insert("instanceHostId".to_string(), Value::string("H2"));
     facade.begin("moqui.server.instance.InstanceHost", None).unwrap();
     facade
-        .upsert_record("moqui.server.instance.InstanceHost", &fields)
+        .upsert_record("moqui.server.instance.InstanceHost", crate::entity::field_map(fields.clone()))
         .unwrap();
     facade.commit("moqui.server.instance.InstanceHost").unwrap();
     let recorded = tape.lock().unwrap_or_else(|err| err.into_inner());
@@ -1010,7 +1010,7 @@ impl DbConnection for CursorConn {
         tape.fetched += 1;
         let number = i64::try_from(tape.fetched).unwrap_or_default();
         Ok(Some(DbRow {
-            columns: vec![("n".to_string(), Value::I64(number))],
+            columns: vec![("n".into(), Value::I64(number))],
         }))
     }
 
@@ -1219,7 +1219,8 @@ fn xml_cdata_text_with_a_section_end_loads_back_unchanged() {
     let mut fields = BTreeMap::new();
     fields.insert("testId".to_string(), Value::string("CD1"));
     fields.insert("testLong".to_string(), Value::string(text));
-    let element = super::query_rest::xml_element(&facade, "moqui.test.TestEntity", &fields, 0).unwrap();
+    let element =
+        super::query_rest::xml_element(&facade, "moqui.test.TestEntity", &crate::entity::field_map(fields), 0).unwrap();
     assert!(element.contains("]]]]><![CDATA[>"), "{element}");
     let document = format!("<entity-facade-xml>\n{element}</entity-facade-xml>\n");
     let loaded =
@@ -1413,7 +1414,7 @@ fn create_or_update_on_an_existing_row_is_one_update_with_the_same_sql_as_update
 }
 
 #[test]
-fn create_or_update_on_a_new_row_updates_nothing_then_finds_and_inserts_as_before() {
+fn create_or_update_on_a_new_row_updates_nothing_then_inserts_as_before() {
     let (facade, tape) = open_store(false, "postgres");
     facade.create_value(&test_value(&facade)).unwrap();
     let direct_insert = tape.lock().unwrap().sql.clone();
@@ -1426,9 +1427,10 @@ fn create_or_update_on_a_new_row_updates_nothing_then_finds_and_inserts_as_befor
     }
     facade.create_or_update_value(&test_value(&facade)).unwrap();
     let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
-    assert_eq!(kinds, ["UPDATE", "SELECT", "INSERT"], "{kinds:?}");
+    // The UPDATE that matched no row stands for the read: the transaction has no such row.
+    assert_eq!(kinds, ["UPDATE", "INSERT"], "{kinds:?}");
     let tape = tape.lock().unwrap();
-    assert_eq!(tape.sql[2], direct_insert[0]);
+    assert_eq!(tape.sql[1], direct_insert[0]);
     assert!(tape.exists);
 }
 
@@ -1459,7 +1461,7 @@ fn create_or_update_flag_selects_java_read_first_and_defaults_to_update_first() 
         let expected = match (java, exists) {
             (true, false) => vec!["SELECT", "INSERT"],
             (true, true) => vec!["SELECT", "UPDATE"],
-            (false, false) => vec!["UPDATE", "SELECT", "INSERT"],
+            (false, false) => vec!["UPDATE", "INSERT"],
             (false, true) => vec!["UPDATE"],
         };
         assert_eq!(kinds, expected, "java={java}, exists={exists}");
@@ -2778,8 +2780,8 @@ fn a_load_entity_file_outside_the_entity_directories_joins_the_model() {
 fn a_sequence_primary_prefix_is_expanded_with_the_value_fields() {
     let context = crate::context::ExecutionContextFactory::test_context();
     let _entered = context.enter();
-    let mut values = BTreeMap::new();
-    values.insert("kind".to_string(), Value::string("INV"));
+    let mut values = crate::entity::FieldMap::new();
+    values.insert("kind".into(), Value::string("INV"));
     assert_eq!(
         super::sequence::expand_prefix(Some("${kind}-"), &values)
             .unwrap()

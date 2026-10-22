@@ -1,0 +1,50 @@
+ gallery ▸ Dialog                                                                                                                                               john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.11 Dialog ─────────────────────────────────────────────────┐ ┌─ Comparison operators ───────────────────────────────────────────────────┐
+     Landing             │ ┃ Create and edit without leaving the list: New is a 600 px               │ │ [ New… ]                                                                 │
+     List                │ ┃ container-dialog with a single-column form-single whose submit confirms │ │   ID                Description    Code        Edit Dialog View Dialog   │
+     Detail              │ ┃ and posts in the background (the dialog closes and a message shows);    │ │ ───────────────────────────────────────────────────────────────────────  │
+     360                 │ ┃ Edit is a container-dialog per row; View is a 900 px dynamic-dialog     │ │   ENTCO_BETWEEN     between        BETWEEN     [ Edit… ]   [ View… ]     │
+     Task                │ ┃ that loads the Detail gallery screen for the row. One primary and the   │ │   ENTCO_EQUALS      equals         EQUALS      [ Edit… ]   [ View… ]     │
+     Board               │ ┃ close button per dialog; dialogs are maximized below 600 px.            │ │   ENTCO_GREATER     greater        GREATER     [ Edit… ]   [ View… ]     │
+     Calendar            │ ┃ No §8 fallbacks. The form attributes for a background submit are        │ │   ENTCO_GREATER_EQ  greater-equals GREATER_EQ  [ Edit… ]   [ View… ]     │
+     Split               │ ┃ background-submit, background-hide-id and background-reload-id (the XSD │ │   ENTCO_IN          in             IN          [ Edit… ]   [ View… ]     │
+     Settings            │ ┃ names); the style guide's submit-reload-id is the name of the m-form    │ │   ENTCO_IS_NOT_NULL is-not-null    IS_NOT_NULL [ Edit… ]   [ View… ]     │
+     Wizard              │ ┃ property they become. A container-dialog is a container of the page by  │ │   ENTCO_IS_NULL     is-null        IS_NULL     [ Edit… ]   [ View… ]     │
+   ▶ Dialog              │ ┃ its id, so background-hide-id closes it; its tooltip is the New         │ │   ENTCO_LESS        less           LESS        [ Edit… ]   [ View… ]     │
+     Report              │ ┃ button's.                                                               │ │   ENTCO_LESS_EQ     less-equals    LESS_EQ     [ Edit… ]   [ View… ]     │
+     Panel               │ └─────────────────────────────────────────────────────────────────────────┘ │   ENTCO_LIKE        like           LIKE        [ Edit… ]   [ View… ]     │
+     Widgets             │                                                                             │   ENTCO_NOT_BETWEEN not-between    NOT_BETWEEN [ Edit… ]   [ View… ]     │
+     Editor              │                                                                             │   ENTCO_NOT_EQUALS  not-equals     NOT_EQUALS  [ Edit… ]   [ View… ]     │
+     Message             │                                                                             │   ENTCO_NOT_IN      not-in         NOT_IN      [ Edit… ]   [ View… ]     │
+     Views               │                                                                             │   ENTCO_NOT_LIKE    not-like       NOT_LIKE    [ Edit… ]   [ View… ]     │
+ ▾ Home                  │                                                                             │   Rows 1–14 of 14 · Page 1/1                                             │
+                         │                                                                             └──────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

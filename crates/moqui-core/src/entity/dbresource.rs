@@ -30,11 +30,10 @@ const DB_FILE: &str = "moqui.resource.DbResourceFile";
 const DB_HISTORY: &str = "moqui.resource.DbResourceFileHistory";
 const SEQUENCE: &str = "moqui.entity.SequenceValueItem";
 
-/// Content over `dbresource_blob_threshold` bytes (64 KiB) is a content blob (`crate::resource::blob`), not
+/// Content over the conf's `resource-facade` `dbresource-blob-threshold` bytes (64 KiB) is a content blob (`crate::resource::blob`), not
 /// `fileData`: stored once, read a window at a time, and a past version of it keeps the blob rather than a copy.
 fn blob_threshold() -> u64 {
-    moqui_lib::env::get_prop_or_env("dbresource_blob_threshold")
-        .trim()
+    crate::resource::setting("dbresource-blob-threshold")
         .parse::<u64>()
         .unwrap_or(64 * 1024)
 }

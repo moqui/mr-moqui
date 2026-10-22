@@ -20,6 +20,7 @@
 //! `unsafe-eval`. The script puts the render function in `moqui.qvtStatic[path]`, the client loads it with a script
 //! element and fills it from `GET {screen}/actions` and `GET {screen}/actions/{formName}`.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
@@ -41,8 +42,10 @@ pub(crate) const UNIT_MODE: &str = "qvt-static";
 pub(crate) const STATIC_MODULE: &str = "framework/template/screen/ScreenQvtStatic.js";
 /// The module of server-merged qvt. A screen with another macro module for qvt is not transcribed.
 pub(crate) const MERGED_MODULE: &str = "framework/template/screen/ScreenQvt.js";
-/// `response-header` `screen-server-static` in `MoquiDefaultConf.xml`.
-pub const SERVER_STATIC_CACHE_CONTROL: &str = "max-age=86400, must-revalidate, public";
+/// The conf's `Cache-Control` of a server-static response, `response-header` `screen-server-static`.
+pub fn server_static_cache_control() -> String {
+    web::conf_header("screen-server-static", "Cache-Control").unwrap_or_else(|| "private, no-store".to_string())
+}
 const COMPILER_LOCATION: &str = "component://webroot/screen/webroot/libs/vue/compiler-dom.cjs.js";
 const STATIC_MODULE_SOURCE: &str =
     include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvtStatic.js");
@@ -236,7 +239,7 @@ fn identity(def: &ScreenDef) -> u64 {
 /// The compiler's text, read once for the factory.
 struct CompilerText(Mutex<Option<Arc<str>>>);
 
-fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
+pub(crate) fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
     let kept = factory.extension(|_| CompilerText(Mutex::new(None)));
     if let Some(text) = kept.0.lock().unwrap_or_else(|err| err.into_inner()).as_ref() {
         return Ok(Arc::clone(text));
@@ -408,7 +411,7 @@ pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &s
         super::static_files::respond_bytes(
             request,
             "text/javascript;charset=UTF-8",
-            SERVER_STATIC_CACHE_CONTROL,
+            &server_static_cache_control(),
             &[("X-Moqui-Qvt".to_string(), "static-template".to_string())],
             &template.etag,
             template.script.as_bytes().to_vec(),
@@ -821,6 +824,19 @@ fn screen_package(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error
             package.remove(&format!("{}{suffix}", instance.list_name));
         }
     }
+    // Request data, so it stays in the package. The template reads it only where an element asks for it.
+    if wants_pass_through(state, def) {
+        match super::urls::current_url(state) {
+            Ok(url) => {
+                let mut map = serde_json::Map::new();
+                for (name, value) in url.pass_through_parameters() {
+                    map.insert(name, serde_json::Value::String(value));
+                }
+                package.insert("mqPassThrough".to_string(), serde_json::Value::Object(map));
+            }
+            Err(err) => tracing::warn!("pass-through of {}: {err}", def.location),
+        }
+    }
     let mut body = serde_json::Value::Object(package);
     web::strip_credential_parameters(&mut body);
     send_json(&body, Vec::new());
@@ -839,6 +855,95 @@ const PAGE_HEADERS: [&str; 6] = [
 
 /// The names a header field of a form-list reads from the request: its value and the find parameters that go with it.
 pub(crate) const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thru", "_poffset", "_period"];
+
+/// Whether the template has a form or a link with `pass-through-parameters="true"`, including an inlined include-screen.
+/// A screen that does not use the attribute does not get the package key. A failed lookup is logged and skipped.
+fn wants_pass_through(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
+    let mut seen = BTreeSet::new();
+    match screen_wants_pass_through(state, def, 0, &mut seen) {
+        Ok(found) => found,
+        Err(err) => {
+            tracing::warn!("pass-through of {}: {err}", def.location);
+            false
+        }
+    }
+}
+
+fn screen_wants_pass_through(
+    state: &RenderState,
+    def: &Arc<ScreenDef>,
+    depth: usize,
+    seen: &mut BTreeSet<String>,
+) -> Result<bool, Error> {
+    if depth > MAX_WALK_DEPTH || !seen.insert(def.location.clone()) {
+        return Ok(false);
+    }
+    for definition in def.forms.values() {
+        // The form element and each screen-extend of it. A parse failure is logged and that fragment is skipped.
+        let mut nodes = Vec::new();
+        match definition.node.node() {
+            Ok(node) => nodes.push(node),
+            Err(err) => tracing::warn!("pass-through form {}: {err}", definition.name),
+        }
+        for extension in &definition.extensions {
+            match extension.node() {
+                Ok(node) => nodes.push(node),
+                Err(err) => tracing::warn!("pass-through form {} extension: {err}", definition.name),
+            }
+        }
+        for node in &nodes {
+            if node_wants_pass_through(state, node, depth, seen)? {
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(widgets) = &def.root.widgets {
+        if node_wants_pass_through(state, &widgets.node()?, depth, seen)? {
+            return Ok(true);
+        }
+    }
+    for section in def.sections.values() {
+        for fragment in [&section.widgets, &section.fail_widgets].into_iter().flatten() {
+            if node_wants_pass_through(state, &fragment.node()?, depth, seen)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn node_wants_pass_through(
+    state: &RenderState,
+    node: &MNode,
+    depth: usize,
+    seen: &mut BTreeSet<String>,
+) -> Result<bool, Error> {
+    if depth > MAX_WALK_DEPTH {
+        return Ok(false);
+    }
+    if node.attribute("pass-through-parameters").as_deref() == Some("true") {
+        return Ok(true);
+    }
+    if node.name() == "include-screen" {
+        let location = node.attribute("location").unwrap_or_default();
+        if !location.is_empty() && !location.contains("${") {
+            match state.facade.screen_def(&state.factory, &location) {
+                Ok(other) => {
+                    if screen_wants_pass_through(state, &other, depth + 1, seen)? {
+                        return Ok(true);
+                    }
+                }
+                Err(err) => tracing::warn!("include-screen {location}: {err}"),
+            }
+        }
+    }
+    for child in node.children() {
+        if node_wants_pass_through(state, &child, depth, seen)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// `GET {screen}/actions/{formName}`.
 fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result<(), Error> {
@@ -993,7 +1098,8 @@ fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result
     // The columns the user chose for the form, as field names, when the column picker is on; without them the template's own columns hold.
     if node.attribute("select-columns").as_deref() == Some("true") {
         let location = super::saved_finds::form_location(&def.location, true, name);
-        let saved = super::saved_finds::saved_find_location(&location, definition.dynamic);
+        let source = definition.node.node()?;
+        let saved = super::saved_finds::saved_find_location(&location, definition.dynamic, &source);
         if let Some(columns) = super::saved_finds::user_columns(&location, &saved)? {
             body.insert("mqColumns".to_string(), serde_json::json!(columns));
         }
@@ -1001,11 +1107,39 @@ fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result
     // The user's saved finds of the form and the screen's default one, for the find dialog.
     if node.attribute("saved-finds").as_deref() == Some("true") {
         let location = super::saved_finds::form_location(&def.location, true, name);
+        let source = definition.node.node()?;
         let finds = super::saved_finds::user_form_list_finds(&super::saved_finds::saved_find_location(
             &location,
             definition.dynamic,
+            &source,
         ))?;
         let listed: Vec<serde_json::Value> = finds.iter().map(saved_find_json).collect();
+        // The schedule of the active find, when it is one of these: the dialog shows it, or offers to schedule the find.
+        let active = script::context_value("formListFindId")
+            .map(|value| moqui_lib::object::to_plain_string(&value))
+            .filter(|id| listed.iter().any(|find| find["formListFindId"] == id.as_str()));
+        if let Some(scheduled) = active
+            .map(|id| super::saved_finds::form_list_find_screen_scheduled(&id))
+            .transpose()?
+            .flatten()
+        {
+            let field = |name: &str| match &scheduled {
+                Value::Map(map) => map
+                    .get(name)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            let mode = match field("renderMode").as_str() {
+                "xsl-fo" => "PDF".to_string(),
+                "" => "CSV".to_string(),
+                other => other.to_uppercase(),
+            };
+            body.insert(
+                "formListFindScheduled".to_string(),
+                serde_json::json!({ "mode": mode, "cronDescription": field("cronDescription") }),
+            );
+        }
         body.insert("formListFinds".to_string(), serde_json::Value::Array(listed));
         if let Some(id) = super::saved_finds::user_default_find_id(&def.location)? {
             body.insert("defaultFormListFindId".to_string(), serde_json::Value::String(id));

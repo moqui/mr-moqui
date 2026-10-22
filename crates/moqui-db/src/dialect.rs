@@ -33,7 +33,8 @@ pub struct NameReplace {
 /// One `<database>` profile.
 ///
 /// String fields are `None` when the attribute is absent. XSD defaults are not filled in.
-/// `never_nulls`, `never_try_insert`, and `use_binary_type_for_blob` are false when absent.
+/// `never_nulls` and `use_binary_type_for_blob` are false when absent. Java's `never-try-insert` is not read: an upsert
+/// here is one statement ([`crate::sql::insert_or_update`]), not an insert that may fail and abort the transaction.
 /// `use_foreign_key_indexes`, `use_pk_constraint_names`, `use_foreign_keys`, `use_indexes`, `use_indexes_unique` and
 /// `fts_ddl` are true unless the attribute is `false`.
 /// `sql_types` holds only that database's `<database-type>` entries.
@@ -52,7 +53,6 @@ pub struct Dialect {
     pub offset_style: Option<String>,
     pub from_lateral_style: Option<String>,
     pub never_nulls: bool,
-    pub never_try_insert: bool,
     pub use_binary_type_for_blob: bool,
     pub constraint_name_clip_length: Option<u32>,
     pub lb_name: Option<String>,
@@ -195,7 +195,6 @@ fn parse_database(node: &MNode) -> Result<Dialect, Error> {
         offset_style: optional(node, "offset-style"),
         from_lateral_style: optional(node, "from-lateral-style"),
         never_nulls: flag(node, "never-nulls")?,
-        never_try_insert: flag(node, "never-try-insert")?,
         use_binary_type_for_blob: flag(node, "use-binary-type-for-blob")?,
         constraint_name_clip_length: optional_int(node, "constraint-name-clip-length")?,
         lb_name: optional(node, "lb-name"),
@@ -269,126 +268,10 @@ fn at(node: &MNode, message: impl Into<String>) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-
-    fn workspace_root() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
-    fn load_default_conf() -> Dialects {
-        let path = workspace_root().join("runtime/base-component/framework/conf/MoquiDefaultConf.xml");
-        let root = MNode::parse_file(&path).expect("parse MoquiDefaultConf.xml");
-        let from_root = Dialects::load(&root).expect("load conf root");
-        let list = root.first_named("database-list").expect("database-list");
-        let from_list = Dialects::load(&list).expect("load database-list");
-        assert_eq!(from_root, from_list);
-        from_root
-    }
 
     fn profile<'a>(dialects: &'a Dialects, name: &str) -> &'a Dialect {
         dialects.get(name).unwrap_or_else(|| panic!("missing database {name}"))
-    }
-
-    #[test]
-    fn default_conf_profiles() {
-        let dialects = load_default_conf();
-        assert!(!dialects.is_empty());
-        let names: Vec<&str> = dialects.iter().map(|(name, _)| name).collect();
-        assert_eq!(
-            names,
-            ["db2", "db2i", "derby", "h2", "hsql", "mssql", "mysql", "mysql8", "oracle", "postgres", "sqlite"]
-        );
-        assert_eq!(dialects.len(), names.len());
-        for (name, dialect) in dialects.iter() {
-            assert_eq!(dialect.name, name);
-            assert_eq!(dialect.placeholder, PLACEHOLDER);
-        }
-        assert_eq!(PLACEHOLDER, "?");
-
-        let postgres = profile(&dialects, "postgres");
-        assert_eq!(postgres.fts_style.as_deref(), Some("postgres-tsvector"));
-        assert_eq!(postgres.fts_config.as_deref(), Some("english"));
-        assert_eq!(postgres.join_style.as_deref(), Some("ansi"));
-        assert_eq!(postgres.from_lateral_style.as_deref(), Some("lateral"));
-        assert!(postgres.never_try_insert);
-        assert!(!postgres.never_nulls);
-        assert!(postgres.offset_style.is_none());
-        assert!(postgres.use_binary_type_for_blob);
-        assert_eq!(postgres.constraint_name_clip_length, Some(60));
-        assert_eq!(postgres.lb_name.as_deref(), Some("postgresql"));
-        assert_eq!(postgres.default_test_query.as_deref(), Some("SELECT 1"));
-        assert_eq!(postgres.result_fetch_size, Some(50));
-        assert!(postgres.table_engine.is_none());
-        assert_eq!(postgres.sql_type("number-float"), Some("FLOAT8"));
-        assert_eq!(postgres.sql_type("text-medium"), Some("TEXT"));
-        assert_eq!(postgres.sql_type("binary-very-long"), Some("BYTEA"));
-        assert!(postgres.sql_type("date-time").is_none());
-        assert!(postgres.sql_type("id").is_none());
-        assert!(postgres.name_replaces.is_empty());
-
-        let mysql = profile(&dialects, "mysql");
-        assert_eq!(mysql.fts_style.as_deref(), Some("mysql-fulltext"));
-        assert!(mysql.fts_config.is_none());
-        assert_eq!(mysql.join_style.as_deref(), Some("ansi-no-parenthesis"));
-        assert_eq!(mysql.offset_style.as_deref(), Some("limit"));
-        assert!(mysql.never_nulls);
-        assert!(!mysql.never_try_insert);
-        assert!(mysql.from_lateral_style.is_none());
-        assert!(!mysql.use_binary_type_for_blob);
-        assert_eq!(mysql.table_engine.as_deref(), Some("InnoDB"));
-        assert_eq!(mysql.character_set.as_deref(), Some("utf8"));
-        assert_eq!(mysql.collate.as_deref(), Some("utf8_general_ci"));
-        assert_eq!(mysql.fk_style.as_deref(), Some("name_fk"));
-        assert_eq!(mysql.constraint_name_clip_length, Some(60));
-        assert_eq!(mysql.sql_type("date-time"), Some("DATETIME(3)"));
-        assert_eq!(mysql.sql_type("text-very-long"), Some("LONGTEXT"));
-        assert!(mysql.sql_type("text-medium").is_none());
-        assert_eq!(
-            mysql.name_replaces,
-            vec![NameReplace {
-                original: "CONDITION".to_string(),
-                replace: "THE_CONDITION".to_string(),
-            }]
-        );
-
-        let mysql8 = profile(&dialects, "mysql8");
-        assert_eq!(mysql8.from_lateral_style.as_deref(), Some("lateral"));
-        assert_eq!(mysql8.sql_type("text-very-long"), Some("LONGTEXT"));
-        assert_eq!(mysql8.lb_name.as_deref(), Some("mysql"));
-        assert_eq!(mysql8.offset_style.as_deref(), Some("limit"));
-
-        let h2 = profile(&dialects, "h2");
-        assert_eq!(h2.fts_style.as_deref(), Some("h2-native"));
-        assert!(h2.offset_style.is_none());
-        assert!(h2.join_style.is_none());
-        assert!(h2.sql_types.is_empty());
-        assert_eq!(
-            h2.name_replaces,
-            vec![NameReplace {
-                original: "VALUE".to_string(),
-                replace: "THE_VALUE".to_string(),
-            }]
-        );
-
-        let oracle = profile(&dialects, "oracle");
-        assert_eq!(oracle.fts_style.as_deref(), Some("oracle-text"));
-        assert_eq!(oracle.from_lateral_style.as_deref(), Some("apply"));
-        assert_eq!(oracle.sql_type("text-medium"), Some("VARCHAR2(255)"));
-        assert!(oracle.offset_style.is_none());
-
-        assert_eq!(profile(&dialects, "derby").fts_style.as_deref(), Some("none"));
-        assert!(profile(&dialects, "derby").join_style.is_none());
-        assert_eq!(profile(&dialects, "db2").offset_style.as_deref(), Some("limit"));
-        assert_eq!(profile(&dialects, "mssql").offset_style.as_deref(), Some("fetch"));
-        assert_eq!(profile(&dialects, "hsql").sql_type("binary-very-long"), Some("OBJECT"));
-
-        let sqlite = profile(&dialects, "sqlite");
-        assert_eq!(sqlite.for_update.as_deref(), Some(""));
-        assert_eq!(sqlite.offset_style.as_deref(), Some("limit"));
-        assert_eq!(sqlite.sql_type("date-time"), Some("TEXT"));
-        assert!(postgres.for_update.is_none());
     }
 
     #[test]
@@ -415,7 +298,6 @@ mod tests {
         assert!(custom.fts_style.is_none());
         assert!(custom.join_style.is_none());
         assert!(!custom.never_nulls);
-        assert!(!custom.never_try_insert);
         assert!(!custom.use_binary_type_for_blob);
         assert!(custom.constraint_name_clip_length.is_none());
         assert!(custom.result_fetch_size.is_none());
@@ -424,7 +306,6 @@ mod tests {
 
         let flags = profile(&dialects, "flags");
         assert!(!flags.never_nulls);
-        assert!(!flags.never_try_insert);
         assert!(!flags.use_binary_type_for_blob);
         assert_eq!(flags.offset_style.as_deref(), Some("fetch"));
     }

@@ -1,0 +1,12 @@
+<widgets>
+    <form-single name="Find" transition="search">
+        <field name="countryGeoId"><default-field title="Country">
+            <drop-down><option key="US" text="United States"/></drop-down>
+        </default-field></field>
+        <field name="stateGeoId"><default-field title="State">
+            <drop-down><dynamic-options transition="getGeoCountryStates" value-field="geoId" label-field="geoName">
+                <depends-on field="countryGeoId"/>
+            </dynamic-options></drop-down>
+        </default-field></field>
+    </form-single>
+</widgets>

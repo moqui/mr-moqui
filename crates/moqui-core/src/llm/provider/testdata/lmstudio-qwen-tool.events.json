@@ -1,0 +1,92 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-k3q8v1x0b2",
+      "model": "qwen3.8-27b",
+      "type": "started"
+    },
+    {
+      "delta": "The user wants the open orders, ",
+      "type": "reasoning"
+    },
+    {
+      "delta": "so I search for them.",
+      "type": "reasoning"
+    },
+    {
+      "call_id": "381940277",
+      "index": 0,
+      "name": "search",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"query\":\"open",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "delta": " orders\",\"limit\":10}",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "index": 0,
+      "type": "tool_end"
+    },
+    {
+      "item": {
+        "kind": "reasoning-content",
+        "text": "The user wants the open orders, so I search for them."
+      },
+      "type": "replay"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 2412,
+      "output": 58,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "finish": "tool_calls",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "qwen3.8-27b",
+    "reasoning": "The user wants the open orders, so I search for them.",
+    "replay": [
+      {
+        "kind": "reasoning-content",
+        "text": "The user wants the open orders, so I search for them."
+      }
+    ],
+    "response_id": "chatcmpl-k3q8v1x0b2",
+    "text": "",
+    "text_deltas": 0,
+    "tool_calls": [
+      {
+        "arguments": {
+          "limit": 10,
+          "query": "open orders"
+        },
+        "id": "381940277",
+        "name": "search"
+      }
+    ],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 2412,
+      "output": 58,
+      "reasoning": 0
+    }
+  }
+}

@@ -40,6 +40,9 @@ body.test.body--dark #top { background:#1b3a1b!important; }
 .q-drawer .q-item__section--side { padding-right:4px; } /* orig 16px */
 .q-drawer .q-expansion-item__content .q-item { padding-left:8px; }
 
+/* the app title as the menu of the app's top-level screens: the same size as the toolbar title, not a toolbar button */
+.q-btn.m-app-screens { min-height:0; padding:0 8px 0 0; }
+.q-btn.m-app-screens .q-icon { font-size:18px; }
 /* the suite shell (IronStone style-guide 2.2, 2.4): the launcher grid, the key hint, the palette and the tray panel */
 .m-launcher-grid { display:grid; grid-template-columns:repeat(3, 112px); gap:6px; }
 @media (max-width: 599.98px) { .m-launcher-grid { grid-template-columns:repeat(3, minmax(0, 1fr)); width:calc(100vw - 40px); } }
@@ -329,7 +332,11 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-rich-text-content img { max-width:100%; height:auto; }
 .m-rich-text-content img.ProseMirror-selectednode { outline:2px solid var(--q-primary); }
 .m-rich-text-content hr { border:none; border-top:1px solid rgba(0,0,0,0.2); margin:0.75em 0; }
-.m-rich-text-content [data-mention-id], .m-rich-text-content .suggestion { color:var(--q-primary); border-radius:3px; padding:0 2px;
+.m-rich-text-content table { border-collapse:collapse; width:100%; margin:0.5em 0; }
+.m-rich-text-content th, .m-rich-text-content td { border:1px solid rgba(0,0,0,0.2); padding:2px 6px; vertical-align:top; }
+.m-rich-text-content th { font-weight:500; }
+.body--dark .m-rich-text-content th, .body--dark .m-rich-text-content td { border-color:rgba(255,255,255,0.24); }
+.m-rich-text-content [data-mention-id], .m-rich-text-content [data-record-id], .m-rich-text-content .suggestion { color:var(--q-primary); border-radius:3px; padding:0 2px;
     background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
 .m-rich-text-content p.is-editor-empty:first-child::before { content:attr(data-placeholder); float:left; height:0; pointer-events:none; opacity:0.5; }
 .m-rich-text-plain { display:block; width:100%; border:none; outline:none; resize:vertical; padding:6px 10px; background:transparent; color:inherit; font:inherit; }
@@ -338,6 +345,23 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
     background:#fff; box-shadow:0 5px 5px -3px rgba(0,0,0,0.2), 0 8px 10px 1px rgba(0,0,0,0.14), 0 3px 14px 2px rgba(0,0,0,0.12); }
 .body--dark .m-rich-text-mentions { background:var(--q-dark); color:#fff; }
 .m-rich-text-mention-avatar { min-width:30px; padding-right:6px; }
+
+/* m-coedit (js/README.md, Collaborative editing): the presence line over the editor (the others' avatars, the sync state),
+   and the others' carets and selections in the content. Tiptap's CollaborationCaret colors the caret's border and the label's
+   background with the user's color, and a selection with that color at 44% (ProseMirror-yjs-selection). */
+.m-coedit { position:relative; width:100%; }
+.m-coedit-presence { gap:0 4px; min-height:26px; margin-bottom:2px; color:#616161; }
+.body--dark .m-coedit-presence { color:#9e9e9e; }
+.m-coedit-peer + .m-coedit-state-icon { margin-left:4px; }
+.m-coedit-state { line-height:1.2; }
+.m-coedit[data-state="saving"] .m-coedit-state-icon, .m-coedit[data-state="connecting"] .m-coedit-state-icon { color:var(--q-primary); }
+.m-coedit[data-state="offline"] .m-coedit-state-icon, .m-coedit[data-state="failed"] .m-coedit-state-icon { color:var(--q-negative); }
+.m-rich-text-content .collaboration-carets__caret { position:relative; margin-left:-1px; margin-right:-1px; border-left:1px solid #0d0d0d;
+    border-right:1px solid #0d0d0d; word-break:normal; pointer-events:none; }
+.m-rich-text-content .collaboration-carets__label { position:absolute; top:-1.4em; left:-1px; padding:0.1rem 0.3rem; border-radius:3px 3px 3px 0;
+    color:#fff; font-size:0.75rem; font-style:normal; font-weight:500; line-height:normal; white-space:nowrap; user-select:none; pointer-events:none; }
+.m-rich-text-content .ProseMirror-yjs-selection { border-radius:2px; }
+.body--dark .m-rich-text-content .collaboration-carets__label { box-shadow:0 0 0 1px rgba(0,0,0,0.4); }
 
 /* the record panels, avatars and record cards: an m-chatter or m-record-files fills its column; an avatar's presence dot
    sits on its lower right (Comms chat sets it, M10); a record card is one dense line or two */
@@ -397,17 +421,68 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .body--dark .m-wizard-nav { border-top-color:rgba(255,255,255,0.14); }
 .m-stack-crumbs { font-size:0.95rem; }
 
-/* form-list views (style-guide §3.6, §3.7, §8.2; m-list-views): the view switch above the list; in the board and calendar the list's
-   rows are hidden, and its nav row and a head with find fields stay, so the filters, saved finds and pages still apply */
+/* form-list views (style-guide §3.6, §3.7, §3.15, §8.2; m-list-views): the view switch above the list; in the board, calendar and
+   tree the list's rows are hidden, and its nav row and a head with find fields stay, so the filters, saved finds and pages still apply */
 .m-list-views { min-width:0; }
-.m-list-views-bar { margin:4px 0 -4px; }
-.m-list-views--board .m-list-views-list .tbody, .m-list-views--calendar .m-list-views-list .tbody { display:none; }
+.m-list-views-bar { margin:4px 0 -4px; gap:4px; }
+.m-list-views--board .m-list-views-list .tbody, .m-list-views--calendar .m-list-views-list .tbody, .m-list-views--tree .m-list-views-list .tbody { display:none; }
 .m-list-views--board .m-list-views-list .thead:not(:has(.form-header-field)),
-    .m-list-views--calendar .m-list-views-list .thead:not(:has(.form-header-field)) { display:none; }
-.m-list-views--board .m-list-views-list .q-table__container, .m-list-views--calendar .m-list-views-list .q-table__container { margin-bottom:4px; }
-.m-list-views--board .m-list-views-list .table ~ .form-list-nav-row, .m-list-views--calendar .m-list-views-list .table ~ .form-list-nav-row { display:none; }
+    .m-list-views--calendar .m-list-views-list .thead:not(:has(.form-header-field)),
+    .m-list-views--tree .m-list-views-list .thead:not(:has(.form-header-field)) { display:none; }
+.m-list-views--board .m-list-views-list .q-table__container, .m-list-views--calendar .m-list-views-list .q-table__container,
+    .m-list-views--tree .m-list-views-list .q-table__container { margin-bottom:4px; }
+.m-list-views--board .m-list-views-list .table ~ .form-list-nav-row, .m-list-views--calendar .m-list-views-list .table ~ .form-list-nav-row,
+    .m-list-views--tree .m-list-views-list .table ~ .form-list-nav-row { display:none; }
 .m-list-views--board .m-list-views-list .q-table__container:not(:has(.form-list-nav-row)):not(:has(.form-header-field)),
-    .m-list-views--calendar .m-list-views-list .q-table__container:not(:has(.form-list-nav-row)):not(:has(.form-header-field)) { display:none; }
+    .m-list-views--calendar .m-list-views-list .q-table__container:not(:has(.form-list-nav-row)):not(:has(.form-header-field)),
+    .m-list-views--tree .m-list-views-list .q-table__container:not(:has(.form-list-nav-row)):not(:has(.form-header-field)) { display:none; }
+/* the peek pane (form-list peek-url, style-guide §3.8): the views and a pane at the right with a separator to drag, the pane in view as
+   the page scrolls; a peeked row is the list's selected row, a peeked card outlined */
+.m-list-views-body { min-width:0; align-items:flex-start; }
+.m-list-views-content { min-width:0; }
+.m-list-views--peek .m-list-views-content { min-width:480px; overflow-x:auto; }
+.m-list-views-list .tbody .tr[data-row] { cursor:default; }
+.m-list-views--peek .m-list-views-list .tbody .tr[data-row] { cursor:pointer; }
+.m-peek-sep { flex:none; width:8px; align-self:stretch; cursor:col-resize; position:relative; touch-action:none; }
+.m-peek-sep::after { content:''; position:absolute; top:0; bottom:0; left:3px; width:1px; background:rgba(0,0,0,0.12); }
+.body--dark .m-peek-sep::after { background:rgba(255,255,255,0.16); }
+.m-peek-sep:hover::after { left:2px; width:3px; background:var(--q-primary); }
+.m-peek-pane { flex:none; min-width:320px; position:sticky; top:56px; max-height:calc(100vh - 64px); overflow:auto; padding:0 4px 8px 4px; }
+.m-peek-bar { min-height:36px; gap:4px; }
+.m-board-card--selected { border-color:var(--q-primary) !important; box-shadow:0 0 0 1px var(--q-primary); }
+/* the tree (view-tree, style-guide §3.15): the first column indented a level at a time, a chevron or an empty gutter before the label,
+   guide lines down the open branches; a parent's label medium, a row placed only for a descendant muted; the drop lines and target */
+.m-tree-bar { margin:4px 0 -4px; min-height:32px; }
+.m-list-tree .q-table__container { overflow-x:auto; }
+.m-tree-row:focus { outline:none; }
+.m-tree-row:focus-visible .td { box-shadow:inset 0 0 0 1px var(--q-primary); }
+.m-tree-cell { min-width:0; gap:0; }
+.m-tree-lead { flex:none; align-self:stretch; margin:-4px 0; }
+.m-tree-indent { flex:none; align-self:stretch; background-image:linear-gradient(to right, transparent 11px, rgba(0,0,0,0.12) 11px, rgba(0,0,0,0.12) 12px, transparent 12px);
+    background-size:20px 100%; background-repeat:repeat-x; }
+.body--dark .m-tree-indent { background-image:linear-gradient(to right, transparent 11px, rgba(255,255,255,0.16) 11px, rgba(255,255,255,0.16) 12px, transparent 12px); }
+.m-tree-lead .m-tree-chevron, .m-tree-gutter { flex:none; width:24px; height:24px; min-width:24px; min-height:24px; padding:0; margin:0; align-self:center; }
+.m-tree-chevron .q-icon { transition:transform 150ms; }
+.m-tree-chevron--open .q-icon { transform:rotate(90deg); }
+.m-tree-depth { flex:none; min-width:14px; align-self:center; text-align:right; margin-right:2px; }
+.m-tree-label { min-width:0; padding-left:2px; }
+.m-tree-label .form-group { margin:0; padding:0; }
+.m-tree-row--parent .m-tree-label { font-weight:500; }
+.m-tree-row--muted .td { color:#616161; }
+.body--dark .m-tree-row--muted .td { color:#9e9e9e; }
+.m-tree-row[draggable=true] { cursor:grab; }
+.m-tree-row--dragged { opacity:0.5; }
+.q-table .tbody .m-tree-drop-before .td { box-shadow:inset 0 2px 0 var(--q-primary); }
+.q-table .tbody .m-tree-drop-after .td { box-shadow:inset 0 -2px 0 var(--q-primary); }
+.q-table .tbody .m-tree-drop-into .td { background:color-mix(in srgb, var(--q-primary) 10%, transparent); }
+.m-tree-rollup { white-space:nowrap; }
+.m-tree-total .td { border-top:1px solid rgba(0,0,0,0.12); }
+.body--dark .m-tree-total .td { border-top-color:rgba(255,255,255,0.16); }
+@media (max-width:599.98px) {
+    .m-tree-indent { background-size:12px 100%; background-image:linear-gradient(to right, transparent 5px, rgba(0,0,0,0.12) 5px, rgba(0,0,0,0.12) 6px, transparent 6px); }
+}
+/* m-elapsed: a running time, its digits of one width so it does not jitter as it ticks */
+.m-elapsed { font-variant-numeric:tabular-nums; }
 /* the board: columns that scroll sideways, each a tinted panel of cards; a column a dragged card may go to is outlined, one the status
    flow does not lead to is dimmed */
 .m-board { gap:8px; overflow-x:auto; padding:4px 2px 8px; align-items:stretch; scroll-snap-type:x proximity; }
@@ -531,6 +606,46 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-markdown-body .m-md-table th, .m-markdown-body .m-md-table td { padding:4px 10px; border:1px solid rgba(127,127,127,0.3); text-align:left; }
 .m-markdown-body .m-md-table th { font-weight:500; background:rgba(127,127,127,0.1); }
 
+/* m-code: source code in a table of lines, the numbers drawn from data-line (so a copy takes the code only); the token colors of
+   highlight.js's GitHub themes, light and dark */
+.m-code { overflow:auto; border:1px solid rgba(127,127,127,0.25); border-radius:6px; background:rgba(127,127,127,0.04);
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12.5px; line-height:1.5; }
+.m-code-table { border-collapse:collapse; width:100%; }
+.m-code-table td { padding:0 12px 0 8px; vertical-align:top; }
+.m-code-number { width:1%; min-width:3em; text-align:right; color:rgba(127,127,127,0.85); user-select:none; -webkit-user-select:none;
+    border-right:1px solid rgba(127,127,127,0.2); }
+.m-code-number::before { content:attr(data-line); }
+.m-code-line { white-space:pre; }
+.m-code-line code { font-family:inherit; background:transparent; padding:0; }
+.m-code-marked { background:color-mix(in srgb, var(--q-warning) 22%, transparent); }
+.m-code .hljs-doctag, .m-code .hljs-keyword, .m-code .hljs-meta .hljs-keyword, .m-code .hljs-template-tag, .m-code .hljs-template-variable,
+.m-code .hljs-type, .m-code .hljs-variable.language_ { color:#d73a49; }
+.m-code .hljs-title, .m-code .hljs-title.class_, .m-code .hljs-title.function_ { color:#6f42c1; }
+.m-code .hljs-attr, .m-code .hljs-attribute, .m-code .hljs-literal, .m-code .hljs-meta, .m-code .hljs-number, .m-code .hljs-operator,
+.m-code .hljs-variable, .m-code .hljs-selector-attr, .m-code .hljs-selector-class, .m-code .hljs-selector-id { color:#005cc5; }
+.m-code .hljs-regexp, .m-code .hljs-string, .m-code .hljs-meta .hljs-string { color:#032f62; }
+.m-code .hljs-built_in, .m-code .hljs-symbol { color:#e36209; }
+.m-code .hljs-comment, .m-code .hljs-code, .m-code .hljs-formula { color:#6a737d; }
+.m-code .hljs-name, .m-code .hljs-quote, .m-code .hljs-selector-tag, .m-code .hljs-selector-pseudo { color:#22863a; }
+.m-code .hljs-section { color:#005cc5; font-weight:bold; }
+.m-code .hljs-addition { color:#22863a; background-color:#f0fff4; }
+.m-code .hljs-deletion { color:#b31d28; background-color:#ffeef0; }
+.body--dark .m-code .hljs-doctag, .body--dark .m-code .hljs-keyword, .body--dark .m-code .hljs-meta .hljs-keyword,
+.body--dark .m-code .hljs-template-tag, .body--dark .m-code .hljs-template-variable, .body--dark .m-code .hljs-type,
+.body--dark .m-code .hljs-variable.language_ { color:#ff7b72; }
+.body--dark .m-code .hljs-title, .body--dark .m-code .hljs-title.class_, .body--dark .m-code .hljs-title.function_ { color:#d2a8ff; }
+.body--dark .m-code .hljs-attr, .body--dark .m-code .hljs-attribute, .body--dark .m-code .hljs-literal, .body--dark .m-code .hljs-meta,
+.body--dark .m-code .hljs-number, .body--dark .m-code .hljs-operator, .body--dark .m-code .hljs-variable,
+.body--dark .m-code .hljs-selector-attr, .body--dark .m-code .hljs-selector-class, .body--dark .m-code .hljs-selector-id { color:#79c0ff; }
+.body--dark .m-code .hljs-regexp, .body--dark .m-code .hljs-string, .body--dark .m-code .hljs-meta .hljs-string { color:#a5d6ff; }
+.body--dark .m-code .hljs-built_in, .body--dark .m-code .hljs-symbol { color:#ffa657; }
+.body--dark .m-code .hljs-comment, .body--dark .m-code .hljs-code, .body--dark .m-code .hljs-formula { color:#8b949e; }
+.body--dark .m-code .hljs-name, .body--dark .m-code .hljs-quote, .body--dark .m-code .hljs-selector-tag,
+.body--dark .m-code .hljs-selector-pseudo { color:#7ee787; }
+.body--dark .m-code .hljs-section { color:#1f6feb; }
+.body--dark .m-code .hljs-addition { color:#aff5b4; background-color:#033a16; }
+.body--dark .m-code .hljs-deletion { color:#ffdcd7; background-color:#67060c; }
+
 /* SHELL_DENSITY compact (moqui.applyDensity puts m-density-compact on the body): less space around the page, the boxes, the list
    rows, the fields and the menu items; comfortable is the rest of this sheet as it is */
 body.m-density-compact { font-size:13px; }
@@ -544,3 +659,61 @@ body.m-density-compact .q-field--dense.q-field--labeled .q-field__native { paddi
 body.m-density-compact .q-item { min-height:32px; padding:4px 12px; }
 body.m-density-compact .q-list--dense > .q-item, body.m-density-compact .q-item--dense { min-height:28px; padding:2px 12px; }
 body.m-density-compact .q-mb-md { margin-bottom:8px; }
+
+/* Assist (js/WebrootAssist.js): the right drawer, its thread and cards, and the marks it leaves on the page while it follows */
+.m-assist .m-assist-body { position:relative; }
+.m-assist-resize { position:absolute; left:-3px; top:0; bottom:0; width:6px; cursor:col-resize; z-index:2; }
+.m-assist-resize:hover { background:color-mix(in srgb, var(--q-primary) 30%, transparent); }
+.m-assist-header { min-height:44px; }
+.m-assist-agent { max-width:180px; }
+.m-assist-thread { overflow-y:auto; overscroll-behavior:contain; }
+.m-assist-user { display:flex; flex-direction:column; align-items:flex-end; }
+.m-assist-bubble { max-width:88%; padding:6px 10px; border-radius:12px 12px 2px 12px; background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
+.body--dark .m-assist-bubble { background:color-mix(in srgb, var(--q-primary) 26%, transparent); }
+.m-assist-queued .m-assist-bubble { opacity:0.7; border:1px dashed color-mix(in srgb, var(--q-primary) 50%, transparent); }
+.m-assist-pre { white-space:pre-wrap; word-break:break-word; }
+.m-assist-answer .m-markdown-body > :last-child { margin-bottom:0; }
+.m-assist-actions { opacity:0.6; }
+.m-assist-answer:hover .m-assist-actions { opacity:1; }
+.m-assist-step, .m-assist-thought { color:#616161; }
+.body--dark .m-assist-step, .body--dark .m-assist-thought { color:#9e9e9e; }
+.m-assist-step-detail { font-family:monospace; font-size:0.8em; max-height:240px; overflow:auto; }
+.m-assist-note { padding:6px 8px; border-radius:6px; background:rgba(127,127,127,0.1); }
+.m-assist-changes { border-collapse:collapse; width:100%; font-size:0.9em; }
+.m-assist-changes td { padding:2px 6px 2px 0; vertical-align:top; }
+.m-assist-current { text-decoration:line-through; opacity:0.7; }
+.m-assist-proposed { font-weight:500; }
+.m-assist-composer .m-assist-textarea { max-height:200px; }
+.m-assist-mentions { max-height:220px; overflow-y:auto; }
+.m-assist-image { display:inline-block; padding:2px 6px; border:1px dashed rgba(127,127,127,0.6); border-radius:4px; font-size:0.85em; }
+.m-markdown-body a.m-assist-external::after { content:" (" attr(title) ")"; font-size:0.85em; opacity:0.7; }
+.m-markdown-body a.m-assist-chip { display:inline-block; padding:0 6px; border-radius:4px; background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
+.m-assist-announce { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+.m-assist-context { display:inline-flex; cursor:default; border-radius:50%; }
+.m-assist-context:focus-visible { outline:2px solid var(--q-primary); outline-offset:1px; }
+.m-assist-prompts .q-chip { max-width:100%; }
+.m-assist-empty .m-assist-prompts { display:flex; flex-wrap:wrap; justify-content:center; gap:4px; }
+.m-assist-file { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:4px; font-size:0.85em; text-decoration:none; color:inherit;
+    border:1px solid rgba(127,127,127,0.35); }
+.m-assist-file:hover { background:rgba(127,127,127,0.12); }
+.m-assist-queued-edit { width:88%; }
+.m-assist-days { width:96px; }
+.m-assist-skill-input { min-height:320px; font-family:monospace; font-size:12px; }
+.m-rich-text-proposal { border-top:1px solid rgba(127,127,127,0.25); border-bottom:1px solid rgba(127,127,127,0.25);
+    background:color-mix(in srgb, var(--q-primary) 6%, transparent); }
+.m-rich-text-proposal-text { white-space:pre-wrap; word-break:break-word; max-height:240px; overflow:auto; }
+/* on the page: a field Assist filled (an outline and an "Assist" tag, so color is not the only cue), and the hand-off's Save; by
+   attribute, which a component's own render keeps (it sets its class again on every update) */
+[data-assist-touched], [data-assist-highlight] { position:relative; outline:2px solid var(--q-primary); outline-offset:2px; border-radius:4px; }
+[data-assist-touched]::after { content:"Assist"; position:absolute; top:-9px; right:6px; padding:0 4px; font-size:10px; line-height:14px; border-radius:3px;
+    color:#fff; background:var(--q-primary); pointer-events:none; z-index:1; }
+[data-assist-save] { box-shadow:0 0 0 3px color-mix(in srgb, var(--q-primary) 55%, transparent); }
+
+/* The Assist canvas (js/WebrootAssistCanvas.js) over the page while the drawer stays docked */
+.m-assist-canvas { min-height:100%; }
+.m-assist-canvas .m-assist-canvas-bar { border-bottom:1px solid var(--m-border, rgba(0,0,0,0.12)); padding-bottom:6px; }
+.m-assist-openui .m-assist-oui-stack > .col { min-width:0; }
+.m-assist-openui .m-assist-oui-stat { min-width:140px; }
+.m-assist-openui .m-assist-oui-code { background:rgba(127,127,127,0.12); overflow:auto; font-size:12px; }
+.m-assist-openui .m-assist-oui-table { max-width:100%; overflow:auto; }
+.m-assist-openui .m-assist-oui-control { min-width:200px; }

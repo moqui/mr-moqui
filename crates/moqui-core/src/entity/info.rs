@@ -509,6 +509,8 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
         .get(group)
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
     let sql = sql.trim().trim_end_matches(';');
+    // Raw SQL does not pass the write gate, so under the read fence only a plain query runs.
+    super::fence::check_sql(sql)?;
     // As JDBC's `execute`, the database says whether the statement gives rows; the first word when it cannot.
     let gives_rows = runtime
         .transactions
@@ -528,7 +530,7 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
             return false;
         }
         if result.columns.is_empty() {
-            result.columns = row.columns.iter().map(|(name, _)| name.clone()).collect();
+            result.columns = row.columns.iter().map(|(name, _)| name.to_string()).collect();
         }
         result
             .records

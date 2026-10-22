@@ -182,6 +182,7 @@ fn an_inline_boot_starts_no_pool_and_no_deadline_timer() {
             &framework,
             BootOptions {
                 executor: Executor::Inline,
+                ..BootOptions::default()
             },
         )
         .expect("boot")

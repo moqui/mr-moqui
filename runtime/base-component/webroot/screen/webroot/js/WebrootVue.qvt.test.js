@@ -469,3 +469,25 @@ test("a number card's delta has the tone of its sign against delta-good, and the
     assert.equal(computed({ delta: "+3" }).deltaClass, "text-positive");
     assert.equal(computed({ delta: "0" }).deltaClass, "m-muted");
 });
+
+// a .qvue component's <style> is added once, whatever its text: a line break or a quote at its start made the old selector
+// invalid (impl-projects.md F53)
+test("a component style with any text is added to the head once", () => {
+    const added = [];
+    const style = () => ({ attrs: {}, setAttribute(name, value) { this.attrs[name] = value; }, getAttribute(name) { return this.attrs[name]; } });
+    const head = { querySelectorAll: (selector) => { assert.equal(selector, "style[data-mq-style]"); return added; }, appendChild: (el) => added.push(el) };
+    const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, "document");
+    const before = globalThis.document;
+    globalThis.document = { head, createElement: (tag) => { assert.equal(tag, "style"); return style(); } };
+    try {
+        const css = '\n.a { content: "x" }\n.b { color: red }\n';
+        moqui.addComponentStyle(css);
+        moqui.addComponentStyle(css);
+        moqui.addComponentStyle(".c { color: blue }");
+        assert.equal(added.length, 2);
+        assert.equal(added[0].textContent, css);
+        assert.match(added[0].getAttribute("data-mq-style"), /^\d+-[0-9a-z]+$/);
+    } finally {
+        if (hadDocument) globalThis.document = before; else delete globalThis.document;
+    }
+});

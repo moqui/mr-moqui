@@ -70,6 +70,12 @@ mod settings_tests;
 #[cfg(all(test, feature = "imap"))]
 mod sync_tests;
 
+/// An attribute of the conf's `email-client` element, `${}` expanded and trimmed, from the current context's factory;
+/// empty when there is no current context or the conf leaves it out.
+fn client_setting(name: &str) -> String {
+    crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting("email-client", name)).unwrap_or_default()
+}
+
 pub(in crate::service) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     #[cfg(feature = "smtp")]
     {
@@ -107,7 +113,7 @@ fn filter_contact_addresses(
     contacts::filter_contact_addresses(parameters, facade)
 }
 
-/// Start the IMAP IDLE workers on the scheduler's tick (`email_idle_enabled`). The host calls it once after boot.
+/// Start the IMAP IDLE workers on the scheduler's tick (`email-client` `idle-enabled`). The host calls it once after boot.
 #[cfg(feature = "imap")]
 pub(crate) fn start_idle(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>) {
     idle::start(factory);

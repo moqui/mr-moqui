@@ -564,7 +564,7 @@ fn rows_of(entity: &EntityFacade, id: &str) -> std::collections::HashMap<String,
 }
 
 fn gc_options(dry_run: bool) -> super::gc::GcOptions {
-    let mut options = super::gc::GcOptions::from_properties(dry_run, std::time::Duration::from_secs(120));
+    let mut options = super::gc::GcOptions::from_conf(dry_run, std::time::Duration::from_secs(120));
     options.reflog_millis = 0;
     options
 }

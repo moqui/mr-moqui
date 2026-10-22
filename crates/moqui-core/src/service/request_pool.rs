@@ -171,19 +171,36 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
     )
 }
 
-/// Errors when `(request cap + service cap) * 2` does not fit the default group's pool.
+/// Errors when `(request cap + service cap) * 2` does not fit the default group's pool, with room for one agent
+/// worker more in a build with the `llm` feature: the agent pool takes as many of its `max-concurrent-runs` as the
+/// rest of the pool leaves ([`spare_connections`]), at least one.
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(factory.conf_text());
+    let manager = default_manager(&facade)?;
+    let agent_workers = if cfg!(feature = "llm") { 1 } else { 0 };
+    manager.check_caps_with(request_cap, service_cap, agent_workers)?;
+    Ok(())
+}
+
+fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transaction::TransactionManager, Error> {
     let group = facade.inner.default_group.clone();
-    let manager = facade
+    facade
         .inner
         .groups
         .get(&group)
         .map(|runtime| runtime.transactions.clone())
-        .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group}")))?;
-    manager.check_caps(request_cap, service_cap)?;
-    Ok(())
+        .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group}")))
+}
+
+/// The connections of the default group's pool that the request and service workers leave (`max - reserve` less
+/// `(request cap + service cap) * 2`); `None` with no entity facade.
+pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
+    let facade = factory.entity()?;
+    let (request_cap, service_cap) = caps(factory.conf_text());
+    default_manager(&facade)
+        .ok()
+        .map(|manager| manager.spare_connections(request_cap, service_cap))
 }
 
 fn pack<T, F>(factory: Arc<ExecutionContextFactory>, job: F, tx: Sender<Result<T, Error>>) -> Work
@@ -477,8 +494,9 @@ mod tests {
             ..Default::default()
         }));
         let err = check_serve_caps(factory).unwrap_err();
-        assert!(err.to_string().contains("80"), "{err}");
+        assert!(err.to_string().contains("(8 + 32) * 2"), "{err}");
 
+        // 80 for the request and service workers, and one agent worker with the llm feature, within 90 less 8 reserve
         factory.set_entity(facade(PoolConfig {
             min: 0,
             max: 90,
@@ -487,6 +505,7 @@ mod tests {
             ..Default::default()
         }));
         check_serve_caps(factory).unwrap();
+        assert_eq!(super::spare_connections(factory), Some(2));
     }
 
     #[test]
@@ -549,9 +568,6 @@ mod tests {
 
     #[test]
     fn a_script_on_a_request_worker_is_limited_to_the_request_timeout() {
-        if !moqui_lib::env::get_prop_or_env("script_timeout").is_empty() {
-            return;
-        }
         let pool = RequestPool::idle();
         pool.start(1, 1).unwrap();
         let left = pool

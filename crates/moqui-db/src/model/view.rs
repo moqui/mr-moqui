@@ -225,7 +225,7 @@ pub struct AliasAll {
 }
 
 pub(super) fn parse_member(node: &MNode) -> Result<MemberEntity, Error> {
-    let relationship = if node.name() == "member-relationship" {
+    let relationship = if node.has_name("member-relationship") {
         Some(require_attr(node, "relationship")?)
     } else {
         None

@@ -63,12 +63,9 @@ const CACHE_ENTRIES: usize = 65_536;
 /// Decoded objects of every `db` repository of a provider, by repository and id: their kind and content.
 pub(crate) type ObjectCache = Mutex<BoundedMap<(Arc<str>, ObjectId), (Kind, Arc<Vec<u8>>)>>;
 
-/// The provider's cache: `git_db_cache_bytes` (64 MiB) of decoded objects.
+/// The provider's cache: `git-server` `db-cache-bytes` (64 MiB) of decoded objects.
 pub(crate) fn object_cache() -> Arc<ObjectCache> {
-    let bytes = moqui_lib::env::get_prop_or_env("git_db_cache_bytes")
-        .trim()
-        .parse::<usize>()
-        .unwrap_or(64 * 1024 * 1024);
+    let bytes = super::number_setting("db-cache-bytes", 64 * 1024 * 1024);
     Arc::new(Mutex::new(BoundedMap::with_bytes(CACHE_ENTRIES, bytes)))
 }
 
@@ -88,12 +85,9 @@ const META_FIELDS: [&str; 9] = [
     "blobId",
 ];
 
-/// Objects over `git_db_large_object` bytes (8 MiB) are content blobs, not row data.
+/// Objects over `git-server` `db-large-object` bytes (8 MiB) are content blobs, not row data.
 fn large_object() -> u64 {
-    moqui_lib::env::get_prop_or_env("git_db_large_object")
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(8 * 1024 * 1024)
+    super::number_setting("db-large-object", 8 * 1024 * 1024)
 }
 
 /// A `GitObject` row as read.
@@ -110,7 +104,7 @@ pub(crate) struct DbStore {
     entity: EntityFacade,
     repository_id: Arc<str>,
     cache: Arc<ObjectCache>,
-    /// `git_db_write_format=raw`: new rows hold the content itself, as before the zlib format, for a database read by
+    /// `git-server` `db-write-format="raw"`: new rows hold the content itself, as before the zlib format, for a database read by
     /// an older version.
     write_raw: bool,
     large_object: u64,
@@ -189,7 +183,7 @@ fn in_values(ids: &[ObjectId]) -> Vec<Value> {
 
 impl DbStore {
     pub(crate) fn new(entity: EntityFacade, repository_id: &str, cache: Arc<ObjectCache>) -> Self {
-        let write_raw = moqui_lib::env::get_prop_or_env("git_db_write_format").trim() == "raw";
+        let write_raw = super::setting("db-write-format") == "raw";
         Self {
             entity,
             repository_id: Arc::from(repository_id),

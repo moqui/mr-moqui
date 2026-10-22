@@ -498,6 +498,17 @@ fn simple_type_name(java_type: &str) -> &str {
     }
 }
 
+/// Whether `value` is already the Java type `java_type` names (`java.lang.String`, `String`, and so on).
+///
+/// A null value and an empty type name count as already converted: there is nothing to coerce.
+#[must_use]
+pub fn is_java_type(value: &Value, java_type: &str) -> bool {
+    if value.is_null() || java_type.is_empty() {
+        return true;
+    }
+    matches_target(value, simple_type_name(java_type))
+}
+
 fn matches_target(value: &Value, target: &str) -> bool {
     matches!(
         (value, target),
@@ -861,12 +872,13 @@ fn take_hms(input: &str) -> Option<(i8, i8, i8, &str)> {
 fn take_hms_frac(input: &str) -> Option<(i8, i8, i8, i32, &str)> {
     let (hour, minute, second, rest) = take_hms(input)?;
     let rest = rest.strip_prefix('.')?;
-    let digits = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>();
+    let len = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let digits = &rest[..len];
     if digits.is_empty() || digits.len() > 9 {
         return None;
     }
-    let nano = frac_to_nano(&digits)?;
-    Some((hour, minute, second, nano, &rest[digits.len()..]))
+    let nano = frac_to_nano(digits)?;
+    Some((hour, minute, second, nano, &rest[len..]))
 }
 
 fn parse_hms(input: &str, allow_short: bool) -> Option<Time> {
@@ -958,12 +970,16 @@ fn take_n_digits(input: &str, n: usize) -> Option<(u32, &str)> {
     Some((head.parse().ok()?, &input[n..]))
 }
 
+/// Up to 9 fraction digits as nanoseconds: the digits padded with zeros on the right.
 fn frac_to_nano(digits: &str) -> Option<i32> {
-    let mut padded = digits.to_string();
-    while padded.len() < 9 {
-        padded.push('0');
+    if digits.is_empty() || digits.len() > 9 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
-    padded.parse().ok()
+    let mut nano = 0i32;
+    for byte in digits.bytes().chain(std::iter::repeat_n(b'0', 9 - digits.len())) {
+        nano = nano * 10 + i32::from(byte - b'0');
+    }
+    Some(nano)
 }
 
 fn is_zone_char(ch: char) -> bool {
@@ -1225,6 +1241,21 @@ mod tests {
         let one_two = Decimal::from_str("1.00").unwrap();
         assert!(!java_equals(&Value::Decimal(one), &Value::Decimal(one_two)));
         assert_eq!(decimal_compare(one, one_two), Ordering::Equal);
+    }
+
+    #[test]
+    fn fractions_of_a_second_are_read_to_the_nanosecond() {
+        for (text, nano) in [
+            ("12:34:56.7", 700_000_000),
+            ("12:34:56.789", 789_000_000),
+            ("12:34:56.000001", 1_000),
+            ("12:34:56.123456789", 123_456_789),
+        ] {
+            assert_eq!(parse_time(text).map(|time| time.subsec_nanosecond()), Some(nano), "{text}");
+        }
+        assert_eq!(parse_time("12:34:56.1234567890"), None);
+        let stamp = parse_timestamp("2026-10-20 12:34:56.789", &TimeZone::UTC).unwrap();
+        assert_eq!(stamp.as_millisecond().rem_euclid(1000), 789);
     }
 
     #[test]

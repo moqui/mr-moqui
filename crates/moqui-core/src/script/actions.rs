@@ -220,6 +220,7 @@ fn render<'js>(ctx: &Ctx<'js>, macros: &Object<'js>, node: &MNode) -> Result<(St
         opaque: &opaque,
         resolve: None,
         missing: "XML action macro",
+        fallback: None,
     };
     walker::walk(ctx, &walk, node, None)
 }
@@ -441,6 +442,23 @@ mod tests {
             include_str!("testdata/service-call.xml"),
             include_str!("testdata/service-call.js"),
         );
+    }
+
+    #[test]
+    fn web_send_json_response_false_sends_nothing_and_a_name_sends_before_the_error_check() {
+        let off = generate(
+            r#"<actions><service-call name="org.moqui.example.ExampleServices.do#Thing" web-send-json-response="false"/></actions>"#,
+        )
+        .unwrap();
+        assert!(!off.contains("sendJsonResponse"), "{off}");
+        let named = generate(
+            r#"<actions><service-call name="org.moqui.example.ExampleServices.do#Thing" web-send-json-response="resultList"/></actions>"#,
+        )
+        .unwrap();
+        let send = named.find("ec.web.sendJsonResponse(").expect(&named);
+        let check = named.find("if (ec.message.hasError()) return;").expect(&named);
+        assert!(send < check, "{named}");
+        assert!(named.contains(r#"call_service_result["resultList"]"#), "{named}");
     }
 
     #[test]

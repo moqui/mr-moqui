@@ -14,7 +14,7 @@
 
 //! The body of a response that streams ([`moqui_core::web::ResponseStream`]): a window of its source read only when
 //! the client has taken the one before, on a blocking thread (in an execution context of its own for a source in the
-//! database, at most `webapp_transfer_workers` of those reading at once). A slow download holds no request worker,
+//! database, at most the webapp's `transfer-workers` of those reading at once). A slow download holds no request worker,
 //! and its memory is a window.
 
 use std::sync::{Arc, OnceLock};
@@ -24,12 +24,13 @@ use moqui_core::resource::source::READ_WINDOW;
 use moqui_core::web::ResponseStream;
 use tokio::sync::Semaphore;
 
-/// The reads of database sources that may run at once, for every streamed response of the process.
-fn readers() -> Arc<Semaphore> {
+/// The reads of database sources that may run at once, for every streamed response of the process: the `webroot`
+/// webapp's `transfer-workers` of the first factory that streams one.
+fn readers(factory: &ExecutionContextFactory) -> Arc<Semaphore> {
     static READERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     Arc::clone(READERS.get_or_init(|| {
-        let workers = moqui_lib::env::get_prop_or_env("webapp_transfer_workers")
-            .trim()
+        let workers = factory
+            .webapp_setting("webroot", "transfer-workers")
             .parse::<usize>()
             .ok()
             .filter(|workers| *workers > 0)
@@ -64,7 +65,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         let factory = Arc::clone(&state.factory);
         let needs_context = source.needs_context();
         let permit = if needs_context {
-            readers().acquire_owned().await.ok()
+            readers(&factory).acquire_owned().await.ok()
         } else {
             None
         };
@@ -89,6 +90,8 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
                 };
                 Some((Ok(bytes::Bytes::from(bytes)), Some(next)))
             }
+            // a stream of unknown length (a proxied body sent in chunks) ends when its source does
+            Ok(Ok(_)) if state.stream.length == ResponseStream::UNKNOWN_LENGTH => None,
             Ok(Ok(_)) => {
                 tracing::warn!("a streamed response ended at {offset} of {} bytes", state.stream.length);
                 failed("the content ended early".to_string())

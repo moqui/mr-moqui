@@ -1,0 +1,50 @@
+ gallery ▸ Split                                                                                                                                                john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.8 Split ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ A master list beside a detail pane: countries on the side with a header find, the selected country in the main pane with its details in a box and    │
+     List                │ ┃ its states as a list. The selected geoId is in the URL so the detail is bookmarkable; the side list keeps its find while the detail changes.         │
+     Detail              │ ┃ container-split (§8.2): a splitter from 1024 px whose side can be dragged from 200 px to what leaves 480 px to the main pane, its width kept for the │
+     360                 │ ┃ session; below 1024 px the panes stack, the list alone until a country is chosen, then the country with a back button. The side list is limited to   │
+     Task                │ ┃ 30 rows and narrowed by the find instead of paged, because a form-list's paging row does not fit in a 320 px pane.                                   │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │   Country                Code            ┌─ Afghanistan ───────────────────────────────────────┐ ┌─ States and regions ────────────────────────────────┐
+   ▶ Split               │ ──────────────────────────────           │ Edit                                                │ │   Geo ID Name Code Type                             │
+     Settings            │ ▌ Afghanistan            AF              │ Geo ID  . . . . . . : AFG                           │ │ ────────────────────────                            │
+     Wizard              │   Albania                AL              │ Alpha-2 . . . . . . : AF                            │ │   No rows match                                     │
+     Dialog              │   Algeria                DZ              │ Numeric . . . . . . : 004                           │ │   Rows 0 of 0                                       │
+     Report              │   American Samoa         AS              │ Type  . . . . . . . : Country                       │ │ No states or regions are recorded for Afghanistan.  │
+     Panel               │   Andorra                AD              │ Alpha-3 . . . . . . : AFG                           │ └─────────────────────────────────────────────────────┘
+     Widgets             │   Angola                 AO              │ States and regions  : 0                             │
+     Editor              │   Anguilla               AI              └─────────────────────────────────────────────────────┘
+     Message             │   Antarctica             AQ
+     Views               │   Antigua And Barbuda    AG
+ ▾ Home                  │   Argentina              AR
+                         │   Armenia                AM
+                         │   Aruba                  AW
+                         │   Australia              AU
+                         │   Austria                AT
+                         │   Azerbaijan             AZ
+                         │   Bahamas                BS
+                         │   Bahrain                BH
+                         │   Bangladesh             BD
+                         │   Barbados               BB
+                         │   Belarus                BY
+                         │   Belgium                BE
+                         │   Belize                 BZ
+                         │   Benin                  BJ
+                         │   Bermuda                BM
+                         │   Bhutan                 BT
+                         │   Bolivia                BO
+                         │   Bosnia And Herzegowina BA
+                         │   Botswana               BW
+                         │   Bouvet Island          BV
+                         │   Brazil                 BR
+                         │   Rows 1–30 of 30 · Page 1/1
+                         │ 30 of 242 countries; narrow the list
+                         │ with the find.
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F8=Page down  s=Sort  f=Find  F10=Actions  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

@@ -44,6 +44,9 @@ pub struct PoolConfig {
     /// Idle-connection test: `pool-test-query`, else the database's `default-test-query`.
     /// `None` is [`DEFAULT_TEST_QUERY`]. Newly connected clients need no test.
     pub test_query: Option<String>,
+    /// An idle connection younger than this is handed out without the test query. Zero tests every reuse.
+    /// A client [`DbConnection::is_closed`] already reports is discarded either way.
+    pub test_after_idle: Duration,
 }
 
 impl Default for PoolConfig {
@@ -55,6 +58,7 @@ impl Default for PoolConfig {
             acquire_timeout: Duration::from_secs(30),
             idle_timeout: None,
             test_query: None,
+            test_after_idle: Duration::from_secs(1),
         }
     }
 }
@@ -97,6 +101,9 @@ struct State {
     testing_ordinary: u32,
     testing_reserve: u32,
     checkouts: u64,
+    /// When a connection was last found dead (its server restarted, or a proxy or NAT dropped it). Every connection
+    /// that went idle before then is tested before it is handed out, however recently: the others are likely dead too.
+    lost_at: Option<Instant>,
 }
 
 impl State {
@@ -143,7 +150,10 @@ pub struct Pool {
 }
 
 enum Step {
+    /// Idle long enough to run the test query, or the only way this pool checks a reused client.
     Test(Tracked),
+    /// Returned recently and still open. No test query.
+    Ready(Tracked),
     Connect,
     Wait,
     Fail(Error),
@@ -155,6 +165,8 @@ pub(super) struct PooledConn {
     class: Class,
     parked: bool,
     discard: bool,
+    /// The discarded client was dead: the others of the pool are suspect.
+    lost: bool,
     timeout_armed: bool,
 }
 
@@ -180,6 +192,18 @@ impl DbConnection for Tracked {
         self.conn.execute(sql, params)
     }
 
+    fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+        self.conn.execute_deferred(sql, params, zero_rows)
+    }
+
+    fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, key: u64) -> Result<(), Error> {
+        self.conn.execute_deferred_row(sql, params, key)
+    }
+
+    fn finish_deferred(&mut self) -> Result<(), Error> {
+        self.conn.finish_deferred()
+    }
+
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
         self.conn.query(sql, params)
     }
@@ -202,6 +226,10 @@ impl DbConnection for Tracked {
 
     fn stream_open(&self) -> bool {
         self.conn.stream_open()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.conn.is_closed()
     }
 
     fn begin(&mut self) -> Result<(), Error> {
@@ -280,6 +308,7 @@ impl Pool {
                     testing_ordinary: 0,
                     testing_reserve: 0,
                     checkouts: 0,
+                    lost_at: None,
                 }),
                 available: Condvar::new(),
             }),
@@ -292,11 +321,25 @@ impl Pool {
 
     /// Errors when `(request_cap + service_cap) * 2 > max - reserve`.
     pub fn check_caps(&self, request_cap: u32, service_cap: u32) -> Result<(), Error> {
+        self.check_caps_with(request_cap, service_cap, 0)
+    }
+
+    /// The connections left of `max - reserve` once `(request_cap + service_cap) * 2` are counted.
+    pub fn spare_connections(&self, request_cap: u32, service_cap: u32) -> u32 {
         let demand = (u64::from(request_cap) + u64::from(service_cap)) * 2;
         let room = u64::from(self.inner.config.max - self.inner.config.reserve);
+        u32::try_from(room.saturating_sub(demand)).unwrap_or(u32::MAX)
+    }
+
+    /// [`Self::check_caps`] with `single` more workers that hold one connection each: the agent pool's step jobs, which
+    /// open only short transactions of their own and none across a model call.
+    pub fn check_caps_with(&self, request_cap: u32, service_cap: u32, single: u32) -> Result<(), Error> {
+        let demand = (u64::from(request_cap) + u64::from(service_cap)) * 2 + u64::from(single);
+        let room = u64::from(self.inner.config.max - self.inner.config.reserve);
         if demand > room {
+            let plus = if single > 0 { format!(" + {single}") } else { String::new() };
             return Err(Error::new(format!(
-                "transaction caps exceed pool: ({request_cap} + {service_cap}) * 2 = {demand} > max - reserve = {room}"
+                "transaction caps exceed pool: ({request_cap} + {service_cap}) * 2{plus} = {demand} > max - reserve = {room}"
             )));
         }
         Ok(())
@@ -325,22 +368,28 @@ impl Pool {
         self.acquire(Class::Reserve)
     }
 
+    /// A failed test drops its connection. Once as many have failed as were idle when the checkout began (a server
+    /// restart leaves every idle connection dead), the idle list is passed over for a new connection.
     fn acquire(&self, class: Class) -> Result<PooledConn, Error> {
         let mut failures = 0usize;
         let mut budget: Option<usize> = None;
+        let mut failed_test: Option<Error> = None;
         let started = Instant::now();
         loop {
             let (step, expired) = {
                 let mut state = self.lock();
-                let expired = self.take_expired(&mut state);
+                let mut expired = self.take_expired(&mut state);
                 if budget.is_none() {
                     budget = Some(idle_len(&state, class));
                 }
-                let step = decide(&mut state, class, &self.inner.config, failures, budget.unwrap_or(0));
+                let allowed = budget.unwrap_or(0);
+                let skip_idle = allowed > 0 && failures >= allowed;
+                let step = decide(&mut state, class, &self.inner.config, skip_idle, &mut expired);
                 (step, expired)
             };
             drop(expired);
             match step {
+                Step::Ready(tracked) => return Ok(self.wrap(tracked, class)),
                 Step::Test(tracked) => match test_connection(tracked, self.inner.config.test_sql()) {
                     Ok(tracked) => {
                         self.finish_test(class, true);
@@ -350,10 +399,7 @@ impl Pool {
                         self.finish_test(class, false);
                         drop(tracked);
                         failures += 1;
-                        let allowed = budget.unwrap_or(0);
-                        if allowed > 0 && failures >= allowed {
-                            return Err(err);
-                        }
+                        failed_test = Some(err);
                     }
                 },
                 Step::Connect => {
@@ -363,7 +409,7 @@ impl Pool {
                         Err(err) => {
                             self.mark_creating(class, false);
                             self.inner.available.notify_all();
-                            return Err(err);
+                            return Err(unavailable(err));
                         }
                     };
                     // A successful connect already established a live session. Let the caller's
@@ -373,10 +419,10 @@ impl Pool {
                 }
                 Step::Wait => {
                     if !self.wait_for_return(started)? {
-                        return Err(Error::new("timed out waiting for a connection"));
+                        return Err(unavailable(Error::new("timed out waiting for a connection")));
                     }
                 }
-                Step::Fail(err) => return Err(err),
+                Step::Fail(err) => return Err(unavailable(failed_test.take().unwrap_or(err))),
             }
         }
     }
@@ -428,6 +474,7 @@ impl Pool {
             class,
             parked: false,
             discard: false,
+            lost: false,
             timeout_armed: false,
         }
     }
@@ -454,12 +501,15 @@ impl Pool {
         publish(&state, Duration::ZERO);
     }
 
+    /// A test that failed lost its connection.
     fn finish_test(&self, class: Class, handed_out: bool) {
         {
             let mut state = self.lock();
             adjust_testing(&mut state, class, false);
             if handed_out {
                 hand_out(&mut state, class);
+            } else {
+                state.lost_at = Some(Instant::now());
             }
             publish(&state, Duration::ZERO);
         }
@@ -528,9 +578,12 @@ impl Pool {
         expired
     }
 
-    fn discard_hold(&self, class: Class, parked: bool) {
+    fn discard_hold(&self, class: Class, parked: bool, lost: bool) {
         let mut state = self.lock();
         release_hold(&mut state, class, parked);
+        if lost {
+            state.lost_at = Some(Instant::now());
+        }
         publish(&state, Duration::ZERO);
         drop(state);
         self.inner.available.notify_all();
@@ -556,7 +609,14 @@ impl PooledConn {
 
     pub(super) fn discard(&mut self) {
         self.discard = true;
-        self.tracked.take();
+        if let Some(tracked) = self.tracked.take() {
+            self.lost = tracked.is_closed();
+        }
+    }
+
+    /// False after [`Self::discard`] took the client.
+    pub(super) fn live(&self) -> bool {
+        self.tracked.is_some()
     }
 
     /// Sets the statement timeout once. Returning the connection to the pool clears it, so a
@@ -604,7 +664,7 @@ impl PooledConn {
         Pool {
             inner: Arc::clone(&self.pool),
         }
-        .discard_hold(self.class, self.parked);
+        .discard_hold(self.class, self.parked, self.lost);
     }
 }
 
@@ -615,17 +675,41 @@ fn idle_len(state: &State, class: Class) -> usize {
     }
 }
 
-fn decide(state: &mut State, class: Class, config: &PoolConfig, failures: usize, budget: usize) -> Step {
-    if budget > 0 && failures >= budget {
-        return Step::Fail(Error::new("connection test failed"));
-    }
-    if let Some(tracked) = pop_idle(state, class) {
-        adjust_testing(state, class, true);
-        return Step::Test(tracked);
+/// A checkout that found no connection it could use: the database cannot take the work now, a 503 to a web client.
+/// The message stays the cause's.
+fn unavailable(cause: Error) -> Error {
+    let message = cause.message().to_string();
+    Error::from(crate::context::Error::of_kind(crate::context::ErrorKind::Unavailable, message).with_source(cause))
+}
+
+/// A client the driver already reports closed goes to `closed`, for the caller to drop off the lock. With `skip_idle`,
+/// after failed tests, only a new connection will do.
+fn decide(state: &mut State, class: Class, config: &PoolConfig, skip_idle: bool, closed: &mut Vec<Tracked>) -> Step {
+    if !skip_idle {
+        while let Some(tracked) = pop_idle(state, class) {
+            // A client the driver already knows is dead is not worth a test query. Off the idle list, it no longer
+            // counts toward the pool, so another can be opened in its place.
+            if tracked.is_closed() {
+                closed.push(tracked);
+                state.lost_at = Some(Instant::now());
+                continue;
+            }
+            let suspect = state.lost_at.is_some_and(|lost_at| tracked.idle_since <= lost_at);
+            if suspect || tracked.idle_since.elapsed() >= config.test_after_idle {
+                adjust_testing(state, class, true);
+                return Step::Test(tracked);
+            }
+            // Handed out now, as `finish_test` does after a test.
+            hand_out(state, class);
+            return Step::Ready(tracked);
+        }
     }
     if can_create(state, class, config) {
         adjust_creating(state, class, true);
         return Step::Connect;
+    }
+    if skip_idle {
+        return Step::Fail(Error::new("connection test failed"));
     }
     if might_return(state, class) {
         return Step::Wait;

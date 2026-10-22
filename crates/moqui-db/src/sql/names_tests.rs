@@ -131,9 +131,7 @@ fn java_names_cover_crud_schema_keys_and_joins_without_changing_logical_aliases(
     assert!(create_fk_index(login, rel, pg)
         .unwrap()
         .ends_with("ON \"custom_login\" (\"account_ref\")"));
-    let mut upsert_pg = pg.clone();
-    upsert_pg.never_try_insert = false;
-    assert!(insert_or_update(user, &upsert_pg, &["userId", "userName"])
+    assert!(insert_or_update(user, pg, &["userId", "userName"])
         .unwrap()
         .contains("ON CONFLICT (\"user_id\") DO UPDATE SET \"user_name\" = EXCLUDED.\"user_name\""));
     let view = model.entity("LoginUser").unwrap();
@@ -162,11 +160,19 @@ fn java_names_cover_crud_schema_keys_and_joins_without_changing_logical_aliases(
     unnamed_pk.use_pk_constraint_names = false;
     assert!(!create_table(user, &model, &unnamed_pk).unwrap().contains("CONSTRAINT"));
     assert!(mysql_ddl.contains("PRIMARY KEY (`USER_ID`)"), "{mysql_ddl}");
-    let h2 = dialects.get("h2").unwrap();
-    let selected = select(login, h2, &[FieldRef::new("value")], None, &[], LimitOffset::default())
-        .unwrap()
-        .sql;
-    assert!(selected.contains("\"THE_VALUE\" AS \"value\""), "{selected}");
+    // Oracle folds an unquoted name to upper case. The logical alias stays as written.
+    let oracle = dialects.get("oracle").unwrap();
+    let selected = select(
+        login,
+        oracle,
+        &[FieldRef::new("value")],
+        None,
+        &[],
+        LimitOffset::default(),
+    )
+    .unwrap()
+    .sql;
+    assert!(selected.contains("\"VALUE\" AS \"value\""), "{selected}");
     // Replacements affect columns only, never table names or logical aliases.
     let mut replaced = pg.clone();
     replaced.name_replaces = vec![
@@ -276,10 +282,10 @@ fn a_raw_condition_names_a_view_member_by_its_java_alias() {
     );
     assert!(pg.contains("\"l\".\"custom_id\" AS \"loginId\""), "{pg}");
     assert!(pg.ends_with("(L.ACCOUNT_REF IS NOT NULL)"), "{pg}");
-    let h2 = sql("h2");
+    let oracle = sql("oracle");
     assert!(
-        h2.contains("\"CUSTOM_LOGIN\" \"L\" INNER JOIN \"USER_ACCOUNT\" \"U\""),
-        "{h2}"
+        oracle.contains("\"CUSTOM_LOGIN\" \"L\" INNER JOIN \"USER_ACCOUNT\" \"U\""),
+        "{oracle}"
     );
     let mysql = sql("mysql");
     assert!(

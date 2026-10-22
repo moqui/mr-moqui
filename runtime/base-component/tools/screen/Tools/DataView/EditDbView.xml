@@ -54,9 +54,10 @@ along with this software (see the LICENSE.md file). If not, see
                 let memberIndex = 1
                 const aliasIndexes = {}
                 let parameterIndex = 0
-                while (ec.web.parameters.get("dbViewEntityName_" + parameterIndex)) {
-                    const field = ec.web.parameters.get("field_" + parameterIndex)
-                    const functionName = ec.web.parameters.get("functionName_" + parameterIndex)
+                const params = ec.web.parameters
+                while (params["dbViewEntityName_" + parameterIndex]) {
+                    const field = params["field_" + parameterIndex]
+                    const functionName = params["functionName_" + parameterIndex]
                     // ec.logger.log(ec.logger.WARN_INT, "Field field_${parameterIndex}, value: ${field}", null)
                     parameterIndex++
 

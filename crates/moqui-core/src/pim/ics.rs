@@ -441,8 +441,74 @@ fn event(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> 
     out
 }
 
-/// A calendar file read: `{events, method, calendarName, timeZone}`, the events of every VCALENDAR in it (a file
-/// of bare VEVENTs too). `year` is the year a VTIMEZONE is matched to an IANA zone on.
+/// The to-do map of a VTODO: `uid`, `sequence`, `summary`, `description`, `status` (NEEDS-ACTION, IN-PROCESS,
+/// COMPLETED, CANCELLED), `priority` (1 high to 9 low, 0 none), `percentComplete`, `start` and `due` (epoch millis;
+/// `dueDate` yyyy-MM-dd and `allDay` for a due day), `completed`, `timeZone` and `lastModified`.
+fn todo(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> {
+    let mut out: IndexMap<String, Value> = IndexMap::new();
+    out.insert(
+        "uid".into(),
+        text_value(component.text("UID").map(|uid| uid.trim().to_string())),
+    );
+    let number = |name: &str| component.text(name).and_then(|text| text.trim().parse::<i64>().ok());
+    out.insert("sequence".into(), Value::I64(number("SEQUENCE").unwrap_or(0)));
+    out.insert("summary".into(), text_value(component.text("SUMMARY")));
+    out.insert("description".into(), text_value(component.text("DESCRIPTION")));
+    out.insert(
+        "status".into(),
+        text_value(
+            component
+                .text("STATUS")
+                .map(|status| status.trim().to_ascii_uppercase()),
+        ),
+    );
+    out.insert("priority".into(), number("PRIORITY").map_or(Value::Null, Value::I64));
+    out.insert(
+        "percentComplete".into(),
+        number("PERCENT-COMPLETE").map_or(Value::Null, Value::I64),
+    );
+    let mut zone_name: Option<String> = None;
+    let mut instant = |when: Option<When>| match when {
+        Some(When::At(at, zone)) => {
+            zone_name.get_or_insert(zone);
+            Some(at.as_millisecond())
+        }
+        _ => None,
+    };
+    let start = reader.when(component.first("DTSTART"));
+    let start_ms = instant(start.clone());
+    out.insert("start".into(), start_ms.map_or(Value::Null, Value::I64));
+    let due = reader.when(component.first("DUE"));
+    let due_day = match &due {
+        Some(When::Day(day)) => Some(*day),
+        _ => None,
+    };
+    let due_ms = instant(due).or_else(|| {
+        let seconds = component.text("DURATION").and_then(|text| parse_duration(&text))?;
+        start_ms.map(|start| start + seconds * 1000)
+    });
+    out.insert("due".into(), due_ms.map_or(Value::Null, Value::I64));
+    out.insert(
+        "dueDate".into(),
+        due_day.map_or(Value::Null, |day| Value::String(day_text(day))),
+    );
+    out.insert("allDay".into(), Value::Bool(due_day.is_some()));
+    let completed = match reader.when(component.first("COMPLETED")) {
+        Some(When::At(at, _)) => Some(at.as_millisecond()),
+        _ => None,
+    };
+    out.insert("completed".into(), completed.map_or(Value::Null, Value::I64));
+    out.insert("timeZone".into(), zone_name.map_or(Value::Null, Value::String));
+    let last_modified = match reader.when(component.first("LAST-MODIFIED")) {
+        Some(When::At(at, _)) => Some(at.as_millisecond()),
+        _ => None,
+    };
+    out.insert("lastModified".into(), last_modified.map_or(Value::Null, Value::I64));
+    out
+}
+
+/// A calendar file read: `{events, todos, method, calendarName, timeZone}`, the events and to-dos of every VCALENDAR in
+/// it (a file of bare VEVENTs or VTODOs too). `year` is the year a VTIMEZONE is matched to an IANA zone on.
 pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
     let top = components(text);
     let calendars: Vec<&Component> = top.iter().filter(|component| component.name == "VCALENDAR").collect();
@@ -452,10 +518,14 @@ pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
         properties: Vec::new(),
     };
     let mut events = Vec::new();
+    let mut todos = Vec::new();
     let mut method = None;
     let mut calendar_name = None;
     let mut time_zone = None;
-    let bare: Vec<&Component> = top.iter().filter(|component| component.name == "VEVENT").collect();
+    let bare: Vec<&Component> = top
+        .iter()
+        .filter(|component| component.name == "VEVENT" || component.name == "VTODO")
+        .collect();
     let mut lists: Vec<(&Component, Vec<&Component>)> = calendars
         .iter()
         .map(|calendar| (*calendar, calendar.children.iter().collect::<Vec<_>>()))
@@ -492,12 +562,17 @@ pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
             time_zone = Some(default.0.clone());
         }
         let reader = Reader { zones: &zones, default };
-        for child in children.iter().filter(|child| child.name == "VEVENT") {
-            events.push(Value::Map(event(&reader, child)));
+        for child in &children {
+            match child.name.as_str() {
+                "VEVENT" => events.push(Value::Map(event(&reader, child))),
+                "VTODO" => todos.push(Value::Map(todo(&reader, child))),
+                _ => {}
+            }
         }
     }
     let mut out = IndexMap::new();
     out.insert("events".to_string(), Value::List(events));
+    out.insert("todos".to_string(), Value::List(todos));
     out.insert("method".to_string(), text_value(method));
     out.insert("calendarName".to_string(), text_value(calendar_name));
     out.insert("timeZone".to_string(), text_value(time_zone));
@@ -730,9 +805,12 @@ fn texts(map: &IndexMap<String, Value>, key: &str) -> Vec<String> {
     }
 }
 
-/// The ICS text of `{method, calendarName, timeZone, events}`. `now` is the DTSTAMP.
+/// The ICS text of `{method, calendarName, timeZone, events, todos}`. `now` is the DTSTAMP. With `calendarObject` it
+/// is a CalDAV calendar object resource (RFC 4791 §4.1): no METHOD, and the reminders as a published calendar has them.
 pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Result<String, String> {
+    let calendar_object = flag(calendar, "calendarObject");
     let method = text_of(calendar, "method")
+        .filter(|_| !calendar_object)
         .unwrap_or_else(|| "PUBLISH".to_string())
         .to_ascii_uppercase();
     if !method.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
@@ -905,7 +983,7 @@ pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Resul
         {
             lines.push(format!("LAST-MODIFIED:{}", utc_text(at)));
         }
-        // a reminder is the reader's own: only a published calendar carries them
+        // a reminder is the reader's own: only a published calendar, or the user's own copy over CalDAV, carries them
         if method == "PUBLISH" {
             for alarm in list(event, "alarms") {
                 let minutes = get(alarm, "offsetMinutes").and_then(millis_of).unwrap_or(0);
@@ -940,13 +1018,77 @@ pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Resul
         lines.push("END:VEVENT".to_string());
         events.extend(lines);
     }
+    let todos_in = match get(calendar, "todos") {
+        Some(Value::List(items)) => items.as_slice(),
+        Some(_) => return Err("todos is not a list".to_string()),
+        None => &[],
+    };
+    for (index, value) in todos_in.iter().enumerate() {
+        let Value::Map(todo) = value else {
+            tracing::warn!("iCalendar write: a to-do that is not a map is left out");
+            continue;
+        };
+        let mut lines = vec!["BEGIN:VTODO".to_string()];
+        let uid = text_of(todo, "uid").unwrap_or_else(|| format!("moqui-todo-{}-{index}", now.as_millisecond()));
+        lines.push(format!("UID:{}", escape(&uid)));
+        lines.push(format!("DTSTAMP:{}", utc_text(now)));
+        let zone = zone_of(text_of(todo, "timeZone"));
+        let at = |key: &str| {
+            get(todo, key)
+                .and_then(millis_of)
+                .and_then(|millis| Timestamp::from_millisecond(millis).ok())
+        };
+        if let Some(line) = date_property("DTSTART", at("start"), None, zone.as_ref(), &mut used) {
+            lines.push(line);
+        }
+        let due_day = text_of(todo, "dueDate").and_then(|text| date_value(&text));
+        let due = if due_day.is_some() { None } else { at("due") };
+        if let Some(line) = date_property("DUE", due, due_day, zone.as_ref(), &mut used) {
+            lines.push(line);
+        }
+        if let Some(completed) = at("completed") {
+            lines.push(format!("COMPLETED:{}", utc_text(completed)));
+        }
+        let sequence = get(todo, "sequence").and_then(millis_of).unwrap_or(0);
+        lines.push(format!("SEQUENCE:{sequence}"));
+        for (key, name) in [("summary", "SUMMARY"), ("description", "DESCRIPTION")] {
+            if let Some(text) = text_of(todo, key) {
+                lines.push(format!("{name}:{}", escape(&text)));
+            }
+        }
+        if let Some(status) = text_of(todo, "status")
+            .map(|status| status.to_ascii_uppercase())
+            .filter(|status| ["NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED"].contains(&status.as_str()))
+        {
+            lines.push(format!("STATUS:{status}"));
+        }
+        if let Some(priority) = get(todo, "priority")
+            .and_then(millis_of)
+            .filter(|priority| (0..=9).contains(priority))
+        {
+            lines.push(format!("PRIORITY:{priority}"));
+        }
+        if let Some(percent) = get(todo, "percentComplete")
+            .and_then(millis_of)
+            .filter(|percent| (0..=100).contains(percent))
+        {
+            lines.push(format!("PERCENT-COMPLETE:{percent}"));
+        }
+        if let Some(modified) = at("lastModified") {
+            lines.push(format!("LAST-MODIFIED:{}", utc_text(modified)));
+        }
+        lines.push("END:VTODO".to_string());
+        events.extend(lines);
+    }
     let mut lines = vec![
         "BEGIN:VCALENDAR".to_string(),
         "VERSION:2.0".to_string(),
         "PRODID:-//Moqui Framework//mr-moqui//EN".to_string(),
         "CALSCALE:GREGORIAN".to_string(),
-        format!("METHOD:{method}"),
     ];
+    if !calendar_object {
+        lines.push(format!("METHOD:{method}"));
+    }
     if let Some(name) = text_of(calendar, "calendarName") {
         lines.push(format!("X-WR-CALNAME:{}", escape(&name)));
     }

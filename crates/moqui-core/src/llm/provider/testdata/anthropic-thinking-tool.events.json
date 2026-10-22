@@ -1,0 +1,114 @@
+{
+  "events": [
+    {
+      "id": "msg_01Xq7Rk2Lm9VbT3nW8cY4dZp",
+      "model": "claude-sonnet-5",
+      "type": "started"
+    },
+    {
+      "delta": "The user asked for the",
+      "type": "reasoning"
+    },
+    {
+      "delta": " weather; I call the tool.",
+      "type": "reasoning"
+    },
+    {
+      "item": {
+        "kind": "thinking",
+        "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxDYW5Ob3RSZWFkVGhpcw==",
+        "thinking": "The user asked for the weather; I call the tool."
+      },
+      "type": "replay"
+    },
+    {
+      "item": {
+        "data": "EmwKAhgBEgy3va3pzix/LafPsn4aDFJlZGFjdGVkVGhpbmtpbmc=",
+        "kind": "redacted-thinking"
+      },
+      "type": "replay"
+    },
+    {
+      "delta": "Let me check ",
+      "index": 2,
+      "type": "text"
+    },
+    {
+      "delta": "the weather.",
+      "index": 2,
+      "type": "text"
+    },
+    {
+      "call_id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+      "index": 3,
+      "name": "get_weather",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"location\": \"San Fra",
+      "index": 3,
+      "type": "tool_args"
+    },
+    {
+      "delta": "ncisco, CA\"}",
+      "index": 3,
+      "type": "tool_args"
+    },
+    {
+      "index": 3,
+      "type": "tool_end"
+    },
+    {
+      "cache_write": 1630,
+      "cached_input": 4096,
+      "input": 5940,
+      "output": 89,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "finish": "tool_calls",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "claude-sonnet-5",
+    "reasoning": "The user asked for the weather; I call the tool.",
+    "replay": [
+      {
+        "kind": "thinking",
+        "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxDYW5Ob3RSZWFkVGhpcw==",
+        "thinking": "The user asked for the weather; I call the tool."
+      },
+      {
+        "data": "EmwKAhgBEgy3va3pzix/LafPsn4aDFJlZGFjdGVkVGhpbmtpbmc=",
+        "kind": "redacted-thinking"
+      }
+    ],
+    "response_id": "msg_01Xq7Rk2Lm9VbT3nW8cY4dZp",
+    "text": "Let me check the weather.",
+    "text_deltas": 2,
+    "tool_calls": [
+      {
+        "arguments": {
+          "location": "San Francisco, CA"
+        },
+        "id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+        "name": "get_weather"
+      }
+    ],
+    "usage": {
+      "cache_write": 1630,
+      "cached_input": 4096,
+      "input": 5940,
+      "output": 89,
+      "reasoning": 0
+    }
+  }
+}

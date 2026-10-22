@@ -494,6 +494,12 @@ fn default_for(
     if param.default_expr.is_none() && param.default_value.is_none() {
         return Ok(None);
     }
+    // Text with nothing to expand (as `expand` decides) needs no scope of the parameters.
+    if let (None, Some(text)) = (&param.default_expr, &param.default_value) {
+        if !text.contains('$') || text.ends_with('$') {
+            return Ok(Some(Value::string(text.as_str())));
+        }
+    }
     scope.enter(params)?;
     if let Some(expression) = &param.default_expr {
         let value = crate::script::eval_value(expression)?;
@@ -550,14 +556,16 @@ pub(crate) fn clean_safe_html(text: &str) -> String {
 }
 
 /// The cleaner. ammonia's defaults are a maintained, conservative allow-list, so there is no
-/// list of our own to keep up to date, with one addition: `data-mention-id` on a `span`, the mention
-/// of the qvt rich-text editor (`m-rich-text`, `<span data-mention-id="john.doe">@John Doe</span>`), so
-/// a note or message keeps who it mentions. The value is only ever text: ammonia escapes it.
+/// list of our own to keep up to date, with three additions on a `span`: `data-mention-id` (a person,
+/// `<span data-mention-id="john.doe">@John Doe</span>`), and `data-record-entity` with `data-record-id`
+/// (a record, `<span data-record-entity="mantle.order.OrderHeader" data-record-id="100050">#SO100050</span>`).
+/// A record span is not a mention. The values are only ever text: ammonia escapes them. Tables (`table`,
+/// `thead`, `tbody`, `tr`, `th`, `td`, with `colspan` and `rowspan`) are in ammonia's defaults.
 fn safe_html() -> &'static ammonia::Builder<'static> {
     static CLEANER: std::sync::OnceLock<ammonia::Builder<'static>> = std::sync::OnceLock::new();
     CLEANER.get_or_init(|| {
         let mut builder = ammonia::Builder::default();
-        builder.add_tag_attributes("span", &["data-mention-id"]);
+        builder.add_tag_attributes("span", &["data-mention-id", "data-record-entity", "data-record-id"]);
         builder
     })
 }
@@ -1303,5 +1311,27 @@ mod safe_html_tests {
             ),
             "<p><span data-mention-id=\"a&quot;b\">@A</span><a rel=\"noopener noreferrer\">x</a></p>"
         );
+        // a table keeps colspan; a handler on a cell goes. Attribute order is ammonia's.
+        let table = clean_safe_html(
+            "<table><thead><tr><th colspan=\"2\">Item</th></tr></thead><tbody><tr>\
+             <td colspan=\"2\" onclick=\"steal()\">Bolt</td></tr></tbody></table>",
+        );
+        assert!(table.contains("<table>"), "{table}");
+        assert!(table.contains("colspan=\"2\""), "{table}");
+        assert!(table.contains(">Bolt<") || table.contains(">Bolt</"), "{table}");
+        assert!(!table.contains("onclick"), "{table}");
+        // a record span keeps its entity and id; a class and a handler go. It is not a mention.
+        let record = clean_safe_html(
+            "<p><span data-record-entity=\"mantle.order.OrderHeader\" data-record-id=\"100050\" \
+             class=\"chip\" onclick=\"steal()\">#SO100050</span></p>",
+        );
+        assert!(
+            record.contains("data-record-entity=\"mantle.order.OrderHeader\""),
+            "{record}"
+        );
+        assert!(record.contains("data-record-id=\"100050\""), "{record}");
+        assert!(record.contains(">#SO100050<"), "{record}");
+        assert!(!record.contains("onclick") && !record.contains("class="), "{record}");
+        assert!(!record.contains("data-mention-id"), "{record}");
     }
 }

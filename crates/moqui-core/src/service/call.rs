@@ -304,6 +304,8 @@ pub(super) enum AsyncCall {
 /// sim: a future gets `simSkipped` and `serviceName`.
 pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) -> Result<AsyncCall, Error> {
     let name = canonical(name);
+    // Under the read fence a worker would run the call unfenced, so it is refused, not queued.
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::AsyncCall, &name).map_err(|err| Error::new(err.message()))?;
     let facade = current_facade();
     if facade.as_ref().is_some_and(EntityFacade::sim_active) {
         tracing::info!("Skipping async service {name} in LLM sim session");
@@ -711,6 +713,10 @@ fn register_tx_rules(
         return Ok(());
     };
     let sim = current_facade().is_some_and(|facade| facade.sim_active());
+    // The rules would run on the service pool, outside the fence: a read that has them is refused.
+    if !sim {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::AsyncCall, &format!("the {when} rules of {service}"))?;
+    }
     let service = service.to_string();
     let mut parameters = parameters.clone();
     let mut results = results.cloned();
@@ -826,6 +832,10 @@ fn canonical(name: &str) -> String {
     name.to_string()
 }
 
+/// The implicit entity-auto definitions made, by service name, kept with the facade whose entities they name. One
+/// definition per name keeps its expanded parameters (see `validate::declared_in`) from one call to the next.
+type ImplicitDefs = crate::entity::ByDefinition<Arc<ServiceDef>>;
+
 fn resolve(name: &str, facade: Option<&EntityFacade>) -> Result<Arc<ServiceDef>, Error> {
     if let Some(def) = super::define::find(name) {
         return Ok(def);
@@ -833,8 +843,14 @@ fn resolve(name: &str, facade: Option<&EntityFacade>) -> Result<Arc<ServiceDef>,
     let (verb, noun) = split_name(name);
     if matches!(verb.as_str(), "create" | "update" | "store" | "delete") && !noun.is_empty() {
         if let Some(facade) = facade {
+            let generation = crate::entity::definition_generation(facade);
+            if let Some(def) = facade.with_slot_read(ImplicitDefs::default, |defs| defs.get(name, generation)) {
+                return Ok(def);
+            }
             if facade.with_entity(&noun, |_, _, _| Ok(())).is_ok() {
-                return Ok(Arc::new(ServiceDef::implicit(name, &verb, &noun)));
+                let def = Arc::new(ServiceDef::implicit(name, &verb, &noun));
+                facade.with_slot(ImplicitDefs::default, |defs| defs.insert(name, generation, Arc::clone(&def)));
+                return Ok(def);
             }
         }
     }
@@ -858,6 +874,11 @@ pub(crate) fn service_authz_action(name: &str) -> String {
     let (verb, _) = split_name(&name);
     let verb = verb.rsplit('.').next().unwrap_or(&verb);
     verb_action(verb).to_string()
+}
+
+/// The `authenticate` of the service `name`. None when no service has that name, as for an implicit entity-auto one.
+pub(crate) fn service_authenticate(name: &str) -> Option<super::define::Authenticate> {
+    super::define::find(&canonical(name)).map(|def| def.authenticate)
 }
 
 /// The in-parameter names of a defined service, in definition order, with `auto-parameters` expanded. None when no
@@ -920,6 +941,105 @@ pub(crate) fn entity_auto_noun(name: &str) -> Option<String> {
     (matches!(verb.as_str(), "create" | "update" | "store" | "delete") && !noun.is_empty()).then_some(noun)
 }
 
+/// A service as an agent's tool takes it (plans/LLM-A2A-Assist.md 4.6): its definition (an implicit entity-auto one
+/// too), its authorization action, its input checked and converted as a call checks it, and the JSON schemas of its
+/// parameters and results as the OpenAPI document writes them.
+#[cfg(feature = "llm")]
+pub(crate) struct ToolService {
+    pub def: Arc<ServiceDef>,
+}
+
+#[cfg(feature = "llm")]
+impl ToolService {
+    /// The service `name`, defined or entity-auto.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no service has that name, or it is an interface.
+    pub(crate) fn of(name: &str) -> Result<Self, Error> {
+        let def = resolve(&canonical(name), current_facade().as_ref())?;
+        if def.kind == ServiceKind::Interface {
+            return Err(Error::new(format!("{} is an interface service, which cannot run", def.name)));
+        }
+        Ok(Self { def })
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.def.name
+    }
+
+    /// view, create, update, delete or all: its `authz-action`, else by its verb.
+    pub(crate) fn authz_action(&self) -> &str {
+        auth_action(&self.def)
+    }
+
+    /// It is declared `read-only="true"`.
+    pub(crate) fn read_only(&self) -> bool {
+        self.def.read_only
+    }
+
+    /// Whether the user must be authorized for it (`authenticate` is not false or anonymous).
+    pub(crate) fn needs_authz(&self) -> bool {
+        self.def.authenticate == Authenticate::Required
+    }
+
+    /// The entity of an entity-auto service.
+    pub(crate) fn entity_noun(&self) -> Option<String> {
+        (self.def.kind == ServiceKind::EntityAuto && !self.def.noun.is_empty()).then(|| self.def.noun.clone())
+    }
+
+    pub(crate) fn verb(&self) -> &str {
+        &self.def.verb
+    }
+
+    /// The input as a call checks it: converted, defaulted, unknown names dropped when the service validates its
+    /// input. The validation errors the check adds to the message facade are taken out again.
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation errors, each with its field.
+    pub(crate) fn clean(&self, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
+        let mark = ExecutionContext::with_current(|ctx| ctx.message().error_mark());
+        let cleaned = validate::clean(&self.def, parameters, current_facade().as_ref());
+        if let Some(mark) = mark {
+            ExecutionContext::with_current(|ctx| ctx.message().take_errors_since(mark));
+        }
+        cleaned
+    }
+
+    /// The JSON schema of the in-parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the `auto-parameters` cannot be expanded.
+    pub(crate) fn input_schema(&self, facade: Option<&EntityFacade>) -> Result<Value, Error> {
+        let params = validate::declared_in(&self.def, facade)?;
+        // an implicit entity-auto service declares none: its entity's fields are its parameters
+        if params.is_empty() && self.def.kind == ServiceKind::EntityAuto {
+            if let Some(schema) =
+                facade.and_then(|facade| super::rest::entity_auto_schema(facade, &self.def.verb, &self.def.noun))
+            {
+                return Ok(schema);
+            }
+        }
+        let params: Vec<&super::define::ParamDef> = params
+            .iter()
+            .filter(|param| !param.name.is_empty() && param.required != super::define::Required::Disabled)
+            .collect();
+        Ok(super::rest::params_schema(&params, &mut super::rest::Schemas::new(facade)))
+    }
+
+    /// The JSON schema of the out-parameters.
+    pub(crate) fn output_schema(&self, facade: Option<&EntityFacade>) -> Value {
+        let expanded = validate::expanded_out(&self.def);
+        let params: Vec<&super::define::ParamDef> = expanded
+            .iter()
+            .filter(|param| !param.name.is_empty() && param.required != super::define::Required::Disabled)
+            .collect();
+        super::rest::params_schema(&params, &mut super::rest::Schemas::new(facade))
+    }
+}
+
 fn auth_action(def: &ServiceDef) -> &str {
     def.authz_action.as_deref().unwrap_or_else(|| verb_action(&def.verb))
 }
@@ -975,7 +1095,8 @@ fn execute(
             def.name, def.location
         ))),
         ServiceKind::Script => run_script(def, parameters),
-        ServiceKind::RemoteRest => super::remote::run_remote_rest(
+        ServiceKind::RemoteRest => crate::entity::fence::check_effect(crate::entity::fence::Effect::RemoteCall, &def.name)
+            .and_then(|()| super::remote::run_remote_rest(
             &def.name,
             &def.location,
             // As Java: the service's `method` attribute, else the verb when it is an HTTP method, else POST.
@@ -984,7 +1105,7 @@ fn execute(
             parameters,
             facade.sim_active(),
         )
-        .map_err(|err| LibError::new(err.message())),
+        .map_err(|err| LibError::new(err.message()))),
         ServiceKind::EntityAuto => run_entity(facade, &def.verb, &def.noun, parameters, 0),
         ServiceKind::Inline => run_inline(def, parameters),
     }
@@ -1069,30 +1190,24 @@ fn run_entity(
     if depth > 8 {
         return Err(LibError::new("nested entity-auto is too deep"));
     }
-    let (pk_names, field_names) = facade.with_entity(noun, |entity, _, _| {
-        Ok((
-            entity
-                .pk_field_names()
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>(),
-            entity
-                .fields
-                .iter()
-                .map(|field| field.name.clone())
-                .collect::<std::collections::BTreeSet<_>>(),
-        ))
-    })?;
+    // As Java's `setFields`, only the entity's fields are set: an implicit call passes its parameters as they came.
+    let settable = |entity: &moqui_db::model::EntityDefinition, key: &str, value: &Value| {
+        !reserved(key) && entity.has_field(key) && !matches!(value, Value::Map(_) | Value::List(_))
+    };
+    let pk_names = crate::entity::cache::pk_field_names(facade, noun)?;
+    let pk_names: &[String] = &pk_names;
     if verb == "delete" {
-        delete_entity(facade, noun, parameters, &pk_names)?;
+        delete_entity(facade, noun, parameters, pk_names)?;
         return Ok(BTreeMap::new());
     }
+    let fields = facade.with_entity(noun, |entity, _, _| {
+        Ok(parameters
+            .iter()
+            .filter(|(key, value)| settable(entity, key, value))
+            .collect::<Vec<_>>())
+    })?;
     let mut record = facade.make_value(noun)?;
-    // As Java's `setFields`, only the entity's fields are set: an implicit call passes its parameters as they came.
-    for (key, value) in parameters {
-        if reserved(key) || !field_names.contains(key) || matches!(value, Value::Map(_) | Value::List(_)) {
-            continue;
-        }
+    for (key, value) in fields {
         record.set(key, value.clone());
     }
     // `EntityAutoServiceRunner.checkFromDate`: a `fromDate` primary key left out of a create or store is
@@ -1106,11 +1221,11 @@ fn run_entity(
         record.set("fromDate", crate::user::now_effective_value());
     }
     // a primary key field with a default (a content date, say) takes it before a missing key is sequenced
-    if matches!(verb, "create" | "store") && pk_missing(&record, &pk_names) {
+    if matches!(verb, "create" | "store") && pk_missing(&record, pk_names) {
         let with_defaults = facade.apply_field_defaults(noun, record.fields())?;
-        for name in &pk_names {
+        for name in pk_names {
             let missing = record.get(name).is_none_or(|value| value.is_null() || is_empty(value));
-            if let Some(value) = with_defaults.get(name).filter(|value| missing && !value.is_null()) {
+            if let Some(value) = with_defaults.get(name.as_str()).filter(|value| missing && !value.is_null()) {
                 record.set(name, value.clone());
             }
         }
@@ -1118,23 +1233,23 @@ fn run_entity(
     let mut status_out = BTreeMap::new();
     match verb {
         "update" => {
-            check_status(facade, noun, &record, &pk_names, parameters, &mut status_out)?;
+            check_status(facade, noun, &record, pk_names, parameters, &mut status_out)?;
             record.update(facade)?
         }
         "create" => {
-            assign_sequence(facade, &mut record, &pk_names)?;
+            assign_sequence(facade, &mut record, pk_names)?;
             record.create(facade)?;
         }
         "store" => {
-            if pk_missing(&record, &pk_names) {
-                assign_sequence(facade, &mut record, &pk_names)?;
+            if pk_missing(&record, pk_names) {
+                assign_sequence(facade, &mut record, pk_names)?;
                 record.create(facade)?;
             } else if parameters.contains_key("statusId")
                 && facade.with_entity(noun, |entity, _, _| Ok(entity.has_field("statusId")))?
             {
                 // Java's store checks status with one uncached read. A missing row is created
                 // directly; other stores choose create/update through EntityValue.refresh.
-                if check_status(facade, noun, &record, &pk_names, parameters, &mut status_out)? {
+                if check_status(facade, noun, &record, pk_names, parameters, &mut status_out)? {
                     record.create_or_update(facade)?;
                 } else {
                     record.create(facade)?;
@@ -1147,7 +1262,7 @@ fn run_entity(
     }
     nest(facade, verb, noun, parameters, &record, depth)?;
     let mut out = status_out;
-    for pk in &pk_names {
+    for pk in pk_names {
         if let Some(value) = record.get(pk) {
             out.insert(pk.clone(), value.clone());
         }

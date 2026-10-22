@@ -29,6 +29,7 @@
 //! expiry passes rank a snapshot without the lock and take the write lock only to
 //! remove.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -322,13 +323,32 @@ where
         self.inner.closed.load(Ordering::SeqCst)
     }
 
-    pub fn get(&self, key: &K) -> Result<Option<V>, Error> {
+    pub fn get<Q>(&self, key: &Q) -> Result<Option<V>, Error>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        Ok(self.get_internal(key, None)?.map(|value| V::clone(&value)))
+    }
+
+    /// The entry's `Arc`, without cloning `V`. The cache still holds its own clone of the `Arc`.
+    pub fn get_arc<Q>(&self, key: &Q) -> Result<Option<Arc<V>>, Error>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.get_internal(key, None)
     }
 
     /// Drop the entry when its last update is older than `expire_before`.
-    pub fn get_if_fresh(&self, key: &K, expire_before: i64) -> Result<Option<V>, Error> {
-        self.get_internal(key, Some(expire_before))
+    pub fn get_if_fresh<Q>(&self, key: &Q, expire_before: i64) -> Result<Option<V>, Error>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        Ok(self
+            .get_internal(key, Some(expire_before))?
+            .map(|value| V::clone(&value)))
     }
 
     pub fn put(&self, key: K, value: V) -> Result<(), Error> {
@@ -588,7 +608,11 @@ where
         Ok(())
     }
 
-    fn get_internal(&self, key: &K, expire_before: Option<i64>) -> Result<Option<V>, Error> {
+    fn get_internal<Q>(&self, key: &Q, expire_before: Option<i64>) -> Result<Option<Arc<V>>, Error>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.ensure_open()?;
         let has_expiry = self.has_expiry();
         let now = if has_expiry { self.inner.clock.now_millis() } else { 0 };
@@ -635,7 +659,7 @@ where
             bump(&stats.expires, 1);
         }
         bump(if found.is_some() { &stats.hits } else { &stats.misses }, 1);
-        Ok(found.map(|value| V::clone(&value)))
+        Ok(found)
     }
 
     /// Remove `key` when it is still expired under the write lock. True when it was removed.

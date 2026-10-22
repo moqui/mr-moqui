@@ -1,0 +1,50 @@
+ gallery ▸ Panel                                                                                                                                                john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.14 Panel ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ The Today tab of the tray panel as a normal screen: groups Overdue, Due today and Later today as captions over dense lists, an icon by kind, two     │
+     List                │ ┃ flat quick actions per item, the open approvals line, an empty group, and the quick-create dialog with a context chip above six fields. The column   │
+     Detail              │ ┃ is col-5 at 1280 px to stand for the panel's 400 px; on a phone it is the full width.                                                                │
+     360                 │ ┃ Fallbacks for style-guide section 8: the tray panel frame does not exist, so this is the content only; the context chip is a q-chip until the screen │
+     Task                │ ┃ context element exists; the approvals count is a fixed number until the notification counts arrive.                                                  │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ Today
+     Split               │ <today>
+     Settings            │ Overdue
+     Wizard              │ 2
+     Dialog              │ Send revised quote
+     Report              │ task · <today-1> 17:00 · Quote Q-10077 · Acme Co.
+   ▶ Panel               │
+     Widgets             │ Call back about the delivery date
+     Editor              │ call · <today-1> 11:30 · Order SO10023 · Acme Co.
+     Message             │
+     Views               │ Due today
+ ▾ Home                  │ 4
+                         │ Reply to the RFQ questions
+                         │ email · 10:00 · RFQ-2041 · Beta Inc.
+                         │
+                         │ Weekly pipeline review
+                         │ meeting · 14:00 · Sales team · Room 2
+                         │
+                         │ Trade show setup
+                         │ event · 16:30 · Event EV-88
+                         │
+                         │ Approve purchase request
+                         │ task · 17:00 · Request PR-512
+                         │
+                         │ Later today
+                         │ ✓ Nothing due later today
+                         │ 3 approvals waiting on you.
+                         │ Open Notifications
+                         │ [ New task… ]
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The endpoints, models and feature bindings in effect: the llm-facade conf with the database rows over it. A row
+    overrides the conf entry with its id field by field, so saving a conf entry here makes a row that changes only what
+    is set in it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Models" default-menu-index="1">
+
+    <transition name="modelDetail"><default-response url="../ModelDetail"/></transition>
+    <transition name="endpointDetail"><default-response url="../EndpointDetail"/></transition>
+    <transition name="createEndpoint"><service-call name="store#moqui.llm.LlmEndpoint"/>
+        <default-response url="../EndpointDetail" parameter-map="{endpointId:endpointId}"/></transition>
+    <transition name="createModel"><service-call name="store#moqui.llm.LlmModel"/>
+        <default-response url="../ModelDetail" parameter-map="{modelId:modelId}"/></transition>
+    <transition name="storeBinding"><service-call name="store#moqui.llm.LlmFeatureBinding"/>
+        <default-response url="."/></transition>
+    <transition name="deleteBinding"><service-call name="delete#moqui.llm.LlmFeatureBinding"/>
+        <default-response url="."/></transition>
+
+    <actions>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#EffectiveConfig" out-map="context"/>
+        <set field="problemRows" from="(problemList || []).map(problem => ({problem: problem}))"/>
+    </actions>
+    <widgets>
+        <section name="DisabledSection" condition="enabled === false"><widgets>
+            <label text="The llm-facade is disabled in the conf: no model is called." type="p" style="text-warning"/>
+        </widgets></section>
+        <section name="ProblemSection" condition="problemRows.length"><widgets>
+            <container-box><box-header title="Problems"/><box-body>
+                <form-list name="ProblemList" list="problemRows" skip-form="true">
+                    <field name="problem"><default-field title="Left out of the configuration"><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Endpoints"/><box-toolbar>
+            <container-dialog id="CreateEndpointDialog" button-text="Add Endpoint">
+                <form-single name="CreateEndpoint" transition="createEndpoint">
+                    <field name="endpointId"><default-field title="ID"><text-line size="20"/></default-field></field>
+                    <field name="protocol"><default-field><drop-down>
+                        <option key="chat-completions"/><option key="responses"/><option key="anthropic-messages"/><option key="fake"/>
+                    </drop-down></default-field></field>
+                    <field name="baseUrl"><default-field title="Base URL"><text-line size="50"/></default-field></field>
+                    <field name="isLocal"><default-field title="Local"><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <form-list name="EndpointList" list="endpointList" skip-form="true">
+                <field name="endpointId"><default-field title="ID"><link url="endpointDetail" text="${endpointId}" link-type="anchor"/></default-field></field>
+                <field name="protocol"><default-field><display/></default-field></field>
+                <field name="requestUrl"><default-field title="URL"><display/></default-field></field>
+                <field name="apiKeyMasked"><default-field title="Key"><display/></default-field></field>
+                <field name="maxConcurrent"><default-field title="Max Calls"><display/></default-field></field>
+                <field name="isLocal"><default-field title="Local"><display/></default-field></field>
+                <field name="disabled"><default-field><display/></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+
+        <container-box><box-header title="Models"/><box-toolbar>
+            <container-dialog id="CreateModelDialog" button-text="Add Model">
+                <form-single name="CreateModel" transition="createModel">
+                    <field name="modelId"><default-field title="ID"><text-line size="20"/></default-field></field>
+                    <field name="endpointId"><default-field title="Endpoint"><drop-down>
+                        <list-options list="endpointList" key="${endpointId}" text="${endpointId}"/></drop-down></default-field></field>
+                    <field name="providerModel"><default-field title="Provider Model" tooltip="The provider's name of the model">
+                        <text-line size="40"/></default-field></field>
+                    <field name="tier"><default-field><drop-down allow-empty="true">
+                        <option key="fast"/><option key="balanced"/><option key="thorough"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <form-list name="ModelList" list="modelList" skip-form="true">
+                <field name="modelId"><default-field title="ID"><link url="modelDetail" text="${modelId}" link-type="anchor"/></default-field></field>
+                <field name="endpointId"><default-field title="Endpoint"><link url="endpointDetail" text="${endpointId}" link-type="anchor"/></default-field></field>
+                <field name="providerModel"><default-field title="Provider Model"><display/></default-field></field>
+                <field name="tier"><default-field><display/></default-field></field>
+                <field name="contextWindow"><default-field title="Context"><display/></default-field></field>
+                <field name="priceInput"><default-field title="In /M"><display/></default-field></field>
+                <field name="priceOutput"><default-field title="Out /M"><display/></default-field></field>
+                <field name="usable"><default-field><display/></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+
+        <container-box><box-header title="Feature Bindings"/><box-toolbar>
+            <container-dialog id="CreateBindingDialog" button-text="Bind Feature">
+                <form-single name="CreateBinding" transition="storeBinding">
+                    <field name="featureId"><default-field title="Feature" tooltip="assist, title, summarize, classify, ai-field, embed, or a component's own">
+                        <text-line size="20"/></default-field></field>
+                    <field name="modelId"><default-field title="Model"><drop-down>
+                        <list-options list="modelList" key="${modelId}" text="${modelId}"/></drop-down></default-field></field>
+                    <field name="fallbackModelId"><default-field title="Fallback"><drop-down allow-empty="true">
+                        <list-options list="modelList" key="${modelId}" text="${modelId}"/></drop-down></default-field></field>
+                    <field name="reasoningLevel"><default-field title="Reasoning"><drop-down allow-empty="true">
+                        <option key="none"/><option key="low"/><option key="medium"/><option key="high"/><option key="max"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <form-list name="BindingList" list="bindingList" transition="storeBinding">
+                <field name="featureId"><default-field title="Feature"><display/></default-field></field>
+                <field name="modelId"><default-field title="Model"><drop-down>
+                    <list-options list="modelList" key="${modelId}" text="${modelId}"/></drop-down></default-field></field>
+                <field name="fallbackModelId"><default-field title="Fallback"><drop-down allow-empty="true">
+                    <list-options list="modelList" key="${modelId}" text="${modelId}"/></drop-down></default-field></field>
+                <field name="reasoningLevel"><default-field title="Reasoning"><drop-down>
+                    <option key="none"/><option key="low"/><option key="medium"/><option key="high"/><option key="max"/></drop-down></default-field></field>
+                <field name="resolvedModelId"><default-field title="Resolves To"><display text="${resolvedModelId ?? resolveError ?? ''}"/></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                <field name="deleteLink"><default-field title=""><link url="deleteBinding" text="Remove Row" condition="source !== 'conf'"
+                        confirmation="Remove the database row of this binding? A conf binding of the feature applies again."
+                        parameter-map="{featureId:featureId}"/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

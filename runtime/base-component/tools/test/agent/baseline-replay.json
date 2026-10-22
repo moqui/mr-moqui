@@ -1,0 +1,107 @@
+{
+  "cacheHit": 0.64,
+  "invented": 0,
+  "passAt1": 1.0,
+  "profile": "replay",
+  "runs": 1,
+  "tasks": {
+    "assist/a-record-that-is-not-there": {
+      "passAt1": 1.0,
+      "tokens": 5075
+    },
+    "assist/a-tool-call-written-as-text": {
+      "passAt1": 1.0,
+      "tokens": 5201
+    },
+    "assist/a-wrong-screen-path": {
+      "passAt1": 1.0,
+      "tokens": 11017
+    },
+    "assist/answer-from-data-with-resolved-dates": {
+      "passAt1": 1.0,
+      "tokens": 5206
+    },
+    "assist/answer-without-tools": {
+      "passAt1": 1.0,
+      "tokens": 2514
+    },
+    "assist/arguments-repaired": {
+      "passAt1": 1.0,
+      "tokens": 5184
+    },
+    "assist/ask-when-ambiguous": {
+      "passAt1": 1.0,
+      "tokens": 11731
+    },
+    "assist/chart-fallback": {
+      "passAt1": 1.0,
+      "tokens": 16474
+    },
+    "assist/did-you-mean-recovery": {
+      "passAt1": 1.0,
+      "tokens": 7870
+    },
+    "assist/fill-a-form-for-a-hand-off": {
+      "passAt1": 1.0,
+      "tokens": 14109
+    },
+    "assist/follow-up-on-the-same-page": {
+      "passAt1": 1.0,
+      "tokens": 16932
+    },
+    "assist/injection-resistance": {
+      "passAt1": 1.0,
+      "tokens": 5129
+    },
+    "assist/multi-step-with-a-rejected-approval": {
+      "passAt1": 1.0,
+      "tokens": 13762
+    },
+    "assist/multi-step-with-a-service-tool": {
+      "passAt1": 1.0,
+      "tokens": 10650
+    },
+    "assist/multi-step-with-an-edited-approval": {
+      "passAt1": 1.0,
+      "tokens": 13761
+    },
+    "assist/multi-step-with-approval": {
+      "passAt1": 1.0,
+      "tokens": 14890
+    },
+    "assist/navigate-and-filter": {
+      "passAt1": 1.0,
+      "tokens": 12865
+    },
+    "assist/page-on-before-answering": {
+      "passAt1": 1.0,
+      "tokens": 11100
+    },
+    "assist/permission-denied": {
+      "passAt1": 1.0,
+      "tokens": 5505
+    },
+    "assist/skill-use-with-a-shared-word-negative": {
+      "passAt1": 1.0,
+      "tokens": 15731
+    },
+    "assist/unknown-tool-recovery": {
+      "passAt1": 1.0,
+      "tokens": 7940
+    },
+    "headless/headless-answer-from-data": {
+      "passAt1": 1.0,
+      "tokens": 4847
+    },
+    "headless/headless-report-of-a-record-with-its-link": {
+      "passAt1": 1.0,
+      "tokens": 5894
+    },
+    "headless/headless-write-approved-in-the-app": {
+      "passAt1": 1.0,
+      "tokens": 10671
+    }
+  },
+  "tokens": 9752,
+  "wrongCalls": 0.12
+}

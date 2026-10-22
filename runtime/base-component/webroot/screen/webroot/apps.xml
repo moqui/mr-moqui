@@ -20,38 +20,27 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setPreference">
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) throw new org.moqui.context.AuthenticationRequiredException("Authentication required")
-            ec.user.setPreference(preferenceKey, preferenceValue)
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                ec.user.setPreference(preferenceKey, preferenceValue)
+            }
             ]]></script></actions>
-        <default-response type="none"/>
-    </transition>
-    <transition name="setAssistTitle">
-        <parameter name="conversationId" required="true"/>
-        <parameter name="title"/>
-        <actions>
-            <if condition="!ec.user.hasPermission('LlmGateway')">
-                <return error="true" message="User does not have permission to use Assist"/></if>
-            <script><![CDATA[
-            const conv = ec.llm.getConversation(conversationId)
-            if (conv != null && title) conv.setTitle(title)
-            ec.web.sendJsonResponse({conversationId: conversationId, title: title})
-            ]]></script>
-        </actions>
         <default-response type="none"/>
     </transition>
     <transition name="setPrefGoLast" read-only="true">
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) throw new org.moqui.context.AuthenticationRequiredException("Authentication required")
-            ec.user.setPreference(preferenceKey, preferenceValue)
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                ec.user.setPreference(preferenceKey, preferenceValue)
+            }
             ]]></script></actions>
         <default-response type="screen-last"/>
     </transition>
     <transition name="getPreferences" read-only="true">
         <parameter name="keyRegexp"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) throw new org.moqui.context.AuthenticationRequiredException("Authentication required")
-            ec.web.sendJsonResponse(ec.user.getPreferences(keyRegexp))
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                ec.web.sendJsonResponse(ec.user.getPreferences(keyRegexp))
+            }
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -59,22 +48,24 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="l10nCatalog" read-only="true">
         <parameter name="locale"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) throw new org.moqui.context.AuthenticationRequiredException("Authentication required")
-            const localeText = String(locale || ec.user.locale || 'en_US').replace('-', '_')
-            const messages = {}
-            for (const key of ['default', localeText.split('_')[0], localeText]) {
-                const rows = ec.entity.find('moqui.basic.LocalizedMessage').condition('locale', key).disableAuthz().list()
-                for (let i = 0; i < rows.length; i++) { const row = rows.get(i); messages[row.original] = row.localized }
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const localeText = String(locale || ec.user.locale || 'en_US').replace('-', '_')
+                const messages = {}
+                for (const key of ['default', localeText.split('_')[0], localeText]) {
+                    const rows = ec.entity.find('moqui.basic.LocalizedMessage').condition('locale', key).disableAuthz().list()
+                    for (let i = 0; i < rows.length; i++) { const row = rows.get(i); messages[row.original] = row.localized }
+                }
+                ec.web.sendJsonResponse({locale: localeText, messages: messages})
             }
-            ec.web.sendJsonResponse({locale: localeText, messages: messages})
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="qzSign" read-only="true">
         <parameter name="message"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) throw new org.moqui.context.AuthenticationRequiredException("Authentication required")
-            ec.web.sendQzSignedResponse(message)
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                ec.web.sendQzSignedResponse(message)
+            }
             ]]></script></actions>
         <default-response type="none"/>
     </transition>

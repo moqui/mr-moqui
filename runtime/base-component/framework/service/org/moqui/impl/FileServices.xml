@@ -24,7 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
     party) grants its permission on its path and everything under it; RspUpload only lets files be added. A mirror and an
     archived drive are read only. On a records drive (RdkRecords) a user below the manage level reaches only the paths in
     its folder map (ResourceDriveRecordFolder) that are in records the user may see, as the record visibility hook answers
-    (check#RecordPaths); the lists leave out the rest. A drive or path the user cannot reach is "not found". Screens read
+    (check#RecordPaths); the lists leave out the rest. An external user (the framework permission EXTERNAL_USER, an app's
+    client contacts) reaches no records drive at all, and check#RecordVisible shows them no record. A drive or path the user cannot reach is "not found". Screens read
     these records only through these services.
 
     Paths are relative to the drive's root, '/'-separated, with no '.' or '..' segment; the empty path is the drive's top
@@ -49,7 +50,9 @@ along with this software (see the LICENSE.md file). If not, see
             record asked once per request; with no hook no record folder is reached), else the level is 0, as for a path
             outside the drive; a share of the path does not pass it either. Another user's records are not asked (level 0
             below manage). recordList is the records the path is in, innermost first (recordEntityName, idField, recordId,
-            folderPath of the record's own folder), for a manager too. Without a path the level is the drive's.</description>
+            folderPath of the record's own folder), for a manager too. Without a path the level is the drive's. An external
+            user (the framework permission EXTERNAL_USER) reaches no records drive at all: level 0, whatever their
+            membership, share or ownership.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="path"/>
@@ -146,6 +149,13 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 recordList = info ? Array.from(info.records || []) : []
                 if (gated && !(info && info.visible === true)) { level = 0; canUpload = false; viaShareId = null }
+            }
+            // an external user (the framework permission EXTERNAL_USER: an app's client contacts; a failed check counts as
+            // external) reaches no records drive, at any level, over the screens, WebDAV or SFTP
+            if (row.driveKindEnumId === 'RdkRecords' && userId && (level > 0 || canUpload)
+                    && ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
+                        .disableAuthz().call()?.anyExternal !== false) {
+                level = 0; canUpload = false; viaShareId = null; isOwner = false; recordList = []
             }
             permissionEnumId = [null, 'RdpView', 'RdpEdit', 'RdpManage'][level]
             canWrite = level >= 2 && !readOnly
@@ -2171,15 +2181,19 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="get" noun="Preview">
-        <description>A preview of a file: an image's thumbnail (PNG, no side over size, kept under runtime://tmp/preview by
-            the file's version so it is made once: previewLocation, width, height); a PDF has kind pdf and no thumbnail
-            unless the host gives one (later, through Chromium); a text file its first 4000 characters (text). kind is
-            image, pdf, text or none. Records the open in the user's recent files. View permission.</description>
+    <service verb="get" noun="Preview" transaction="ignore">
+        <description>A preview of a file, kept under runtime://tmp/preview by the file's version and size so it is made
+            once (a new version gets a new one): an image's thumbnail (PNG, no side over size: previewLocation, width,
+            height); a PDF's page 1 drawn by the PDF engine (the same, with pages, the page count; no image and no error
+            when there is no engine); a spreadsheet's first 100 rows and 26 columns of sheetName, else the first sheet
+            (rows, sheetNames, sheetName, truncated); a text file its first 4000 characters (text). kind is image, pdf,
+            spreadsheet, text or none. Records the open in the user's recent files. View permission. No transaction, so no
+            connection is held while the PDF engine works.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="path" required="true"/>
             <parameter name="size" type="Integer" default="256"/>
+            <parameter name="sheetName"/>
         </in-parameters>
         <out-parameters>
             <parameter name="kind"/>
@@ -2187,11 +2201,18 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="contentType"/>
             <parameter name="width" type="Integer"/>
             <parameter name="height" type="Integer"/>
+            <parameter name="pages" type="Integer"/>
             <parameter name="text"/>
+            <parameter name="rows" type="List"/>
+            <parameter name="sheetNames" type="List"/>
+            <parameter name="sheetName"/>
+            <parameter name="truncated" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
             const clean = (value) => String(value == null ? '' : value).split('/').filter((part) => part && part !== '.').join('/')
-            kind = 'none'; previewLocation = null; contentType = null; width = null; height = null; text = null
+            const askedSheet = sheetName == null ? '' : String(sheetName)
+            kind = 'none'; previewLocation = null; contentType = null; width = null; height = null; pages = null; text = null
+            rows = null; sheetNames = null; sheetName = null; truncated = null
             if (String(path).split('/').includes('..') || !clean(path)) { ec.message.addError(ec.l10n.localize('File not found')); return }
             path = clean(path)
             const access = ec.service.sync().name('org.moqui.impl.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
@@ -2206,10 +2227,14 @@ along with this software (see the LICENSE.md file). If not, see
                 recent.setFields({userId: ec.user.userId, driveId: driveId, path: path, lastOpenedDate: ec.user.nowTimestamp}, true, null, null)
                 recent.createOrUpdate()
             }
+            // the cache key: the file, its version and size, and what is previewed
+            const keyOf = (what) => ec.user.singleUseCodeHash(`${driveId}\n${path}\n${change.versionName || change.date}\n${change.size}\n${what}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
+            const readJson = (ref) => { try { return ref.exists ? JSON.parse(String(ref.getText())) : null } catch (e) { return null } }
+            const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
             if (fileType.startsWith('image/')) {
                 kind = 'image'
                 const box = Math.max(16, Math.min(Number(size) || 256, 2048))
-                const key = ec.user.singleUseCodeHash(`${driveId}\n${path}\n${change.versionName || change.date}\n${change.size}\n${box}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
+                const key = keyOf(box)
                 const cached = `runtime://tmp/preview/${key}.png`
                 const ref = ec.resource.getLocationReference(cached)
                 if (!ref.exists) {
@@ -2219,9 +2244,34 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 previewLocation = cached
                 contentType = 'image/png'
-            } else if (name.toLowerCase().endsWith('.pdf')) {
+            } else if (ext === 'pdf') {
                 kind = 'pdf'
                 contentType = 'application/pdf'
+                const box = Math.max(16, Math.min(Number(size) || 256, 2048))
+                const key = keyOf(`pdf\n${box}`)
+                const cached = `runtime://tmp/preview/${key}.png`
+                const infoRef = ec.resource.getLocationReference(`runtime://tmp/preview/${key}.json`)
+                let info = ec.resource.getLocationReference(cached).exists ? readJson(infoRef) : null
+                if (info == null) {
+                    // null with no PDF engine, or a PDF that does not open (logged): kind pdf and no image
+                    info = ec.resource.makePdfPreview(location, cached, box)
+                    if (info != null) infoRef.putText(JSON.stringify(info))
+                }
+                if (info != null) {
+                    previewLocation = cached; contentType = 'image/png'
+                    width = info.width; height = info.height; pages = info.pages
+                }
+            } else if (['xlsx', 'xlsm', 'xlsb', 'xls', 'ods'].includes(ext)) {
+                kind = 'spreadsheet'
+                contentType = fileType || null
+                const ref = ec.resource.getLocationReference(`runtime://tmp/preview/${keyOf(`sheet\n${askedSheet}`)}.json`)
+                let sheet = readJson(ref)
+                if (sheet == null) {
+                    sheet = ec.resource.readSheetPreview(location, askedSheet, 100, 26)
+                    if (sheet != null) ref.putText(JSON.stringify(sheet))
+                }
+                if (sheet == null) { kind = 'none'; return }
+                rows = sheet.rows; sheetNames = sheet.sheetNames; sheetName = sheet.sheetName; truncated = sheet.truncated === true
             } else if (ec.resource.isTextFilename(name)) {
                 kind = 'text'
                 contentType = fileType || 'text/plain'
@@ -2234,7 +2284,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="clean" noun="DriveTempFiles">
         <description>Remove the temporary files of drives older than maxAgeHours (a day by default): the zips of
             download#Zip and download#PublicShare (runtime://tmp/drive-zip), the exports export#Drive leaves there
-            (drive-export), the thumbnails of get#Preview (runtime://tmp/preview, made again when next asked for) and any
+            (drive-export), the previews of get#Preview (runtime://tmp/preview, made again when next asked for), the
+            extracted text of extract#DriveFileText (runtime://tmp/file-text, extracted again when next indexed) and any
             other runtime://tmp/drive-* folder an application keeps copies in, with the folders they leave empty. A file
             that cannot be removed is logged and the others go on. The clean_DriveTempFiles_hourly ServiceJob runs it.</description>
         <in-parameters><parameter name="maxAgeHours" type="Integer" default="24"/></in-parameters>
@@ -2269,7 +2320,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return false
             }
             for (const folder of tmp.getDirectoryEntries()) {
-                if (!folder.directory || !(folder.fileName === 'preview' || String(folder.fileName).startsWith('drive-'))) continue
+                if (!folder.directory || !(['preview', 'file-text'].includes(String(folder.fileName)) || String(folder.fileName).startsWith('drive-'))) continue
                 try { sweep(folder, 0) }
                 catch (e) { ec.logger.warn(`Drive temporary folder ${folder.location} not cleaned: ${e}`) }
             }
@@ -2280,12 +2331,16 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="index" noun="DriveFiles">
         <description>Internal: index the MoquiDriveFile search documents of paths of a drive (a folder with everything
-            under it, up to 2000 entries) and remove those of removePathList (and everything under them). Nothing happens
-            without search; a failure is logged and the caller goes on. Authorization must be disabled.</description>
+            under it, up to 2000 entries) and remove those of removePathList (and everything under them). The
+            extractedText of a PDF, spreadsheet or text file comes from the text cache only (ec.resource.extractText); up
+            to 200 files not in it yet go to extract#DriveFileText, run asynchronously, which fills the cache and indexes
+            them again (with extractMissing false). Nothing happens without search; a failure is logged and the caller goes
+            on. Authorization must be disabled.</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="pathList" type="List"/>
             <parameter name="removePathList" type="List"/>
+            <parameter name="extractMissing" type="Boolean" default="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="indexedCount" type="Integer"/>
@@ -2295,6 +2350,8 @@ along with this software (see the LICENSE.md file). If not, see
             indexedCount = 0
             removedCount = 0
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('index#DriveFiles is internal'); return }
+            // the text cache key: the file and its version and size (the same in index#DriveFiles and extract#DriveFileText)
+            const textKey = (driveId, path, change) => ec.user.singleUseCodeHash(`${driveId}\n${path}\n${change.versionName || change.date}\n${change.size}\ntext`).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
             let available = false
             try { available = ec.search.isAvailable() } catch (e) { available = false }
             if (!available) return
@@ -2329,15 +2386,24 @@ along with this software (see the LICENSE.md file). If not, see
                     return 'other'
                 }
                 const documents = []
+                const missing = []
+                const textOf = (path, name, change, fileType) => {
+                    if (!change.isFile || !['pdf', 'spreadsheet', 'text'].includes(fileType)) return null
+                    const found = ec.resource.extractText(`${root}/${path}`, textKey(driveId, path, change), 100000, true)
+                    if (found == null && missing.length < 200) missing.push(path)
+                    return found ? found : null
+                }
                 const document = (path, change) => {
                     const name = path.slice(path.lastIndexOf('/') + 1)
                     const tagIds = tagsByPath[path] || []
+                    const fileType = typeOf(name, !change.isFile)
                     documents.push({_type: 'MoquiDriveFile', _id: `${driveId}:${path}`, driveId: driveId, path: path, name: name,
                         folder: path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
-                        contentType: change.isFile ? (ec.resource.contentTypeOf(name) ?? null) : null, fileType: typeOf(name, !change.isFile),
+                        contentType: change.isFile ? (ec.resource.contentTypeOf(name) ?? null) : null, fileType: fileType,
                         isDirectory: change.isFile ? 'N' : 'Y', size: change.size ?? null,
                         modifiedDate: change.date != null ? new Date(change.date).toISOString() : null, modifiedByUserId: change.userId ?? null,
-                        tagIds: tagIds, tags: tagIds.map((tagId) => tagNames[tagId]).filter((tagName) => tagName).join(' '), extractedText: null})
+                        tagIds: tagIds, tags: tagIds.map((tagId) => tagNames[tagId]).filter((tagName) => tagName).join(' '),
+                        extractedText: textOf(path, name, change, fileType)})
                 }
                 const walk = (path, depth) => {
                     if (documents.length >= 2000 || depth > 24) return
@@ -2357,9 +2423,58 @@ along with this software (see the LICENSE.md file). If not, see
                     if (!change.isFile) walk(path, 0)
                 }
                 if (documents.length) indexedCount = Number(ec.search.indexDocuments(documents)) || 0
+                if (missing.length && extractMissing !== false) {
+                    ec.message.pushErrors()
+                    try {
+                        ec.service.async().name('org.moqui.impl.FileServices.extract#DriveFileText').parameters({driveId: driveId, pathList: missing}).call()
+                        if (ec.message.hasError()) ec.logger.warn(`Drive ${driveId} text of ${missing.length} files not queued: ${ec.message.errorsString}`)
+                    } catch (e) {
+                        ec.logger.warn(`Drive ${driveId} text of ${missing.length} files not queued: ${e}`)
+                    } finally {
+                        ec.message.clearErrors()
+                        ec.message.popErrors()
+                    }
+                }
             } catch (e) {
                 ec.logger.warn(`Drive ${driveId} search documents not indexed: ${e}`)
             }
+        ]]></script></actions>
+    </service>
+
+    <service verb="extract" noun="DriveFileText" authenticate="anonymous-all" transaction="ignore">
+        <description>Internal, run asynchronously by index#DriveFiles: extract the text of the files of pathList in a drive
+            (PDF through the PDF engine, spreadsheets, text files) into the text cache (ec.resource.extractText), then index
+            those paths again so their documents carry it. A file that cannot be read is logged, cached as having no text,
+            and the others go on. No transaction, so no connection is held while the PDF engine works. It returns no
+            text.</description>
+        <in-parameters>
+            <parameter name="driveId" required="true"/>
+            <parameter name="pathList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="extractedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            extractedCount = 0
+            // the text cache key: the file and its version and size (the same in index#DriveFiles and extract#DriveFileText)
+            const textKey = (driveId, path, change) => ec.user.singleUseCodeHash(`${driveId}\n${path}\n${change.versionName || change.date}\n${change.size}\ntext`).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)
+            const drive = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).disableAuthz().one()
+            if (drive == null) return
+            const root = String(drive.rootLocation).replace(/\/+$/, '')
+            const done = []
+            for (const raw of Array.from(pathList || []).slice(0, 200)) {
+                const path = String(raw).split('/').filter((part) => part && part !== '.').join('/')
+                if (!path || path.split('/').includes('..') || path === '.trash' || path.startsWith('.trash/')) continue
+                try {
+                    const change = ec.resource.getLastChange(`${root}/${path}`)
+                    if (change == null || !change.isFile) continue
+                    ec.resource.extractText(`${root}/${path}`, textKey(driveId, path, change), 100000, false)
+                    extractedCount++
+                    done.push(path)
+                } catch (e) {
+                    ec.logger.error(`Text of drive ${driveId} file ${path} not extracted: ${e}`)
+                }
+            }
+            if (done.length) ec.service.sync().name('org.moqui.impl.FileServices.index#DriveFiles')
+                .parameters({driveId: driveId, pathList: done, extractMissing: false}).disableAuthz().call()
         ]]></script></actions>
     </service>
 

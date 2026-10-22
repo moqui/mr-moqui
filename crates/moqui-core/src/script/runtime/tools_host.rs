@@ -596,20 +596,32 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         this.client = client;
         this.body = sent.text;
         this.bytesValue = sent.bytes;
-        // the headers by lower case name, each with the list of its values
+        // a body `send()` left on the server, read by the first text() or bytes(), or passed on by response.forward
+        this.bodyId = sent.bodyId ?? null;
+        this.contentLength = sent.length ?? null;
+        // the headers by lower case name, each with the list of its values, and as sent in order
         this.headerMap = {};
-        for (const [name, value] of sent.headers || []) (this.headerMap[name.toLowerCase()] ||= []).push(value);
+        this.headerPairs = sent.headers || [];
+        for (const [name, value] of this.headerPairs) (this.headerMap[name.toLowerCase()] ||= []).push(value);
     }
+    RestResponse.prototype.loadBody = function () {
+        if (this.bodyId == null) return;
+        const read = host.restReadBody(this.bodyId);
+        this.bodyId = null;
+        this.body = read.text;
+        this.bytesValue = read.bytes;
+    };
     // the body as received, a Uint8Array: use it for a body that is not text, such as a label image
-    RestResponse.prototype.bytes = function () { return this.bytesValue; };
+    RestResponse.prototype.bytes = function () { this.loadBody(); return this.bytesValue; };
     RestResponse.prototype.headerList = function (name) { return (this.headerMap[String(name).toLowerCase()] || []).slice(); };
     RestResponse.prototype.headerFirst = function (name) { return (this.headerMap[String(name).toLowerCase()] || [null])[0]; };
     RestResponse.prototype.getContentType = function () { return this.headerFirst("content-type"); };
     RestResponse.prototype.getHeaders = function () { return this.headerMap; };
     RestResponse.prototype.getStatusCode = function () { return this.statusCode; };
     RestResponse.prototype.getReasonPhrase = function () { return this.reasonPhrase; };
-    RestResponse.prototype.text = function () { return this.body; };
+    RestResponse.prototype.text = function () { this.loadBody(); return this.body; };
     RestResponse.prototype.jsonObject = function () {
+        this.loadBody();
         try { return JSON.parse(this.body); }
         catch (e) { throw new Error("Error parsing JSON response from request to " + this.client.uriString + ": " + e.message); }
     };
@@ -651,6 +663,7 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     function RestClient() {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
         this.bodyParameterList = []; this.contentTypeText = "application/json"; this.timeoutSeconds = 30;
+        this.bodyBinary = null; this.bodyFromRequest = false; this.followRedirectsFlag = true;
     }
     RestClient.prototype.method = function (method) { this.methodName = String(method).toUpperCase(); return this; };
     RestClient.prototype.uri = function (uri) {
@@ -677,6 +690,24 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         return this;
     };
     RestClient.prototype.timeout = function (seconds) { this.timeoutSeconds = Number(seconds); return this; };
+    // A binary body, a Uint8Array, sent as it is; the Content-Type is the caller's header.
+    RestClient.prototype.bodyBytes = function (bytes) { this.bodyBinary = bytes == null ? null : bytes; this.bodyText = null; return this; };
+    // The body of the web request being handled, sent as it came without passing through the script (a proxy).
+    RestClient.prototype.streamFrom = function () { this.bodyFromRequest = true; this.bodyText = null; this.bodyBinary = null; return this; };
+    // false passes a redirect back as the 3xx response instead of following it; only send() reads it.
+    RestClient.prototype.followRedirects = function (follow) { this.followRedirectsFlag = follow !== false; return this; };
+    // As call(), with the headers only as given (no Content-Type or Accept added) and the body of the response left on
+    // the server until text() or bytes() reads it, or response.forward(up) sends it on to the client as it comes.
+    RestClient.prototype.send = function () {
+        let uri = this.uriString;
+        if (!uri) throw new Error("No URI set in RestClient");
+        const query = restQuery(this.bodyParameterList);
+        if (query) uri += (uri.includes("?") ? "&" : "?") + query;
+        const sent = host.restOpen({ method: this.methodName, uri: uri, headers: this.headerList.slice(), body: this.bodyText,
+            bodyBytes: this.bodyBinary, bodyFromRequest: this.bodyFromRequest, followRedirects: this.followRedirectsFlag,
+            timeoutSeconds: this.timeoutSeconds });
+        return new RestResponse(this, sent);
+    };
     RestClient.prototype.call = function () {
         let uri = this.uriString;
         if (!uri) throw new Error("No URI set in RestClient");
@@ -1277,7 +1308,7 @@ fn load_data<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<JsVa
             data_types: list("dataTypes"),
             components: list("componentNames"),
             only_create: flag("onlyCreate"),
-            use_try_insert: flag("useTryInsert"),
+            // `useTryInsert` is not read: a store is one upsert wherever that fits.
             dummy_fks: flag("dummyFks"),
             disable_fk_create: flag("disableFkCreate"),
             timeout: text("transactionTimeout")
@@ -2015,6 +2046,7 @@ fn run_command_first_line(command: &str) -> Result<String, moqui_lib::error::Err
     let Some(program) = words.next() else {
         return Err(moqui_lib::error::Error::new("the token command is empty"));
     };
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Process, program)?;
     let mut child = Command::new(program)
         .args(words)
         .stdin(Stdio::null())
@@ -2116,6 +2148,12 @@ fn rest_send<'js>(ctx: Ctx<'js>, request: JsValue<'js>) -> rquickjs::Result<JsVa
                     crate::outbound::redacted(&url)
                 ),
             ));
+        }
+        if let Err(refused) = crate::entity::fence::check_effect(
+            crate::entity::fence::Effect::RemoteCall,
+            &format!("HTTP {method} {}", crate::outbound::redacted(&url)),
+        ) {
+            return Err(Exception::throw_message(&ctx, refused.message()));
         }
         let response = crate::outbound::send(crate::outbound::Request {
             method,
@@ -2356,7 +2394,7 @@ fn get_find_filters_for_user<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickj
                 filter
                     .fields()
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|(name, value)| (name.to_string(), value.clone()))
                     .collect()
             })
             .collect();
@@ -2584,6 +2622,7 @@ pub(super) fn install<'js>(
     method!("resourceVersionText", resource_version_text);
     method!("resourceVersionDiff", resource_version_diff);
     method!("restSend", rest_send);
+    super::web_host::methods(ctx, &host)?;
     method!("runTokenCommand", run_token_command);
     method!("testConfConnection", test_conf_connection);
     method!("runSqlCountConf", run_sql_count_conf);
@@ -2603,9 +2642,11 @@ pub(super) fn install<'js>(
             collection_utilities.clone(),
             string_utilities.clone(),
             web_utilities.clone(),
-            host,
+            host.clone(),
         )),
     )?;
+    // the servlet API's request and response for web scripts, ec.web.request and ec.web.response (web_host.rs)
+    super::web_host::install(ctx, &host)?;
     // change sets, version notes and the rest of what drives use (files_host.rs)
     super::files_host::install(ctx)
 }

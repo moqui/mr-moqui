@@ -242,7 +242,11 @@ pub fn get_field_entity_value(widget: &NodeLit) -> Result<String, Error> {
     };
     let text = widget.attr("text");
     if !text.is_empty() {
-        let fields: IndexMap<String, Value> = found.localized_fields(&facade).into_iter().collect();
+        let fields: IndexMap<String, Value> = found
+            .localized_fields(&facade)
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
         let _frame = ContextFrame::push();
         script::put_context_all(&fields);
         return script::expand_localized(text);
@@ -328,7 +332,10 @@ pub fn context_value(from: &str, value: &str) -> Result<Value, Error> {
     Ok(Value::string(""))
 }
 
-/// `sri.setInContext(setNode)`: a `set` element run in the context.
+/// `sri.setInContext(setNode)`: a `<set>` under a field. `set-if-empty="false"` skips a null or empty
+/// new value; otherwise the field is assigned, including an empty value. `value` and `default-value`
+/// go through [`script::expand`], which does not localize. That is the XSD rule `XmlActions.js`
+/// already uses. Java's `setInContext` tests the raw attribute string, so `"false"` is truthy there.
 ///
 /// # Errors
 ///
@@ -338,25 +345,33 @@ pub fn set_in_context(set: &NodeLit) -> Result<(), Error> {
     if field.is_empty() {
         return Ok(());
     }
-    let current = script::context_value(field);
-    let skip = set.attr("set-if-empty") == "false" && current.as_ref().is_some_and(|value| !is_empty(value));
-    if skip {
-        return Ok(());
-    }
     let mut value = if !set.attr("from").is_empty() {
         script::eval_value(set.attr("from"))?
-    } else if !set.attr("value").is_empty() {
-        Value::String(script::expand_localized(set.attr("value"))?)
+    } else if let Some(text) = set.attrs.get("value") {
+        Value::String(script::expand(text)?)
     } else {
         Value::Null
     };
-    if is_empty(&value) && !set.attr("default-value").is_empty() {
-        value = Value::String(script::expand_localized(set.attr("default-value"))?);
+    if null_or_empty_string(&value) && !set.attr("default-value").is_empty() {
+        value = Value::String(script::expand(set.attr("default-value"))?);
     }
     if !set.attr("type").is_empty() {
         value = l10n::basic_convert(&value, set.attr("type")).value;
     }
+    // After the default and the type conversion, so a default that fills an empty value is kept.
+    if set.attr("set-if-empty") == "false" && null_or_empty_string(&value) {
+        return Ok(());
+    }
     script::set_context_name(field, value)
+}
+
+/// Null or `""`. A `0`, `false`, or empty list is a value, as `XmlActions.js` checks `!= null && !== ""`.
+fn null_or_empty_string(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.is_empty(),
+        _ => false,
+    }
 }
 
 // ---- validation ----
@@ -403,13 +418,13 @@ pub fn field_validation(sub: &NodeLit) -> Result<FieldValidation, Error> {
     Ok(out)
 }
 
-/// `getFieldValidationJsRules` for a field sub-node: the browser checks of its `validate-service` parameter, or for a
-/// numeric `validate-entity` field, each `(expression over value, localized message)`.
+/// `getFieldValidationJsRules` for a field sub-node, as rules: the checks of its `validate-service` parameter, or for a
+/// numeric `validate-entity` field, each with its localized message. qvt writes each with [`crate::service::ClientRule::js`].
 ///
 /// # Errors
 ///
 /// Returns an error when the named entity does not exist.
-pub fn field_validation_js_rules(sub: &NodeLit) -> Result<Vec<(String, String)>, Error> {
+pub fn field_validation_rules(sub: &NodeLit) -> Result<Vec<(crate::service::ClientRule, String)>, Error> {
     let field_name = sub.parent.as_ref().map_or("", |field| field.attr("name"));
     let service = sub.attr("validate-service");
     let entity = sub.attr("validate-entity");
@@ -418,7 +433,7 @@ pub fn field_validation_js_rules(sub: &NodeLit) -> Result<Vec<(String, String)>,
             "" => field_name,
             other => other,
         };
-        crate::service::input_js_rules(service, parameter).unwrap_or_default()
+        crate::service::input_rules(service, parameter).unwrap_or_default()
     } else if !entity.is_empty() {
         let name = match sub.attr("validate-field") {
             "" => field_name,
@@ -429,12 +444,12 @@ pub fn field_validation_js_rules(sub: &NodeLit) -> Result<Vec<(String, String)>,
             Some((_, kind, _)) if kind.starts_with("number-") || kind.starts_with("currency-") => {
                 if kind.ends_with("integer") {
                     vec![(
-                        crate::service::VALIDATE_NUMBER_INT.to_string(),
+                        crate::service::ClientRule::Integer,
                         "Please enter a valid whole number".to_string(),
                     )]
                 } else {
                     vec![(
-                        crate::service::VALIDATE_NUMBER.to_string(),
+                        crate::service::ClientRule::Number,
                         "Please enter a valid number".to_string(),
                     )]
                 }
@@ -446,6 +461,6 @@ pub fn field_validation_js_rules(sub: &NodeLit) -> Result<Vec<(String, String)>,
     };
     Ok(rules
         .into_iter()
-        .map(|(expr, message)| (expr, l10n::localize(&message).unwrap_or(message)))
+        .map(|(rule, message)| (rule, l10n::localize(&message).unwrap_or(message)))
         .collect())
 }

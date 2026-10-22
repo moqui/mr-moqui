@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Assist drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/Assist.md): /assist/<call>,
+    for js/WebrootAssist.js. Each transition hands its call to org.moqui.agent.AssistServices.call#Drawer, which reads the
+    request's parameters (query, form or JSON body), acts as the current user only (AgentUse; anything of another user's is
+    not found) and sends the response itself: 200 with JSON, or the error status with {errorCode, errors, code}. The reads
+    are GETs; the writes are POSTs, which present the session token (the X-CSRF-Token header or moquiSessionToken) as every
+    transition that runs actions does, and decide takes a decision only from a browser session by its cookie with that token.
+    No app's authorization covers these, so the service runs without it, as the shell and chat transitions of webroot.xml
+    do. The run's events stream from the host route /assist/runs/{runId}/events. The canvas calls (canvasState, canvasAction,
+    canvasAdjust, canvasProblems) and read, the one read proxy of the canvases, are llm/assist/canvas.rs; the calls of
+    phase 13.14 (queued, attachments, attachment, transcribe, textAction, memories, memory, skills, skill, events) are
+    llm/assist/extras.rs and files.rs. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-include="false">
+
+    <transition name="bootstrap" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'bootstrap').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="conversations" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'conversations').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="conversation" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'conversation').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="turn" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'turn').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancel" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'cancel').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="retry" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'retry').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="follow" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'follow').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="context" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'context').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="submitted" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'submitted').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="decide" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'decide').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="preview" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'preview').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="answer" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'answer').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="feedback" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'feedback').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="tasks" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'tasks').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="prompts" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'prompts').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="mentions" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const params = ec.web.parameters
+            if (String(params.kind || '') === 'records') {
+                // records come from the palette's sources (the apps' palette-source providers), as the palette shows them
+                if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+                else if (!ec.user.hasPermission('AgentUse')) ec.web.sendJsonError(403, 'this needs the AgentUse permission')
+                else {
+                    const found = sri.getShellSearch(String(params.q || ''), String(params.groups || ''), String(params.limit || ''))
+                    if (found != null) ec.web.sendJsonResponse({kind: 'records', groups: found.groups || []})
+                }
+            } else {
+                ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'mentions').disableAuthz().call()
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="queued" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'queued').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="attachments" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'attachments').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="attachment" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'attachment').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="transcribe" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'transcribe').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="textAction" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'textAction').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="memories" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'memories').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="memory" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'memory').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="skills" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'skills').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="skill" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'skill').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="events" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'events').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="canvasState" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'canvasState').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="canvasAction" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'canvasAction').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="canvasAdjust" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'canvasAdjust').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="canvasProblems" method="post" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'canvasProblems').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="read" method="get" read-only="true" begin-transaction="false">
+        <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'read').disableAuthz().call()</script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets/>
+</screen>

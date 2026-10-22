@@ -109,8 +109,8 @@ fn framework_seed_and_fixture_load() {
     assert!(enumeration > 0, "enumeration {enumeration}");
     assert!(permissions > 0, "user group permission {permissions}");
     let extra = read_extra(&framework, &cluster_dir);
-    // ElasticRemote is a sealed permission that only seed-initial grants.
-    assert_eq!(extra.sealed_grant, 1, "sealed ElasticRemote grant");
+    // SearchRemote is a sealed permission that only seed-initial grants.
+    assert_eq!(extra.sealed_grant, 1, "sealed SearchRemote grant");
     // BTC is in CurrencyData, which is seed-initial only.
     assert_eq!(extra.initial_uom, 1, "seed-initial Uom BTC");
     assert!(
@@ -141,7 +141,7 @@ fn read_extra(framework: &Path, cluster_dir: &Path) -> Extra {
     let sealed_grant = facade
         .find("moqui.security.UserGroupPermission")
         .unwrap()
-        .eq("userPermissionId", Value::string("ElasticRemote"))
+        .eq("userPermissionId", Value::string("SearchRemote"))
         .count()
         .unwrap();
     let initial_uom = facade

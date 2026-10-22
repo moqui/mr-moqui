@@ -70,69 +70,69 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Overdue -->
             <container style="row items-center q-mt-sm q-mb-xs">
                 <label type="span" text="Overdue" style="text-subtitle2 text-warning"/>
-                <render-mode><text type="qvt"><![CDATA[<q-badge class="q-ml-xs" color="warning" text-color="dark">${overdueList.length}</q-badge>]]></text></render-mode>
+                <render-mode><text type="qvt"><![CDATA[<q-badge class="q-ml-xs" color="warning" text-color="dark">${overdueList.length}</q-badge>]]></text><text type="tui"><![CDATA[{"t": "text", "id": "PanelOverdueCount", "style": "strong", "text": ${JSON.stringify(String(overdueList.length))}}]]></text></render-mode>
             </container>
-            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text><text type="tui" template="false">[]</text></render-mode>
             <section-iterate name="OverdueItems" list="overdueList" entry="item"><widgets>
                 <render-mode><text type="qvt"><![CDATA[
                     <q-item class="q-px-sm">
                         <q-item-section avatar><q-icon name="${item.icon}" color="warning" size="xs"></q-icon></q-item-section>
-                        <q-item-section><q-item-label lines="1">]]></text></render-mode>
+                        <q-item-section><q-item-label lines="1">]]></text><text type="tui" template="false">[]</text></render-mode>
                 <link url="openRecord" link-type="anchor" text="${item.title}"><parameter name="enumId" from="item.id"/></link>
                 <render-mode><text type="qvt"><![CDATA[</q-item-label><q-item-label caption lines="1">${item.time} &#183; ${item.record}</q-item-label></q-item-section>
-                        <q-item-section side class="q-pl-none"><div class="row no-wrap items-center">]]></text></render-mode>
+                        <q-item-section side class="q-pl-none"><div class="row no-wrap items-center">]]></text><text type="tui"><![CDATA[{"t": "text", "id": ${JSON.stringify("PanelOverdueCaption" + item.id)}, "text": ${JSON.stringify(item.kind + " · " + item.time + " · " + String(item.record).replace(/&#183;/g, "·"))}}]]></text></render-mode>
                 <link url="markDone" link-type="hidden-form-link" icon="check" text="" tooltip="Mark done"><parameter name="itemTitle" from="item.title"/></link>
                 <link url="snooze" link-type="hidden-form-link" icon="schedule" text="" tooltip="Snooze to tomorrow"><parameter name="itemTitle" from="item.title"/></link>
-                <render-mode><text type="qvt"><![CDATA[</div></q-item-section></q-item>]]></text></render-mode>
+                <render-mode><text type="qvt"><![CDATA[</div></q-item-section></q-item>]]></text><text type="tui" template="false">[]</text></render-mode>
             </widgets></section-iterate>
-            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text><text type="tui" template="false">[]</text></render-mode>
 
             <!-- Due today -->
             <container style="row items-center q-mt-md q-mb-xs">
                 <label type="span" text="Due today" style="text-subtitle2"/>
-                <render-mode><text type="qvt"><![CDATA[<q-badge class="q-ml-xs" color="primary">${dueTodayList.length}</q-badge>]]></text></render-mode>
+                <render-mode><text type="qvt"><![CDATA[<q-badge class="q-ml-xs" color="primary">${dueTodayList.length}</q-badge>]]></text><text type="tui"><![CDATA[{"t": "text", "id": "PanelDueTodayCount", "style": "strong", "text": ${JSON.stringify(String(dueTodayList.length))}}]]></text></render-mode>
             </container>
-            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text><text type="tui" template="false">[]</text></render-mode>
             <section-iterate name="DueTodayItems" list="dueTodayList" entry="item"><widgets>
                 <render-mode><text type="qvt"><![CDATA[
                     <q-item class="q-px-sm">
                         <q-item-section avatar><q-icon name="${item.icon}" color="primary" size="xs"></q-icon></q-item-section>
-                        <q-item-section><q-item-label lines="1">]]></text></render-mode>
+                        <q-item-section><q-item-label lines="1">]]></text><text type="tui" template="false">[]</text></render-mode>
                 <link url="openRecord" link-type="anchor" text="${item.title}"><parameter name="enumId" from="item.id"/></link>
                 <render-mode><text type="qvt"><![CDATA[</q-item-label><q-item-label caption lines="1">${item.time} &#183; ${item.record}</q-item-label></q-item-section>
-                        <q-item-section side class="q-pl-none"><div class="row no-wrap items-center">]]></text></render-mode>
+                        <q-item-section side class="q-pl-none"><div class="row no-wrap items-center">]]></text><text type="tui"><![CDATA[{"t": "text", "id": ${JSON.stringify("PanelDueTodayCaption" + item.id)}, "text": ${JSON.stringify(item.kind + " · " + item.time + " · " + String(item.record).replace(/&#183;/g, "·"))}}]]></text></render-mode>
                 <link url="markDone" link-type="hidden-form-link" icon="check" text="" tooltip="Mark done"><parameter name="itemTitle" from="item.title"/></link>
                 <link url="snooze" link-type="hidden-form-link" icon="schedule" text="" tooltip="Snooze to tomorrow"><parameter name="itemTitle" from="item.title"/></link>
-                <render-mode><text type="qvt"><![CDATA[</div></q-item-section></q-item>]]></text></render-mode>
+                <render-mode><text type="qvt"><![CDATA[</div></q-item-section></q-item>]]></text><text type="tui" template="false">[]</text></render-mode>
             </widgets></section-iterate>
-            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text><text type="tui" template="false">[]</text></render-mode>
 
             <!-- Later today: the empty state of a group -->
             <container style="row items-center q-mt-md q-mb-xs">
                 <label type="span" text="Later today" style="text-subtitle2"/>
             </container>
-            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[<q-list dense bordered class="rounded-borders">]]></text><text type="tui" template="false">[]</text></render-mode>
             <section-iterate name="LaterTodayItems" list="laterTodayList" entry="item"><widgets>
                 <render-mode><text type="qvt"><![CDATA[<q-item class="q-px-sm"><q-item-section avatar><q-icon name="${item.icon}" size="xs"></q-icon></q-item-section>
-                    <q-item-section><q-item-label lines="1">${item.title}</q-item-label><q-item-label caption>${item.time} &#183; ${item.record}</q-item-label></q-item-section></q-item>]]></text></render-mode>
+                    <q-item-section><q-item-label lines="1">${item.title}</q-item-label><q-item-label caption>${item.time} &#183; ${item.record}</q-item-label></q-item-section></q-item>]]></text><text type="tui"><![CDATA[{"t": "text", "id": ${JSON.stringify("PanelLaterItem" + item.id)}, "text": ${JSON.stringify(item.title + " (" + item.kind + " · " + item.time + " · " + String(item.record).replace(/&#183;/g, "·") + ")")}}]]></text></render-mode>
             </widgets></section-iterate>
             <section name="LaterTodayEmpty" condition="!laterTodayList || laterTodayList.length == 0"><widgets>
                 <render-mode><text type="qvt"><![CDATA[<q-item class="q-px-sm"><q-item-section avatar><q-icon name="check_circle" color="positive" size="xs"></q-icon></q-item-section>
-                    <q-item-section><q-item-label :class="$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'">Nothing due later today</q-item-label></q-item-section></q-item>]]></text></render-mode>
+                    <q-item-section><q-item-label :class="$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'">Nothing due later today</q-item-label></q-item-section></q-item>]]></text><text type="tui" template="false"><![CDATA[{"t": "text", "id": "PanelLaterEmpty", "text": "✓ Nothing due later today"}]]></text></render-mode>
             </widgets></section>
-            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[</q-list>]]></text><text type="tui" template="false">[]</text></render-mode>
 
             <!-- the approvals line links to the Notifications tab -->
             <render-mode><text type="qvt"><![CDATA[<q-banner dense rounded class="q-mt-md" :class="$q.dark.isActive ? 'bg-grey-9' : 'bg-grey-2'">
                 <template v-slot:avatar><q-icon name="how_to_reg" color="info" size="sm"></q-icon></template>
-                <span class="text-weight-medium">${approvalsWaiting} approvals</span> waiting on you.]]></text></render-mode>
+                <span class="text-weight-medium">${approvalsWaiting} approvals</span> waiting on you.]]></text><text type="tui"><![CDATA[{"t": "text", "id": "PanelApprovals", "style": "strong", "text": ${JSON.stringify(approvalsWaiting + " approvals waiting on you.")}}]]></text></render-mode>
             <link url="openNotifications" link-type="anchor" text="Open Notifications" style="q-ml-xs"/>
-            <render-mode><text type="qvt"><![CDATA[</q-banner>]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[</q-banner>]]></text><text type="tui" template="false">[]</text></render-mode>
 
             <!-- quick create: the dialog the header's + opens, with the context chip above six fields -->
             <container style="q-mt-md">
                 <container-dialog id="QuickCreate" button-text="New task" title="Quick create" width="420">
-                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square icon="link" class="q-ml-none q-mb-sm">Linked to: Enumeration ScreenThemeType</q-chip>]]></text></render-mode>
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square icon="link" class="q-ml-none q-mb-sm">Linked to: Enumeration ScreenThemeType</q-chip>]]></text><text type="tui" template="false"><![CDATA[{"t": "text", "id": "PanelQuickCreateContext", "style": "strong", "text": "Linked to: Enumeration ScreenThemeType"}]]></text></render-mode>
                     <form-single name="QuickCreateForm" transition="createQuick" focus-field="title">
                         <field name="title"><default-field title="Title"><text-line/></default-field></field>
                         <field name="kind"><default-field title="Kind"><drop-down>

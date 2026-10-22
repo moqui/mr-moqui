@@ -80,7 +80,18 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header title="Chatter"/><box-body>
             <label text="On ${recordEntity} ${recordId} · opens on ${tabText}${hide ? ' · leaves out ' + hide : ''}. The gallery's stand-in for BOSS's Shared/Chatter, loaded by the chatter element."
                     type="div" style="text-caption m-muted q-mb-sm"/>
-            <render-mode><text type="qvt"><![CDATA[<m-record-card record-entity="${WebUtilities.encodeHtml(recordEntity || '')}" record-id="${WebUtilities.encodeHtml(recordId || '')}" card-url="${sri.buildUrl('recordCard').url}" dense class="q-mb-sm"></m-record-card>]]></text></render-mode>
+            <render-mode><text type="qvt"><![CDATA[<m-record-card record-entity="${WebUtilities.encodeHtml(recordEntity || '')}" record-id="${WebUtilities.encodeHtml(recordId || '')}" card-url="${sri.buildUrl('recordCard').url}" dense class="q-mb-sm"></m-record-card>]]></text>
+                <!-- the record card as the recordCard transition answers it: the enumeration, its type, a link to its Detail -->
+                <text type="tui"><![CDATA[${JSON.stringify((() => {
+                    const enumeration = recordId ? ec.entity.find('moqui.basic.Enumeration').condition('enumId', recordId).one() : null
+                    if (!enumeration) return {t: 'text', id: 'ChatterRecord', style: 'strong', text: ((recordEntity || '') + ' ' + (recordId || '')).trim() || 'No record'}
+                    const type = ec.entity.find('moqui.basic.EnumerationType').condition('enumTypeId', enumeration.enumTypeId).one()
+                    return {t: 'box', id: 'ChatterRecord', title: 'Enumeration ' + enumeration.enumId, c: [
+                        {t: 'link', id: 'ChatterRecordLink', kind: 'anchor', text: enumeration.description || enumeration.enumId,
+                            url: sri.buildUrl('../Detail').url + '?enumId=' + encodeURIComponent(enumeration.enumId)},
+                        {t: 'text', id: 'ChatterRecordFields', text: 'Active · Type: ' + ((type && type.description) || enumeration.enumTypeId) +
+                            (enumeration.sequenceNum == null ? '' : ' · Sequence: ' + enumeration.sequenceNum)}]}
+                })())}]]></text></render-mode>
             <form-single name="LogNote" transition="logNote">
                 <field name="recordEntity"><default-field><hidden/></default-field></field>
                 <field name="recordId"><default-field><hidden/></default-field></field>
@@ -100,6 +111,12 @@ along with this software (see the LICENSE.md file). If not, see
         <template v-slot:title><div class="row items-center no-wrap q-gutter-x-sm"><m-avatar size="24px"></m-avatar><span class="text-body2">spec-sheet.pdf was attached</span></div></template>
     </q-timeline-entry>
 </q-timeline>
+            ]]></text><text type="tui" template="false"><![CDATA[
+{"t": "component", "id": "ChatterTimeline", "name": "timeline", "props": {"items": [
+    {"time": "Today 09:12", "title": "John Doe logged a note", "text": "Description reviewed with @John Doe and the Products team.", "kind": "primary"},
+    {"time": "Yesterday 16:40", "title": "Ada Lovelace logged a call", "kind": "primary"},
+    {"time": "Last week", "title": "spec-sheet.pdf was attached", "kind": "secondary"}
+]}}
             ]]></text></render-mode>
         </box-body></container-box>
     </widgets>

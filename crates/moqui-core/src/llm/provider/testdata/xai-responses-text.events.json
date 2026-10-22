@@ -1,0 +1,75 @@
+{
+  "events": [
+    {
+      "id": "b6c1e5f0-3a2d-4c87-9e1b-77d0f2a9c414",
+      "model": "grok-4.7",
+      "type": "started"
+    },
+    {
+      "item": {
+        "item": {
+          "encrypted_content": "eGFpLWVuY3J5cHRlZC1yZWFzb25pbmctYmxvYg==",
+          "id": "rs_b6c1e5f0-3a2d-4c87-9e1b-77d0f2a9c414",
+          "summary": [],
+          "type": "reasoning"
+        },
+        "kind": "responses-reasoning"
+      },
+      "type": "replay"
+    },
+    {
+      "delta": "Three users",
+      "index": 1,
+      "type": "text"
+    },
+    {
+      "delta": " logged in today.",
+      "index": 1,
+      "type": "text"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 1088,
+      "input": 1210,
+      "output": 203,
+      "reasoning": 191,
+      "type": "usage"
+    },
+    {
+      "finish": "stop",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "stop",
+      "type": "finish"
+    },
+    "model": "grok-4.7",
+    "reasoning": "",
+    "replay": [
+      {
+        "item": {
+          "encrypted_content": "eGFpLWVuY3J5cHRlZC1yZWFzb25pbmctYmxvYg==",
+          "id": "rs_b6c1e5f0-3a2d-4c87-9e1b-77d0f2a9c414",
+          "summary": [],
+          "type": "reasoning"
+        },
+        "kind": "responses-reasoning"
+      }
+    ],
+    "response_id": "b6c1e5f0-3a2d-4c87-9e1b-77d0f2a9c414",
+    "text": "Three users logged in today.",
+    "text_deltas": 2,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 1088,
+      "input": 1210,
+      "output": 203,
+      "reasoning": 191
+    }
+  }
+}

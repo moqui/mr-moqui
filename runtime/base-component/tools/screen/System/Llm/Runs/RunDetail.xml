@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One run: the state box (status, pause, lease, attempts, budgets, counts, tokens, cost) with Cancel, which stops it and
+    keeps the partial answer, and its steps and tool calls by name for any admin; the tool arguments and results, the
+    events and the approvals only for its own user or with AgentAudit, each such read logged (get#AgentAuditView). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Run" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="runId" required="true"/>
+    <transition name="runList"><default-response url="../RunList"/></transition>
+    <transition name="conversationDetail"><default-response url="../../Conversations/ConversationDetail"/></transition>
+    <transition name="approvalDetail"><default-response url="../../Approvals/ApprovalDetail"/></transition>
+    <transition name="callList"><default-response url="../../Calls/CallList"/></transition>
+    <transition name="cancelRun"><service-call name="org.moqui.agent.AgentAdminServices.cancel#AgentRun"/>
+        <default-response url="."/><error-response url="."/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentRun" value-field="agentRun"/>
+        <!-- the answer and the error text are content: they come only through the service -->
+        <script>if (agentRun) { agentRun.resultJson = null; agentRun.statusReason = null; agentRun.errorText = null }</script>
+        <set field="terminal" from="!agentRun || ['AgrCompleted', 'AgrFailed', 'AgrCanceled', 'AgrRejected'].includes(agentRun.statusId)"/>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#AgentAuditView" in-map="{runId:runId}" out-map="audit"/>
+        <set field="stepList" from="audit?.stepList ?? []"/>
+        <set field="toolCallList" from="audit?.toolCallList ?? []"/>
+        <set field="eventList" from="audit?.eventList ?? []"/>
+        <set field="approvalList" from="audit?.approvalList ?? []"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Run ${runId ?? ''}"/><box-toolbar>
+            <link url="conversationDetail" text="Conversation" condition="agentRun?.conversationId" parameter-map="{conversationId:agentRun?.conversationId}"/>
+            <link url="callList" text="Model Calls" parameter-map="{runId:runId}"/>
+            <link url="runList" text="All Runs"/>
+        </box-toolbar><box-body>
+            <label text="${audit?.reason ?? ''}" type="p" condition="!audit?.shown"/>
+            <label text="This read of another user's run is logged." type="p" condition="audit?.audited"/>
+            <section name="CancelSection" condition="!terminal"><widgets>
+                <form-single name="CancelRun" transition="cancelRun">
+                    <field name="runId"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Cancel Run"><submit confirmation="Stop this run? Its partial answer is kept."/></default-field></field>
+                </form-single>
+            </widgets></section>
+            <form-single name="RunState" map="agentRun">
+                <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="pauseKindEnumId"><default-field title="Waiting For"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="pauseRef"><default-field title="Waiting On"><display/></default-field></field>
+                <field name="pauseExpireDate"><default-field title="Wait Expires"><display/></default-field></field>
+                <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+                <field name="surfaceEnumId"><default-field title="Surface"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="tier"><default-field><display/></default-field></field>
+                <field name="leaseOwner"><default-field title="Lease Node"><display/></default-field></field>
+                <field name="leaseExpireDate"><default-field title="Lease Expires"><display/></default-field></field>
+                <field name="attempt"><default-field><display/></default-field></field>
+                <field name="cancelRequested"><default-field title="Cancel Asked"><display/></default-field></field>
+                <field name="lastEventSeq"><default-field title="Events"><display/></default-field></field>
+                <field name="stepCount"><default-field title="Steps"><display text="${stepCount ?? 0} of ${maxSteps ?? '-'}"/></default-field></field>
+                <field name="toolCallCount"><default-field title="Tool Calls"><display text="${toolCallCount ?? 0} of ${maxToolCalls ?? '-'}"/></default-field></field>
+                <field name="inputTokens"><default-field title="Input Tokens"><display/></default-field></field>
+                <field name="cachedInputTokens"><default-field title="Cached Input"><display/></default-field></field>
+                <field name="outputTokens"><default-field title="Output Tokens"><display/></default-field></field>
+                <field name="maxTokens"><default-field title="Token Cap"><display/></default-field></field>
+                <field name="cost"><default-field><display/></default-field></field>
+                <field name="maxCost"><default-field title="Cost Cap"><display/></default-field></field>
+                <field name="activeSeconds"><default-field title="Seconds Working"><display text="${activeSeconds ?? 0} of ${maxRunSeconds ?? '-'}"/></default-field></field>
+                <field name="capsText"><default-field title="Capabilities"><display/></default-field></field>
+                <field name="submittedDate"><default-field title="Submitted"><display/></default-field></field>
+                <field name="startedDate"><default-field title="Started"><display/></default-field></field>
+                <field name="endedDate"><default-field title="Ended"><display/></default-field></field>
+                <field name="errorCode"><default-field title="Error"><display/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Steps"/><box-body>
+            <form-list name="StepList" list="stepList" skip-form="true">
+                <field name="stepSeq"><default-field title="Step"><display/></default-field></field>
+                <field name="modelId"><default-field title="Model"><display/></default-field></field>
+                <field name="finishReason"><default-field title="Finish"><display/></default-field></field>
+                <field name="inputTokens"><default-field title="Input"><display/></default-field></field>
+                <field name="cachedInputTokens"><default-field title="Cached"><display/></default-field></field>
+                <field name="outputTokens"><default-field title="Output"><display/></default-field></field>
+                <field name="reasoningTokens"><default-field title="Reasoning"><display/></default-field></field>
+                <field name="toolCallCount"><default-field title="Tool Calls"><display/></default-field></field>
+                <field name="cost"><default-field><display/></default-field></field>
+                <field name="startedDate"><default-field title="Started"><display/></default-field></field>
+                <field name="endedDate"><default-field title="Ended"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Tool Calls"/><box-body>
+            <form-list name="ToolCallList" list="toolCallList" skip-form="true">
+                <field name="stepSeq"><default-field title="Step"><display/></default-field></field>
+                <field name="toolName"><default-field title="Tool"><display/></default-field></field>
+                <field name="classificationEnumId"><default-field title="Class"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="approvalId"><default-field title="Approval"><link url="approvalDetail" text="${approvalId}" link-type="anchor" condition="approvalId" parameter-map="{approvalId:approvalId}"/></default-field></field>
+                <field name="argumentsJson"><default-field title="Arguments"><display/></default-field></field>
+                <field name="resultSummary"><default-field title="Result"><display/></default-field></field>
+                <field name="startedDate"><default-field title="Started"><display/></default-field></field>
+                <field name="endedDate"><default-field title="Ended"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <section name="ContentSection" condition="audit?.shown"><widgets>
+            <container-box><box-header title="Approvals"/><box-body>
+                <form-list name="ApprovalList" list="approvalList" skip-form="true">
+                    <field name="approvalId"><default-field title="Approval"><link url="approvalDetail" text="${approvalId}" link-type="anchor" parameter-map="{approvalId:approvalId}"/></default-field></field>
+                    <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                    <field name="targetKind"><default-field title="Kind"><display/></default-field></field>
+                    <field name="targetName"><default-field title="Target"><display/></default-field></field>
+                    <field name="decisionChannel"><default-field title="Channel"><display/></default-field></field>
+                    <field name="createdDate"><default-field title="Created"><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+            <container-box><box-header title="Events"/><box-body>
+                <form-list name="EventList" list="eventList" skip-form="true">
+                    <field name="eventSeq"><default-field title="#"><display/></default-field></field>
+                    <field name="eventType"><default-field title="Type"><display/></default-field></field>
+                    <field name="eventDate"><default-field title="Date"><display/></default-field></field>
+                    <field name="payloadJson"><default-field title="Payload"><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

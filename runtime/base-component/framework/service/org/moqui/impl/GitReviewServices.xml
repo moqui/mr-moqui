@@ -1,0 +1,614 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Merge requests of a repository's branches and their reviews (moqui.resource.GitMergeRequest,
+    GitMergeRequestReviewer). No Java counterpart. Mantle-free, as WikiPageReview is: Mantle links merge requests to
+    work items and comments to lines; the framework keeps the request, its reviewers and its merge. Each service checks
+    the repository's rights (org.moqui.impl.GitServices.get#GitRepositoryAccess): viewers see, comment and request
+    changes, users who may push (update) approve and only their approvals count, the author or a user with update
+    changes one, update merges. Guide: docs/Git-Hosting.md, Merge requests. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="create" noun="MergeRequest">
+        <description>Open a merge request of a source branch into a target branch (the default branch when empty), as
+            the current user, who may push to the repository. A draft is not merged until it is marked ready. Its number
+            is the repository's next from 1; its head, merge base and mergeability are read now. Only one open request
+            per source and target. Webhooks get a merge_request event (opened).</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="sourceRef" required="true"/>
+            <parameter name="targetRef"/>
+            <parameter name="title" required="true"/>
+            <parameter name="description" allow-html="any"/>
+            <parameter name="draft" type="Boolean" default="false"/>
+            <parameter name="reviewerUserIdList" type="List"><parameter name="userId"/></parameter>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="deleteSourceBranch" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequestId"/>
+            <parameter name="mergeRequestNum" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <service-call name="org.moqui.impl.GitServices.get#GitRepositoryAccess" in-map="{repositoryId:repositoryId}" out-map="access"/>
+            <script><![CDATA[
+                mergeRequestId = null
+                mergeRequestNum = null
+                const me = ec.user.userId
+                if (!me) { ec.message.addError('Sign in to open a merge request'); return }
+                if (!access.canView) { ec.message.addError(ec.resource.expand('Repository ${repositoryId} not found', '', {repositoryId})); return }
+                if (!access.canCreate && !access.canUpdate) { ec.message.addError(ec.resource.expand('You may not push to ${repositoryId}', '', {repositoryId})); return }
+                if (access.archived) { ec.message.addError(ec.resource.expand('Repository ${repositoryId} is archived', '', {repositoryId})); return }
+                const short = (name) => String(name || '').trim().replace(/^refs\/heads\//, '')
+                const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', repositoryId).disableAuthz().one()
+                const source = short(sourceRef)
+                const target = short(targetRef) || (repo.branch || 'main')
+                if (source === target) { ec.message.addError('The source and the target are the same branch'); return }
+                const refs = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRefs').parameters({repositoryId, refType: 'branch'}).call()
+                const branches = Array.from(refs.refList || []).map((ref) => ref.shortName)
+                for (const branch of [source, target]) {
+                    if (!branches.includes(branch)) { ec.message.addError(ec.resource.expand('No branch ${branch} in ${repositoryId}', '', {branch, repositoryId})); return }
+                }
+                const existing = ec.entity.find('moqui.resource.GitMergeRequest').condition({repositoryId, sourceRef: source, targetRef: target})
+                        .condition('statusId', 'in', ['GmrDraft', 'GmrOpen']).disableAuthz().list()
+                if (existing.size() > 0) { ec.message.addError('Merge request !' + existing.get(0).mergeRequestNum + ' is already open for ' + source + ' into ' + target); return }
+                if (mergeMethodEnumId && !['GmmMerge', 'GmmSquash', 'GmmFastForward', 'GmmRebase'].includes(mergeMethodEnumId)) {
+                    ec.message.addError(mergeMethodEnumId + ' is not a merge method'); return }
+                const checked = ec.service.sync().name('org.moqui.impl.GitServices.get#GitCompare')
+                        .parameters({repositoryId, base: 'refs/heads/' + target, head: 'refs/heads/' + source, checkMergeable: true}).call()
+                if (ec.message.hasError()) return
+                const last = ec.entity.find('moqui.resource.GitMergeRequest').condition('repositoryId', repositoryId)
+                        .orderBy('-mergeRequestNum').limit(1).selectField('mergeRequestNum').disableAuthz().list()
+                const num = (last.size() > 0 ? Number(last.get(0).mergeRequestNum || 0) : 0) + 1
+                const now = ec.user.nowTimestamp
+                const mr = ec.entity.makeValue('moqui.resource.GitMergeRequest')
+                mr.setSequencedIdPrimary()
+                mr.setFields({repositoryId, mergeRequestNum: num, title: String(title).trim(), description: description || null,
+                    sourceRef: source, targetRef: target, statusId: draft ? 'GmrDraft' : 'GmrOpen', authorUserId: me,
+                    createdDate: now, lastUpdatedDate: now, headCommitId: checked.headCommitId, baseCommitId: checked.mergeBaseId || null,
+                    mergeableEnumId: checked.alreadyMerged ? 'GmaMerged' : (checked.mergeable ? 'GmaMergeable' : 'GmaConflict'),
+                    conflictPaths: Array.from(checked.conflictPaths || []).join('\n') || null,
+                    mergeMethodEnumId: mergeMethodEnumId || null, deleteSourceBranch: deleteSourceBranch ? 'Y' : 'N'}, true, null, null)
+                mr.create()
+                mergeRequestId = mr.mergeRequestId
+                mergeRequestNum = num
+                for (const reviewer of Array.from(new Set(Array.from(reviewerUserIdList || []).map(String).filter((id) => id && id !== me)))) {
+                    const row = ec.entity.makeValue('moqui.resource.GitMergeRequestReviewer')
+                    row.setFields({mergeRequestId, userId: reviewer, statusId: 'GmrrRequested', requestedDate: now}, true, null, null)
+                    row.create()
+                }
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'opened'}).call()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="MergeRequest">
+        <description>A merge request for its viewers: its fields, the repository's default merge method, its reviewers
+            (with their names, whether their approval is of the current head, and whether it counts: only approvals of
+            users who may push count, get#MergeRequestApprovals), the head's checks, the target's
+            branch rules and what keeps it from merging now (missing), and what the current user may do.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequest" type="Map"/>
+            <parameter name="reviewerList" type="List"/>
+            <parameter name="approvalCount" type="Integer"/>
+            <parameter name="checkState"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="branchRules" type="Map"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="missingList" type="List"><description>Why it cannot merge now; empty when it can</description></parameter>
+            <parameter name="canEdit" type="Boolean"/>
+            <parameter name="canMerge" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', mr.repositoryId).disableAuthz().one()
+                const nameOf = (userId) => {
+                    const account = userId ? ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(true).disableAuthz().one() : null
+                    return account ? (account.userFullName || account.username || userId) : userId
+                }
+                mergeRequest = Object.assign({}, mr.getMap(), {authorName: nameOf(mr.authorUserId),
+                    mergedByName: nameOf(mr.mergedByUserId), conflictPathList: String(mr.conflictPaths || '').split('\n').filter((path) => path)})
+                const rules = ec.service.sync().name('org.moqui.impl.GitServices.get#GitBranchRules')
+                        .parameters({repositoryId: mr.repositoryId, refName: mr.targetRef}).call()
+                branchRules = rules
+                const head = mr.headCommitId
+                // only the approvals of users who may push count toward the branch rules (a viewer's review is a comment)
+                const approvals = ec.service.sync().name('org.moqui.impl.GitReviewServices.get#MergeRequestApprovals')
+                        .parameters({mergeRequestId}).call() || {}
+                const counted = Array.from(approvals.approverUserIdList || []).map(String)
+                approvalCount = counted.length
+                reviewerList = []
+                for (const reviewer of Array.from(ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition('mergeRequestId', mergeRequestId)
+                        .orderBy('requestedDate').disableAuthz().list())) {
+                    const current = reviewer.reviewedCommitId != null && reviewer.reviewedCommitId === head
+                    reviewerList.push({userId: reviewer.userId, name: nameOf(reviewer.userId), statusId: reviewer.statusId,
+                        requestedDate: reviewer.requestedDate, reviewedDate: reviewer.reviewedDate, reviewedCommitId: reviewer.reviewedCommitId,
+                        reviewNote: reviewer.reviewNote, ofCurrentHead: current, approvalCounts: counted.includes(String(reviewer.userId))})
+                }
+                const checks = head ? ec.service.sync().name('org.moqui.impl.GitServices.get#GitCommitStatuses')
+                        .parameters({repositoryId: mr.repositoryId, commitId: head}).call() : {}
+                checkState = checks.state || null
+                checkList = Array.from(checks.statusList || [])
+                mergeMethodEnumId = mr.mergeMethodEnumId || repo.defaultMergeMethodEnumId || 'GmmMerge'
+                missingList = []
+                if (mr.statusId === 'GmrDraft') missingList.push('It is a draft: mark it ready')
+                else if (mr.statusId !== 'GmrOpen') missingList.push('It is not open')
+                if (repo.archivedDate) missingList.push('The repository is archived')
+                if (mr.mergeableEnumId === 'GmaConflict') missingList.push('Conflicts in ' + mergeRequest.conflictPathList.join(', '))
+                if (mr.mergeableEnumId === 'GmaUnchecked') missingList.push('The target moved; checking')
+                const required = Number(rules.requiredApprovals || 0)
+                if (approvalCount < required) missingList.push(approvalCount + ' of ' + required + ' approvals')
+                const passed = checkList.filter((check) => check.state === 'success').map((check) => check.context)
+                const failing = Array.from(rules.requiredStatusContexts || []).filter((context) => !passed.includes(context))
+                if (failing.length) missingList.push('Checks not passed: ' + failing.join(', '))
+                const allowed = Array.from(rules.allowedMergeMethods || [])
+                if (allowed.length && !allowed.includes(mergeMethodEnumId)) missingList.push('The branch rules allow ' + allowed.join(', '))
+                canEdit = !!ec.user.userId && (ec.user.userId === mr.authorUserId || access.canUpdate) && ['GmrDraft', 'GmrOpen'].includes(mr.statusId)
+                canMerge = !!access.canUpdate && missingList.length === 0
+                if (!access.canUpdate) missingList.push('You may not push to the target')
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="update" noun="MergeRequest">
+        <description>Change an open or draft merge request: the title, description, target branch, draft (a draft marked
+            ready opens), merge method and whether the source branch goes after the merge. By its author or a user with
+            update. A new target is checked for mergeability again.</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="title"/>
+            <parameter name="description" allow-html="any"/>
+            <parameter name="targetRef"/>
+            <parameter name="draft" type="Boolean"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="deleteSourceBranch" type="Boolean"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (ec.user.userId !== mr.authorUserId && !access.canUpdate) { ec.message.addError('Only its author or a maintainer changes a merge request'); return }
+                if (!['GmrDraft', 'GmrOpen'].includes(mr.statusId)) { ec.message.addError('A merged or closed merge request does not change'); return }
+                const fields = {}
+                if (title != null && String(title).trim()) fields.title = String(title).trim()
+                if (description != null) fields.description = description || null
+                if (draft != null) fields.statusId = draft ? 'GmrDraft' : 'GmrOpen'
+                if (deleteSourceBranch != null) fields.deleteSourceBranch = deleteSourceBranch ? 'Y' : 'N'
+                if (mergeMethodEnumId != null) {
+                    if (mergeMethodEnumId && !['GmmMerge', 'GmmSquash', 'GmmFastForward', 'GmmRebase'].includes(mergeMethodEnumId)) {
+                        ec.message.addError(mergeMethodEnumId + ' is not a merge method'); return }
+                    fields.mergeMethodEnumId = mergeMethodEnumId || null
+                }
+                const target = targetRef ? String(targetRef).trim().replace(/^refs\/heads\//, '') : null
+                if (target && target !== mr.targetRef) {
+                    if (target === mr.sourceRef) { ec.message.addError('The source and the target are the same branch'); return }
+                    fields.targetRef = target
+                }
+                if (!Object.keys(fields).length) return
+                fields.lastUpdatedDate = ec.user.nowTimestamp
+                mr.setFields(fields, true, null, null)
+                mr.update()
+                if (fields.targetRef) {
+                    ec.service.sync().name('org.moqui.impl.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).call()
+                }
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId,
+                    action: fields.statusId === 'GmrOpen' && mr.statusId === 'GmrOpen' && draft === false ? 'ready' : 'updated'}).call()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="set" noun="MergeRequestReviewers">
+        <description>Who reviews a merge request: replace them with userIdList, or add and remove some. A reviewer kept
+            keeps their review; one added is requested. Not the author. By its author or a user with update.</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="userIdList" type="List"><description>Replace the reviewers with these</description></parameter>
+            <parameter name="addUserIdList" type="List"/>
+            <parameter name="removeUserIdList" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="reviewerUserIdList" type="List"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                reviewerUserIdList = []
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (ec.user.userId !== mr.authorUserId && !access.canUpdate) { ec.message.addError('Only its author or a maintainer sets the reviewers'); return }
+                const ids = (list) => Array.from(list || []).map(String).filter((id) => id && id !== mr.authorUserId)
+                const rows = Array.from(ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition('mergeRequestId', mergeRequestId).disableAuthz().list())
+                const current = rows.map((row) => row.userId)
+                let wanted = userIdList != null ? ids(userIdList) : current.concat(ids(addUserIdList))
+                const removed = ids(removeUserIdList)
+                wanted = Array.from(new Set(wanted)).filter((id) => !removed.includes(id))
+                for (const row of rows) { if (!wanted.includes(row.userId)) row.delete() }
+                for (const userId of wanted) {
+                    if (current.includes(userId)) continue
+                    const account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).disableAuthz().one()
+                    if (!account) { ec.message.addError('No user ' + userId); return }
+                    const row = ec.entity.makeValue('moqui.resource.GitMergeRequestReviewer')
+                    row.setFields({mergeRequestId, userId, statusId: 'GmrrRequested', requestedDate: ec.user.nowTimestamp}, true, null, null)
+                    row.create()
+                }
+                mr.lastUpdatedDate = ec.user.nowTimestamp
+                mr.update()
+                reviewerUserIdList = wanted
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="submit" noun="MergeRequestReview">
+        <description>A review of a merge request at its current head by the current user, who may view the repository:
+            approve, request changes or comment, with a summary. Only a user who may push (update on the repository)
+            approves; a viewer comments or requests changes. The author does not approve their own. A reviewer not
+            requested becomes one. Webhooks get a merge_request event (reviewed).</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="decision" required="true"><description>approve, request_changes or comment</description></parameter>
+            <parameter name="note" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                const me = ec.user.userId
+                if (!me || !access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (!['GmrDraft', 'GmrOpen'].includes(mr.statusId)) { ec.message.addError('A merged or closed merge request takes no review'); return }
+                statusId = {approve: 'GmrrApproved', request_changes: 'GmrrChangesRequested', comment: 'GmrrCommented'}[decision]
+                if (!statusId) { ec.message.addError('The decision is approve, request_changes or comment'); return }
+                if (statusId === 'GmrrApproved' && me === mr.authorUserId) { ec.message.addError('You do not approve your own merge request'); return }
+                if (statusId === 'GmrrApproved' && !access.canUpdate) {
+                    ec.message.addError('Approving needs the right to push to the repository: you may comment or request changes'); return }
+                let row = ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition({mergeRequestId, userId: me}).disableAuthz().one()
+                const fields = {statusId, reviewedCommitId: mr.headCommitId, reviewedDate: ec.user.nowTimestamp, reviewNote: note || null}
+                if (row) {
+                    row.setFields(fields, true, null, null)
+                    row.update()
+                } else {
+                    row = ec.entity.makeValue('moqui.resource.GitMergeRequestReviewer')
+                    row.setFields(Object.assign({mergeRequestId, userId: me, requestedDate: ec.user.nowTimestamp}, fields), true, null, null)
+                    row.create()
+                }
+                mr.lastUpdatedDate = ec.user.nowTimestamp
+                mr.update()
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'reviewed'}).call()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="close" noun="MergeRequest">
+        <description>Close a merge request without merging it. By its author or a user with update.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (ec.user.userId !== mr.authorUserId && !access.canUpdate) { ec.message.addError('Only its author or a maintainer closes a merge request'); return }
+                if (mr.statusId === 'GmrClosed') return
+                if (mr.statusId === 'GmrMerged') { ec.message.addError('The merge request is merged'); return }
+                mr.setFields({statusId: 'GmrClosed', closedDate: ec.user.nowTimestamp, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
+                mr.update()
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'closed'}).call()
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="reopen" noun="MergeRequest">
+        <description>Open a closed merge request again, when its source branch is still there and the repository is not
+            archived; its mergeability is checked again. By its author or a user with update.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const access = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call()
+                if (!access.canView) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                if (ec.user.userId !== mr.authorUserId && !access.canUpdate) { ec.message.addError('Only its author or a maintainer reopens a merge request'); return }
+                if (mr.statusId !== 'GmrClosed') { ec.message.addError('Only a closed merge request reopens'); return }
+                if (access.archived) { ec.message.addError('The repository is archived'); return }
+                const open = ec.entity.find('moqui.resource.GitMergeRequest').condition({repositoryId: mr.repositoryId, sourceRef: mr.sourceRef, targetRef: mr.targetRef})
+                        .condition('statusId', 'in', ['GmrDraft', 'GmrOpen']).disableAuthz().count()
+                if (open > 0) { ec.message.addError('Another merge request of ' + mr.sourceRef + ' into ' + mr.targetRef + ' is open'); return }
+                mr.setFields({statusId: 'GmrOpen', closedDate: null, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
+                mr.update()
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.check#MergeRequest').parameters({mergeRequestId}).call()
+                if (ec.message.hasError()) return
+                ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'reopened'}).call()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="merge" noun="MergeRequest" type="rust" location="moqui_core::service::git_hosting::merge_merge_request"
+            transaction="ignore">
+        <description>Merge an open merge request by its method (the one given, else its own, else the repository's
+            default) once the target's branch rules are met: the approvals required (of the current head when the rule
+            dismisses stale ones; only those of users who may push count), the required checks successful on the head, a method they allow. Needs update on the
+            repository; refused on a conflict. The request becomes merged with the target's new head; its source branch
+            is deleted when asked (kept, with a message, when its branch rules refuse). Webhooks get a merge_request
+            event (merged).</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="message" allow-html="any"><description>Of the merge commit or squash</description></parameter>
+            <parameter name="deleteSourceBranch" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commitId"/>
+            <parameter name="madeCommitIds" type="List"/>
+            <parameter name="mergeMethodEnumId"/>
+            <parameter name="conflictPaths" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="MergeRequestApprovals" type="rust" location="moqui_core::service::git_hosting::get_merge_request_approvals">
+        <description>For a viewer of the repository, the approvals of a merge request that count toward the target's
+            branch rules: approved (of the current head when the rules dismiss stale approvals) by a user who may push
+            to the repository now, decided as that user. merge#MergeRequest counts the same way.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="approvalCount" type="Integer"/>
+            <parameter name="approverUserIdList" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="find" noun="MergeRequests">
+        <description>Merge requests of the repositories the current user may view, last updated first, paged: by
+            repository, status, author, reviewer, the ones waiting for a user's review, target branch and text in the
+            title. Each with its repository, branches, author and reviewers' names, mergeability and the head's
+            combined check state.</description>
+        <in-parameters>
+            <parameter name="repositoryId"/>
+            <parameter name="repositoryIdList" type="List"/>
+            <parameter name="statusId"/>
+            <parameter name="statusIdList" type="List"/>
+            <parameter name="authorUserId"/>
+            <parameter name="reviewerUserId"/>
+            <parameter name="waitingForUserId"><description>Requested reviews of this user not yet given, of open
+                requests</description></parameter>
+            <parameter name="targetRef"/>
+            <parameter name="text"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mergeRequestList" type="List"/>
+            <parameter name="mergeRequestListCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                mergeRequestList = []
+                mergeRequestListCount = 0
+                let wanted = Array.from(repositoryIdList || []).map(String)
+                if (repositoryId) wanted.push(String(repositoryId))
+                const repos = ec.service.sync().name('org.moqui.impl.GitServices.find#GitRepositories')
+                        .parameters({repositoryIdList: wanted.length ? wanted : null, includeArchived: true, pageNoLimit: true}).call()
+                const visible = Array.from(repos.repositoryList || []).map((repo) => repo.repositoryId)
+                if (!visible.length) return
+                const cf = ec.entity.conditionFactory
+                const statuses = Array.from(statusIdList || []).map(String)
+                if (statusId) statuses.push(String(statusId))
+                const reviewerOf = (userId, waiting) => {
+                    let rows = ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition('userId', userId).disableAuthz()
+                    if (waiting) rows = rows.condition('statusId', 'GmrrRequested')
+                    return Array.from(rows.selectField('mergeRequestId').list()).map((row) => row.mergeRequestId)
+                }
+                const reviewed = reviewerUserId ? reviewerOf(reviewerUserId, false).concat(['_NA_']) : null
+                const waiting = waitingForUserId ? reviewerOf(waitingForUserId, true).concat(['_NA_']) : null
+                // a find is used once: one for the count, one for the page
+                const makeFind = () => {
+                    let find = ec.entity.find('moqui.resource.GitMergeRequest').condition('repositoryId', 'in', visible).disableAuthz()
+                    if (statuses.length) find = find.condition('statusId', 'in', statuses)
+                    if (authorUserId) find = find.condition('authorUserId', authorUserId)
+                    if (targetRef) find = find.condition('targetRef', String(targetRef).replace(/^refs\/heads\//, ''))
+                    if (text) find = find.condition(cf.makeCondition('title', 'like', '%' + String(text) + '%').ignoreCase())
+                    if (reviewed) find = find.condition('mergeRequestId', 'in', reviewed)
+                    if (waiting) find = find.condition('mergeRequestId', 'in', waiting).condition('statusId', 'GmrOpen')
+                    return find
+                }
+                mergeRequestListCount = makeFind().count()
+                const rows = Array.from(makeFind().orderBy('-lastUpdatedDate').orderBy('-mergeRequestId').offset(pageIndex * pageSize).limit(pageSize).list())
+                const names = {}
+                const nameOf = (userId) => {
+                    if (!userId) return null
+                    if (!(userId in names)) {
+                        const account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).useCache(true).disableAuthz().one()
+                        names[userId] = account ? (account.userFullName || account.username || userId) : userId
+                    }
+                    return names[userId]
+                }
+                // the combined check state of each head, a query per repository
+                const heads = {}
+                for (const row of rows) { if (row.headCommitId) (heads[row.repositoryId] = heads[row.repositoryId] || []).push(row.headCommitId) }
+                const states = {}
+                for (const repo of Object.keys(heads)) {
+                    const out = ec.service.sync().name('org.moqui.impl.GitServices.get#GitCommitStatuses')
+                            .parameters({repositoryId: repo, commitIdList: heads[repo]}).call()
+                    states[repo] = out.stateByCommit || {}
+                }
+                for (const row of rows) {
+                    const reviewers = Array.from(ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition('mergeRequestId', row.mergeRequestId)
+                            .disableAuthz().list()).map((reviewer) => ({userId: reviewer.userId, name: nameOf(reviewer.userId), statusId: reviewer.statusId}))
+                    mergeRequestList.push({mergeRequestId: row.mergeRequestId, repositoryId: row.repositoryId, mergeRequestNum: row.mergeRequestNum,
+                        title: row.title, sourceRef: row.sourceRef, targetRef: row.targetRef, statusId: row.statusId,
+                        authorUserId: row.authorUserId, authorName: nameOf(row.authorUserId), createdDate: row.createdDate,
+                        lastUpdatedDate: row.lastUpdatedDate, headCommitId: row.headCommitId, mergeableEnumId: row.mergeableEnumId,
+                        checkState: row.headCommitId ? (states[row.repositoryId] || {})[row.headCommitId] || null : null, reviewerList: reviewers})
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="MergeRequestDiff">
+        <description>What a merge request changes, for review: the commits and each file's diff, as get#GitCompare gives
+            them (the moqui-diff html and hunks of numbered lines), from its target to its source while it is open, and
+            from its recorded merge base to its recorded head once merged or closed. For its viewers.</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="withDiffs" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="baseCommitId"/>
+            <parameter name="headCommitId"/>
+            <parameter name="mergeBaseId"/>
+            <parameter name="aheadBy" type="Integer"/>
+            <parameter name="behindBy" type="Integer"/>
+            <parameter name="commitList" type="List"/>
+            <parameter name="fileList" type="List"/>
+            <parameter name="insertions" type="Integer"/>
+            <parameter name="deletions" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) { ec.message.addError('No merge request ' + mergeRequestId); return }
+                const open = ['GmrDraft', 'GmrOpen'].includes(mr.statusId)
+                const base = open ? 'refs/heads/' + mr.targetRef : (mr.baseCommitId || 'refs/heads/' + mr.targetRef)
+                const head = open ? 'refs/heads/' + mr.sourceRef : (mr.headCommitId || 'refs/heads/' + mr.sourceRef)
+                const compared = ec.service.sync().name('org.moqui.impl.GitServices.get#GitCompare')
+                        .parameters({repositoryId: mr.repositoryId, base, head, withDiffs}).call()
+                baseCommitId = compared.baseCommitId; headCommitId = compared.headCommitId; mergeBaseId = compared.mergeBaseId
+                aheadBy = compared.aheadBy; behindBy = compared.behindBy; commitList = compared.commitList
+                fileList = compared.fileList; insertions = compared.insertions; deletions = compared.deletions
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="check" noun="MergeRequest">
+        <description>Read a merge request's source head, merge base and mergeability again (a trial merge into its
+            target); merged when the target already holds the head. For refresh#MergeRequests and the services that
+            change a request's branches.</description>
+        <in-parameters><parameter name="mergeRequestId" required="true"/></in-parameters>
+        <out-parameters><parameter name="mergeableEnumId"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr || !['GmrDraft', 'GmrOpen'].includes(mr.statusId)) return
+                const checked = ec.service.sync().name('org.moqui.impl.GitServices.merge#GitRefs').parameters({repositoryId: mr.repositoryId,
+                    source: 'refs/heads/' + mr.sourceRef, target: mr.targetRef, checkOnly: true}).call()
+                const now = ec.user.nowTimestamp
+                if (ec.message.hasError()) {
+                    // a branch is gone: nothing to merge until it is back
+                    ec.logger.log('info', 'Merge request ' + mergeRequestId + ' not checked: ' + ec.message.getErrorsString())
+                    ec.message.clearErrors()
+                    mr.setFields({mergeableEnumId: 'GmaUnchecked', conflictPaths: null, lastUpdatedDate: now}, true, null, null)
+                    mr.update()
+                    mergeableEnumId = 'GmaUnchecked'
+                    return
+                }
+                if (checked.alreadyMerged) {
+                    const target = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRefs').parameters({repositoryId: mr.repositoryId, refType: 'branch'}).call()
+                    const targetRef = Array.from(target.refList || []).find((ref) => ref.shortName === mr.targetRef)
+                    mr.setFields({statusId: 'GmrMerged', mergeableEnumId: 'GmaMerged', conflictPaths: null, mergedDate: now, lastUpdatedDate: now,
+                        mergeCommitId: targetRef ? targetRef.commitId : null}, true, null, null)
+                    mr.update()
+                    mergeableEnumId = 'GmaMerged'
+                    ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent').parameters({mergeRequestId, action: 'merged'}).call()
+                    return
+                }
+                mergeableEnumId = checked.mergeable ? 'GmaMergeable' : 'GmaConflict'
+                mr.setFields({mergeableEnumId, conflictPaths: Array.from(checked.conflictPaths || []).join('\n') || null,
+                    baseCommitId: checked.baseCommitId || mr.baseCommitId, lastUpdatedDate: now}, true, null, null)
+                mr.update()
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="refresh" noun="MergeRequests">
+        <description>The framework's ref-update gitECA rule (Git.gitecas.xml): a branch moved. Each open merge request
+            whose source it is takes the new head (its approvals set back to requested when the target's branch rules
+            dismiss stale ones; webhooks get a merge_request event, synchronize), and each whose source or target it is
+            is checked for mergeability again, and is merged when the target holds its head. One that fails is logged
+            and the others are still refreshed.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="refName" required="true"/>
+            <parameter name="oldId"/>
+            <parameter name="newId"/>
+            <parameter name="changeType"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                if (!String(refName).startsWith('refs/heads/')) return
+                const branch = String(refName).substring('refs/heads/'.length)
+                const cf = ec.entity.conditionFactory
+                const rows = Array.from(ec.entity.find('moqui.resource.GitMergeRequest').condition('repositoryId', repositoryId)
+                        .condition('statusId', 'in', ['GmrDraft', 'GmrOpen'])
+                        .condition(cf.makeCondition([cf.makeCondition('sourceRef', 'equals', branch), cf.makeCondition('targetRef', 'equals', branch)], 'or'))
+                        .disableAuthz().list())
+                for (const mr of rows) {
+                    try {
+                        if (mr.sourceRef === branch && newId && mr.headCommitId !== newId) {
+                            mr.setFields({headCommitId: newId, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
+                            mr.update()
+                            const rules = ec.service.sync().name('org.moqui.impl.GitServices.get#GitBranchRules')
+                                    .parameters({repositoryId, refName: mr.targetRef}).call()
+                            if (rules.dismissStaleApprovals) {
+                                ec.entity.find('moqui.resource.GitMergeRequestReviewer').condition({mergeRequestId: mr.mergeRequestId, statusId: 'GmrrApproved'})
+                                        .disableAuthz().updateAll({statusId: 'GmrrRequested'})
+                            }
+                            ec.service.sync().name('org.moqui.impl.GitReviewServices.queue#MergeRequestEvent')
+                                    .parameters({mergeRequestId: mr.mergeRequestId, action: 'synchronize'}).call()
+                        }
+                        ec.service.sync().name('org.moqui.impl.GitReviewServices.check#MergeRequest').parameters({mergeRequestId: mr.mergeRequestId}).call()
+                    } catch (err) {
+                        ec.logger.log('error', 'Merge request ' + mr.mergeRequestId + ' not refreshed: ' + err)
+                    }
+                    if (ec.message.hasError()) {
+                        ec.logger.log('error', 'Merge request ' + mr.mergeRequestId + ' not refreshed: ' + ec.message.getErrorsString())
+                        ec.message.clearErrors()
+                    }
+                }
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="queue" noun="MergeRequestEvent">
+        <description>A merge_request event of a merge request (opened, updated, ready, reviewed, synchronize, closed,
+            reopened, merged) to the repository's webhooks. A failure is logged; the change it reports stands.</description>
+        <in-parameters>
+            <parameter name="mergeRequestId" required="true"/>
+            <parameter name="action" required="true"/>
+        </in-parameters>
+        <actions>
+            <script><![CDATA[
+                const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
+                if (!mr) return
+                const state = {GmrDraft: 'draft', GmrOpen: 'open', GmrMerged: 'merged', GmrClosed: 'closed'}[mr.statusId] || mr.statusId
+                const author = mr.authorUserId ? ec.entity.find('moqui.security.UserAccount').condition('userId', mr.authorUserId).useCache(true).disableAuthz().one() : null
+                try {
+                    ec.service.sync().name('org.moqui.impl.GitServices.queue#GitWebhookEvent').parameters({repositoryId: mr.repositoryId,
+                        event: 'merge_request', action, payload: {merge_request: {id: mr.mergeRequestId, number: mr.mergeRequestNum, title: mr.title,
+                            description: mr.description, state, draft: mr.statusId === 'GmrDraft', source_branch: mr.sourceRef, target_branch: mr.targetRef,
+                            head_sha: mr.headCommitId, base_sha: mr.baseCommitId, merge_commit_sha: mr.mergeCommitId,
+                            author: author ? author.username : mr.authorUserId}}}).call()
+                } catch (err) {
+                    ec.logger.log('error', 'Merge request ' + mergeRequestId + ' webhooks not queued: ' + err)
+                }
+                if (ec.message.hasError()) {
+                    ec.logger.log('error', 'Merge request ' + mergeRequestId + ' webhooks not queued: ' + ec.message.getErrorsString())
+                    ec.message.clearErrors()
+                }
+            ]]></script>
+        </actions>
+    </service>
+</services>

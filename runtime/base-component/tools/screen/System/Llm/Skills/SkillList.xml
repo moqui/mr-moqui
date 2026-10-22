@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Every skill in the index: from a file of the framework or a component (sourceLocation; its text is the file's), a
+    site skill an admin wrote, or a user's personal skill (owner), which shadows the site skill of its name unless that
+    one is locked. Sync reads the files again; a file that does not read is listed by name. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Skills" default-menu-index="1">
+
+    <transition name="skillDetail"><default-response url="../SkillDetail"/></transition>
+    <transition name="syncSkills" begin-transaction="false">
+        <actions>
+            <service-call name="org.moqui.agent.AgentAdminServices.sync#AgentSkills" out-map="synced"/>
+            <message>Synced: ${synced.added ?? 0} added, ${synced.changed ?? 0} changed, ${synced.unchanged ?? 0} unchanged, ${synced.retired ?? 0} retired.</message>
+            <iterate list="synced.problemList ?? []" entry="problem"><message type="warning">${problem}</message></iterate>
+        </actions>
+        <default-response url="."/></transition>
+    <transition name="createSkill"><service-call name="org.moqui.agent.AgentAdminServices.store#AgentSkill"/>
+        <default-response url="../SkillDetail" parameter-map="{skillId:skillId}"/>
+        <error-response url="."/></transition>
+
+    <widgets>
+        <container-box><box-header title="Skills"/><box-toolbar>
+            <link url="syncSkills" text="Sync Files" tooltip="Read the skill files of the framework and the components again"/>
+            <container-dialog id="CreateSkillDialog" button-text="New Skill">
+                <form-single name="CreateSkill" transition="createSkill">
+                    <field name="skillText"><default-field title="Skill" tooltip="Markdown with front matter: name (kebab-case) and description (Use when …) are required">
+                        <text-area rows="16" cols="90" default-value="---&#10;name: my-skill&#10;title: My skill&#10;description: Use when …&#10;kind: procedure&#10;aliases: []&#10;---&#10;What to do, in steps.&#10;"/></default-field></field>
+                    <field name="personal"><default-field title="Personal" tooltip="Y: yours only, shadowing a site skill of its name unless that one is locked">
+                        <drop-down allow-empty="true"><option key="N" text="Site"/><option key="Y" text="Personal"/></drop-down></default-field></field>
+                    <field name="statusId"><default-field title="Status"><drop-down allow-empty="true" no-current-selected-key="AgskPublished">
+                        <entity-options key="${statusId}" text="${description}"><entity-find entity-name="moqui.basic.StatusItem">
+                            <econdition field-name="statusTypeId" value="AgentSkill"/><order-by field-name="sequenceNum"/></entity-find></entity-options>
+                    </drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <link url="../RetrievalTest" text="Retrieval Test"/>
+        </box-toolbar><box-body>
+            <form-list name="SkillList" list="skillList" skip-form="true" header-dialog="true">
+                <entity-find entity-name="moqui.agent.AgentSkill" list="skillList" use-clone="true">
+                    <search-form-inputs default-order-by="skillName"/>
+                    <select-field field-name="skillId,skillName,title,skillKind,ownerUserId,locked,statusId,provenance,sourceLocation,versionNum,useCount,lastUsedDate"/>
+                </entity-find>
+                <field name="skillName"><header-field title="Skill" show-order-by="true"><text-find size="15" hide-options="true"/></header-field>
+                    <default-field><link url="skillDetail" text="${skillName}" link-type="anchor" parameter-map="{skillId:skillId}"/></default-field></field>
+                <field name="title"><header-field show-order-by="true"><text-find size="15" hide-options="true"/></header-field><default-field><display/></default-field></field>
+                <field name="skillKind"><header-field title="Kind"><drop-down allow-empty="true">
+                    <option key="procedure"/><option key="reference"/><option key="guide"/></drop-down></header-field><default-field><display/></default-field></field>
+                <field name="provenance"><header-field title="Source"><drop-down allow-empty="true">
+                    <option key="framework"/><option key="component"/><option key="admin"/><option key="user"/><option key="learned"/></drop-down></header-field>
+                    <default-field><display/></default-field></field>
+                <field name="ownerUserId"><header-field title="Owner"><text-find size="10" hide-options="true"/></header-field><default-field>
+                    <display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username ?? userId}"/></default-field></field>
+                <field name="locked"><header-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></header-field>
+                    <default-field><display/></default-field></field>
+                <field name="statusId"><header-field title="Status"><drop-down allow-empty="true"><entity-options key="${statusId}" text="${description}">
+                        <entity-find entity-name="moqui.basic.StatusItem"><econdition field-name="statusTypeId" value="AgentSkill"/>
+                            <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                    <default-field><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="versionNum"><header-field title="Version"/><default-field><display/></default-field></field>
+                <field name="useCount"><header-field title="Uses" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="lastUsedDate"><header-field title="Last Used" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="sourceLocation"><header-field title="File"/><default-field><display/></default-field></field>
+                <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

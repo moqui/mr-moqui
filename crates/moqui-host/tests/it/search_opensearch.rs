@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The server on the OpenSearch search backend: the `/elastic` proxy behind its login and
+//! The server on the OpenSearch search backend: the `/search` proxy behind its login and
 //! permission, log events shipped to `moqui_logs` and read through the log viewer, and HTTP
 //! requests shipped to `moqui_http_log`. Ignored unless `OPENSEARCH_URL` names a running node, such
 //! as the install in `runtime/opensearch` (`bin/opensearch -d -p pid`). This binary sets process
@@ -44,18 +44,18 @@ fn opensearch_backend_proxies_and_ships_logs() {
     let facade = moqui_core::search::installed(gate.server.factory()).expect("search is installed");
     assert_eq!(facade.backend().name(), "opensearch");
 
-    // The proxy: a login and ElasticRemote, then the cluster's own answer.
-    let (status, headers, _) = exchange(address, &http_request("GET", "/elastic/", &[], ""));
+    // The proxy: a login and SearchRemote (AuthFilter.js), then ProxyServlet.js, then the cluster's own answer.
+    let (status, headers, _) = exchange(address, &http_request("GET", "/search/", &[], ""));
     assert_eq!(status, 401);
     assert!(crate::common::header(&headers, "www-authenticate").is_some_and(|value| value.starts_with("Basic")));
     let (status, _, body) = exchange(
         address,
-        &http_request("GET", "/elastic/", &[("Authorization", &john)], ""),
+        &http_request("GET", "/search/", &[("Authorization", &john)], ""),
     );
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("cluster_name"), "{body}");
     // kibana_host defaults to this host; with no Dashboards there the proxy answers 502.
-    let (status, _, _) = exchange(address, &http_request("GET", "/kibana/", &[], ""));
+    let (status, _, _) = exchange(address, &http_request("GET", "/dashboard/", &[], ""));
     assert_eq!(status, 401, "the Dashboards proxy needs a login too");
 
     // A log event and the requests above reach their indexes; the log viewer reads moqui_logs.
@@ -76,7 +76,7 @@ fn opensearch_backend_proxies_and_ships_logs() {
     assert!(!page.contains("has no log index"), "{page}");
 
     moqui_host::logging::flush(&facade);
-    let search = format!("/elastic/{prefix}moqui_http_log/_search?q=request_path:LogViewer.html");
+    let search = format!("/search/{prefix}moqui_http_log/_search?q=request_path:LogViewer.html");
     let deadline = Instant::now() + Duration::from_secs(20);
     let body = loop {
         let (_, _, body) = exchange(address, &http_request("GET", &search, &[("Authorization", &john)], ""));
@@ -87,7 +87,7 @@ fn opensearch_backend_proxies_and_ships_logs() {
     };
     assert!(body.contains("\"request_path\""), "{body}");
 
-    let cleanup = format!("/elastic/{prefix}*");
+    let cleanup = format!("/search/{prefix}*");
     exchange(
         address,
         &http_request("DELETE", &cleanup, &[("Authorization", &john)], ""),

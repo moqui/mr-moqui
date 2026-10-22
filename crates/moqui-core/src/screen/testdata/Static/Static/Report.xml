@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- What the compatibility report finds: each widget expression or action here does something a browser cannot. -->
 <screen require-authentication="false" server-static="qvt,html">
-    <always-actions><message>repeated by the form request</message></always-actions>
+    <always-actions><message>repeated by the form request</message>
+        <!-- the scan reads the calls without running them: a get service only reads, an update service writes -->
+        <if condition="false"><service-call name="moqui.test.ReadServices.get#Counts"/><service-call name="moqui.test.WriteServices.update#Counts"/></if>
+    </always-actions>
     <pre-actions><entity-make-value entity-name="moqui.basic.EnumerationType" value-field="made"/></pre-actions>
     <actions>
         <set field="amount" value="1.50" type="BigDecimal"/>
@@ -14,6 +17,12 @@
         <link url="." text="Here" link-type="anchor" condition="sri.getScreenUrlInstance() != null"/>
         <label text="Total ${enumListCount}"/>
         <section-iterate name="Each" list="enumList" entry="enumRow"><widgets><label text="${enumRow.enumId}"/></widgets></section-iterate>
+        <!-- a condition that reads a form-list's list, which is in the form package only -->
+        <section name="NoEnums" condition="!(enumList &amp;&amp; enumList.length)"><widgets><label text="No types"/></widgets></section>
+        <!-- a form-list per iteration: its form request has no iteration entry -->
+        <section-iterate name="Groups" list="groupList" entry="group"><widgets>
+            <form-list name="GroupRows" list="group.rows" skip-form="true"><field name="enumId"><default-field><display/></default-field></field></form-list>
+        </widgets></section-iterate>
         <form-list name="EnumList" list="enumList">
             <entity-find entity-name="moqui.basic.Enumeration"><order-by field-name="enumId"/></entity-find>
             <field name="enumId"><default-field><display/></default-field></field>

@@ -74,6 +74,16 @@ along with this software (see the LICENSE.md file). If not, see
             <render-mode>
                 <text type="qvt"><![CDATA[<m-mermaid height="800px" text="${WebUtilities.encodeHtml(mermaidText)}"></m-mermaid>]]></text>
                 <text type="html,vuet"><![CDATA[<p><strong>Only supported in the 'qvt' render mode, go to the same URL under /qapps (instead of /apps or /vapps)</strong></p>]]></text>
+                <!-- the diagram as a list: each status in sequence, then the transitions out of it -->
+                <text type="tui"><![CDATA[{"t": "text", "id": "StatusFlowList", "style": "pre", "text": ${JSON.stringify((statusItemList || []).map((statusItem) => {
+                    const lines = [statusItem.description + ' [' + statusItem.statusId + ']' + (statusItem.sequenceNum ? ' (' + statusItem.sequenceNum + ')' : '')]
+                    for (const transition of transitionList || []) {
+                        if (transition.statusId != statusItem.statusId) continue
+                        lines.push('    -> ' + (transition.toDescription || transition.toStatusId) + ' [' + transition.toStatusId + ']: ' +
+                            (transition.transitionName || '') + (transition.transitionSequence ? ' (' + transition.transitionSequence + ')' : ''))
+                    }
+                    return lines.join('\n')
+                }).join('\n'))}}]]></text>
             </render-mode>
         </widgets></section>
 

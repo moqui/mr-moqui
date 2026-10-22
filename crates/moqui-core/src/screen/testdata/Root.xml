@@ -7,6 +7,8 @@
     </always-actions>
     <transition name="goUrl"><default-response url="Sub"/></transition>
     <transition name="goAbsolute"><default-response url="/Sub/Deep"/></transition>
+    <transition name="goExternal"><default-response url="https://evil.example/steal"/></transition>
+    <transition name="goPhish"><default-response url="https://evil.example//phish"/></transition>
     <transition name="goPlain"><default-response url="/plain/target" url-type="plain"/></transition>
     <transition name="goParams">
         <default-response url="Sub"><parameter name="x" value="1"/><parameter name="who" from="'a b'"/></default-response>
@@ -31,6 +33,10 @@
     <transition name="okTx">
         <actions><script>trace.push('okTx')</script></actions>
         <error-response url="/Home"/>
+        <default-response url="Sub"/>
+    </transition>
+    <transition name="readTx" read-only="true">
+        <actions><script>trace.push('readTx')</script></actions>
         <default-response url="Sub"/>
     </transition>
     <transition name="byId" method="get">

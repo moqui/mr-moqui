@@ -33,8 +33,13 @@ const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const FOLDER: &str = "moqui.basic.email.EmailFolder";
 
 pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
+    setup_with("")
+}
+
+/// [`setup`] with the conf text `conf`.
+pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        conf,
         crate::service::ServicePools::idle(),
         crate::context::framework_dir(),
     );
@@ -1178,20 +1183,12 @@ fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
     assert_eq!(imap.messages("Sent Mail").len(), 2);
 }
 
-/// A sync that stops at email_sync_batch with mail left is due again at the job's next run, before its interval, until
+/// A sync that stops at email-client sync-batch with mail left is due again at the job's next run, before its interval, until
 /// the backlog is in; then the interval holds again.
 #[test]
 fn the_job_goes_on_with_a_backlog_at_its_next_run() {
     let _lock = crate::user::session::cookie_property_lock();
-    struct Batch;
-    impl Drop for Batch {
-        fn drop(&mut self) {
-            moqui_lib::env::clear_property("email_sync_batch");
-        }
-    }
-    let _batch = Batch;
-    moqui_lib::env::set_property("email_sync_batch", "1");
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client sync-batch="1"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install();
     alice(&facade);
@@ -1660,18 +1657,6 @@ fn rules_conditions_actions_block_and_spam() {
 #[test]
 fn discover_from_autoconfig_then_srv_then_guesses() {
     let _lock = crate::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
-    let _entered = ctx.enter();
-    install();
-    alice(&facade);
-    struct Properties;
-    impl Drop for Properties {
-        fn drop(&mut self) {
-            moqui_lib::env::clear_property("email_autoconfig_urls");
-            moqui_lib::env::clear_property("email_dns_server");
-        }
-    }
-    let _properties = Properties;
     let config = r#"<?xml version="1.0"?><clientConfig version="1.1"><emailProvider id="example.test">
         <domain>example.test</domain><displayName>Example Test Mail</displayName>
         <incomingServer type="imap"><hostname>imap.example.test</hostname><port>993</port><socketType>SSL</socketType>
@@ -1682,10 +1667,6 @@ fn discover_from_autoconfig_then_srv_then_guesses() {
     let mut pages = HashMap::new();
     pages.insert("/example.test/config-v1.1.xml".to_string(), config.to_string());
     let http = fake_http(pages);
-    moqui_lib::env::set_property(
-        "email_autoconfig_urls",
-        format!("http://127.0.0.1:{http}/{{domain}}/config-v1.1.xml"),
-    );
     let mut records = HashMap::new();
     records.insert(
         "_imaps._tcp.srv.test".to_string(),
@@ -1696,7 +1677,13 @@ fn discover_from_autoconfig_then_srv_then_guesses() {
         (10, 5, 587, "smtp.srv.test".to_string()),
     );
     let dns = fake_dns(records);
-    moqui_lib::env::set_property("email_dns_server", format!("127.0.0.1:{dns}"));
+    let (ctx, facade) = setup_with(&format!(
+        r#"<moqui-conf><email-client autoconfig-urls="http://127.0.0.1:{http}/{{domain}}/config-v1.1.xml"
+            dns-server="127.0.0.1:{dns}"/></moqui-conf>"#
+    ));
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
 
     let found = ok("discover#EmailServer", &[("emailAddress", text("ann@example.test"))]);
     assert_eq!(out_text(&found, "source"), "autoconfig");

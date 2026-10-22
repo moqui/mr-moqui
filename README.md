@@ -8,6 +8,28 @@
 ./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
 ```
 
+This builds the 'lite' binary and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing.
+
+## Status
+
+Initial implementation of the framework is complete and various applications are functional. It is still in heavy development for full Moqui Java feature completeness, additional features new to MR Moqui, testing & bugfixes, and profiling & optimization.
+
+**Mantle UDM** and **Mantle USL** are converted from Groovy to JavaScript in new fork repositories: `mr-mantle-udm` and `mr-mantle-usl`.
+
+**SimpleScreens** and **MarbleERP** are being converted (not yet complete) and are also in new fork repositories: `MrSimpleScreens` and `MrMarbleERP`.
+
+There is a new component called **IronSide Business OS Suite** (`ironstone-boss`) that is being designed and implemented (neither are complete). A high-level design can be seen in the `plan/initial-design.md` file.
+
+The NextCloud-inspired **Commons & Comms** applications for groupware and communication have been designed and are being built first. These are a major upgrade to the long-neglected My Account app, fill some long-standing gaps in Moqui, and along with other new framework features and application functionality are intended for full cloud service replacement.
+
+The `moq` script replaces our old Gradle tasks, and getting components is similar:
+
+```sh
+./moq component-get MrMarbleERP
+./moq component-get ironstone-boss
+```
+
+
 ## Goals
 
 - Keep XML as the spec language for configuration, entities, services, screens, SECAs, and data files, with only the adaptations required by a Rust runtime.
@@ -21,14 +43,14 @@
 
 Most of MR-Moqui is a port of the Java framework as it exists when the port begins. These are the places that change on purpose.
 
-1. **SearchFacade replaces ElasticFacade.** Postgres full-text and JSON are the default backend. OpenSearch is optional. Plan: [`plans/archive/SearchFacade.md`](plans/archive/SearchFacade.md).
-2. **qvt becomes server-static.** With `server-static` set for `qvt`, the server sends a data-free Vue template and the client merges data from `/actions` and from a separate form-list request. The attribute stays opt-in for this pass. Plan: [`plans/archive/QvtServerStatic.md`](plans/archive/QvtServerStatic.md).
-3. **Feed registration commits with the entity change.** Entity create, update, and delete register document keys during the transaction. After the transaction-cache flush and before commit, on the enlisted connection, the feed inserts a pending row. Rollback drops it. Assembly and the index write run after commit on the service worker pool, for same-database Postgres, a second Postgres, and OpenSearch. An index failure leaves the pending row and does not roll the entity change back. Plan: [`plans/archive/SearchFacade.md`](plans/archive/SearchFacade.md).
-4. **JavaScript for scripts and templates.** Scripts, XML action and screen macros, and text templates are JavaScript, initially on QuickJS. `ec.resource.expand()` is a template literal. Structured text uses a second renderer: `if`, `list`, and `assign`, compiled to one cached JavaScript function. A locked-down variant of that renderer is the sandbox for less-trusted templates. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Templating).
-5. **Print HTML is its own render mode.** Server-side page layout is `html-print` (print CSS and `@page`). The old `xsl-fo` name selects that mode. One long-lived external Chromium process prints it to PDF, through the host's own DevTools client; resource images are inlined first, and `/fop/<path>` sends a screen as PDF, as Java's FOP servlet did. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Tool components and print).
-6. **Cluster coordination uses the shared database.** Instances find each other in a member table. Cache invalidation and notifications fan out over HTTPS, and that endpoint requires a client certificate whose key material is deployment configuration (member rows hold only key fingerprints). Service jobs stay on the database. There is no Hazelcast, Redis, or session-byte replication. Plan: [`plans/archive/Cluster.md`](plans/archive/Cluster.md).
-7. **Sessions live in the database.** The session is `moqui.server.HttpSession`, cached through the entity one-cache and invalidated on the existing cluster topic. A flush overlays dirty fields onto the latest row and retries on `sessionRevision`. The default flush is eventually consistent. Guarantee mode reads the primary and flushes at login, logout, and the end of the request, so a load balancer without stickiness can fail over. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Sessions and login) and [`plans/archive/Cluster.md`](plans/archive/Cluster.md).
-8. **Keys are configuration, and unset secrets are generated.** Secret key values (field encryption, session-cookie signing, the cluster certificate pair, later the SSH host key) are `default-property`s in the `entity_ds_crypt_pass` pattern: a `CHANGEME` value in `MoquiDefaultConf.xml` set by config file or environment, never database rows. A `runtime/.env` file in the root of the runtime directory is loaded at startup like environment variables and supports any conf property. A secret still at its `CHANGEME` default is generated with the OS CSPRNG and saved to `runtime/.env`, instead of running on the shipped default. Plan: [`plans/archive/MimoReview.md`](plans/archive/MimoReview.md) (Decisions 1–3).
+1. **JavaScript for scripts and templates.** Scripts, XML action and screen macros, and text templates are JavaScript, initially on QuickJS. `ec.resource.expand()` is a template literal. Structured text uses a second renderer: `if`, `list`, and `assign`, compiled to one cached JavaScript function. A locked-down variant of that renderer is the sandbox for less-trusted templates. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Templating).
+2. **SearchFacade replaces ElasticFacade.** Postgres full-text and JSON are the default backend. OpenSearch is optional. Plan: [`plans/archive/SearchFacade.md`](plans/archive/SearchFacade.md).
+3. **qvt becomes server-static.** With `server-static` set for `qvt`, the server sends a data-free Vue template and the client merges data from `/actions` and from a separate form-list request. The attribute stays opt-in for this pass. Plan: [`plans/archive/QvtServerStatic.md`](plans/archive/QvtServerStatic.md).
+4. **Print HTML is its own render mode.** Server-side page layout is `html-print` (print CSS and `@page`). The old `xsl-fo` name selects that mode. One long-lived external Chromium process prints it to PDF, through the host's own DevTools client; resource images are inlined first, and `/fop/<path>` sends a screen as PDF, as Java's FOP servlet did. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Tool components and print).
+5. **Cluster coordination uses the shared database.** Instances find each other in a member table. Cache invalidation and notifications fan out over HTTPS, and that endpoint requires a client certificate whose key material is deployment configuration (member rows hold only key fingerprints). Service jobs stay on the database. There is no Hazelcast, Redis, or session-byte replication. Plan: [`plans/archive/Cluster.md`](plans/archive/Cluster.md).
+6. **Sessions live in the database.** The session is `moqui.server.HttpSession`, cached through the entity one-cache and invalidated on the existing cluster topic. A flush overlays dirty fields onto the latest row and retries on `sessionRevision`. The default flush is eventually consistent. Guarantee mode reads the primary and flushes at login, logout, and the end of the request, so a load balancer without stickiness can fail over. Plan: [`plans/archive/Architecture-Proposal.md`](plans/archive/Architecture-Proposal.md) (Sessions and login) and [`plans/archive/Cluster.md`](plans/archive/Cluster.md).
+7. **Keys are configuration, and unset secrets are generated.** Secret key values (field encryption, session-cookie signing, the cluster certificate pair, later the SSH host key) are `default-property`s in the `entity_ds_crypt_pass` pattern: a `CHANGEME` value in `MoquiDefaultConf.xml` set by config file or environment, never database rows. A `runtime/.env` file in the root of the runtime directory is loaded at startup like environment variables and supports any conf property. As in Java, `default-property` is kept for what a deployment commonly sets (hosts, ports, URLs, credentials, secrets), named by a conf attribute as `${name}`; any other setting is a plain attribute of its element (`git-server`, `ssh-server`, `email-client` and so on), changed in a runtime or component conf. A secret still at its `CHANGEME` default is generated with the OS CSPRNG and saved to `runtime/.env`, instead of running on the shipped default. Plan: [`plans/archive/MimoReview.md`](plans/archive/MimoReview.md) (Decisions 1–3).
+8. **Feed registration commits with the entity change.** Entity create, update, and delete register document keys during the transaction. After the transaction-cache flush and before commit, on the enlisted connection, the feed inserts a pending row. Rollback drops it. Assembly and the index write run after commit on the service worker pool, for same-database Postgres, a second Postgres, and OpenSearch. An index failure leaves the pending row and does not roll the entity change back. Plan: [`plans/archive/SearchFacade.md`](plans/archive/SearchFacade.md).
 
 ## Native components
 
@@ -75,8 +97,8 @@ cargo test -p moqui-host --test gate3 --test gate3_browser
 ```
 
 Run from the repo root (paths default to `MOQUI_RUNTIME=runtime`, or the binary's own directory when it is a runtime
-directory, `MOQUI_FRAMEWORK=<runtime>/base-component/framework`, embedded cluster in `runtime/db/embedded`, and the
-embedded Postgres unpacked into `runtime/install/postgres`, or under `MOQUI_INSTALL`).
+directory, embedded Postgres data in `runtime/db/embedded`, and the
+binary unpacked into `runtime/install/postgres`, or under `MOQUI_INSTALL`).
 Setting `entity_ds_db_conf` to `postgres`, `mysql` or `mysql8`, with the other `entity_ds_*`
 properties, uses that server instead. The examples are in `runtime/conf/MoquiDevConf.xml`.
 

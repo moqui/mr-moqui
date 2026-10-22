@@ -32,6 +32,20 @@ along with this software (see the LICENSE.md file). If not, see
         <render-mode>
             <text type="html" location="component://tools/template/AutoScreenMenu.html.fancy"/>
             <text type="qvt" location="component://tools/template/AutoScreenMenu.qvt.fancy"/>
+            <!-- the same tabs as AutoScreenMenu.qvt.fancy; the terminal draws the active subscreen as the next level -->
+            <text type="tui"><![CDATA[${JSON.stringify((() => {
+                const masterUrl = sri.buildUrl('AutoEditMaster').addParameter('aen', aen).addParameters(masterPrimaryKeyMap || {}).removeParameter('den')
+                const items = [{title: String(aen), url: masterUrl.getUrlWithParams(), active: !den}]
+                for (const relationshipInfo of relationshipInfoList || []) {
+                    const curKeyMap = relationshipInfo.getTargetParameterMap(context)
+                    if (!curKeyMap) continue
+                    const relatedName = relationshipInfo.riRelatedEntityName()
+                    const tabUrl = sri.buildUrl('AutoEditDetail').addParameters(masterPrimaryKeyMap || {}).addParameter('den', relatedName)
+                        .addParameter('aen', aen).addParameters(curKeyMap)
+                    items.push({title: String(relationshipInfo.riPrettyName()), url: tabUrl.getUrlWithParams(), active: relatedName == den})
+                }
+                return {t: 'subscreens', id: 'AutoEditTabs', kind: 'tab', items: items, c: []}
+            })())}]]></text>
         </render-mode>
     </widgets>
 </screen>

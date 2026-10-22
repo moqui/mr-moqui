@@ -1,0 +1,20 @@
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"reasoning":"I need the customer first."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-9c1e7b02","type":"function","index":0,"function":{"name":"data","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"entity\": \"moqui.basic.Enumeration\", "}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"limit\": 5}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-4a7f33d1","type":"function","index":1,"function":{"name":"screen","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"path\": \"/apps/system\"}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"tool_calls","stop_reason":null}]}
+
+data: {"id":"chatcmpl-6f2d0c8a1e9b4f37","object":"chat.completion.chunk","created":1792500300,"model":"Qwen/Qwen3.8-32B","choices":[],"usage":{"prompt_tokens":3021,"total_tokens":3105,"completion_tokens":84,"prompt_tokens_details":{"cached_tokens":2944}}}
+
+data: [DONE]
+

@@ -18,7 +18,7 @@
 //! A request-pool worker reuses its thread, so a leaked slot would leak into the next request.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -28,15 +28,14 @@ use moqui_lib::object::Value;
 pub mod address;
 pub mod error_info;
 pub mod multipart;
+pub mod servlet;
+pub(crate) mod upstream;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
 use crate::entity::query_rest;
 
 /// The cap on a request body that is not multipart, unless `webapp_max_body` says otherwise.
 const DEFAULT_MAX_BODY: usize = 10 * 1024 * 1024;
-const PREFLIGHT_HEADERS: &str = "Accept,Accept-Encoding,Content-Type,Content-Encoding,Origin,X-Requested-With,Access-Control-Request-Method,Access-Control-Request-Headers,api_key,login_key,X-HTTP-Method-Override,moquiSessionToken,SessionToken,X-CSRF-Token,Authorization,A2A-Version";
-const EXPOSE_HEADERS: &str =
-    "Access-Control-Allow-Origin,Access-Control-Allow-Credentials,X-CSRF-Token,moquiSessionToken";
 
 thread_local! {
     static WEB: RefCell<Option<WebSlot>> = const { RefCell::new(None) };
@@ -64,6 +63,8 @@ pub struct WebRequest {
     pub headers: BTreeMap<String, String>,
     /// Decoded query pairs in request order. A repeated name becomes a list parameter.
     pub query: Vec<(String, String)>,
+    /// The query string as the client sent it, still encoded (the servlet's `getQueryString`), when the host has it.
+    pub raw_query: Option<String>,
     pub body: Vec<u8>,
     /// A `multipart/form-data` body the host read as it arrived ([`multipart::MultipartReader`]), its large files
     /// spooled to disk; `body` is empty then.
@@ -82,6 +83,7 @@ impl WebRequest {
             https: false,
             headers: BTreeMap::new(),
             query: Vec::new(),
+            raw_query: None,
             body: Vec::new(),
             multipart: None,
             peer_ip: String::new(),
@@ -100,6 +102,14 @@ impl WebRequest {
     }
 }
 
+/// Session, visitor, and username for one HTTP log entry. Not response headers.
+#[derive(Clone, Debug, Default)]
+pub struct HttpLogIdentity {
+    pub session: Option<String>,
+    pub visitor_id: Option<String>,
+    pub remote_user: Option<String>,
+}
+
 /// One HTTP response. Repeated names are separate headers, so `Set-Cookie` can appear twice. A large body is a
 /// [`ResponseStream`] the host reads a window at a time as the client takes it, and `body` is empty.
 #[derive(Clone, Debug)]
@@ -108,6 +118,8 @@ pub struct WebResponse {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub stream: Option<ResponseStream>,
+    /// Filled while the session is still bound. Empty when the request never bound one.
+    pub http_log: HttpLogIdentity,
 }
 
 /// `length` bytes of `source` from `offset`: the body of a response too large to hold.
@@ -115,7 +127,13 @@ pub struct WebResponse {
 pub struct ResponseStream {
     pub source: std::sync::Arc<dyn crate::resource::source::ByteSource>,
     pub offset: u64,
+    /// [`ResponseStream::UNKNOWN_LENGTH`] reads until the source has no more.
     pub length: u64,
+}
+
+impl ResponseStream {
+    /// The length of a stream that ends when its source does, such as a proxied body sent in chunks.
+    pub const UNKNOWN_LENGTH: u64 = u64::MAX;
 }
 
 impl std::fmt::Debug for ResponseStream {
@@ -134,6 +152,7 @@ impl WebResponse {
             headers: Vec::new(),
             body: body.into(),
             stream: None,
+            http_log: HttpLogIdentity::default(),
         }
     }
 
@@ -179,7 +198,23 @@ struct WebSlot {
     locale: Option<String>,
     /// Scheme, host, and context path that links start with. Empty for a path-only link.
     base_url: String,
+    /// Whether the request came over https; None with no request, as for a render from a job.
+    secure: Option<bool>,
+    /// The request itself and its raw body, for a web script's `request` ([`set_request`]). None with no socket.
+    request: Option<std::sync::Arc<WebRequest>>,
+    request_body: bytes::Bytes,
+    /// The servlet API's request attributes: what a filter leaves for the servlet after it.
+    attributes: BTreeMap<String, Value>,
+    /// The servlet path and path info of the servlet the request went to ([`servlet::Match`]).
+    servlet_path: String,
+    path_info: Option<String>,
+    /// The request path, Java's `getPathInfo`, for `sendError`.
+    path: String,
+    /// The `Accept` header, for `sendError`.
+    accept: String,
     sent: bool,
+    /// Whether the body was written through [`write_bytes`], which may go on writing after it committed.
+    writing: bool,
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
@@ -226,8 +261,17 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             client_ip: String::new(),
             locale: None,
             base_url,
+            secure: None,
+            request: None,
+            request_body: bytes::Bytes::new(),
+            attributes: BTreeMap::new(),
+            servlet_path: String::new(),
+            path_info: None,
+            path: String::new(),
+            accept: String::new(),
             changed_preferences: BTreeMap::new(),
             sent: false,
+            writing: false,
             status: 200,
             headers: Vec::new(),
             body: Vec::new(),
@@ -297,20 +341,38 @@ pub(crate) fn set_host(host: &str) {
     });
 }
 
-/// Remember the full URL of the request and its `Referer`, Java's `getRequestUrl`, for artifact hits.
-/// The full URL of a request, as Java's `requestUrl`: scheme, host, path and query.
+/// The full URL of a request for artifact hits and the visit, Java's `getRequestUrl`: the scheme, the host, its port
+/// unless it is 80 or 443, the path, and the query string as the client sent it. Without the raw query (a request the
+/// host did not make) the pairs are encoded again.
 fn full_url(request: &WebRequest) -> String {
     let host = request.header("host").unwrap_or("localhost");
     let scheme = if request.https { "https" } else { "http" };
-    let mut url = format!("{scheme}://{host}{}", request.path);
-    let query: Vec<String> = request
-        .query
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect();
+    let name = host_without_port(host);
+    let port = host[name.len()..]
+        .strip_prefix(':')
+        .filter(|port| !port.is_empty() && *port != "80" && *port != "443");
+    let mut url = match port {
+        Some(port) => format!("{scheme}://{name}:{port}{}", request.path),
+        None => format!("{scheme}://{name}{}", request.path),
+    };
+    let query = match &request.raw_query {
+        Some(raw) => raw.clone(),
+        None => request
+            .query
+            .iter()
+            .map(|(name, value)| {
+                format!(
+                    "{}={}",
+                    moqui_lib::string::url_encode_if_needed(name),
+                    moqui_lib::string::url_encode_if_needed(value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&"),
+    };
     if !query.is_empty() {
         url.push('?');
-        url.push_str(&query.join("&"));
+        url.push_str(&query);
     }
     url
 }
@@ -352,7 +414,10 @@ pub(crate) fn set_request_info(request: &WebRequest) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.request_url = url;
+            web.secure = Some(request.https);
             web.referrer = referrer;
+            web.path = request.path.clone();
+            web.accept = request.header("accept").unwrap_or("").to_string();
             web.request_details = details;
             web.query_names = request.query.iter().map(|(name, _)| name.clone()).collect();
             web.client_ip = client_ip(request);
@@ -498,6 +563,194 @@ pub(crate) fn is_same_origin_redirect(url: &str, configured_host: Option<&str>) 
     !host.is_empty() && host.eq_ignore_ascii_case(&configured)
 }
 
+/// Keep the request and its raw body for a web script's `request`. The parsed parameters are already in the slot.
+pub(crate) fn set_request(request: std::sync::Arc<WebRequest>, body: bytes::Bytes) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.request = Some(request);
+            web.request_body = body;
+        }
+    });
+}
+
+/// The request of this thread's web slot, None with no socket.
+pub(crate) fn current_request() -> Option<std::sync::Arc<WebRequest>> {
+    WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request.clone()))
+}
+
+/// The raw body of the request, empty with none or for a multipart body (read as it arrived, files spooled).
+pub(crate) fn request_body() -> bytes::Bytes {
+    WEB.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|web| web.request_body.clone())
+            .unwrap_or_default()
+    })
+}
+
+/// The servlet path and path info of the servlet the request went to.
+pub(crate) fn set_servlet_match(servlet_path: &str, path_info: Option<&str>) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.servlet_path = servlet_path.to_string();
+            web.path_info = path_info.map(str::to_string);
+        }
+    });
+}
+
+pub(crate) fn servlet_match() -> (String, Option<String>) {
+    WEB.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|web| (web.servlet_path.clone(), web.path_info.clone()))
+            .unwrap_or_default()
+    })
+}
+
+/// A request attribute; None when unset.
+pub(crate) fn attribute(name: &str) -> Option<Value> {
+    WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.attributes.get(name).cloned()))
+}
+
+/// Set a request attribute, or remove it with None.
+pub(crate) fn set_attribute(name: &str, value: Option<Value>) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            match value {
+                Some(value) => web.attributes.insert(name.to_string(), value),
+                None => web.attributes.remove(name),
+            };
+        }
+    });
+}
+
+pub(crate) fn attribute_names() -> Vec<String> {
+    WEB.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|web| web.attributes.keys().cloned().collect())
+            .unwrap_or_default()
+    })
+}
+
+/// The servlet API's `setStatus`: the status of the response still to be written; a written one is left alone.
+pub(crate) fn set_status(status: u16) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            if !web.sent {
+                web.status = status;
+            }
+        }
+    });
+}
+
+/// The servlet API's `setHeader`: replace every value of `name`, or remove them with None.
+pub(crate) fn set_header(name: &str, value: Option<&str>) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
+            if let Some(value) = value {
+                web.headers.push((name.to_string(), value.to_string()));
+            }
+        }
+    });
+}
+
+/// The values of the response header `name` so far.
+pub(crate) fn response_header_values(name: &str) -> Vec<String> {
+    WEB.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|web| {
+                web.headers
+                    .iter()
+                    .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// The names of the response headers so far, each once.
+pub(crate) fn response_header_names() -> Vec<String> {
+    WEB.with(|slot| {
+        let mut names: Vec<String> = Vec::new();
+        if let Some(web) = slot.borrow().as_ref() {
+            for (name, _) in &web.headers {
+                if !names.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        names
+    })
+}
+
+/// The servlet API's writer: append bytes to the body and commit the response, its status and headers as they are.
+/// Nothing is written after a response another way sent (an error, a redirect, a stream).
+pub(crate) fn write_bytes(bytes: &[u8]) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            if web.stream.is_some() || (web.sent && !web.writing) {
+                return;
+            }
+            web.sent = true;
+            web.writing = true;
+            web.body.extend_from_slice(bytes);
+        }
+    });
+}
+
+/// Put a whole response in the slot, as the screen servlet made it, for the filters around it to see and change.
+pub(crate) fn put_response(response: WebResponse) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.sent = true;
+            web.status = response.status;
+            web.headers = response.headers;
+            web.body = response.body;
+            web.stream = response.stream;
+        }
+    });
+}
+
+/// The response the slot holds, its status 200 when nothing set one.
+pub(crate) fn take_response() -> WebResponse {
+    let stream = take_stream();
+    let (status, headers, body, _) = take_output();
+    WebResponse {
+        status,
+        headers,
+        body,
+        stream,
+        http_log: HttpLogIdentity::default(),
+    }
+}
+
+/// Whether the request came over https, None with no request (a job, a render from a script).
+pub(crate) fn request_secure() -> Option<bool> {
+    WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.secure))
+}
+
+/// Java's `WebFacadeImpl.getWebappRootUrl`: empty, as the context path, when a path-only link will do, which is in a
+/// request whose security matches `use_encryption`; otherwise the scheme and host. Those are the render's base URL
+/// when it has one (an email, a render with no socket), else the conf `webapp`'s host and port. Never the request's
+/// `Host` header, which the sender of the request picks (Parity-Diffs P8-08).
+pub(crate) fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
+    let secure = request_secure();
+    let require_encryption = use_encryption.unwrap_or(secure.unwrap_or(false));
+    if !require_full_url && secure == Some(require_encryption) {
+        return String::new();
+    }
+    let base = base_url();
+    if base.starts_with("http://") || base.starts_with("https://") {
+        return base.trim_end_matches('/').to_string();
+    }
+    let https = require_encryption || secure == Some(true);
+    ExecutionContext::with_current(|ec| ec.factory().webapp_root_url_for(webapp_name, Some(https))).unwrap_or_default()
+}
+
 pub(crate) fn base_url() -> String {
     WEB.with(|slot| {
         slot.borrow()
@@ -541,6 +794,35 @@ pub(crate) fn truncate_output(len: usize) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.body.truncate(len);
+        }
+    });
+}
+
+/// Read the body so far. The closure must not write the response: the slot is borrowed while it runs.
+pub(crate) fn with_body<R>(read: impl FnOnce(&[u8]) -> R) -> R {
+    WEB.with(|slot| {
+        let borrowed = slot.borrow();
+        let bytes = borrowed.as_ref().map(|web| web.body.as_slice()).unwrap_or(b"");
+        read(bytes)
+    })
+}
+
+/// Replace the body from `start` to the end. Headers and the sent flag stay.
+pub(crate) fn rewrite_tail(start: usize, bytes: &[u8]) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            let start = start.min(web.body.len());
+            web.body.truncate(start);
+            web.body.extend_from_slice(bytes);
+        }
+    });
+}
+
+/// Replace the whole body. Headers and the sent flag stay.
+pub(crate) fn replace_body(body: Vec<u8>) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.body = body;
         }
     });
 }
@@ -652,6 +934,90 @@ pub(crate) fn send_json_response(value: Value) {
     send_bytes(status, "application/json", query_rest::encode_json(&value).into_bytes());
 }
 
+/// `ec.web.sendError(errorCode, message, throwable)`, as Java's `WebFacadeImpl.sendError`.
+///
+/// `text/html` in `Accept` writes the small HTML page, `application/json` or `text/json` writes Java's
+/// single-quoted body, and anything else is `text/plain`. An empty message uses the throwable's message,
+/// then the name of the code. The path is the request path.
+pub(crate) fn send_error(error_code: u16, message: &str, throwable_message: Option<&str>) {
+    let name = error_code_name(error_code);
+    let message = if !message.is_empty() {
+        message.to_string()
+    } else if let Some(from_throwable) = throwable_message.filter(|text| !text.is_empty()) {
+        from_throwable.to_string()
+    } else {
+        name.to_string()
+    };
+    let path = request_path();
+    let accept = request_accept();
+    let (content_type, body) = if accept.contains("text/html") {
+        let mut body = format!(
+            "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/><title>Error {error_code} {name}</title></head><body>\n<h2>Error {error_code} {name}</h2>\n<p>Problem accessing {}</p>\n",
+            crate::screen::sri::encode_html(&path)
+        );
+        if !message.is_empty() {
+            body.push_str(&format!(
+                "<p>Reason: {}</p>\n",
+                crate::screen::sri::encode_html(&message)
+            ));
+        }
+        body.push_str("</body></html>\n");
+        ("text/html;charset=UTF-8", body)
+    } else if accept.contains("application/json") || accept.contains("text/json") {
+        let body = format!(
+            "{{'message':'{}','errorName':'{name}','error':{error_code},'path':'{}'}}",
+            json_quote_as_string(&message),
+            json_quote_as_string(&path)
+        );
+        ("application/json;charset=UTF-8", body)
+    } else {
+        ("text/plain;charset=UTF-8", format!("{error_code} {message} {path}"))
+    };
+    send_bytes_with_headers(
+        error_code,
+        vec![("Content-Type".to_string(), content_type.to_string())],
+        body.into_bytes(),
+    );
+}
+
+fn error_code_name(code: u16) -> &'static str {
+    match code {
+        401 => "Authentication Required",
+        403 => "Access Forbidden",
+        404 => "Not Found",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        _ => "",
+    }
+}
+
+/// Jackson `JsonStringEncoder.quoteAsString`: the escapes inside the quotes, without the quotes.
+fn json_quote_as_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{000c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out
+}
+
+fn request_path() -> String {
+    WEB.with(|slot| slot.borrow().as_ref().map(|web| web.path.clone()).unwrap_or_default())
+}
+
+fn request_accept() -> String {
+    WEB.with(|slot| slot.borrow().as_ref().map(|web| web.accept.clone()).unwrap_or_default())
+}
+
 /// `{"errorCode","errors"}` as JSON.
 pub(crate) fn send_json_error(status: u16, message: &str) {
     let mut map = IndexMap::new();
@@ -682,8 +1048,16 @@ pub(crate) fn send_text_response_with(text: &str, content_type: Option<&str>, fi
         format!("{content_type};charset=UTF-8")
     };
     let mut headers = vec![("Content-Type".to_string(), content_type)];
-    if let Some(name) = file_name.map(str::trim).filter(|value| !value.is_empty()) {
-        headers.push(("Content-Disposition".to_string(), attachment_disposition(name)));
+    match file_name.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(name) => headers.push(("Content-Disposition".to_string(), attachment_disposition(name))),
+        None => headers.push(("Content-Disposition".to_string(), "inline".to_string())),
+    }
+    // As Java's `sendTextResponseInternal`: with an error in the message facade the errors go instead, with a 500.
+    let errors = message_errors();
+    if !errors.is_empty() {
+        let body: String = errors.iter().map(|error| format!("{error}\n")).collect();
+        send_bytes_with_headers(500, headers, body.into_bytes());
+        return;
     }
     send_bytes_with_headers(200, headers, text.as_bytes().to_vec());
 }
@@ -766,12 +1140,12 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
     } else {
         headers.push(("Content-Disposition".to_string(), attachment_disposition(file_name)));
     }
-    let cache = if inline && application_file {
-        "max-age=86400, must-revalidate, public"
+    // An inline file of the app gets the conf's `web-resource-inline` headers, as Java's; any other file is the user's.
+    if inline && application_file {
+        apply_conf_headers(None, "web-resource-inline", &mut headers, false);
     } else {
-        "private, no-store"
-    };
-    headers.push(("Cache-Control".to_string(), cache.to_string()));
+        headers.push(("Cache-Control".to_string(), "private, no-store".to_string()));
+    }
     let conditional = WEB
         .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
         .unwrap_or_default();
@@ -948,6 +1322,7 @@ pub(crate) fn clear_output() {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.sent = false;
+            web.writing = false;
             web.status = 200;
             web.headers.clear();
             web.body.clear();
@@ -1038,6 +1413,10 @@ pub fn body_limit_for(factory: Option<&crate::context::ExecutionContextFactory>,
         ))
         .unwrap_or(DEFAULT_MAX_UPLOAD)
     } else {
+        // a servlet that takes larger bodies says so (`max-body`), as a search proxy does for a bulk load
+        if let Some(max) = factory.and_then(|factory| factory.webapp_scripts().max_body_for(&request.path)) {
+            return max;
+        }
         parse_size(&protection_setting(factory, "requests", "max-body", "webapp_max_body")).unwrap_or(DEFAULT_MAX_BODY)
     }
 }
@@ -1093,10 +1472,25 @@ pub fn parse_size(text: &str) -> Option<usize> {
 }
 
 fn upload_executable_allowed() -> bool {
-    moqui_lib::env::get_prop_or_env("webapp_upload_executable_allow") == "true"
+    webroot_setting(None, "upload-executable-allow", "webapp_upload_executable_allow") == "true"
 }
 
-/// Query, then form, then a JSON object. A JSON list is not merged into the map.
+/// The `webroot` webapp's attribute `name` (Java's `WebappInfo`), or the property `property` when the conf leaves it out
+/// or it expands to nothing. With no factory given, the current context's, else only the property.
+fn webroot_setting(factory: Option<&crate::context::ExecutionContextFactory>, name: &str, property: &str) -> String {
+    let configured = match factory {
+        Some(factory) => factory.webapp_setting("webroot", name),
+        None => ExecutionContext::with_current(|ec| ec.factory().webapp_setting("webroot", name)).unwrap_or_default(),
+    };
+    if !configured.is_empty() {
+        return configured;
+    }
+    moqui_lib::env::get_prop_or_env(property).trim().to_string()
+}
+
+/// Query, then a form body. A JSON object fills a name only when those did not already set it.
+/// A multipart text field is not added onto a name the query already has. A JSON list is not merged
+/// into the map. A repeated name inside the query, or inside the form body, stays a list.
 pub(crate) fn parse_body(request: &WebRequest) -> Result<ParsedBody, BodyError> {
     if request.body.len() > body_limit(request) {
         return Err(BodyError::TooLarge);
@@ -1112,7 +1506,14 @@ pub(crate) fn parse_body(request: &WebRequest) -> Result<ParsedBody, BodyError> 
             None => multipart::parse(request.header("content-type").unwrap_or(""), &request.body)
                 .map_err(|err| BodyError::Multipart(err.to_string()))?,
         };
-        pairs.extend(parsed.fields);
+        // The query wins. A multipart text field of a name the query already set is left out,
+        // so the parameter stays the query value and does not become a list of both.
+        let query_names: HashSet<&str> = request.query.iter().map(|(name, _)| name.as_str()).collect();
+        for (name, value) in parsed.fields {
+            if !query_names.contains(name.as_str()) {
+                pairs.push((name, value));
+            }
+        }
         if !upload_executable_allowed() {
             if let Some(file) = parsed.files.iter().find(|file| file.is_executable()) {
                 return Err(BodyError::Executable(file.file_name.clone()));
@@ -1150,7 +1551,8 @@ pub(crate) fn parse_body(request: &WebRequest) -> Result<ParsedBody, BodyError> 
             multipart: multipart_files,
         });
     }
-    if media == "application/x-www-form-urlencoded" || (media.is_empty() && request.body.contains(&b'=')) {
+    // Only a form type is a form, as the servlet parses one; a body with no type is no parameter at all.
+    if media == "application/x-www-form-urlencoded" {
         pairs.extend(form_pairs(&String::from_utf8_lossy(&request.body)));
         return Ok(ParsedBody {
             parameters: pairs_to_parameters(pairs),
@@ -1159,16 +1561,25 @@ pub(crate) fn parse_body(request: &WebRequest) -> Result<ParsedBody, BodyError> 
         });
     }
     let mut parameters = pairs_to_parameters(pairs);
-    // As Java's WebFacadeImpl: a body that is not a form is `_requestBodyText`, and a JSON one is read as well. An
-    // object's fields are parameters, an array is `_requestBodyJsonList`, and JSON that does not parse is
-    // `_requestBodyJsonParseError` for the screen or service to answer, not a refused request.
+    // As Java's WebFacadeImpl: a body of a text type (`ResourceReference.isTextContentType`) that is not a form is
+    // `_requestBodyText`, and a JSON one is read as well. An object's fields are parameters, an array is
+    // `_requestBodyJsonList`, and JSON that does not parse is `_requestBodyJsonParseError` for the screen or service to
+    // answer, not a refused request. A binary body is no parameter.
+    if !moqui_lib::resource::is_text_content_type(media) {
+        return Ok(ParsedBody {
+            parameters,
+            json_list,
+            multipart: multipart_files,
+        });
+    }
     let text = String::from_utf8_lossy(&request.body).into_owned();
     parameters.insert("_requestBodyText".to_string(), Value::String(text.clone()));
     if media == "application/json" || media == "text/json" || media.ends_with("+json") {
         match crate::service::parse_json(&text) {
             Ok(Value::Map(map)) => {
                 for (key, value) in map {
-                    parameters.insert(key, value);
+                    // A name the query already set stays. This body is JSON, not a form.
+                    parameters.entry(key).or_insert(value);
                 }
             }
             Ok(Value::List(items)) => {
@@ -1193,6 +1604,10 @@ pub(crate) fn parse_body(request: &WebRequest) -> Result<ParsedBody, BodyError> 
 }
 
 /// One value stays a string. A name that repeats becomes a list in request order.
+/// A lone non-breaking space is Java's "no parameter" value (`WebUtilities.simplifyRequestParameters`): the html
+/// remote options post it for an empty option, and the name is null, which still hides a JSON or saved value.
+const NO_PARAMETER: &str = "\u{a0}";
+
 fn pairs_to_parameters(pairs: Vec<(String, String)>) -> BTreeMap<String, Value> {
     let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (key, value) in pairs {
@@ -1201,7 +1616,9 @@ fn pairs_to_parameters(pairs: Vec<(String, String)>) -> BTreeMap<String, Value> 
     grouped
         .into_iter()
         .map(|(key, mut values)| {
-            let value = if values.len() == 1 {
+            let value = if values.len() == 1 && values[0] == NO_PARAMETER {
+                Value::Null
+            } else if values.len() == 1 {
                 Value::string(values.remove(0))
             } else {
                 Value::List(values.into_iter().map(Value::string).collect())
@@ -1209,6 +1626,13 @@ fn pairs_to_parameters(pairs: Vec<(String, String)>) -> BTreeMap<String, Value> 
             (key, value)
         })
         .collect()
+}
+
+/// Multipart files fill names the query and the form body did not already set.
+pub(crate) fn overlay_multipart(parameters: &mut BTreeMap<String, Value>, files: &BTreeMap<String, Value>) {
+    for (name, value) in files {
+        parameters.entry(name.clone()).or_insert_with(|| value.clone());
+    }
 }
 
 /// Split `a=1&b=2` into decoded pairs.
@@ -1369,18 +1793,15 @@ fn canonical_ip(text: &str) -> String {
 }
 
 pub(crate) fn require_session_token() -> bool {
-    !matches!(
-        moqui_lib::env::get_prop_or_env("webapp_require_session_token").as_str(),
-        "false"
-    )
+    webroot_setting(None, "require-session-token", "webapp_require_session_token") != "false"
 }
 
-fn handle_cors() -> bool {
-    !matches!(moqui_lib::env::get_prop_or_env("webapp_handle_cors").as_str(), "false")
+fn handle_cors(factory: Option<&crate::context::ExecutionContextFactory>) -> bool {
+    webroot_setting(factory, "handle-cors", "webapp_handle_cors") != "false"
 }
 
-fn allow_origins() -> Vec<String> {
-    moqui_lib::env::get_prop_or_env("webapp_allow_origins")
+fn allow_origins(factory: Option<&crate::context::ExecutionContextFactory>) -> Vec<String> {
+    webroot_setting(factory, "allow-origins", "webapp_allow_origins")
         .split(',')
         .map(str::trim)
         .filter(|text| !text.is_empty())
@@ -1388,15 +1809,27 @@ fn allow_origins() -> Vec<String> {
         .collect()
 }
 
+/// [`origin_allowed_by`] with the current context's conf.
+pub fn origin_allowed_for(origin: Option<&str>, host: Option<&str>) -> bool {
+    origin_allowed_by(None, origin, host)
+}
+
 /// Java's `WebUtilities.webSocketOriginAllowed`, which CORS follows too: no Origin, `*`, the request's own host, an
 /// allowed origin or domain, or a subdomain of an allowed domain on a dot boundary (`moqui.org` allows `www.moqui.org`,
-/// not `foo-moqui.org`). Case-insensitive.
-pub fn origin_allowed_for(origin: Option<&str>, host: Option<&str>) -> bool {
+/// not `foo-moqui.org`). Case-insensitive. The allowed origins are the `webroot` webapp's `allow-origins`.
+pub fn origin_allowed_by(
+    factory: Option<&crate::context::ExecutionContextFactory>,
+    origin: Option<&str>,
+    host: Option<&str>,
+) -> bool {
     let Some(origin) = origin.map(str::trim).filter(|text| !text.is_empty()) else {
         return true;
     };
     let origin = origin.to_ascii_lowercase();
-    let allow: Vec<String> = allow_origins().iter().map(|text| text.to_ascii_lowercase()).collect();
+    let allow: Vec<String> = allow_origins(factory)
+        .iter()
+        .map(|text| text.to_ascii_lowercase())
+        .collect();
     if allow.iter().any(|entry| entry == "*") {
         return true;
     }
@@ -1425,33 +1858,99 @@ fn origin_host(text: &str) -> String {
     text.split(':').next().unwrap_or("").to_string()
 }
 
-/// Screen-render headers, and CORS when the origin is allowed.
-pub fn finish_response(request: &WebRequest, mut response: WebResponse, preflight: bool) -> WebResponse {
-    push_unique(
-        &mut response.headers,
-        "Cache-Control",
-        "no-cache, no-store, must-revalidate, private",
-    );
-    push_unique(
-        &mut response.headers,
-        "Content-Security-Policy",
-        "frame-ancestors 'none'; form-action 'self';",
-    );
-    push_unique(&mut response.headers, "X-Frame-Options", "sameorigin");
-    push_unique(&mut response.headers, "X-Content-Type-Options", "nosniff");
+/// The `Origin` of a request CORS refuses, as `MoquiServlet.handleCors`: CORS is on, the request names an origin and
+/// `origin_allowed_by` does not allow it. The caller answers 401 before the request runs.
+///
+/// The request's own site is never refused, also behind a proxy that rewrites `Host`: the origin may be the
+/// `X-Forwarded-Host` of a proxy whose forwarding headers are believed, as Jetty's `ForwardedRequestCustomizer` made it
+/// Java's server name, or the conf webapp's `http-host` or `https-host`.
+pub(crate) fn refused_origin<'a>(
+    factory: &crate::context::ExecutionContextFactory,
+    request: &'a WebRequest,
+) -> Option<&'a str> {
+    if !handle_cors(Some(factory)) {
+        return None;
+    }
+    let origin = request.header("origin").filter(|origin| !origin.trim().is_empty())?;
+    if origin_allowed_by(Some(factory), Some(origin), request.header("host")) {
+        return None;
+    }
+    let origin_domain = origin_host(origin);
+    let forwarded = request
+        .header("x-forwarded-host")
+        .and_then(|value| value.split(',').next())
+        .filter(|_| {
+            request
+                .peer_ip
+                .trim()
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|peer| factory.extension(address::ClientAddressing::of_factory).believes(peer))
+        });
+    let configured = ["http-host", "https-host"].map(|name| factory.webapp_setting("webroot", name));
+    let own = forwarded
+        .into_iter()
+        .chain(configured.iter().map(String::as_str))
+        .any(|host| !host.trim().is_empty() && origin_host(host) == origin_domain);
+    (!own).then_some(origin)
+}
+
+/// The conf's `screen-render` headers on every response, as the baseline under what the response set itself, and
+/// `screen-secure` on https; then CORS when the origin is allowed.
+pub fn finish_response(
+    factory: &crate::context::ExecutionContextFactory,
+    request: &WebRequest,
+    mut response: WebResponse,
+    preflight: bool,
+) -> WebResponse {
+    apply_conf_headers(Some(factory), "screen-render", &mut response.headers, true);
     // HSTS holds for every port of a host (RFC 6797), so on localhost a trusted dev certificate would send the plain
     // dev listener and any other local server to https for a year.
     if request.https && !is_localhost(request.header("host").unwrap_or("")) {
-        push_unique(&mut response.headers, "Strict-Transport-Security", "max-age=31536000");
+        apply_conf_headers(Some(factory), "screen-secure", &mut response.headers, true);
     }
-    if handle_cors() {
+    if handle_cors(Some(factory)) {
         if let Some(origin) = request.header("origin").filter(|text| !text.is_empty()) {
-            if origin_allowed_for(Some(origin), request.header("host")) {
-                apply_cors(&mut response.headers, origin, preflight);
+            if origin_allowed_by(Some(factory), Some(origin), request.header("host")) {
+                apply_cors(factory, &mut response.headers, origin, preflight);
             }
         }
     }
     response
+}
+
+/// Java's `WebappInfo.addHeaders`: the conf's `response-header` entries for `kind` (`screen-render`, `cors-actual`). An
+/// entry replaces the header, or adds a value when it says `add="true"`. With `only_missing`, a header the response
+/// already has is left as it is. With no factory given, the current context's conf, else the shipped entries.
+pub(crate) fn apply_conf_headers(
+    factory: Option<&crate::context::ExecutionContextFactory>,
+    kind: &str,
+    headers: &mut Vec<(String, String)>,
+    only_missing: bool,
+) {
+    let entries = match factory {
+        Some(factory) => factory.response_headers("webroot", kind),
+        None => ExecutionContext::with_current(|ec| ec.factory().response_headers("webroot", kind))
+            .unwrap_or_else(|| crate::context::ExecutionContextFactory::default_response_headers(kind)),
+    };
+    for (name, value, add) in entries {
+        if only_missing && headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        if !add {
+            headers.retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        }
+        headers.push((name, value));
+    }
+}
+
+/// The conf's first `response-header` value of `name` for `kind`, such as a `Cache-Control`.
+pub(crate) fn conf_header(kind: &str, name: &str) -> Option<String> {
+    let mut headers = Vec::new();
+    apply_conf_headers(None, kind, &mut headers, false);
+    headers
+        .into_iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value)
 }
 
 /// `localhost` or a name under it, with or without a port.
@@ -1468,30 +1967,16 @@ pub(crate) fn host_without_port(host: &str) -> &str {
     host.split(':').next().unwrap_or(host)
 }
 
-fn apply_cors(headers: &mut Vec<(String, String)>, origin: &str, preflight: bool) {
-    headers.push(("Vary".to_string(), "Origin".to_string()));
-    headers.push(("Access-Control-Allow-Credentials".to_string(), "true".to_string()));
+/// The allowed origin, then the conf's `cors-preflight` or `cors-actual` headers, as `MoquiServlet.handleCors`.
+fn apply_cors(
+    factory: &crate::context::ExecutionContextFactory,
+    headers: &mut Vec<(String, String)>,
+    origin: &str,
+    preflight: bool,
+) {
     headers.push(("Access-Control-Allow-Origin".to_string(), origin.to_string()));
-    if preflight {
-        headers.push((
-            "Access-Control-Allow-Headers".to_string(),
-            PREFLIGHT_HEADERS.to_string(),
-        ));
-        headers.push((
-            "Access-Control-Allow-Methods".to_string(),
-            "GET,PUT,POST,PATCH,DELETE,OPTIONS".to_string(),
-        ));
-        headers.push(("Access-Control-Max-Age".to_string(), "3600".to_string()));
-    } else {
-        headers.push(("Access-Control-Expose-Headers".to_string(), EXPOSE_HEADERS.to_string()));
-    }
-}
-
-fn push_unique(headers: &mut Vec<(String, String)>, name: &str, value: &str) {
-    if headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(name)) {
-        return;
-    }
-    headers.push((name.to_string(), value.to_string()));
+    let kind = if preflight { "cors-preflight" } else { "cors-actual" };
+    apply_conf_headers(Some(factory), kind, headers, false);
 }
 
 /// Names a response never carries: `WebUtilities.stripCredentialParameters`, compared without case.
@@ -1524,6 +2009,31 @@ pub(crate) fn strip_credential_parameters(value: &mut serde_json::Value) {
     }
 }
 
+/// The JSON error response of `err`: its status and client text, and a `Retry-After` when the error says when the
+/// client may come back (a tarpit), as Java adds one to every 429.
+pub(crate) fn json_error_of(err: &Error) -> WebResponse {
+    let status = status_for(err);
+    let mut response = json_error(status, &error_text(status, err));
+    add_retry_after(&mut response.headers, err);
+    response
+}
+
+/// [`json_error_of`] into the thread's web slot.
+pub(crate) fn send_json_error_of(err: &Error) {
+    let status = status_for(err);
+    send_json_error(status, &error_text(status, err));
+    if let Some(seconds) = err.retry_after() {
+        add_header("Retry-After", seconds.to_string());
+    }
+}
+
+/// A `Retry-After` of `err`'s seconds, when it has some.
+pub(crate) fn add_retry_after(headers: &mut Vec<(String, String)>, err: &Error) {
+    if let Some(seconds) = err.retry_after() {
+        headers.push(("Retry-After".to_string(), seconds.to_string()));
+    }
+}
+
 pub(crate) fn json_error(status: u16, message: &str) -> WebResponse {
     let mut map = IndexMap::new();
     map.insert("errorCode".to_string(), Value::I64(i64::from(status)));
@@ -1535,13 +2045,39 @@ pub(crate) fn json_error(status: u16, message: &str) -> WebResponse {
     response
 }
 
-pub(crate) fn early_error(request: &WebRequest, status: u16, message: &str) -> WebResponse {
-    finish_response(request, json_error(status, message), false)
+/// Whether `err` or an error in its source chain is [`ErrorKind::Unavailable`]: the database could not be reached, or
+/// the server cannot take the work now.
+pub(crate) fn is_unavailable(err: &Error) -> bool {
+    if err.kind() == ErrorKind::Unavailable {
+        return true;
+    }
+    let mut source = std::error::Error::source(err);
+    while let Some(found) = source {
+        if found
+            .downcast_ref::<Error>()
+            .is_some_and(|context| context.kind() == ErrorKind::Unavailable)
+        {
+            return true;
+        }
+        source = found.source();
+    }
+    false
 }
 
-/// The HTTP status of an error, by its [`ErrorKind`]. A general error is a 500 whatever its message says.
+pub(crate) fn early_error(
+    factory: &crate::context::ExecutionContextFactory,
+    request: &WebRequest,
+    status: u16,
+    message: &str,
+) -> WebResponse {
+    finish_response(factory, request, json_error(status, message), false)
+}
+
+/// The HTTP status of an error, by its [`ErrorKind`]. A general error is a 500 whatever its message says, unless it
+/// was caused by one that is unavailable (no database connection), which is the whole request's: a 503.
 pub(crate) fn status_for(err: &Error) -> u16 {
     match err.kind() {
+        ErrorKind::General | ErrorKind::RollbackOnly if is_unavailable(err) => 503,
         ErrorKind::Validation | ErrorKind::BadRequest => 400,
         ErrorKind::AuthenticationRequired => 401,
         ErrorKind::Unauthorized => 403,
@@ -1609,6 +2145,66 @@ mod tests {
     use moqui_lib::object::Value;
 
     #[test]
+    fn send_error_follows_accept() {
+        let sent = |accept: &str| {
+            let _web = super::install(std::collections::BTreeMap::new());
+            let mut request = super::WebRequest::new("GET", "/apps/ship");
+            if !accept.is_empty() {
+                request.set_header("accept", accept);
+            }
+            super::set_request_info(&request);
+            super::send_error(404, "No labelUrl", None);
+            let (status, headers, body, sent) = super::take_output();
+            assert!(sent);
+            assert_eq!(status, 404);
+            (
+                headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_default(),
+                String::from_utf8(body).unwrap(),
+            )
+        };
+        let (html_type, html) = sent("text/html");
+        assert_eq!(html_type, "text/html;charset=UTF-8");
+        assert_eq!(
+            html,
+            "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/><title>Error 404 Not Found</title></head><body>\n<h2>Error 404 Not Found</h2>\n<p>Problem accessing /apps/ship</p>\n<p>Reason: No labelUrl</p>\n</body></html>\n"
+        );
+        let (json_type, json) = sent("application/json");
+        assert_eq!(json_type, "application/json;charset=UTF-8");
+        assert_eq!(
+            json,
+            "{'message':'No labelUrl','errorName':'Not Found','error':404,'path':'/apps/ship'}"
+        );
+        let (plain_type, plain) = sent("");
+        assert_eq!(plain_type, "text/plain;charset=UTF-8");
+        assert_eq!(plain, "404 No labelUrl /apps/ship");
+
+        let _web = super::install(std::collections::BTreeMap::new());
+        let mut request = super::WebRequest::new("GET", "/a<b");
+        request.set_header("accept", "text/html, application/json");
+        super::set_request_info(&request);
+        super::send_error(404, "say \"hi\" <tag>", None);
+        let (_, _, body, _) = super::take_output();
+        let html = String::from_utf8(body).unwrap();
+        assert!(html.contains("<p>Problem accessing /a&lt;b</p>"), "{html}");
+        assert!(html.contains("<p>Reason: say &quot;hi&quot; &lt;tag&gt;</p>"), "{html}");
+
+        let _web = super::install(std::collections::BTreeMap::new());
+        let mut request = super::WebRequest::new("GET", "/apps/ship");
+        request.set_header("accept", "application/json");
+        super::set_request_info(&request);
+        super::send_error(500, "", Some("boom\n\"x\""));
+        let (_, _, body, _) = super::take_output();
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "{'message':'boom\\n\\\"x\\\"','errorName':'Internal Server Error','error':500,'path':'/apps/ship'}"
+        );
+    }
+
+    #[test]
     fn request_details_leave_out_credential_parameters() {
         let parameters = [("orderId", "O1"), ("password", "hunter2"), ("api_key", "k-1")]
             .into_iter()
@@ -1618,6 +2214,69 @@ mod tests {
         let details = super::request_details();
         assert!(details.contains("Parameter: orderId = O1"), "{details}");
         assert!(!details.contains("hunter2") && !details.contains("k-1"), "{details}");
+    }
+
+    /// The query wins over a JSON field and over a multipart field. A repeated name in the query,
+    /// or in the form body, stays a list.
+    #[test]
+    fn the_query_wins_over_json_and_multipart() {
+        let body = |request: &super::WebRequest| match super::parse_body(request) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("body refused"),
+        };
+        let mut json = super::WebRequest::new("POST", "/x");
+        json.query.push(("orderId".to_string(), "1".to_string()));
+        json.set_header("content-type", "application/json");
+        json.body = br#"{"orderId":2,"note":"n"}"#.to_vec();
+        let parsed = body(&json);
+        assert_eq!(parsed.parameters.get("orderId"), Some(&Value::string("1")));
+        assert_eq!(parsed.parameters.get("note"), Some(&Value::string("n")));
+
+        let mut form = super::WebRequest::new("POST", "/x");
+        form.query.push(("a".to_string(), "1".to_string()));
+        form.query.push(("a".to_string(), "2".to_string()));
+        form.set_header("content-type", "application/x-www-form-urlencoded");
+        form.body = b"a=3&b=4".to_vec();
+        let parsed = body(&form);
+        assert_eq!(
+            parsed.parameters.get("a"),
+            Some(&Value::List(vec![
+                Value::string("1"),
+                Value::string("2"),
+                Value::string("3")
+            ]))
+        );
+        assert_eq!(parsed.parameters.get("b"), Some(&Value::string("4")));
+
+        let mut upload = super::WebRequest::new("POST", "/x");
+        upload.query.push(("name".to_string(), "x".to_string()));
+        upload.query.push(("q".to_string(), "1".to_string()));
+        upload.query.push(("q".to_string(), "2".to_string()));
+        upload.set_header("content-type", "multipart/form-data; boundary=XyZ");
+        upload.body = b"\
+--XyZ\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nfrom-body\r\n\
+--XyZ\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\ny\r\n\
+--XyZ\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\nfrom-body\r\n\
+--XyZ\r\nContent-Disposition: form-data; name=\"name\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\nxyz\r\n\
+--XyZ\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"b.bin\"\r\nContent-Type: application/octet-stream\r\n\r\nxyz\r\n\
+--XyZ--\r\n"
+            .to_vec();
+        let parsed = body(&upload);
+        assert_eq!(parsed.parameters.get("name"), Some(&Value::string("x")));
+        assert_eq!(parsed.parameters.get("other"), Some(&Value::string("y")));
+        assert_eq!(
+            parsed.parameters.get("q"),
+            Some(&Value::List(vec![Value::string("1"), Value::string("2")]))
+        );
+        let mut parameters = parsed.parameters.clone();
+        super::overlay_multipart(&mut parameters, &parsed.multipart);
+        assert_eq!(parameters.get("name"), Some(&Value::string("x")));
+        assert!(
+            parameters
+                .get("doc")
+                .is_some_and(|value| matches!(value, Value::Object(_))),
+            "{parameters:?}"
+        );
     }
 
     #[test]
@@ -1684,6 +2343,61 @@ mod tests {
         );
     }
 
+    /// A lone non-breaking space is no parameter, as Java's `simplifyRequestParameters`; the name stays, null.
+    #[test]
+    fn a_lone_non_breaking_space_is_a_null_parameter() {
+        let map = pairs_to_parameters(form_pairs("statusId=%C2%A0&note=%C2%A0x&a=%C2%A0&a=1"));
+        assert_eq!(map.get("statusId"), Some(&Value::Null));
+        assert_eq!(map.get("note"), Some(&Value::string("\u{a0}x")));
+        assert_eq!(
+            map.get("a"),
+            Some(&Value::List(vec![Value::string("\u{a0}"), Value::string("1")]))
+        );
+    }
+
+    /// Only a text body is `_requestBodyText`, and only a form type is a form, as Java's `WebFacadeImpl` reads them.
+    #[test]
+    fn a_binary_or_untyped_body_is_no_parameter() {
+        let parse = |content_type: Option<&str>, body: &[u8]| {
+            let mut request = super::WebRequest::new("POST", "/x");
+            if let Some(content_type) = content_type {
+                request.set_header("content-type", content_type);
+            }
+            request.body = body.to_vec();
+            match super::parse_body(&request) {
+                Ok(parsed) => parsed.parameters,
+                Err(_) => panic!("body refused"),
+            }
+        };
+        assert!(parse(Some("application/octet-stream"), b"a=1\xff").is_empty());
+        assert!(parse(None, b"a=1").is_empty());
+        let text = parse(Some("text/plain; charset=utf-8"), b"a=1");
+        assert_eq!(text.get("_requestBodyText"), Some(&Value::string("a=1")));
+        assert_eq!(text.get("a"), None);
+        assert_eq!(
+            parse(Some("application/x-www-form-urlencoded"), b"a=1").get("a"),
+            Some(&Value::string("1"))
+        );
+    }
+
+    /// Java's `getRequestUrl`: the host without a port of 80 or 443, and the query string as the client sent it.
+    #[test]
+    fn the_request_url_keeps_the_query_as_sent_and_drops_a_default_port() {
+        let mut request = super::WebRequest::new("GET", "/apps/Find");
+        request.set_header("host", "site.test:80");
+        request.query = form_pairs("q=a%20b&n=%0A");
+        assert_eq!(super::full_url(&request), "http://site.test/apps/Find?q=a+b&n=%0A");
+        request.raw_query = Some("q=a%20b&n=%0A".to_string());
+        request.set_header("host", "site.test:8080");
+        assert_eq!(
+            super::full_url(&request),
+            "http://site.test:8080/apps/Find?q=a%20b&n=%0A"
+        );
+        request.https = true;
+        request.set_header("host", "[::1]:443");
+        assert_eq!(super::full_url(&request), "https://[::1]/apps/Find?q=a%20b&n=%0A");
+    }
+
     #[test]
     fn percent_decode_keeps_bad_escapes_and_never_panics() {
         assert_eq!(percent_decode("a%20b+c"), "a b c");
@@ -1699,6 +2413,11 @@ mod tests {
             Some("abc")
         );
         assert_eq!(cookie_value("a=b", "moqui.session"), None);
+        // Two Cookie headers as the host joins them.
+        assert_eq!(
+            cookie_value("a=1; moqui.session=abc; b=2", "moqui.session").as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]
@@ -1716,9 +2435,21 @@ mod tests {
         let err = Error::from(err);
         assert_eq!(err.kind(), ErrorKind::Tarpit, "{err}");
         assert_eq!(super::status_for(&err), 429);
+        // A tarpit's seconds come through a lib error as the response's Retry-After.
+        let wrapped =
+            moqui_lib::error::Error::from(Error::of_kind(ErrorKind::Tarpit, "too many times").with_retry_after(42));
+        let response = super::json_error_of(&Error::from(wrapped));
+        assert_eq!(response.status, 429);
+        assert_eq!(response.header("Retry-After"), Some("42"));
+        assert_eq!(super::json_error_of(&err).header("Retry-After"), None);
         // The kind is found under a lib error that names it as its source.
         let wrapped = moqui_lib::error::Error::new("outer").with_source(Error::of_kind(ErrorKind::Unavailable, "full"));
         assert_eq!(super::status_for(&Error::from(wrapped)), 503);
+        // An unavailable database under a general error is still the request's 503.
+        let beneath = Error::new("find failed").with_source(Error::of_kind(ErrorKind::Unavailable, "no connection"));
+        assert_eq!(super::status_for(&beneath), 503);
+        let not_found = Error::new("service failed").with_source(Error::of_kind(ErrorKind::NotFound, "no row"));
+        assert_eq!(super::status_for(&not_found), 500);
         // A general error is a 500 whatever its words.
         for message in [
             "Operation x not supported",

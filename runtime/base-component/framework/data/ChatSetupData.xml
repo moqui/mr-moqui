@@ -44,4 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Chat files uploaded and never sent with a message, after a day -->
     <moqui.service.job.ServiceJob jobName="clean_ChatAttachments_daily" description="Remove chat files never sent"
             serviceName="org.moqui.impl.ChatServices.clean#PendingAttachments" cronExpression="0 30 3 * * ?" paused="N"/>
+    <!-- Retention: the events older than a room's retentionDays. Each room is on its own. -->
+    <moqui.service.job.ServiceJob jobName="clean_ChatRetention_daily" description="Delete chat events past their room's retention"
+            serviceName="org.moqui.impl.ChatServices.clean#ChatRetention" cronExpression="0 45 3 * * ?" paused="N"/>
 </entity-facade-xml>

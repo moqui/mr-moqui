@@ -152,17 +152,19 @@ check "build two packages" 1 'ask for two packages' -- dry "$M" build --release 
 check "build passes cargo args" 0 'moqui --features x$' -- dry "$M" build --debug -- --features x
 check "run --enterprise" 0 'target/enterprise/moqui$' -- dry "$M" run --enterprise
 rm -f "$R/cargo.log"
-check "run --debug builds a missing debug binary" 0 'is not built, building it' -- "$M" run --debug
+check "run --debug builds first" 0 '' -- "$M" run --debug
 check "cargo saw the debug build" 0 'cargo: build --profile dev --no-default-features --features maximal -p moqui$' -- cat "$R/cargo.log"
 check "debug binary exists now" 0 '' -- test -x "$R/target/debug/moqui"
 rm -f "$R/cargo.log"
-check "run with the binary there does not build" 0 '' -- "$M" run
-check "no cargo call" 1 '' -- test -f "$R/cargo.log"
-check "run --build builds anyway" 0 '' -- "$M" run --build
-check "cargo saw --build" 0 'cargo: build --profile lite --no-default-features --features lite -p moqui$' -- cat "$R/cargo.log"
-rm -f "$R/target/lite/moqui" "$R/cargo.log"
-check "missing default binary is built" 0 'is not built, building it' -- "$M" run
+check "run builds first with the binary there" 0 '' -- "$M" run
 check "cargo saw the default build" 0 'cargo: build --profile lite --no-default-features --features lite -p moqui$' -- cat "$R/cargo.log"
+rm -f "$R/cargo.log"
+check "run --nobuild with the binary there does not build" 0 '' -- "$M" run --nobuild
+check "no cargo call" 1 '' -- test -f "$R/cargo.log"
+check "run --build is gone" 1 'unknown option --build' -- "$M" run --build
+rm -f "$R/target/lite/moqui" "$R/cargo.log"
+check "--nobuild still builds a missing binary" 0 'is not built, building it' -- "$M" run --nobuild
+check "cargo saw the missing build" 0 'cargo: build --profile lite --no-default-features --features lite -p moqui$' -- cat "$R/cargo.log"
 rm -f "$R/target/lite/moqui" "$R/cargo.log"
 check "dry run shows the build" 0 'cargo build --profile lite --no-default-features --features lite -p moqui' -- dry "$M" load
 check "dry run does not call cargo" 1 '' -- test -f "$R/cargo.log"
@@ -233,6 +235,8 @@ wait "$live" 2>/dev/null
 check "save-db dump" 0 'dump of' -- cat "$R/runtime/save/t1/moqui.dump"
 check "save-db opensearch tar" 0 '' -- test -f "$R/runtime/save/t1/opensearch-data.tar.gz"
 check "save-db bad name" 1 'may use only' -- "$M" save-db ../x
+check "load-save builds once, with the package of its load" 0 '^1 .*target/debug/moqui save-db' -- \
+    sh -c "out=\$(MOQ_DRY_RUN=1 '$M' load-save --debug -n t2 seed 2>&1); printf '%s ' \"\$(printf '%s\n' \"\$out\" | grep -c 'cargo build')\"; printf '%s\n' \"\$out\" | grep ' save-db '"
 check "complete save names" 0 '^t1$' -- "$M" __complete 2 reload-save ''
 check "clean-db" 0 'Deleting runtime/db/embedded' -- "$M" clean-db
 check "clean-db removed cluster" 1 '' -- test -e "$R/runtime/db/embedded"

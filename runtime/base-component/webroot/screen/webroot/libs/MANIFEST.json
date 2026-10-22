@@ -13,12 +13,17 @@
     "estree-walker": "2.0.2",
     "source-map-js": "1.2.2",
     "highlight.js": "11.12.0",
+    "@openuidev/lang-core": "0.2.18",
+    "zod": "4.6.5",
+    "ci-info": "4.4.0",
     "@tiptap/core": "3.31.4",
     "@tiptap/extension-blockquote": "3.31.4",
     "@tiptap/extension-bold": "3.31.4",
     "@tiptap/extension-bullet-list": "3.31.4",
     "@tiptap/extension-code": "3.31.4",
     "@tiptap/extension-code-block": "3.31.4",
+    "@tiptap/extension-collaboration": "3.31.4",
+    "@tiptap/extension-collaboration-caret": "3.31.4",
     "@tiptap/extension-document": "3.31.4",
     "@tiptap/extension-dropcursor": "3.31.4",
     "@tiptap/extension-gapcursor": "3.31.4",
@@ -36,12 +41,21 @@
     "@tiptap/extension-paragraph": "3.31.4",
     "@tiptap/extension-placeholder": "3.31.4",
     "@tiptap/extension-strike": "3.31.4",
+    "@tiptap/extension-table": "3.31.4",
+    "@tiptap/extension-table-cell": "3.31.4",
+    "@tiptap/extension-table-header": "3.31.4",
+    "@tiptap/extension-table-row": "3.31.4",
     "@tiptap/extension-text": "3.31.4",
     "@tiptap/extension-underline": "3.31.4",
     "@tiptap/extensions": "3.31.4",
     "@tiptap/pm": "3.31.4",
     "@tiptap/starter-kit": "3.31.4",
     "@tiptap/suggestion": "3.31.4",
+    "@tiptap/y-tiptap": "3.0.9",
+    "yjs": "13.6.33",
+    "y-protocols": "1.0.7",
+    "lib0": "0.2.119",
+    "isomorphic.js": "0.2.5",
     "@floating-ui/core": "1.8.0",
     "@floating-ui/dom": "1.8.0",
     "@floating-ui/utils": "0.2.12",
@@ -65,7 +79,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "b037b2568df00d24c0cb7ecf0bf81301c27582d2f31654976f63545a751dca1d"
+    "sha256": "5ca3f11bb67374a49bb5a13afc05a7f23b2ae553fa8925d0f43e1118c87839d8"
   },
   "libraries": [
     {
@@ -153,6 +167,46 @@
           "from": "Sortable.min.js",
           "size": 45478,
           "sha256": "bf4241bc73fef7f11c59a283a69fe8051cdd31c6d8ff5a2b9ba219e7831fcf76"
+        }
+      ]
+    },
+    {
+      "id": "xterm",
+      "name": "xterm.js",
+      "version": "6.0.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz",
+      "npm": "@xterm/xterm@6.0.0",
+      "tarballIntegrity": "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==",
+      "files": [
+        {
+          "path": "xterm/xterm.js",
+          "from": "lib/xterm.js",
+          "size": 488663,
+          "sha256": "14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972"
+        },
+        {
+          "path": "xterm/xterm.css",
+          "from": "css/xterm.css",
+          "size": 7112,
+          "sha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6"
+        }
+      ]
+    },
+    {
+      "id": "xterm-addon-fit",
+      "name": "@xterm/addon-fit",
+      "version": "0.11.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz",
+      "npm": "@xterm/addon-fit@0.11.0",
+      "tarballIntegrity": "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==",
+      "files": [
+        {
+          "path": "xterm/addon-fit.js",
+          "from": "lib/addon-fit.js",
+          "size": 1521,
+          "sha256": "ba3ea256ce0620a0992a197d6c9baea64823fc93d8da07a9e366ca9943c18527"
         }
       ]
     },
@@ -423,7 +477,7 @@
       "source": "https://registry.npmjs.org/highlight.js/-/highlight.js-11.12.0.tgz",
       "npm": "highlight.js@11.12.0",
       "tarballIntegrity": "sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=hljs of lib/core plus the languages bash, css, diff, groovy, java, javascript, json, markdown, plaintext, python, rust, sql, typescript, xml, yaml. Exposes the global hljs.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=hljs of lib/core plus the languages bash, css, diff, groovy, java, javascript, json, kotlin, markdown, plaintext, python, rust, sql, typescript, xml, yaml. Exposes the global hljs.",
       "files": [
         {
           "path": "highlightjs/styles/github-dark.min.css",
@@ -440,8 +494,8 @@
         {
           "path": "highlightjs/highlight.min.js",
           "from": "build",
-          "size": 77309,
-          "sha256": "ffc9eeb1e124cfde5cc6e7220149b1e7891ba50a498f86740ea0da4c925b982e"
+          "size": 80699,
+          "sha256": "92f609b468164d824140c9f66d3738e24af2c79b57ee15802bac75b298a56c70"
         }
       ]
     },
@@ -450,17 +504,70 @@
       "name": "Tiptap (with ProseMirror, bundled)",
       "version": "3.31.4",
       "license": "MIT",
-      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, with the packages it is the license of.",
+      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, with the packages it is the license of.",
       "source": "https://registry.npmjs.org/@tiptap/core/-/core-3.31.4.tgz",
       "npm": "@tiptap/core@3.31.4",
       "tarballIntegrity": "sha512-cIVUQYBycighzsk6GbmCef8ZiEDVxoT5EuAe4xg2q9dNkDqCXVqI4YGr9aavCQEiAS4uHiRwqvcsPqJHipFDfg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention and Placeholder. Exposes the global Tiptap.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.",
       "files": [
         {
           "path": "tiptap/tiptap.min.js",
           "from": "build",
-          "size": 425261,
-          "sha256": "46523ec95836aacd3b99c22d0869748abd63059641fb848163e6ca45226d0ce7"
+          "size": 601562,
+          "sha256": "6cbb699803b69b3e56aff7440420b1ce63f99f64108dbb3e9ccf60c029d98524"
+        }
+      ]
+    },
+    {
+      "id": "openui-lang-core",
+      "name": "OpenUI Lang core (bundled with zod)",
+      "version": "0.2.18",
+      "license": "MIT",
+      "note": "Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: patches/openui-lang-core-0.2.18-telemetry-off.patch, patches/openui-lang-core-0.2.18-failed-query.patch (telemetry off; a failed Query is not fetched again until its arguments change).",
+      "source": "https://registry.npmjs.org/@openuidev/lang-core/-/lang-core-0.2.18.tgz",
+      "npm": "@openuidev/lang-core@0.2.18",
+      "tarballIntegrity": "sha512-I8kP9gI2MDNy9C7YuG2Rr8oS0o3SVA9GjYPpQFvTi+pZXX33nrHKar7aSbwL7CDFlBnvIxFuj6KMDjmG93/mVQ==",
+      "build": "the patches applied with patch -p1 to the installed package, then esbuild --bundle --minify --format=iife --global-name=OpenUILang --platform=browser --target=es2020 --legal-comments=none of an entry that exports createParser, createStreamingParser, mergeStatements, createStore, createQueryManager, evaluate, evaluateElementProps, BuiltinActionType, ACTION_STEPS, walkAST, tokenize, split, parseExpression, BUILTIN_NAMES and ACTION_NAMES. Exposes the global OpenUILang; the build fails when the bundle names a telemetry host, a process call or a network call of its own.",
+      "patches": [
+        {
+          "path": "patches/openui-lang-core-0.2.18-telemetry-off.patch",
+          "sha256": "9a32b0bdfcaefd0a3d1eada8df563a9a3c7147f8029021142c5867e9eb008f9f"
+        },
+        {
+          "path": "patches/openui-lang-core-0.2.18-failed-query.patch",
+          "sha256": "a57643726cfdb3a5d84f1374759fcc6a6a48b7937ce547d5f9e961844f281d8a"
+        }
+      ],
+      "files": [
+        {
+          "path": "openui/lang-core.min.js",
+          "from": "build",
+          "size": 39205,
+          "sha256": "ee6113a8f1cd13623cda85d25decdb40ceebb0d5bbe257fec2b65795cb3b3b6a"
+        }
+      ]
+    },
+    {
+      "id": "pdfjs",
+      "name": "PDF.js",
+      "version": "6.4.299",
+      "license": "Apache-2.0",
+      "note": "Only the display and worker modules. The standard_fonts (Foxit fonts under a BSD license, Liberation fonts under GPL-2.0 with a font exception), cmaps, iccs and wasm directories are not shipped.",
+      "source": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.4.299.tgz",
+      "npm": "pdfjs-dist@6.4.299",
+      "tarballIntegrity": "sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g==",
+      "files": [
+        {
+          "path": "pdfjs/pdf.min.mjs",
+          "from": "build/pdf.min.mjs",
+          "size": 458904,
+          "sha256": "57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2"
+        },
+        {
+          "path": "pdfjs/pdf.worker.min.mjs",
+          "from": "build/pdf.worker.min.mjs",
+          "size": 1264342,
+          "sha256": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18"
         }
       ]
     },

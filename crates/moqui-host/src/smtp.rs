@@ -15,12 +15,26 @@
 //! The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (the `inbound-smtp` feature;
 //! docs/Mail-Inbound.md). Off unless `smtp_listen_port` is set; it listens on `smtp_listen_host` (default `127.0.0.1`).
 //!
-//! It is the last hop of a gateway (Postfix with Rspamd, or another MTA) that does the internet side: TLS, SPF, DKIM,
-//! DMARC, spam and virus filtering, queueing and retries. So it is a small RFC 5321 server for that one client: EHLO or
-//! HELO, MAIL FROM (SIZE, BODY=8BITMIME, SMTPUTF8), RCPT TO, DATA, RSET, NOOP, QUIT, VRFY (252), HELP, with PIPELINING
-//! and ENHANCEDSTATUSCODES; no AUTH, no STARTTLS, no relay. A connection from an address outside `smtp_allowed_addresses`
-//! (IPs and CIDRs) gets 554 at connect and is closed; with `smtp_proxy_protocol` each connection starts with a PROXY v1
+//! It is the last hop of a gateway (Postfix with Rspamd, or another MTA) that does the internet side: SPF, DKIM, DMARC,
+//! spam and virus filtering, queueing and retries. So it is a small RFC 5321 server for that one client: EHLO or HELO,
+//! MAIL FROM (SIZE, BODY=8BITMIME, SMTPUTF8), RCPT TO, DATA, RSET, NOOP, QUIT, VRFY (252), HELP, with PIPELINING and
+//! ENHANCEDSTATUSCODES; no AUTH, no relay. A connection from an address outside `smtp_allowed_addresses` (IPs and
+//! CIDRs) gets 554 at connect and is closed; with `smtp-server` `proxy-protocol` each connection starts with a PROXY v1
 //! or v2 header and the address it names must be allowed too. An empty allow-list does not start the listener.
+//!
+//! The `smtp-server` options:
+//! - `protocol="lmtp"` (RFC 2033): LHLO instead of EHLO, and after the data one reply per accepted recipient, by how
+//!   its account took the message (stored 250, gone 550, failed 451), so a store that fails for one account does not
+//!   make the gateway send the message to all of them again.
+//! - `starttls` (RFC 3207), with `require-tls` refusing MAIL before it (530). The certificate is `tls-cert-file` and
+//!   `tls-key-file`, else `runtime/cert` by the name asked for or `hostname` (`tls.rs` `smtp_server_config`); with
+//!   none the listener does not start. Bytes pipelined after STARTTLS end the session (554), the session starts over
+//!   after the handshake, and STARTTLS is not offered again.
+//! - `chunking` (RFC 3030, on): `BDAT n [LAST]`, the chunk read as it is (no dot-stuffing); DATA after BDAT is 503.
+//! - `dsn` (RFC 3461, off): RET and ENVID on MAIL, NOTIFY and ORCPT on RCPT, checked (501 when they do not parse) and
+//!   kept on the envelope; delivery adds `Original-Recipient` and sends a "delivered" report for NOTIFY=SUCCESS.
+//!
+//! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
 //! `RCPT TO` is answered from the accounts ([`moqui_core::service::mail_inbound::find_recipient`]): an address of a
 //! hosted or shared account is accepted, any other refused with 550 there, so nothing is accepted that would bounce
@@ -28,9 +42,9 @@
 //! that fails, or no request worker free, answers 451 so the gateway tries again, and the accounts that took it the
 //! first time do not store it twice. Both run on a request worker with authorization disabled.
 //!
-//! Limits: `smtp_max_message_size` bytes (advertised as SIZE; a larger message is read to its end and refused with
-//! 552), `smtp_max_recipients` a message (452 after), `smtp_max_connections` at once (421 after), `smtp_command_timeout`
-//! seconds for each command line or data chunk, `smtp_session_timeout` seconds for a whole connection. Each session's
+//! Limits: `smtp-server` `max-message-size` bytes (advertised as SIZE; a larger message is read to its end and refused with
+//! 552), `smtp-server` `max-recipients` a message (452 after), `smtp-server` `max-connections` at once (421 after), `smtp-server` `command-timeout`
+//! seconds for each command line or data chunk, `smtp-server` `session-timeout` seconds for a whole connection. Each session's
 //! outcome is logged, with its addresses and sizes, never the message.
 
 use std::future::Future;
@@ -40,10 +54,11 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
-use moqui_core::service::mail_inbound::{self as inbound, Envelope, Options, Outcome, Recipients};
+use moqui_core::service::mail_inbound::{self as inbound, Envelope, Options, Outcome, RecipientDsn, Recipients};
 use moqui_lib::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 
 /// The longest command line, with its CRLF. RFC 5321 asks for 512; extensions make it longer.
 const MAX_COMMAND: usize = 4096;
@@ -53,6 +68,11 @@ const DATA_CHUNK: usize = 64 * 1024;
 const MAX_ERRORS: usize = 20;
 /// The PROXY v2 signature.
 const PROXY_V2: [u8; 12] = [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
+
+/// A connection's bytes: TCP, then TLS after STARTTLS.
+pub(crate) trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
 /// The address the listener is on, kept on the factory for `Server::smtp_address`.
 #[derive(Default)]
@@ -129,40 +149,61 @@ pub struct SmtpConfig {
     pub plus_separator: String,
     pub spam_headers: Vec<String>,
     pub authserv_id: String,
+    /// LMTP (RFC 2033) instead of SMTP: LHLO, and a reply per recipient after the data.
+    pub lmtp: bool,
+    /// STARTTLS is offered.
+    pub starttls: bool,
+    /// MAIL before STARTTLS is refused.
+    pub require_tls: bool,
+    /// The certificate and key files; both empty for `runtime/cert`.
+    pub tls_cert_file: String,
+    pub tls_key_file: String,
+    /// CHUNKING (RFC 3030, BDAT).
+    pub chunking: bool,
+    /// DSN (RFC 3461).
+    pub dsn: bool,
 }
 
 fn property(name: &str) -> String {
     moqui_lib::env::get_prop_or_env(name).trim().to_string()
 }
 
-fn number(name: &str, default: u64) -> u64 {
-    property(name)
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn count(name: &str, default: usize) -> usize {
-    usize::try_from(number(name, default as u64)).unwrap_or(default)
-}
-
 impl SmtpConfig {
-    /// The settings when `smtp_listen_port` is set, else none.
+    /// The settings of the conf's `smtp-server` when its `listen-port` (`smtp_listen_port`) is set, else none. An
+    /// attribute the conf leaves out, or that expands to nothing, is its property when it has one.
     ///
     /// # Errors
     ///
     /// Returns why the listener cannot start: a port that does not parse, an allow-list that is empty or does not
-    /// parse.
-    pub fn from_properties() -> Result<Option<Self>, Error> {
-        let port_text = property("smtp_listen_port");
+    /// parse, a protocol other than smtp or lmtp, `require-tls` without `starttls`.
+    pub fn from_conf(factory: &ExecutionContextFactory) -> Result<Option<Self>, Error> {
+        let setting = |name: &str| factory.conf_setting("smtp-server", name);
+        let setting_or_property = |name: &str, property_name: &str| {
+            Some(setting(name))
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| property(property_name))
+        };
+        let number = |name: &str, default: u64| {
+            setting(name)
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        let count = |name: &str, default: usize| usize::try_from(number(name, default as u64)).unwrap_or(default);
+        let flag = |name: &str, default: bool| match setting(name).trim().to_ascii_lowercase().as_str() {
+            "true" | "y" | "yes" | "1" => true,
+            "false" | "n" | "no" | "0" => false,
+            _ => default,
+        };
+        let port_text = setting_or_property("listen-port", "smtp_listen_port");
         if port_text.is_empty() {
             return Ok(None);
         }
         let port: u16 = port_text
             .parse()
             .map_err(|_| Error::new(format!("smtp_listen_port {port_text} is not a port number")))?;
-        let allowed_text = property("smtp_allowed_addresses");
+        let allowed_text = setting_or_property("allowed-addresses", "smtp_allowed_addresses");
         let allowed = allowed_text
             .split([',', ' '])
             .filter(|entry| !entry.trim().is_empty())
@@ -174,19 +215,31 @@ impl SmtpConfig {
                 "smtp_allowed_addresses is empty: name the edge gateway's addresses (127.0.0.1 for a gateway on this host)",
             ));
         }
-        let hostname = match property("smtp_hostname") {
+        let hostname = match setting_or_property("hostname", "smtp_hostname") {
             name if !name.is_empty() => name,
             _ => match property("webapp_http_host") {
                 name if !name.is_empty() => name,
                 _ => "localhost".to_string(),
             },
         };
-        let host = match property("smtp_listen_host") {
+        let host = match setting_or_property("listen-host", "smtp_listen_host") {
             host if !host.is_empty() => host,
             _ => "127.0.0.1".to_string(),
         };
+        let lmtp = match setting("protocol").trim().to_ascii_lowercase().as_str() {
+            "" | "smtp" => false,
+            "lmtp" => true,
+            other => return Err(Error::new(format!("smtp-server protocol {other} is not smtp or lmtp"))),
+        };
+        let starttls = flag("starttls", false);
+        let require_tls = flag("require-tls", false);
+        if require_tls && !starttls {
+            return Err(Error::new(
+                "smtp-server require-tls is on but starttls is off: no client could send mail",
+            ));
+        }
         let list = |name: &str| -> Vec<String> {
-            property(name)
+            setting(name)
                 .split(',')
                 .map(str::trim)
                 .filter(|entry| !entry.is_empty())
@@ -198,24 +251,28 @@ impl SmtpConfig {
             port,
             hostname,
             allowed,
-            max_message: count("smtp_max_message_size", 25 * 1024 * 1024),
-            max_recipients: count("smtp_max_recipients", 100),
-            max_connections: count("smtp_max_connections", 20),
-            command_timeout: Duration::from_secs(number("smtp_command_timeout", 300)),
-            session_timeout: Duration::from_secs(number("smtp_session_timeout", 1800)),
-            proxy_protocol: matches!(
-                property("smtp_proxy_protocol").to_ascii_lowercase().as_str(),
-                "true" | "y" | "yes" | "1"
-            ),
-            plus_separator: match property("smtp_plus_separator") {
+            max_message: count("max-message-size", 25 * 1024 * 1024),
+            max_recipients: count("max-recipients", 100),
+            max_connections: count("max-connections", 20),
+            command_timeout: Duration::from_secs(number("command-timeout", 300)),
+            session_timeout: Duration::from_secs(number("session-timeout", 1800)),
+            proxy_protocol: flag("proxy-protocol", false),
+            plus_separator: match setting("plus-separator") {
                 none if none.eq_ignore_ascii_case("none") => String::new(),
                 characters => characters
                     .chars()
                     .filter(|ch| !ch.is_whitespace() && *ch != '@')
                     .collect(),
             },
-            spam_headers: list("smtp_spam_headers"),
-            authserv_id: property("smtp_authserv_id"),
+            spam_headers: list("spam-headers"),
+            authserv_id: setting_or_property("authserv-id", "smtp_authserv_id"),
+            lmtp,
+            starttls,
+            require_tls,
+            tls_cert_file: setting_or_property("tls-cert-file", "smtp_tls_cert_file"),
+            tls_key_file: setting_or_property("tls-key-file", "smtp_tls_key_file"),
+            chunking: flag("chunking", true),
+            dsn: flag("dsn", false),
         }))
     }
 
@@ -247,10 +304,23 @@ impl Drop for SmtpServer {
 ///
 /// # Errors
 ///
-/// Returns an error when the settings or the bind fail; the host logs it and starts without the listener.
+/// Returns an error when the settings or the bind fail, or STARTTLS is on with no certificate; the host logs it and
+/// starts without the listener.
 pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer>, Error> {
-    let Some(config) = SmtpConfig::from_properties()? else {
+    let Some(config) = SmtpConfig::from_conf(factory)? else {
         return Ok(None);
+    };
+    let tls = if config.starttls {
+        let server_config = crate::tls::smtp_server_config(
+            factory.runtime_dir(),
+            &config.hostname,
+            &config.tls_cert_file,
+            &config.tls_key_file,
+        )
+        .map_err(|err| Error::new(format!("the SMTP listener has starttls on, but {err}")))?;
+        Some(TlsAcceptor::from(Arc::new(server_config)))
+    } else {
+        None
     };
     let bind = if config.host.contains(':') && !config.host.starts_with('[') {
         format!("[{}]:{}", config.host, config.port)
@@ -279,16 +349,22 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     };
     let (shutdown, watch) = tokio::sync::watch::channel(false);
     tracing::info!(
-        "SMTP listener on {address} for hosted and shared accounts, from {}{}",
+        "{} listener on {address} for hosted and shared accounts, from {}{}{}",
+        if config.lmtp { "LMTP" } else { "SMTP" },
         config
             .allowed
             .iter()
             .map(|net| format!("{}/{}", net.network, net.prefix))
             .collect::<Vec<_>>()
             .join(", "),
-        if config.proxy_protocol { " through PROXY" } else { "" }
+        if config.proxy_protocol { " through PROXY" } else { "" },
+        match (config.starttls, config.require_tls) {
+            (true, true) => ", STARTTLS required",
+            (true, false) => ", STARTTLS offered",
+            _ => "",
+        }
     );
-    crate::edge::handle().spawn(serve(listener, config, backend, watch));
+    crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     *factory
         .extension(|_| SmtpAddress::default())
         .0
@@ -305,10 +381,25 @@ pub(crate) enum RcptAnswer {
     TempFail(String),
 }
 
-/// The answer after `DATA`.
+/// What became of a message in one account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccountResult {
+    /// Stored, or it had it already.
+    Stored,
+    /// The account was removed after `RCPT TO`.
+    Gone,
+    /// The store failed: 451, and the gateway tries again.
+    Failed,
+}
+
+/// The answer after `DATA` or the last `BDAT`.
 pub(crate) enum DataAnswer {
-    /// Stored; the text is for the session log.
-    Stored(String),
+    /// Delivered to the accounts, each with its result; the text is for the session log.
+    Stored {
+        accounts: Vec<(String, AccountResult)>,
+        summary: String,
+    },
+    /// Not delivered at all (no request worker free): 451 for every recipient.
     TempFail(String),
     Rejected(String),
 }
@@ -392,11 +483,19 @@ impl Backend for FactoryBackend {
                         report.authentication.as_str()
                     }
                 );
-                if report.store_failed() {
-                    DataAnswer::TempFail(summary)
-                } else {
-                    DataAnswer::Stored(summary)
-                }
+                let accounts = report
+                    .deliveries
+                    .iter()
+                    .map(|delivery| {
+                        let result = match &delivery.result {
+                            Ok(Outcome::Stored { .. } | Outcome::Duplicate) => AccountResult::Stored,
+                            Ok(Outcome::Gone) => AccountResult::Gone,
+                            Err(_) => AccountResult::Failed,
+                        };
+                        (delivery.email_account_id.clone(), result)
+                    })
+                    .collect();
+                DataAnswer::Stored { accounts, summary }
             }
         }
     }
@@ -404,12 +503,13 @@ impl Backend for FactoryBackend {
 
 struct Shared<B> {
     config: SmtpConfig,
+    tls: Option<TlsAcceptor>,
     backend: B,
     active: AtomicUsize,
     sessions: AtomicU64,
 }
 
-/// A place among `smtp_max_connections`, given back on drop.
+/// A place among `smtp-server` `max-connections`, given back on drop.
 struct Slot<'a>(&'a AtomicUsize);
 
 impl Drop for Slot<'_> {
@@ -418,15 +518,17 @@ impl Drop for Slot<'_> {
     }
 }
 
-/// Accept connections until `shutdown` says stop.
+/// Accept connections until `shutdown` says stop. `tls` is there when STARTTLS is on.
 pub(crate) async fn serve<B: Backend>(
     listener: TcpListener,
     config: SmtpConfig,
+    tls: Option<TlsAcceptor>,
     backend: B,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let shared = Arc::new(Shared {
         config,
+        tls,
         backend,
         active: AtomicUsize::new(0),
         sessions: AtomicU64::new(0),
@@ -444,8 +546,7 @@ pub(crate) async fn serve<B: Backend>(
                     let shared = Arc::clone(&shared);
                     let shutdown = shutdown.clone();
                     tokio::spawn(async move {
-                        let (reader, writer) = stream.into_split();
-                        connection(reader, writer, peer, &shared, shutdown).await;
+                        connection(Box::new(stream), peer, &shared, shutdown).await;
                     });
                 }
                 Err(err) => {
@@ -466,40 +567,36 @@ fn session_id(shared: &Shared<impl Backend>) -> String {
     format!("{seconds:X}{:04X}", number & 0xFFFF)
 }
 
-async fn connection<B: Backend, R, W>(
-    reader: R,
-    mut writer: W,
+async fn connection<B: Backend>(
+    mut stream: Box<dyn Io>,
     peer: SocketAddr,
     shared: &Shared<B>,
     shutdown: tokio::sync::watch::Receiver<bool>,
-) where
-    R: AsyncRead + Unpin + Send,
-    W: AsyncWrite + Unpin + Send,
-{
+) {
     let id = session_id(shared);
     let peer_ip = peer.ip().to_canonical();
     let config = &shared.config;
     if !config.allows(peer_ip) {
         tracing::warn!("SMTP connection {id} from {peer_ip} refused: not in smtp_allowed_addresses");
         let _ = reply_now(
-            &mut writer,
+            &mut stream,
             config.command_timeout,
             &format!("554 5.7.1 {} does not take mail from this address", config.hostname),
         )
         .await;
-        let _ = writer.shutdown().await;
+        let _ = stream.shutdown().await;
         return;
     }
     if shared.active.fetch_add(1, Ordering::SeqCst) >= config.max_connections {
         shared.active.fetch_sub(1, Ordering::SeqCst);
-        tracing::warn!("SMTP connection {id} from {peer_ip} refused: smtp_max_connections are open");
+        tracing::warn!("SMTP connection {id} from {peer_ip} refused: smtp-server max-connections are open");
         let _ = reply_now(
-            &mut writer,
+            &mut stream,
             config.command_timeout,
             "421 4.7.0 Too many connections, try again later",
         )
         .await;
-        let _ = writer.shutdown().await;
+        let _ = stream.shutdown().await;
         return;
     }
     let _slot = Slot(&shared.active);
@@ -508,12 +605,12 @@ async fn connection<B: Backend, R, W>(
         shared,
         id,
         client_ip: peer_ip,
-        reader: BufReader::new(reader),
-        writer,
+        stream: BufReader::new(stream),
         shutdown,
         deadline: started + config.session_timeout,
         helo: None,
         esmtp: false,
+        tls: false,
         transaction: None,
         errors: 0,
         messages: 0,
@@ -521,10 +618,11 @@ async fn connection<B: Backend, R, W>(
         refused: 0,
     };
     let end = session.run().await;
-    let _ = session.writer.shutdown().await;
-    let level_error = matches!(end, End::Io(_));
+    let _ = session.stream.get_mut().shutdown().await;
+    let level_error = matches!(end, End::Io(_) | End::Tls(_) | End::Pipelining);
     let text = format!(
-        "SMTP session {} from {}{} ({}): {} messages, {} recipients accepted, {} refused, {} in {}ms",
+        "{} session {} from {}{} ({}{}): {} messages, {} recipients accepted, {} refused, {} in {}ms",
+        if config.lmtp { "LMTP" } else { "SMTP" },
         session.id,
         session.client_ip,
         if session.client_ip == peer_ip {
@@ -533,6 +631,7 @@ async fn connection<B: Backend, R, W>(
             format!(" through {peer_ip}")
         },
         session.helo.as_deref().unwrap_or("no EHLO"),
+        if session.tls { ", TLS" } else { "" },
         session.messages,
         session.accepted,
         session.refused,
@@ -546,8 +645,8 @@ async fn connection<B: Backend, R, W>(
     }
 }
 
-/// Write one reply line now, within `wait`.
-async fn reply_now<W: AsyncWrite + Unpin>(writer: &mut W, wait: Duration, line: &str) -> Result<(), End> {
+/// Write one reply now, within `wait`; several lines are joined with CRLF.
+async fn reply_now<W: AsyncWrite + Unpin + ?Sized>(writer: &mut W, wait: Duration, line: &str) -> Result<(), End> {
     let mut bytes = Vec::with_capacity(line.len() + 2);
     bytes.extend_from_slice(line.as_bytes());
     bytes.extend_from_slice(b"\r\n");
@@ -566,6 +665,9 @@ enum End {
     Shutdown,
     TooLong,
     TooManyErrors,
+    /// Bytes after STARTTLS, before the handshake.
+    Pipelining,
+    Tls(String),
     Proxy(String),
     Io(String),
 }
@@ -579,6 +681,8 @@ impl End {
             Self::Shutdown => "server stopping".to_string(),
             Self::TooLong => "line too long".to_string(),
             Self::TooManyErrors => "too many errors".to_string(),
+            Self::Pipelining => "refused: commands pipelined after STARTTLS".to_string(),
+            Self::Tls(text) => format!("TLS handshake failed: {text}"),
             Self::Proxy(text) => format!("refused: {text}"),
             Self::Io(text) => format!("connection error: {text}"),
         }
@@ -589,20 +693,36 @@ impl End {
 struct Transaction {
     mail_from: String,
     utf8: bool,
-    /// Each accepted `RCPT TO` and its account.
-    recipients: Vec<(String, String)>,
+    /// The DSN `RET` and `ENVID` (decoded), empty for none.
+    ret: String,
+    envid: String,
+    /// Each accepted `RCPT TO`.
+    recipients: Vec<Rcpt>,
+    /// The `BDAT` chunks so far; `Some` from the first, so `DATA` is refused after it.
+    chunks: Option<Vec<u8>>,
+    /// A chunk went over `max-message-size`: the others are read and dropped, and the last is answered 552.
+    too_big: bool,
 }
 
-struct Session<'a, B, R, W> {
+/// An accepted recipient.
+struct Rcpt {
+    address: String,
+    /// The account it goes to.
+    account: String,
+    dsn: Option<RecipientDsn>,
+}
+
+struct Session<'a, B> {
     shared: &'a Shared<B>,
     id: String,
     client_ip: IpAddr,
-    reader: BufReader<R>,
-    writer: W,
+    /// The connection, which STARTTLS replaces with its TLS stream.
+    stream: BufReader<Box<dyn Io>>,
     shutdown: tokio::sync::watch::Receiver<bool>,
     deadline: Instant,
     helo: Option<String>,
     esmtp: bool,
+    tls: bool,
     transaction: Option<Transaction>,
     errors: usize,
     messages: usize,
@@ -610,12 +730,7 @@ struct Session<'a, B, R, W> {
     refused: usize,
 }
 
-impl<B, R, W> Session<'_, B, R, W>
-where
-    B: Backend,
-    R: AsyncRead + Unpin + Send,
-    W: AsyncWrite + Unpin + Send,
-{
+impl<B: Backend> Session<'_, B> {
     fn config(&self) -> &SmtpConfig {
         &self.shared.config
     }
@@ -631,7 +746,7 @@ where
 
     async fn reply(&mut self, line: &str) -> Result<(), End> {
         let wait = self.wait()?;
-        reply_now(&mut self.writer, wait, line).await
+        reply_now(self.stream.get_mut(), wait, line).await
     }
 
     /// A reply that counts as an error; too many of them close the connection.
@@ -648,7 +763,7 @@ where
     async fn read_line(&mut self, limit: usize, buf: &mut Vec<u8>) -> Result<(), End> {
         buf.clear();
         let wait = self.wait()?;
-        let mut limited = (&mut self.reader).take(limit as u64);
+        let mut limited = (&mut self.stream).take(limit as u64);
         let read = limited.read_until(b'\n', buf);
         tokio::select! {
             changed = self.shutdown.changed() => {
@@ -666,7 +781,7 @@ where
 
     async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), End> {
         let wait = self.wait()?;
-        match tokio::time::timeout(wait, self.reader.read_exact(buf)).await {
+        match tokio::time::timeout(wait, self.stream.read_exact(buf)).await {
             Err(_) => Err(End::Timeout),
             Ok(Err(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => Err(End::Closed),
             Ok(Err(err)) => Err(End::Io(err.to_string())),
@@ -679,7 +794,7 @@ where
             Ok(()) => End::Quit,
             Err(End::Timeout) => {
                 let _ = reply_now(
-                    &mut self.writer,
+                    self.stream.get_mut(),
                     Duration::from_secs(5),
                     "421 4.4.2 Timeout, closing the connection",
                 )
@@ -688,7 +803,7 @@ where
             }
             Err(End::Shutdown) => {
                 let _ = reply_now(
-                    &mut self.writer,
+                    self.stream.get_mut(),
                     Duration::from_secs(5),
                     "421 4.3.2 Server stopping, try again later",
                 )
@@ -716,8 +831,15 @@ where
                 self.client_ip = source;
             }
         }
-        let greeting = format!("220 {} ESMTP mr-moqui", self.config().hostname);
+        let lmtp = self.config().lmtp;
+        let greeting = format!(
+            "220 {} {} mr-moqui",
+            self.config().hostname,
+            if lmtp { "LMTP" } else { "ESMTP" }
+        );
         self.reply(&greeting).await?;
+        let chunking = self.config().chunking;
+        let starttls = self.shared.tls.is_some();
         let mut buf = Vec::with_capacity(512);
         loop {
             self.read_line(MAX_COMMAND, &mut buf).await?;
@@ -731,10 +853,14 @@ where
                 None => (line.trim().to_ascii_uppercase(), String::new()),
             };
             match verb.as_str() {
-                "EHLO" | "HELO" => self.hello(&verb, &rest).await?,
+                "EHLO" | "HELO" if !lmtp => self.hello(&verb, &rest).await?,
+                "LHLO" if lmtp => self.hello(&verb, &rest).await?,
+                "EHLO" | "HELO" => self.error("500 5.5.1 This is an LMTP server: use LHLO").await?,
                 "MAIL" => self.mail(&rest).await?,
                 "RCPT" => self.rcpt(&rest).await?,
                 "DATA" => self.data(&rest).await?,
+                "BDAT" if chunking => self.bdat(&rest).await?,
+                "STARTTLS" if starttls => self.starttls(&rest).await?,
                 "RSET" => {
                     self.transaction = None;
                     self.reply("250 2.0.0 Ok").await?;
@@ -817,27 +943,73 @@ where
             return self.error(&format!("501 5.5.4 Syntax: {verb} hostname")).await;
         }
         self.helo = Some(name.chars().take(255).collect());
-        self.esmtp = verb == "EHLO";
+        self.esmtp = verb != "HELO";
         self.transaction = None;
         let hostname = self.config().hostname.clone();
         if !self.esmtp {
             return self.reply(&format!("250 {hostname}")).await;
         }
         let size = self.config().max_message;
-        let lines = [
+        let mut lines = vec![
             format!("250-{hostname}"),
             "250-PIPELINING".to_string(),
             format!("250-SIZE {size}"),
             "250-8BITMIME".to_string(),
             "250-SMTPUTF8".to_string(),
-            "250 ENHANCEDSTATUSCODES".to_string(),
         ];
+        if self.shared.tls.is_some() && !self.tls {
+            lines.push("250-STARTTLS".to_string());
+        }
+        if self.config().chunking {
+            lines.push("250-CHUNKING".to_string());
+        }
+        if self.config().dsn {
+            lines.push("250-DSN".to_string());
+        }
+        lines.push("250 ENHANCEDSTATUSCODES".to_string());
         self.reply(&lines.join("\r\n")).await
+    }
+
+    /// STARTTLS: refuse bytes the client sent after it (they would be read as commands after the handshake, from
+    /// before it: CVE-2011-0411), shake hands, and start the session over on the TLS stream.
+    async fn starttls(&mut self, rest: &str) -> Result<(), End> {
+        if !rest.is_empty() {
+            return self.error("501 5.5.4 Syntax: STARTTLS").await;
+        }
+        if self.tls {
+            return self.error("503 5.5.1 TLS already active").await;
+        }
+        let Some(acceptor) = self.shared.tls.clone() else {
+            return self.error("502 5.5.1 Command not implemented").await;
+        };
+        if !self.stream.buffer().is_empty() {
+            self.reply("554 5.5.0 Commands pipelined after STARTTLS, closing the connection")
+                .await?;
+            return Err(End::Pipelining);
+        }
+        self.reply("220 2.0.0 Ready to start TLS").await?;
+        let wait = self.wait()?;
+        let placeholder: Box<dyn Io> = Box::new(tokio::io::duplex(1).0);
+        let plain = std::mem::replace(&mut self.stream, BufReader::new(placeholder)).into_inner();
+        match tokio::time::timeout(wait, acceptor.accept(plain)).await {
+            Err(_) => return Err(End::Tls("timed out".to_string())),
+            Ok(Err(err)) => return Err(End::Tls(err.to_string())),
+            Ok(Ok(secured)) => self.stream = BufReader::new(Box::new(secured)),
+        }
+        self.tls = true;
+        self.helo = None;
+        self.esmtp = false;
+        self.transaction = None;
+        Ok(())
     }
 
     async fn mail(&mut self, rest: &str) -> Result<(), End> {
         if self.helo.is_none() {
-            return self.error("503 5.5.1 Send EHLO first").await;
+            let hello = if self.config().lmtp { "LHLO" } else { "EHLO" };
+            return self.error(&format!("503 5.5.1 Send {hello} first")).await;
+        }
+        if self.config().require_tls && !self.tls {
+            return self.error("530 5.7.0 Must issue a STARTTLS command first").await;
         }
         if self.transaction.is_some() {
             return self.error("503 5.5.1 Nested MAIL command").await;
@@ -848,10 +1020,19 @@ where
         let Some((address, parameters)) = parse_path(path) else {
             return self.error("501 5.1.7 Bad sender address syntax").await;
         };
+        let dsn = self.esmtp && self.config().dsn;
         let mut utf8 = false;
+        let mut ret = String::new();
+        let mut envid = String::new();
+        let mut seen: Vec<String> = Vec::new();
         for parameter in parameters.split_whitespace() {
             let (key, value) = parameter.split_once('=').unwrap_or((parameter, ""));
-            match key.to_ascii_uppercase().as_str() {
+            let key = key.to_ascii_uppercase();
+            if seen.contains(&key) {
+                return self.error(&format!("501 5.5.4 Duplicate {key} parameter")).await;
+            }
+            seen.push(key.clone());
+            match key.as_str() {
                 "SIZE" if self.esmtp => {
                     let Ok(size) = value.parse::<u64>() else {
                         return self.error("501 5.5.4 Bad SIZE parameter").await;
@@ -864,6 +1045,14 @@ where
                 }
                 "BODY" if self.esmtp && matches!(value.to_ascii_uppercase().as_str(), "7BIT" | "8BITMIME") => {}
                 "SMTPUTF8" if self.esmtp && value.is_empty() => utf8 = true,
+                "RET" if dsn => match value.to_ascii_uppercase().as_str() {
+                    word @ ("FULL" | "HDRS") => ret = word.to_string(),
+                    _ => return self.error("501 5.5.4 Bad RET parameter").await,
+                },
+                "ENVID" if dsn => match xtext(value, false).filter(|text| !text.is_empty() && value.len() <= 100) {
+                    Some(text) => envid = text,
+                    None => return self.error("501 5.5.4 Bad ENVID parameter").await,
+                },
                 _ => {
                     return self
                         .error(&format!("555 5.5.4 Unsupported option: {}", clip(parameter)))
@@ -874,7 +1063,11 @@ where
         self.transaction = Some(Transaction {
             mail_from: address,
             utf8,
+            ret,
+            envid,
             recipients: Vec::new(),
+            chunks: None,
+            too_big: false,
         });
         self.reply("250 2.1.0 Ok").await
     }
@@ -893,10 +1086,31 @@ where
         let Some((address, parameters)) = parse_path(path) else {
             return self.error("501 5.1.3 Bad recipient address syntax").await;
         };
-        if !parameters.trim().is_empty() {
-            return self
-                .error(&format!("555 5.5.4 Unsupported option: {}", clip(parameters.trim())))
-                .await;
+        let dsn_on = self.esmtp && self.config().dsn;
+        let mut dsn = RecipientDsn::default();
+        let mut seen: Vec<String> = Vec::new();
+        for parameter in parameters.split_whitespace() {
+            let (key, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+            let key = key.to_ascii_uppercase();
+            if seen.contains(&key) {
+                return self.error(&format!("501 5.5.4 Duplicate {key} parameter")).await;
+            }
+            seen.push(key.clone());
+            match key.as_str() {
+                "NOTIFY" if dsn_on => match parse_notify(value) {
+                    Some(notify) => dsn.notify = notify,
+                    None => return self.error("501 5.5.4 Bad NOTIFY parameter").await,
+                },
+                "ORCPT" if dsn_on => match parse_orcpt(value) {
+                    Some(original) => dsn.original = original,
+                    None => return self.error("501 5.5.4 Bad ORCPT parameter").await,
+                },
+                _ => {
+                    return self
+                        .error(&format!("555 5.5.4 Unsupported option: {}", clip(parameter)))
+                        .await
+                }
+            }
         }
         let well_formed = address
             .rsplit_once('@')
@@ -915,8 +1129,12 @@ where
         };
         match answer {
             RcptAnswer::Local(account) => {
+                let dsn = (!seen.is_empty()).then(|| RecipientDsn {
+                    address: address.clone(),
+                    ..dsn
+                });
                 if let Some(transaction) = self.transaction.as_mut() {
-                    transaction.recipients.push((address, account));
+                    transaction.recipients.push(Rcpt { address, account, dsn });
                 }
                 self.accepted += 1;
                 self.reply("250 2.1.5 Ok").await
@@ -954,14 +1172,13 @@ where
         if !rest.is_empty() {
             return self.error("501 5.5.4 Syntax: DATA").await;
         }
-        let Some(recipients) = self
-            .transaction
-            .as_ref()
-            .map(|transaction| transaction.recipients.len())
-        else {
+        let Some(transaction) = self.transaction.as_ref() else {
             return self.error("503 5.5.1 Need MAIL command").await;
         };
-        if recipients == 0 {
+        if transaction.chunks.is_some() {
+            return self.error("503 5.5.1 DATA after BDAT").await;
+        }
+        if transaction.recipients.is_empty() {
             return self.error("554 5.5.1 No valid recipients").await;
         }
         self.reply("354 End data with <CR><LF>.<CR><LF>").await?;
@@ -969,75 +1186,213 @@ where
         let Some(transaction) = self.transaction.take() else {
             return self.reply("503 5.5.1 Need MAIL command").await;
         };
+        self.finish_message(transaction, raw).await
+    }
+
+    /// `BDAT size [LAST]`: the chunk is read whatever the answer, so the next command is where the client expects.
+    async fn bdat(&mut self, rest: &str) -> Result<(), End> {
+        let mut words = rest.split_whitespace();
+        let size = words
+            .next()
+            .filter(|word| word.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|word| word.parse::<u64>().ok());
+        let last = match words.next() {
+            None => Some(false),
+            Some(word) if word.eq_ignore_ascii_case("LAST") => Some(true),
+            Some(_) => None,
+        };
+        let (Some(size), Some(last), None) = (size, last, words.next()) else {
+            return self.error("501 5.5.4 Syntax: BDAT size [LAST]").await;
+        };
+        let refusal = match self.transaction.as_ref() {
+            None => Some("503 5.5.1 Need MAIL command"),
+            Some(transaction) if transaction.recipients.is_empty() => Some("554 5.5.1 No valid recipients"),
+            Some(_) => None,
+        };
+        self.read_chunk(size, refusal.is_none()).await?;
+        if let Some(line) = refusal {
+            return self.error(line).await;
+        }
+        if !last {
+            return self.reply(&format!("250 2.0.0 {size} octets received")).await;
+        }
+        let Some(mut transaction) = self.transaction.take() else {
+            return self.reply("503 5.5.1 Need MAIL command").await;
+        };
+        let raw = if transaction.too_big {
+            None
+        } else {
+            Some(transaction.chunks.take().unwrap_or_default())
+        };
+        self.finish_message(transaction, raw).await
+    }
+
+    /// Read a `BDAT` chunk of `size` bytes as it is, onto the transaction's when `keep` (dropped once over the limit).
+    async fn read_chunk(&mut self, size: u64, keep: bool) -> Result<(), End> {
+        let max = self.config().max_message;
+        if keep {
+            if let Some(transaction) = self.transaction.as_mut() {
+                transaction.chunks.get_or_insert_with(Vec::new);
+            }
+        }
+        let mut piece = vec![0_u8; usize::try_from(size).map_or(DATA_CHUNK, |size| size.min(DATA_CHUNK))];
+        let mut left = size;
+        while left > 0 {
+            let length = usize::try_from(left).map_or(piece.len(), |left| left.min(piece.len()));
+            self.read_exact(&mut piece[..length]).await?;
+            left -= length as u64;
+            let Some(transaction) = self.transaction.as_mut().filter(|_| keep) else {
+                continue;
+            };
+            if transaction.too_big {
+                continue;
+            }
+            let chunks = transaction.chunks.get_or_insert_with(Vec::new);
+            if chunks.len() + length > max {
+                transaction.too_big = true;
+                transaction.chunks = Some(Vec::new());
+            } else {
+                chunks.extend_from_slice(&piece[..length]);
+            }
+        }
+        Ok(())
+    }
+
+    /// One reply, or in LMTP the same reply for each recipient.
+    async fn reply_all(&mut self, transaction: &Transaction, line: &str) -> Result<(), End> {
+        if !self.config().lmtp {
+            return self.reply(line).await;
+        }
+        let lines = vec![line; transaction.recipients.len().max(1)];
+        self.reply(&lines.join("\r\n")).await
+    }
+
+    /// The end of `DATA` or the last `BDAT`: store the message (none when it was over the limit) and answer.
+    async fn finish_message(&mut self, transaction: Transaction, raw: Option<Vec<u8>>) -> Result<(), End> {
         let Some(raw) = raw else {
             tracing::warn!(
-                "SMTP session {} refused a message from <{}>: larger than smtp_max_message_size ({} bytes)",
+                "SMTP session {} refused a message from <{}>: larger than smtp-server max-message-size ({} bytes)",
                 self.id,
                 clip(&transaction.mail_from),
                 self.config().max_message
             );
             return self
-                .reply("552 5.3.4 Message size exceeds fixed maximum message size")
+                .reply_all(
+                    &transaction,
+                    "552 5.3.4 Message size exceeds fixed maximum message size",
+                )
                 .await;
         };
         let size = raw.len();
         let mut grouped: Vec<Recipients> = Vec::new();
-        for (address, account) in &transaction.recipients {
-            match grouped.iter_mut().find(|group| group.email_account_id == *account) {
-                Some(group) => {
-                    if !group.addresses.contains(address) {
-                        group.addresses.push(address.clone());
-                    }
+        for rcpt in &transaction.recipients {
+            let group = match grouped.iter().position(|group| group.email_account_id == rcpt.account) {
+                Some(at) => &mut grouped[at],
+                None => {
+                    grouped.push(Recipients {
+                        email_account_id: rcpt.account.clone(),
+                        ..Recipients::default()
+                    });
+                    let last = grouped.len() - 1;
+                    &mut grouped[last]
                 }
-                None => grouped.push(Recipients {
-                    email_account_id: account.clone(),
-                    addresses: vec![address.clone()],
-                }),
+            };
+            if !group.addresses.contains(&rcpt.address) {
+                group.addresses.push(rcpt.address.clone());
+            }
+            if let Some(dsn) = &rcpt.dsn {
+                if !group.dsn.iter().any(|seen| seen.address == dsn.address) {
+                    group.dsn.push(dsn.clone());
+                }
             }
         }
-        let protocol = match (self.esmtp, transaction.utf8) {
-            (true, true) => "UTF8ESMTP",
-            (true, false) => "ESMTP",
-            _ => "SMTP",
-        };
+        let protocol = received_protocol(self.config().lmtp, self.esmtp, transaction.utf8, self.tls);
         let message = Message {
             raw,
             envelope: Envelope {
                 mail_from: transaction.mail_from.clone(),
                 helo: self.helo.clone().unwrap_or_default(),
                 client_ip: self.client_ip.to_string(),
-                protocol: protocol.to_string(),
+                protocol,
                 session_id: self.id.clone(),
                 hostname: self.config().hostname.clone(),
+                dsn_ret: transaction.ret.clone(),
+                dsn_envid: transaction.envid.clone(),
             },
             recipients: grouped,
         };
         let answer = self.shared.backend.deliver(message).await;
-        let recipients: Vec<&str> = transaction
+        let recipients = transaction
             .recipients
             .iter()
-            .map(|(address, _)| address.as_str())
-            .collect();
+            .map(|rcpt| rcpt.address.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         match answer {
-            DataAnswer::Stored(summary) => {
-                self.messages += 1;
-                tracing::info!(
-                    "SMTP session {} stored a message of {size} bytes from <{}> to {}: {summary}",
-                    self.id,
-                    clip(&transaction.mail_from),
-                    recipients.join(", ")
-                );
-                self.reply(&format!("250 2.0.0 Ok: stored as {}.{}", self.id, self.messages))
-                    .await
+            DataAnswer::Stored { accounts, summary } => {
+                let result = |account: &str| {
+                    accounts
+                        .iter()
+                        .find(|(id, _)| id == account)
+                        .map_or(AccountResult::Failed, |(_, result)| *result)
+                };
+                let failed: Vec<&str> = transaction
+                    .recipients
+                    .iter()
+                    .filter(|rcpt| result(&rcpt.account) == AccountResult::Failed)
+                    .map(|rcpt| rcpt.address.as_str())
+                    .collect();
+                let lmtp = self.config().lmtp;
+                if !failed.is_empty() {
+                    tracing::error!(
+                        "SMTP session {} could not store a message of {size} bytes from <{}> for {}, answered 451{}: \
+                         {summary}",
+                        self.id,
+                        clip(&transaction.mail_from),
+                        failed.join(", "),
+                        if lmtp { " for them" } else { "" }
+                    );
+                    if !lmtp {
+                        return self.reply("451 4.3.0 Message not stored, try again later").await;
+                    }
+                }
+                if failed.len() < transaction.recipients.len() {
+                    self.messages += 1;
+                    tracing::info!(
+                        "SMTP session {} stored a message of {size} bytes from <{}> to {recipients}: {summary}",
+                        self.id,
+                        clip(&transaction.mail_from),
+                    );
+                }
+                let stored_as = format!("{}.{}", self.id, self.messages);
+                if !lmtp {
+                    return self.reply(&format!("250 2.0.0 Ok: stored as {stored_as}")).await;
+                }
+                let lines: Vec<String> = transaction
+                    .recipients
+                    .iter()
+                    .map(|rcpt| {
+                        let address = clip(&rcpt.address);
+                        match result(&rcpt.account) {
+                            AccountResult::Stored => format!("250 2.1.5 <{address}> Ok: stored as {stored_as}"),
+                            AccountResult::Gone => format!("550 5.1.1 <{address}>: Mailbox is gone"),
+                            AccountResult::Failed => {
+                                format!("451 4.3.0 <{address}>: Message not stored, try again later")
+                            }
+                        }
+                    })
+                    .collect();
+                self.reply(&lines.join("\r\n")).await
             }
             DataAnswer::TempFail(text) => {
                 tracing::error!(
-                    "SMTP session {} could not store a message of {size} bytes from <{}> to {}, answered 451: {text}",
+                    "SMTP session {} could not store a message of {size} bytes from <{}> to {recipients}, answered \
+                     451: {text}",
                     self.id,
                     clip(&transaction.mail_from),
-                    recipients.join(", ")
                 );
-                self.reply("451 4.3.0 Message not stored, try again later").await
+                self.reply_all(&transaction, "451 4.3.0 Message not stored, try again later")
+                    .await
             }
             DataAnswer::Rejected(text) => {
                 tracing::warn!(
@@ -1045,7 +1400,8 @@ where
                     self.id,
                     clip(&transaction.mail_from)
                 );
-                self.reply(&format!("554 5.6.0 {}", clip(&text))).await
+                self.reply_all(&transaction, &format!("554 5.6.0 {}", clip(&text)))
+                    .await
             }
         }
     }
@@ -1080,6 +1436,74 @@ where
         }
         Ok((!too_big).then_some(out))
     }
+}
+
+/// The Received field's `with` (RFC 3848, RFC 6531): SMTP after HELO, ESMTP after EHLO, LMTP; UTF8SMTP and UTF8LMTP
+/// for SMTPUTF8; an `S` after STARTTLS.
+fn received_protocol(lmtp: bool, esmtp: bool, utf8: bool, tls: bool) -> String {
+    let base = match (lmtp, utf8) {
+        (true, true) => "UTF8LMTP",
+        (true, false) => "LMTP",
+        (false, true) => "UTF8SMTP",
+        (false, false) if esmtp || tls => "ESMTP",
+        (false, false) => "SMTP",
+    };
+    format!("{base}{}", if tls { "S" } else { "" })
+}
+
+/// RFC 3461 xtext, decoded: `+XX` is the byte in upper-case hex, any other character from `!` to `~` but `+` and `=` is
+/// itself (and with `utf8`, any non-ASCII character, RFC 6533). None when it does not parse or decodes to control
+/// characters or bytes that are not UTF-8.
+fn xtext(text: &str, utf8: bool) -> Option<String> {
+    let mut out: Vec<u8> = Vec::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '+' => {
+                let hex: String = chars.by_ref().take(2).collect();
+                if hex.len() != 2 || !hex.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'A'..=b'F')) {
+                    return None;
+                }
+                out.push(u8::from_str_radix(&hex, 16).ok()?);
+            }
+            '!'..='~' if ch != '=' => out.push(ch as u8),
+            _ if utf8 && !ch.is_ascii() => out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
+            _ => return None,
+        }
+    }
+    String::from_utf8(out)
+        .ok()
+        .filter(|decoded| !decoded.chars().any(char::is_control))
+}
+
+/// `NOTIFY`: `NEVER` alone, or some of `SUCCESS`, `FAILURE` and `DELAY` once each; upper case, joined by commas.
+fn parse_notify(value: &str) -> Option<String> {
+    let words: Vec<String> = value.split(',').map(str::to_ascii_uppercase).collect();
+    if words == ["NEVER"] {
+        return Some("NEVER".to_string());
+    }
+    let mut kept: Vec<String> = Vec::new();
+    for word in words {
+        if !matches!(word.as_str(), "SUCCESS" | "FAILURE" | "DELAY") || kept.contains(&word) {
+            return None;
+        }
+        kept.push(word);
+    }
+    Some(kept.join(","))
+}
+
+/// `ORCPT=addr-type;xtext`: the type (an atom such as `rfc822` or `utf-8`) and the decoded address, `rfc822;a@x.org`.
+fn parse_orcpt(value: &str) -> Option<String> {
+    if value.len() > 500 {
+        return None;
+    }
+    let (kind, address) = value.split_once(';')?;
+    if kind.is_empty() || !kind.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+        return None;
+    }
+    let kind = kind.to_ascii_lowercase();
+    let address = xtext(address, kind == "utf-8").filter(|address| !address.is_empty())?;
+    Some(format!("{kind};{address}"))
 }
 
 /// `rest` after a keyword such as `FROM:`, in any case, with the spaces some clients put after the colon.
@@ -1143,7 +1567,8 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpStream;
 
-    /// Accounts by address, and every message delivered; a recipient `fail@` makes the store fail.
+    /// Accounts by address, and every message delivered; the store fails for account `fail@`, and account `gone@`
+    /// is removed by the time the message comes.
     #[derive(Default)]
     struct Fake {
         delivered: Mutex<Vec<Message>>,
@@ -1152,25 +1577,37 @@ mod tests {
     impl Backend for Arc<Fake> {
         async fn recipient(&self, address: String) -> RcptAnswer {
             match address.to_ascii_lowercase().as_str() {
-                "sales@example.com" | "fail@example.com" => RcptAnswer::Local(address.to_ascii_lowercase()),
+                "sales@example.com" | "fail@example.com" | "gone@example.com" => {
+                    RcptAnswer::Local(address.to_ascii_lowercase())
+                }
+                "help@example.com" => RcptAnswer::Local("sales@example.com".to_string()),
                 "busy@example.com" => RcptAnswer::TempFail("database down".to_string()),
                 _ => RcptAnswer::Unknown,
             }
         }
 
         async fn deliver(&self, message: Message) -> DataAnswer {
-            let fail = message
+            let accounts = message
                 .recipients
                 .iter()
-                .any(|group| group.email_account_id == "fail@example.com");
+                .map(|group| {
+                    let result = match group.email_account_id.as_str() {
+                        "fail@example.com" => AccountResult::Failed,
+                        "gone@example.com" => AccountResult::Gone,
+                        _ => AccountResult::Stored,
+                    };
+                    (group.email_account_id.clone(), result)
+                })
+                .collect();
             let bad = !message.raw.windows(2).any(|pair| pair == b": ");
             self.delivered.lock().unwrap().push(message);
             if bad {
                 DataAnswer::Rejected("the message has no header fields".to_string())
-            } else if fail {
-                DataAnswer::TempFail("store failed".to_string())
             } else {
-                DataAnswer::Stored("ok".to_string())
+                DataAnswer::Stored {
+                    accounts,
+                    summary: "ok".to_string(),
+                }
             }
         }
     }
@@ -1190,21 +1627,34 @@ mod tests {
             plus_separator: "+".to_string(),
             spam_headers: Vec::new(),
             authserv_id: String::new(),
+            lmtp: false,
+            starttls: false,
+            require_tls: false,
+            tls_cert_file: String::new(),
+            tls_key_file: String::new(),
+            chunking: true,
+            dsn: false,
         }
     }
 
     async fn start(config: SmtpConfig) -> (SocketAddr, Arc<Fake>, tokio::sync::watch::Sender<bool>) {
+        start_tls(config, None).await
+    }
+
+    async fn start_tls(
+        config: SmtpConfig,
+        tls: Option<TlsAcceptor>,
+    ) -> (SocketAddr, Arc<Fake>, tokio::sync::watch::Sender<bool>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let fake = Arc::new(Fake::default());
         let (stop, watch) = tokio::sync::watch::channel(false);
-        tokio::spawn(serve(listener, config, Arc::clone(&fake), watch));
+        tokio::spawn(serve(listener, config, tls, Arc::clone(&fake), watch));
         (address, fake, stop)
     }
 
     struct Client {
-        reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
-        writer: tokio::net::tcp::OwnedWriteHalf,
+        stream: BufReader<Box<dyn Io>>,
     }
 
     impl Client {
@@ -1213,11 +1663,18 @@ mod tests {
         }
 
         fn from(stream: TcpStream) -> Self {
-            let (reader, writer) = stream.into_split();
             Self {
-                reader: BufReader::new(reader),
-                writer,
+                stream: BufReader::new(Box::new(stream)),
             }
+        }
+
+        /// TLS on the connection, as a client after `220` to STARTTLS.
+        async fn upgrade(&mut self, connector: &tokio_rustls::TlsConnector) {
+            let placeholder: Box<dyn Io> = Box::new(tokio::io::duplex(1).0);
+            let plain = std::mem::replace(&mut self.stream, BufReader::new(placeholder)).into_inner();
+            let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+            let secured = connector.connect(name, plain).await.expect("the TLS handshake");
+            self.stream = BufReader::new(Box::new(secured));
         }
 
         /// One reply, its lines joined with `|`; empty at the end of the stream.
@@ -1225,7 +1682,7 @@ mod tests {
             let mut lines = Vec::new();
             loop {
                 let mut line = String::new();
-                if self.reader.read_line(&mut line).await.unwrap() == 0 {
+                if self.stream.read_line(&mut line).await.unwrap_or(0) == 0 {
                     break;
                 }
                 let line = line.trim_end().to_string();
@@ -1239,7 +1696,11 @@ mod tests {
         }
 
         async fn send(&mut self, text: &str) {
-            self.writer.write_all(text.as_bytes()).await.unwrap();
+            self.send_bytes(text.as_bytes()).await;
+        }
+
+        async fn send_bytes(&mut self, bytes: &[u8]) {
+            self.stream.get_mut().write_all(bytes).await.unwrap();
         }
 
         async fn command(&mut self, line: &str) -> String {
@@ -1257,7 +1718,7 @@ mod tests {
         let ehlo = client.command("EHLO gw.example.com").await;
         assert_eq!(
             ehlo,
-            "250-mx.test|250-PIPELINING|250-SIZE 1000|250-8BITMIME|250-SMTPUTF8|250 ENHANCEDSTATUSCODES"
+            "250-mx.test|250-PIPELINING|250-SIZE 1000|250-8BITMIME|250-SMTPUTF8|250-CHUNKING|250 ENHANCEDSTATUSCODES"
         );
         assert_eq!(
             client.command("RCPT TO:<sales@example.com>").await,
@@ -1371,15 +1832,22 @@ mod tests {
         );
         assert_eq!(client.reply().await, "");
         assert!(fake.delivered.lock().unwrap().is_empty());
-        // 127.0.0.2 is not 127.0.0.1
+        // 127.0.0.2 is not 127.0.0.1; macOS routes only 127.0.0.1 unless lo0 has an alias
         let (address, _fake, _stop) = start(config("127.0.0.1/32")).await;
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.2:0".parse().unwrap()).unwrap();
-        let mut other = Client::from(socket.connect(address).await.unwrap());
-        assert_eq!(
-            other.reply().await,
-            "554 5.7.1 mx.test does not take mail from this address"
-        );
+        match socket.bind("127.0.0.2:0".parse().unwrap()) {
+            Err(err) if err.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                eprintln!("skipping the 127.0.0.2 connect: this host does not route 127.0.0.2 ({err})");
+            }
+            bound => {
+                bound.unwrap();
+                let mut other = Client::from(socket.connect(address).await.unwrap());
+                assert_eq!(
+                    other.reply().await,
+                    "554 5.7.1 mx.test does not take mail from this address"
+                );
+            }
+        }
         let mut allowed = Client::connect(address).await;
         assert_eq!(allowed.reply().await, "220 mx.test ESMTP mr-moqui");
     }
@@ -1431,16 +1899,358 @@ mod tests {
         let mut v2 = Client::connect(address).await;
         let mut header = PROXY_V2.to_vec();
         header.extend_from_slice(&[0x21, 0x11, 0, 12, 192, 0, 2, 10, 127, 0, 0, 1, 0x9C, 0x40, 0, 25]);
-        v2.writer.write_all(&header).await.unwrap();
+        v2.send_bytes(&header).await;
         assert_eq!(v2.reply().await, "220 mx.test ESMTP mr-moqui");
         let mut local = Client::connect(address).await;
         let mut header = PROXY_V2.to_vec();
         header.extend_from_slice(&[0x20, 0x00, 0, 0]);
-        local.writer.write_all(&header).await.unwrap();
+        local.send_bytes(&header).await;
         assert_eq!(local.reply().await, "220 mx.test ESMTP mr-moqui");
         let mut none = Client::connect(address).await;
         none.send("EHLO gw\r\n").await;
         assert_eq!(none.reply().await, "");
+    }
+
+    /// A STARTTLS acceptor on a generated `localhost` certificate in a runtime directory of its own, and a client
+    /// that trusts it.
+    fn tls_pair(label: &str) -> (TlsAcceptor, tokio_rustls::TlsConnector, std::path::PathBuf) {
+        let runtime = crate::tls::tests::temp_dir(label);
+        crate::tls::ensure_dev_cert(&runtime.join("cert")).unwrap();
+        let server = crate::tls::smtp_server_config(&runtime, "localhost", "", "").unwrap();
+        let connector = crate::tls::tests::client_trusting(&runtime.join("cert").join("localhost.crt"));
+        (TlsAcceptor::from(Arc::new(server)), connector, runtime)
+    }
+
+    #[tokio::test]
+    async fn starttls_starts_the_session_over_and_require_tls_waits_for_it() {
+        let (acceptor, connector, runtime) = tls_pair("smtp-starttls");
+        let mut secure = config("127.0.0.1");
+        secure.starttls = true;
+        secure.require_tls = true;
+        let (address, fake, _stop) = start_tls(secure, Some(acceptor)).await;
+        let mut client = Client::connect(address).await;
+        assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+        assert_eq!(
+            client.command("EHLO gw").await,
+            "250-mx.test|250-PIPELINING|250-SIZE 1000|250-8BITMIME|250-SMTPUTF8|250-STARTTLS|250-CHUNKING|250 ENHANCEDSTATUSCODES"
+        );
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org>").await,
+            "530 5.7.0 Must issue a STARTTLS command first"
+        );
+        assert_eq!(client.command("STARTTLS now").await, "501 5.5.4 Syntax: STARTTLS");
+        assert_eq!(client.command("STARTTLS").await, "220 2.0.0 Ready to start TLS");
+        client.upgrade(&connector).await;
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org>").await,
+            "503 5.5.1 Send EHLO first",
+            "the session starts over"
+        );
+        assert_eq!(
+            client.command("EHLO gw").await,
+            "250-mx.test|250-PIPELINING|250-SIZE 1000|250-8BITMIME|250-SMTPUTF8|250-CHUNKING|250 ENHANCEDSTATUSCODES",
+            "no STARTTLS after it"
+        );
+        assert_eq!(client.command("STARTTLS").await, "503 5.5.1 TLS already active");
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client.send("Subject: secure\r\n\r\nhi\r\n.\r\n").await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok: stored as "));
+        assert_eq!(client.command("MAIL FROM:<a@x.org> SMTPUTF8").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client.send("Subject: ünïcode\r\n\r\nhi\r\n.\r\n").await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok: stored as "));
+        assert_eq!(client.command("QUIT").await, "221 2.0.0 Bye");
+        {
+            let delivered = fake.delivered.lock().unwrap();
+            assert_eq!(delivered[0].envelope.protocol, "ESMTPS");
+            assert_eq!(delivered[1].envelope.protocol, "UTF8SMTPS");
+        }
+        // a command pipelined after STARTTLS would run as if it came over TLS: the session ends instead
+        let mut eager = Client::connect(address).await;
+        eager.reply().await;
+        eager.command("EHLO gw").await;
+        eager.send("STARTTLS\r\nMAIL FROM:<a@x.org>\r\n").await;
+        assert_eq!(
+            eager.reply().await,
+            "554 5.5.0 Commands pipelined after STARTTLS, closing the connection"
+        );
+        assert_eq!(eager.reply().await, "");
+        assert_eq!(fake.delivered.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn starttls_with_no_certificate_does_not_start() {
+        let runtime = crate::tls::tests::temp_dir("smtp-no-cert");
+        let err = crate::tls::smtp_server_config(&runtime, "mx.test", "", "").unwrap_err();
+        assert!(
+            err.to_string().contains("no certificate for mx.test or default"),
+            "{err}"
+        );
+        crate::tls::ensure_dev_cert(&runtime.join("dev")).unwrap();
+        assert!(
+            crate::tls::smtp_server_config(&runtime, "mx.test", "dev/localhost.crt", "").is_err(),
+            "the files go together"
+        );
+        assert!(crate::tls::smtp_server_config(&runtime, "mx.test", "dev/none.crt", "dev/none.key").is_err());
+        let config = crate::tls::smtp_server_config(
+            &runtime,
+            "mx.test",
+            "runtime://dev/localhost.crt",
+            &runtime.join("dev/localhost.key").display().to_string(),
+        )
+        .unwrap();
+        assert!(config.alpn_protocols.is_empty());
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[tokio::test]
+    async fn lmtp_answers_each_recipient_by_its_account() {
+        let mut lmtp = config("127.0.0.1");
+        lmtp.lmtp = true;
+        lmtp.max_recipients = 10;
+        let (address, fake, _stop) = start(lmtp).await;
+        let mut client = Client::connect(address).await;
+        assert_eq!(client.reply().await, "220 mx.test LMTP mr-moqui");
+        assert_eq!(
+            client.command("EHLO gw").await,
+            "500 5.5.1 This is an LMTP server: use LHLO"
+        );
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "503 5.5.1 Send LHLO first");
+        assert_eq!(
+            client.command("LHLO gw").await,
+            "250-mx.test|250-PIPELINING|250-SIZE 1000|250-8BITMIME|250-SMTPUTF8|250-CHUNKING|250 ENHANCEDSTATUSCODES"
+        );
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        for to in ["sales", "fail", "gone", "help"] {
+            assert_eq!(
+                client.command(&format!("RCPT TO:<{to}@example.com>")).await,
+                "250 2.1.5 Ok"
+            );
+        }
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client.send("Subject: x\r\n\r\nhi\r\n.\r\n").await;
+        let sales = client.reply().await;
+        assert!(
+            sales.starts_with("250 2.1.5 <sales@example.com> Ok: stored as "),
+            "{sales}"
+        );
+        assert_eq!(
+            client.reply().await,
+            "451 4.3.0 <fail@example.com>: Message not stored, try again later"
+        );
+        assert_eq!(client.reply().await, "550 5.1.1 <gone@example.com>: Mailbox is gone");
+        let help = client.reply().await;
+        assert!(
+            help.starts_with("250 2.1.5 <help@example.com> Ok: stored as "),
+            "{help}"
+        );
+        {
+            let delivered = fake.delivered.lock().unwrap();
+            assert_eq!(delivered[0].envelope.protocol, "LMTP");
+            let accounts: Vec<&str> = delivered[0]
+                .recipients
+                .iter()
+                .map(|group| group.email_account_id.as_str())
+                .collect();
+            assert_eq!(accounts, ["sales@example.com", "fail@example.com", "gone@example.com"]);
+            assert_eq!(
+                delivered[0].recipients[0].addresses,
+                ["sales@example.com", "help@example.com"]
+            );
+        }
+        // a whole-message answer is given once for each recipient
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("RCPT TO:<gone@example.com>").await, "250 2.1.5 Ok");
+        client.send(&format!("BDAT 1001 LAST\r\n{}", "x".repeat(1001))).await;
+        for _ in 0..2 {
+            assert_eq!(
+                client.reply().await,
+                "552 5.3.4 Message size exceeds fixed maximum message size"
+            );
+        }
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("RCPT TO:<help@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client.send("no header\r\n.\r\n").await;
+        for _ in 0..2 {
+            assert_eq!(client.reply().await, "554 5.6.0 the message has no header fields");
+        }
+        assert_eq!(client.command("QUIT").await, "221 2.0.0 Bye");
+    }
+
+    #[tokio::test]
+    async fn bdat_chunks_are_taken_as_they_are() {
+        let (address, fake, _stop) = start(config("127.0.0.1")).await;
+        let mut client = Client::connect(address).await;
+        client.reply().await;
+        client.command("EHLO gw").await;
+        client.send("BDAT 3 LAST\r\nabc").await;
+        assert_eq!(client.reply().await, "503 5.5.1 Need MAIL command");
+        assert_eq!(client.command("NOOP").await, "250 2.0.0 Ok", "the chunk was read past");
+        assert_eq!(client.command("BDAT x").await, "501 5.5.4 Syntax: BDAT size [LAST]");
+        assert_eq!(
+            client.command("BDAT 1 FIRST").await,
+            "501 5.5.4 Syntax: BDAT size [LAST]"
+        );
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        let first = "Subject: chunks\r\n\r\n.lead\r\n";
+        client.send(&format!("BDAT {}\r\n{first}", first.len())).await;
+        assert_eq!(
+            client.reply().await,
+            format!("250 2.0.0 {} octets received", first.len())
+        );
+        assert_eq!(client.command("DATA").await, "503 5.5.1 DATA after BDAT");
+        let second = "x\r\n.\r\nafter the dot line\r\n";
+        client.send(&format!("BDAT {} last\r\n{second}", second.len())).await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok: stored as "));
+        assert_eq!(
+            String::from_utf8_lossy(&fake.delivered.lock().unwrap()[0].raw),
+            format!("{first}{second}"),
+            "no dot-unstuffing, and a dot line does not end it"
+        );
+        // over the limit: every chunk is read, and the last is answered 552
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        client.send(&format!("BDAT 600\r\n{}", "x".repeat(600))).await;
+        assert_eq!(client.reply().await, "250 2.0.0 600 octets received");
+        client.send(&format!("BDAT 600 LAST\r\n{}", "x".repeat(600))).await;
+        assert_eq!(
+            client.reply().await,
+            "552 5.3.4 Message size exceeds fixed maximum message size"
+        );
+        assert_eq!(client.command("NOOP").await, "250 2.0.0 Ok");
+        // an empty last chunk ends the message
+        assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        let whole = "Subject: z\r\n\r\nz\r\n";
+        client.send(&format!("BDAT {}\r\n{whole}", whole.len())).await;
+        client.reply().await;
+        assert!(client
+            .command("BDAT 0 LAST")
+            .await
+            .starts_with("250 2.0.0 Ok: stored as "));
+        assert_eq!(
+            fake.delivered.lock().unwrap().len(),
+            2,
+            "the 552 message never reached the store"
+        );
+        assert_eq!(client.command("QUIT").await, "221 2.0.0 Bye");
+        // CHUNKING off
+        let mut plain = config("127.0.0.1");
+        plain.chunking = false;
+        let (address, _fake, _stop) = start(plain).await;
+        let mut client = Client::connect(address).await;
+        client.reply().await;
+        assert!(!client.command("EHLO gw").await.contains("CHUNKING"));
+        assert_eq!(client.command("BDAT 0 LAST").await, "502 5.5.1 Command not implemented");
+    }
+
+    #[tokio::test]
+    async fn dsn_parameters_are_checked_and_kept() {
+        let mut dsn = config("127.0.0.1");
+        dsn.dsn = true;
+        dsn.max_recipients = 10;
+        let (address, fake, _stop) = start(dsn).await;
+        let mut client = Client::connect(address).await;
+        client.reply().await;
+        assert!(client.command("EHLO gw").await.contains("|250-DSN|"));
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org> RET=BOGUS").await,
+            "501 5.5.4 Bad RET parameter"
+        );
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org> ENVID=bad+zz").await,
+            "501 5.5.4 Bad ENVID parameter"
+        );
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org> ENVID=a=b").await,
+            "501 5.5.4 Bad ENVID parameter"
+        );
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org> RET=hdrs RET=FULL").await,
+            "501 5.5.4 Duplicate RET parameter"
+        );
+        assert_eq!(
+            client.command("MAIL FROM:<a@x.org> RET=hdrs ENVID=QQ+2B1").await,
+            "250 2.1.0 Ok"
+        );
+        assert_eq!(
+            client.command("RCPT TO:<sales@example.com> NOTIFY=NEVER,SUCCESS").await,
+            "501 5.5.4 Bad NOTIFY parameter"
+        );
+        assert_eq!(
+            client
+                .command("RCPT TO:<sales@example.com> NOTIFY=SUCCESS,SUCCESS")
+                .await,
+            "501 5.5.4 Bad NOTIFY parameter"
+        );
+        assert_eq!(
+            client.command("RCPT TO:<sales@example.com> ORCPT=rfc822").await,
+            "501 5.5.4 Bad ORCPT parameter"
+        );
+        assert_eq!(
+            client
+                .command("RCPT TO:<sales@example.com> NOTIFY=DELAY NOTIFY=FAILURE")
+                .await,
+            "501 5.5.4 Duplicate NOTIFY parameter"
+        );
+        assert_eq!(
+            client
+                .command("RCPT TO:<sales@example.com> NOTIFY=success,failure ORCPT=rfc822;Sales+2Bnews@example.com")
+                .await,
+            "250 2.1.5 Ok"
+        );
+        assert_eq!(client.command("RCPT TO:<help@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client.send("Subject: dsn\r\n\r\nhi\r\n.\r\n").await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok: stored as "));
+        let delivered = fake.delivered.lock().unwrap();
+        let message = &delivered[0];
+        assert_eq!(message.envelope.dsn_ret, "HDRS");
+        assert_eq!(message.envelope.dsn_envid, "QQ+1");
+        assert_eq!(
+            message.recipients[0].addresses,
+            ["sales@example.com", "help@example.com"]
+        );
+        assert_eq!(
+            message.recipients[0].dsn,
+            [RecipientDsn {
+                address: "sales@example.com".to_string(),
+                notify: "SUCCESS,FAILURE".to_string(),
+                original: "rfc822;Sales+news@example.com".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn protocols_and_dsn_values_parse() {
+        assert_eq!(received_protocol(false, false, false, false), "SMTP");
+        assert_eq!(received_protocol(false, true, false, false), "ESMTP");
+        assert_eq!(received_protocol(false, true, false, true), "ESMTPS");
+        assert_eq!(received_protocol(false, true, true, false), "UTF8SMTP");
+        assert_eq!(received_protocol(true, true, false, false), "LMTP");
+        assert_eq!(received_protocol(true, true, true, true), "UTF8LMTPS");
+        assert_eq!(xtext("a+2Bb+3Dc", false).as_deref(), Some("a+b=c"));
+        assert_eq!(xtext("a+2b", false), None, "upper-case hex only");
+        assert_eq!(xtext("a+0A", false), None, "no control characters");
+        assert_eq!(xtext("a b", false), None);
+        assert_eq!(xtext("ü@x.org", false), None);
+        assert_eq!(xtext("ü@x.org", true).as_deref(), Some("ü@x.org"));
+        assert_eq!(parse_notify("never").as_deref(), Some("NEVER"));
+        assert_eq!(parse_notify("Delay,success").as_deref(), Some("DELAY,SUCCESS"));
+        assert_eq!(parse_notify(""), None);
+        assert_eq!(parse_notify("SUCCESS,"), None);
+        assert_eq!(parse_orcpt("RFC822;a+2Bb@x.org").as_deref(), Some("rfc822;a+b@x.org"));
+        assert_eq!(parse_orcpt("utf-8;ü@x.org").as_deref(), Some("utf-8;ü@x.org"));
+        assert_eq!(parse_orcpt(";a@x.org"), None);
+        assert_eq!(parse_orcpt("rfc822;"), None);
     }
 
     #[test]

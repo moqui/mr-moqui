@@ -148,6 +148,11 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="no-tx-cache" type="boolean" default="false"><xs:annotation><xs:documentation>
                 If true and a TransactionCache is active flush and remove it before calling the service.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="read-only" type="boolean" default="false"><xs:annotation><xs:documentation>
+                The service writes nothing and sends nothing: it only reads, and may set values in the user's context. A
+                server-static screen may call it in its always-actions and pre-actions, which the form request runs
+                again (moqui lint --screens --qvt-static). A get, find or setup verb is taken as read-only too. MR Moqui
+                only; Java Moqui ignores it.</xs:documentation></xs:annotation></xs:attribute>
 
             <!-- not supported by Atomikos/etc right now, consider for later:
             <xs:attribute name="transaction-isolation" type="isolation-level" use="optional">

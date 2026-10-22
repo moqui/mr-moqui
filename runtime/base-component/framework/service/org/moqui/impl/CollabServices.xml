@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- Co-edited documents (crates/moqui-core/src/collab; docs/Revision-Management.md, Co-editing): a Yjs document per
+        record that several people edit at once in m-coedit over the notification WebSocket, kept as
+        moqui.resource.CollabDocument and written to its record (a wiki page, documentKey WikiPage:<wikiPageId>) only as a
+        version: on Save, after two minutes without an edit on database files, and when its last editor leaves. -->
+    <service verb="save" noun="CollabDocument" type="rust" location="moqui_core::service::collab::save_document">
+        <description>Save a co-edited document as a version of its record now, as the current user (update access to the
+            record), with versionNote, or a note naming its editors: the record's text becomes the document's markdown. The
+            document need not be open on this server; its stored state is saved. versionName is empty when the text was
+            unchanged.</description>
+        <in-parameters>
+            <parameter name="documentKey" required="true"/>
+            <parameter name="versionNote"/>
+        </in-parameters>
+        <out-parameters><parameter name="versionName"/></out-parameters>
+    </service>
+    <service verb="get" noun="CollabDocument" type="rust" location="moqui_core::service::collab::get_document">
+        <description>A co-edited document the current user may view: its markdown now (of the open document on this server,
+            else as last stored), whether it is open here, who changed it last and when, the last save, and the users whose
+            changes are in no version yet.</description>
+        <in-parameters><parameter name="documentKey" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="exists" type="Boolean"/>
+            <parameter name="isOpen" type="Boolean"/>
+            <parameter name="snapshotText"/>
+            <parameter name="unsavedUserIdList" type="List"/>
+            <parameter name="lastChangeDate" type="Timestamp"/>
+            <parameter name="lastChangeUserId"/>
+            <parameter name="lastSaveDate" type="Timestamp"/>
+        </out-parameters>
+    </service>
+</services>

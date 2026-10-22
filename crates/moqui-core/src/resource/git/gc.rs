@@ -19,8 +19,8 @@
 //! 1. Scan every row without its data.
 //! 2. Mark what is reachable from the refs (a missing object there stops the run: a damaged repository is never
 //!    swept), then from what may still be needed: the tips of a change whose events have not run, the old and new ids
-//!    of the changes of the last `git_gc_reflog_days` (a force push can be undone), and every row stamped in the last
-//!    `git_gc_prune_days` (a push or write in progress, whose refs have not moved yet). The bases of every kept delta
+//!    of the changes of the last `git-server` `gc-reflog-days` (a force push can be undone), and every row stamped in the last
+//!    `git-server` `gc-prune-days` (a push or write in progress, whose refs have not moved yet). The bases of every kept delta
 //!    are kept.
 //! 3. Look again at the rows stamped since the scan began (a push that reused an old object freshens it), then
 //!    delete the rest, deepest delta first, each `DELETE` only of rows still stamped before the cutoff.
@@ -50,35 +50,30 @@ const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
 pub struct GcOptions {
     /// Count what would be deleted, and change nothing.
     pub dry_run: bool,
-    /// Unreachable rows stamped within this long are kept (`git_gc_prune_days`, 14, at least 1).
+    /// Unreachable rows stamped within this long are kept (`git-server` `gc-prune-days`, 14, at least 1).
     pub prune_millis: i64,
-    /// The changes of this long ago are kept, so a force push can be undone (`git_gc_reflog_days`, 30).
+    /// The changes of this long ago are kept, so a force push can be undone (`git-server` `gc-reflog-days`, 30).
     pub reflog_millis: i64,
     /// When the run stops repacking.
     pub deadline: Instant,
-    /// A repository with more rows is passed over (`git_gc_max_objects`, 20,000,000): the scan is kept in memory.
+    /// A repository with more rows is passed over (`git-server` `gc-max-objects`, 20,000,000): the scan is kept in memory.
     pub max_objects: usize,
     pub max_depth: u32,
     pub max_delta_size: u64,
 }
 
 impl GcOptions {
-    /// The options from the properties, with `timeout` for the run.
-    pub fn from_properties(dry_run: bool, timeout: Duration) -> Self {
-        let number = |name: &str, default: i64| {
-            moqui_lib::env::get_prop_or_env(name)
-                .trim()
-                .parse::<i64>()
-                .unwrap_or(default)
-        };
+    /// The options from the conf's `git-server` element, with `timeout` for the run.
+    pub fn from_conf(dry_run: bool, timeout: Duration) -> Self {
+        let number = |name: &str, default: i64| super::number_setting(name, default);
         Self {
             dry_run,
-            prune_millis: number("git_gc_prune_days", 14).max(1) * DAY_MILLIS,
-            reflog_millis: number("git_gc_reflog_days", 30).max(0) * DAY_MILLIS,
+            prune_millis: number("gc-prune-days", 14).max(1) * DAY_MILLIS,
+            reflog_millis: number("gc-reflog-days", 30).max(0) * DAY_MILLIS,
             deadline: Instant::now() + timeout,
-            max_objects: usize::try_from(number("git_gc_max_objects", 20_000_000)).unwrap_or(usize::MAX),
-            max_depth: u32::try_from(number("git_db_delta_depth", 50)).unwrap_or(50).max(1),
-            max_delta_size: u64::try_from(number("git_db_delta_max_size", 16 * 1024 * 1024)).unwrap_or(u64::MAX),
+            max_objects: usize::try_from(number("gc-max-objects", 20_000_000)).unwrap_or(usize::MAX),
+            max_depth: u32::try_from(number("db-delta-depth", 50)).unwrap_or(50).max(1),
+            max_delta_size: u64::try_from(number("db-delta-max-size", 16 * 1024 * 1024)).unwrap_or(u64::MAX),
         }
     }
 }
@@ -288,7 +283,7 @@ impl GitProvider {
         let store = DbStore::new(
             entity.clone(),
             repository_id,
-            std::sync::Arc::clone(&self.inner.objects),
+            self.objects(),
         );
         if options.dry_run {
             return collect(&store, &self.gc_roots(entity, &store, options)?, options);
@@ -425,7 +420,7 @@ fn collect(store: &DbStore, roots: &Roots, options: &GcOptions) -> Result<GcRepo
     store.scan(&mut |row: ScanRow| {
         if table.objs.len() >= options.max_objects {
             return Err(Error::new(format!(
-                "the repository has more than git_gc_max_objects ({}) objects",
+                "the repository has more than git-server gc-max-objects ({}) objects",
                 options.max_objects
             )));
         }
@@ -968,7 +963,7 @@ fn rewrite_whole(store: &DbStore, table: &mut Table, at: usize) -> Result<i64, E
     Ok(saved)
 }
 
-/// Record each row's true delta depth, and make a chain deeper than `git_db_delta_depth` shorter by storing the row
+/// Record each row's true delta depth, and make a chain deeper than `git-server` `db-delta-depth` shorter by storing the row
 /// at the limit whole: from the whole rows down the chains, a level at a time.
 fn fix_depths(
     store: &DbStore,
@@ -1056,7 +1051,7 @@ impl GitProvider {
         let store = DbStore::new(
             self.entity()?,
             repository_id,
-            std::sync::Arc::clone(&self.inner.objects),
+            self.objects(),
         );
         let mut ids = Vec::new();
         store.scan(&mut |row| {

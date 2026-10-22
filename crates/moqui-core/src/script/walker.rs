@@ -41,6 +41,10 @@ pub(crate) struct Walk<'a, 'js> {
     pub resolve: Option<Resolve<'a>>,
     /// Names what is missing in an error: "XML action macro", "screen macro for text".
     pub missing: &'a str,
+    /// The macro an element with none of its own gets, Java's FreeMarker `@element`: the element is logged and the
+    /// rest renders (the failure-tolerance rule). With none, a screen's unknown element writes nothing. `None` keeps
+    /// it an error, as for XML actions.
+    pub fallback: Option<&'a str>,
 }
 
 /// Load a chain of macro modules. The first source evaluates to the support object. Each module
@@ -157,10 +161,21 @@ fn run<'js>(ctx: &Ctx<'js>, walk: &Walk<'_, 'js>, node_obj: &Object<'js>) -> Res
         combined.push_str(&run(ctx, walk, &child.map_err(js_error)?)?);
     }
     let name: String = node_obj.get("name").map_err(js_error)?;
-    if !walk.macros.contains_key(name.as_str()).map_err(js_error)? {
-        return Err(Error::new(format!("no {} for {name}", walk.missing)));
+    let mut macro_name = name.as_str();
+    if !walk.macros.contains_key(macro_name).map_err(js_error)? {
+        let Some(fallback) = walk.fallback else {
+            return Err(Error::new(format!("no {} for {name}", walk.missing)));
+        };
+        tracing::error!("No {} for {name}; it renders as an unknown element", walk.missing);
+        if !walk.macros.contains_key(fallback).map_err(js_error)? {
+            node_obj.set("source", "").map_err(js_error)?;
+            return Ok(String::new());
+        }
+        // Java's @element does not recurse, so the children are not rendered either.
+        combined.clear();
+        macro_name = fallback;
     }
-    let function: Function = walk.macros.get(name.as_str()).map_err(js_error)?;
+    let function: Function = walk.macros.get(macro_name).map_err(js_error)?;
     let source: String = function
         .call((node_obj.clone(), combined))
         .catch(ctx)

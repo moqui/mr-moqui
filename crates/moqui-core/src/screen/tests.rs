@@ -76,8 +76,20 @@ struct World {
 
 impl World {
     fn open(conf: &str) -> Self {
+        Self::open_with(ExecutionContextFactory::test_context_with_conf(conf))
+    }
+
+    /// [`World::open`] with the framework directory, so `component://` locations of the base components resolve.
+    fn open_in_framework(conf: &str) -> Self {
+        Self::open_with(ExecutionContextFactory::test_context_in(
+            conf,
+            crate::service::ServicePools::idle(),
+            crate::context::framework_dir(),
+        ))
+    }
+
+    fn open_with(context: crate::context::ExecutionContext) -> Self {
         let env = Env::new();
-        let context = ExecutionContextFactory::test_context_with_conf(conf);
         let facade = crate::testing::open();
         context.factory().set_entity(facade.clone());
         let entered = context.enter();
@@ -111,6 +123,19 @@ impl World {
         }
     }
 
+    /// The two `REST_SCHEMA` rows in `MoquiSetupData.xml`: the permission, and the `ADMIN` grant.
+    fn grant_rest_schema(&self) {
+        let mut permission = self.facade.make_value("moqui.security.UserPermission").unwrap();
+        permission.set("userPermissionId", Value::string("REST_SCHEMA"));
+        permission.set("description", Value::string("REST schema dumps"));
+        permission.create(&self.facade).unwrap();
+        let mut grant = self.facade.make_value("moqui.security.UserGroupPermission").unwrap();
+        grant.set("userGroupId", Value::string("ADMIN"));
+        grant.set("userPermissionId", Value::string("REST_SCHEMA"));
+        grant.set("fromDate", stamp());
+        grant.create(&self.facade).unwrap();
+    }
+
     fn allow_entity(&self, group: &str) {
         let mut member = self.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();
         member.set("artifactGroupId", Value::string("ENUM_TYPE"));
@@ -130,18 +155,24 @@ impl World {
 
     /// Allow `group` to view the screen at `location`.
     fn allow_screen(&self, group: &str, location: &str) {
+        self.grant_screen("SCREEN_VIEW", group, location, "AUTHZT_ALWAYS");
+    }
+
+    /// An inheritable view record of `authz_type` for `group` on the screen at `location`, with `id` as both the
+    /// artifact group and the authorization id.
+    fn grant_screen(&self, id: &str, group: &str, location: &str, authz_type: &str) {
         let mut member = self.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();
-        member.set("artifactGroupId", Value::string("SCREEN_VIEW"));
+        member.set("artifactGroupId", Value::string(id));
         member.set("artifactName", Value::string(location));
         member.set("artifactTypeEnumId", Value::string("AT_XML_SCREEN"));
         member.set("nameIsPattern", Value::string("N"));
         member.set("inheritAuthz", Value::string("Y"));
         member.create(&self.facade).unwrap();
         let mut authz = self.facade.make_value("moqui.security.ArtifactAuthz").unwrap();
-        authz.set("artifactAuthzId", Value::string("SCREEN_VIEW"));
+        authz.set("artifactAuthzId", Value::string(id));
         authz.set("userGroupId", Value::string(group));
-        authz.set("artifactGroupId", Value::string("SCREEN_VIEW"));
-        authz.set("authzTypeEnumId", Value::string("AUTHZT_ALWAYS"));
+        authz.set("artifactGroupId", Value::string(id));
+        authz.set("authzTypeEnumId", Value::string(authz_type));
         authz.set("authzActionEnumId", Value::string("AUTHZA_VIEW"));
         authz.create(&self.facade).unwrap();
     }
@@ -405,6 +436,10 @@ fn redirect_json_list_security_headers_and_cors() {
         header_value(&response, "X-Content-Type-Options").as_deref(),
         Some("nosniff")
     );
+    assert_eq!(
+        header_value(&response, "X-XSS-Protection").as_deref(),
+        Some("1; mode=block")
+    );
     assert!(header_value(&response, "Strict-Transport-Security").is_some());
 
     world._env.set("webapp_allow_origins", "https://app.example");
@@ -429,6 +464,144 @@ fn redirect_json_list_security_headers_and_cors() {
         .contains("api_key"));
 }
 
+/// The webapp's `response-header` entries and its `handle-cors` and `allow-origins` attributes come from the conf, as
+/// Java's `WebappInfo` reads them; the properties are only the fallback.
+#[test]
+fn the_webapp_conf_sets_the_response_headers_and_cors() {
+    let web = webroot().to_string_lossy().into_owned();
+    let world = World::open(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" allow-origins="https://conf.example">
+            <response-header type="screen-render" name="Content-Security-Policy" value="default-src 'self'"/>
+            <response-header type="screen-render" name="X-Extra" value="yes"/>
+        </webapp></webapp-list></moqui-conf>"#,
+    );
+    let mut get = request("GET", "/");
+    get.set_header("origin", "https://conf.example");
+    let response = serve_at(&world.factory, get, &web);
+    assert_eq!(
+        header_value(&response, "Content-Security-Policy").as_deref(),
+        Some("default-src 'self'")
+    );
+    assert_eq!(header_value(&response, "X-Extra").as_deref(), Some("yes"));
+    assert_eq!(
+        header_value(&response, "Access-Control-Allow-Origin").as_deref(),
+        Some("https://conf.example"),
+        "allow-origins from the webapp element"
+    );
+    drop(world);
+
+    let mut world = World::open(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" handle-cors="false"/></webapp-list></moqui-conf>"#,
+    );
+    world._env.set("webapp_allow_origins", "https://app.example");
+    let mut get = request("GET", "/");
+    get.set_header("origin", "https://app.example");
+    let response = serve_at(&world.factory, get, &web);
+    assert_eq!(
+        header_value(&response, "Access-Control-Allow-Origin"),
+        None,
+        "handle-cors=false"
+    );
+    // A webapp that declares no response-header gets the shipped ones.
+    assert_eq!(
+        header_value(&response, "X-Frame-Options").as_deref(),
+        Some("sameorigin")
+    );
+}
+
+/// A login form posted with no username or password fails as a wrong password does, back to the Login screen with the
+/// message, not a 500 from `loginUser(null, null)`; and it tried no password, so web protection does not count it.
+#[test]
+fn a_blank_login_is_a_failed_login_not_an_error() {
+    let world = World::open_in_framework("");
+    let root = webroot().to_string_lossy().into_owned();
+    let _ = crate::web::take_auth_failure();
+    let response = serve_at(&world.factory, request("POST", "/Login/login"), &root);
+    assert_ne!(response.status, 500, "{}", response.body_text());
+    assert!(!crate::web::take_auth_failure(), "a blank form is not a failed guess");
+    // over JSON the answer is the failed transition's, the same as for a wrong password
+    let json = |body: &[u8]| {
+        let mut call = request("POST", "/Login/login");
+        call.set_header("accept", "application/json");
+        call.set_header("content-type", "application/json");
+        call.body = body.to_vec();
+        serve_at(&world.factory, call, &root)
+    };
+    let blank = json(br#"{"username": null}"#);
+    let wrong = json(br#"{"username": "nobody", "password": "wrong"}"#);
+    assert_eq!(blank.status, wrong.status, "{}", blank.body_text());
+    assert!(
+        blank
+            .body_text()
+            .contains("\"errors\" : \"The username or password is not valid\""),
+        "{}",
+        blank.body_text()
+    );
+}
+
+/// As `MoquiServlet.handleCors`: a request from an origin CORS does not allow is answered 401 before it runs; an
+/// allowed origin, the request's own host and no origin at all go on.
+#[test]
+fn a_disallowed_origin_is_refused_before_the_request_runs() {
+    let mut world = World::open("");
+    let path = std::env::temp_dir().join(format!("moqui-screen-origin-{}.xml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"<screen require-authentication="false">
+            <transition name="go"><default-response type="url" url="/next"/></transition>
+        </screen>"#,
+    )
+    .unwrap();
+    let root = path.to_string_lossy().into_owned();
+    world._env.set("webapp_allow_origins", "https://app.example");
+    let send = |method: &str, origin: Option<&str>| {
+        let mut call = request(method, "/go");
+        call.set_header("host", "erp.example:8080");
+        if let Some(origin) = origin {
+            call.set_header("origin", origin);
+        }
+        serve_at(&world.factory, call, &root)
+    };
+    for method in ["GET", "POST", "OPTIONS"] {
+        let response = send(method, Some("https://evil.example"));
+        assert_eq!(response.status, 401, "{method} {}", response.body_text());
+        assert!(
+            response.body_text().contains("Origin not allowed"),
+            "{}",
+            response.body_text()
+        );
+        assert_eq!(header_value(&response, "Access-Control-Allow-Origin"), None);
+    }
+    assert_eq!(send("GET", Some("https://app.example")).status, 302);
+    assert_eq!(send("GET", Some("http://erp.example:8080")).status, 302);
+    assert_eq!(send("GET", None).status, 302);
+    assert_eq!(send("OPTIONS", Some("https://app.example")).status, 204);
+
+    drop(world);
+
+    // behind a proxy that rewrites Host: the forwarded host of a believed proxy, or the conf webapp's host
+    let world = World::open(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" client-ip-header="x-forwarded-for"
+            trusted-proxies="127.0.0.1" http-host="erp.example"/></webapp-list></moqui-conf>"#,
+    );
+    let mut proxied = request("POST", "/go");
+    proxied.set_header("host", "127.0.0.1:8080");
+    proxied.set_header("x-forwarded-host", "shop.example");
+    proxied.set_header("origin", "https://shop.example");
+    assert_eq!(serve_at(&world.factory, proxied.clone(), &root).status, 302);
+    proxied.peer_ip = "10.1.1.1".to_string();
+    assert_eq!(
+        serve_at(&world.factory, proxied, &root).status,
+        401,
+        "not from a trusted proxy"
+    );
+    let mut configured = request("POST", "/go");
+    configured.set_header("host", "127.0.0.1:8080");
+    configured.set_header("origin", "https://erp.example");
+    assert_eq!(serve_at(&world.factory, configured, &root).status, 302);
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn script_send_json_response_writes_the_web_slot() {
     let context = ExecutionContextFactory::test_context();
@@ -442,11 +615,83 @@ fn script_send_json_response_writes_the_web_slot() {
     assert!(text.contains("loggedIn"), "{text}");
 }
 
+/// As Java's `sendTextResponseInternal`: a text response sent while the message facade has an error is the errors,
+/// with a 500.
+#[test]
+fn script_send_text_response_with_an_error_sends_the_errors() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let _web = crate::web::install(BTreeMap::new());
+    crate::script::run_script("ec.message.addError('No such order'); ec.web.sendTextResponse('all good')").unwrap();
+    let (status, _headers, body, sent) = crate::web::take_output();
+    assert!(sent);
+    assert_eq!(status, 500);
+    assert_eq!(String::from_utf8(body).unwrap(), "No such order\n");
+}
+
+/// P8-08: in a request a path-only link is empty, and a full URL is the conf webapp's, never the request's `Host`.
+#[test]
+fn webapp_root_url_is_the_conf_webapp_and_never_the_host_header() {
+    let context = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="erp.example" http-port="8080"
+            https-host="erp.example" https-port="8443"/></webapp-list></moqui-conf>"#,
+    );
+    let _entered = context.enter();
+    let _web = crate::web::install(BTreeMap::new());
+    let mut request = WebRequest::new("GET", "/apps/ship");
+    request.set_header("host", "attacker.example");
+    crate::web::set_request_info(&request);
+    let conf = context.factory().webapp_root_url("webroot");
+    assert_eq!(conf, "http://erp.example:8080");
+    let value = |script: &str| {
+        crate::script::eval_value(script)
+            .map(|value| moqui_lib::object::to_plain_string(&value))
+            .unwrap()
+    };
+    assert_eq!(value("ec.web.getWebappRootUrl(false, null)"), "");
+    assert_eq!(value("ec.web.getWebappRootUrl()"), "");
+    assert_eq!(value("ec.web.getWebappRootUrl(true, null)"), conf);
+    assert_eq!(value("ec.web.getWebappRootUrl('webroot', null, true, false)"), conf);
+    // An https link asked for from an http request needs the full URL; with no https-enabled it stays http.
+    assert_eq!(value("ec.web.getWebappRootUrl(false, true)"), conf);
+    let mut secure = WebRequest::new("GET", "/apps/ship");
+    secure.https = true;
+    crate::web::set_request_info(&secure);
+    assert_eq!(value("ec.web.getWebappRootUrl(false, null)"), "");
+    assert_eq!(value("ec.web.getWebappRootUrl(false, false)"), conf);
+}
+
+#[test]
+fn script_send_error_follows_accept() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let _web = crate::web::install(BTreeMap::new());
+    let mut request = WebRequest::new("GET", "/apps/ship");
+    request.set_header("accept", "application/json");
+    crate::web::set_request_info(&request);
+    crate::script::run_script("ec.web.sendError(404, 'No labelUrl', null)").unwrap();
+    let (status, headers, body, sent) = crate::web::take_output();
+    assert!(sent);
+    assert_eq!(status, 404);
+    assert_eq!(
+        headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            .map(|(_, value)| value.as_str()),
+        Some("application/json;charset=UTF-8")
+    );
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "{'message':'No labelUrl','errorName':'Not Found','error':404,'path':'/apps/ship'}"
+    );
+}
+
 #[test]
 fn entity_json_has_the_primary_key_and_the_service_document_lists_enum_types() {
     let world = World::open("");
     world.load_service_rest();
-    world.user("admin", None);
+    world.user("admin", Some("ADMIN"));
+    world.grant_rest_schema();
     let root = webroot().to_string_lossy().into_owned();
 
     let anonymous = serve_at(
@@ -461,6 +706,13 @@ fn entity_json_has_the_primary_key_and_the_service_document_lists_enum_types() {
     let response = serve_at(&world.factory, entity, &root);
     assert_eq!(response.status, 200, "{}", response.body_text());
     assert!(response.body_text().contains("enumTypeId"), "{}", response.body_text());
+    // As Java's RestSchemaUtil sends it: the schema type, and the document alone with no messages merged in.
+    assert_eq!(
+        header_value(&response, "Content-Type").as_deref(),
+        Some("application/schema+json;charset=UTF-8")
+    );
+    let document: serde_json::Value = serde_json::from_str(&response.body_text()).unwrap();
+    assert!(document.get("messages").is_none(), "{document}");
 
     let mut all = request("GET", "/rest/entity.json");
     all.set_header("authorization", basic("admin"));
@@ -485,6 +737,10 @@ fn entity_json_has_the_primary_key_and_the_service_document_lists_enum_types() {
     service.set_header("authorization", basic("admin"));
     let response = serve_at(&world.factory, service, &root);
     assert_eq!(response.status, 200, "{}", response.body_text());
+    assert_eq!(
+        header_value(&response, "Content-Type").as_deref(),
+        Some("application/json;charset=UTF-8")
+    );
     assert!(
         response.body_text().contains("\"openapi\" : \"3.1.0\""),
         "{}",
@@ -500,6 +756,56 @@ fn entity_json_has_the_primary_key_and_the_service_document_lists_enum_types() {
     yaml.set_header("authorization", basic("admin"));
     let response = serve_at(&world.factory, yaml, &root);
     assert_eq!(response.status, 404, "{}", response.body_text());
+}
+
+/// The schema documents need the `REST_SCHEMA` permission, as Java's `RestSchemaUtil.requireSchemaAccess`
+/// does: a user without it is refused with 403, and nobody with 401.
+#[test]
+fn the_rest_schema_documents_need_the_rest_schema_permission() {
+    let world = World::open("");
+    world.load_service_rest();
+    world.user("admin", None);
+    let root = webroot().to_string_lossy().into_owned();
+
+    let anonymous = serve_at(
+        &world.factory,
+        request("GET", "/rest/entity.json/moqui.basic.EnumerationType"),
+        &root,
+    );
+    assert_eq!(anonymous.status, 401, "{}", anonymous.body_text());
+
+    let mut entity = request("GET", "/rest/entity.json/moqui.basic.EnumerationType");
+    entity.set_header("authorization", basic("admin"));
+    let response = serve_at(&world.factory, entity, &root);
+    assert_eq!(response.status, 403, "{}", response.body_text());
+    assert!(
+        response.body_text().contains("Not authorized for REST schema"),
+        "{}",
+        response.body_text()
+    );
+
+    for path in [
+        "/rest/master.json/moqui.basic.Enumeration",
+        "/rest/service.swagger/moqui.json",
+    ] {
+        let mut document = request("GET", path);
+        document.set_header("authorization", basic("admin"));
+        let response = serve_at(&world.factory, document, &root);
+        assert_eq!(response.status, 403, "{path}: {}", response.body_text());
+    }
+
+    // admin in ADMIN, and the REST_SCHEMA grant: the document is served.
+    let mut member = world.facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userId", Value::string("admin"));
+    member.set("userGroupId", Value::string("ADMIN"));
+    member.set("fromDate", stamp());
+    member.create(&world.facade).unwrap();
+    world.grant_rest_schema();
+    let mut allowed = request("GET", "/rest/entity.json/moqui.basic.EnumerationType");
+    allowed.set_header("authorization", basic("admin"));
+    let response = serve_at(&world.factory, allowed, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    assert!(response.body_text().contains("enumTypeId"), "{}", response.body_text());
 }
 
 #[test]
@@ -590,8 +896,10 @@ fn fop_sends_the_print_document_of_the_screen_as_pdf() {
 }
 
 mod authc;
+mod decimal;
 mod files;
 mod forms;
+mod gate;
 mod golden;
 mod html;
 mod markdown;
@@ -601,12 +909,28 @@ mod print;
 mod qvt;
 mod render;
 mod saved_finds;
+mod servlets;
 mod shell;
 mod statics;
+mod tui;
 mod walk;
 mod widgets;
 
 /// The fixture screen tree under `testdata`, as a root screen location.
 fn fixture_root() -> String {
     format!("{}/src/screen/testdata/Root.xml", env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn a_render_mode_parameter_of_tui_renders_standalone_json() {
+    let world = World::open("");
+    let root = webroot().to_string_lossy().into_owned();
+    let mut asked = request("GET", "/Login");
+    asked.query.push(("renderMode".to_string(), "tui".to_string()));
+    let response = serve_at(&world.factory, asked, &root);
+    let text = response.body_text();
+    assert_eq!(response.status, 200, "{text}");
+    // Without standalone the webroot shell renders, and its html is not JSON.
+    let doc: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}: {text}"));
+    assert!(!text.contains("did not render as JSON"), "{doc}");
 }

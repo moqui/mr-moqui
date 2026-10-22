@@ -21,6 +21,17 @@
 //! the rows that were delivered. A row that cannot be delivered stays, and a later call with no
 //! ids (the `IndexDataFeedDocuments` drain) tries it again.
 //!
+//! The after-commit worker and the drain can read the same rows at once. A worker claims a row by
+//! deleting it, in the transaction that delivers it and before the delivery: the second worker's
+//! delete waits for the first transaction, then removes nothing and leaves the row to it. So one
+//! worker delivers each row; a delivery whose commit fails rolls the claim back and is tried again,
+//! so a document is delivered at least once.
+//!
+//! A worker given ids also claims the other rows still pending for the same records. When another
+//! worker is delivering an earlier change of a record, this one waits for it before it assembles the
+//! record, so an earlier delivery that finishes late (a document read before a delete, written
+//! after it) is never the last word.
+//!
 //! A feed's receive service defaults to `index#DataDocuments` and its delete service to
 //! `delete#DataDocument`. Other feeds, such as notifications, receive through their own service.
 
@@ -82,12 +93,36 @@ pub fn process_pending(ids: Option<&[String]>) -> Result<FeedReport, Error> {
     let search_up = ExecutionContext::with_current(|ec| super::installed(ec.factory()).is_some()).unwrap_or(false);
     let mut report = FeedReport::default();
     if let Some(ids) = ids {
-        let rows = facade
+        let given = facade
             .find(PENDING)?
             .condition(Condition::is_in(
                 "dataFeedPendingId",
                 ids.iter().map(Value::string).collect(),
             ))
+            .list()?;
+        // The given rows and the others pending for their records, so a delivery of an earlier change still under way
+        // finishes before this one assembles the record.
+        let mut seen = std::collections::HashSet::new();
+        let mut records: Vec<Condition> = Vec::new();
+        for row in given.iter() {
+            let text = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+            let (document_id, record_id) = (text("dataDocumentId"), text("primaryKey"));
+            if document_id.is_empty() || record_id.is_empty() || !seen.insert((document_id.clone(), record_id.clone()))
+            {
+                continue;
+            }
+            records.push(Condition::and(vec![
+                Condition::equals("dataDocumentId", Value::string(&document_id)),
+                Condition::equals("primaryKey", Value::string(&record_id)),
+            ]));
+        }
+        if records.is_empty() {
+            return Ok(report);
+        }
+        let rows = facade
+            .find(PENDING)?
+            .condition(Condition::or(records))
+            .order_by("dataFeedPendingId", false)
             .list()?;
         deliver_rows(&facade, &rows, &feeds, search_up, &mut report);
         return Ok(report);
@@ -146,12 +181,18 @@ fn deliver_rows(
 ) {
     // Document id, then record id to the pending row ids for it.
     let mut by_document: IndexMap<String, IndexMap<String, Vec<String>>> = IndexMap::new();
+    // The agent that made a pending row's writes (`originAgentId`), by row id.
+    let mut row_origins: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for row in rows.iter() {
         let text = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
         let (pending_id, document_id, record_id) =
             (text("dataFeedPendingId"), text("dataDocumentId"), text("primaryKey"));
         if document_id.is_empty() || record_id.is_empty() {
             continue;
+        }
+        let origin = text("originAgentId");
+        if !origin.is_empty() {
+            row_origins.insert(pending_id.clone(), origin);
         }
         by_document
             .entry(document_id)
@@ -171,26 +212,60 @@ fn deliver_rows(
             report.rows_left += row_count;
             continue;
         }
-        let record_ids: Vec<String> = records.keys().cloned().collect();
         // Each document type in its own transaction: a type that fails (a manual data service that errors, say) rolls
         // back only its own delivery and keeps only its own rows, not the other types' in this batch.
         let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
         let delivered = facade.transactions_for(PENDING).and_then(|tx| {
             tx.run(TransactionAttribute::ForceNew, None, || {
-                let (indexed, deleted) = deliver(facade, &document_id, &record_ids, &document_feeds)?;
-                for pending_ids in records.values() {
-                    for pending_id in pending_ids {
-                        delete_pending(facade, pending_id)?;
+                // Claim the rows before delivering, in id order so two workers take their locks in the same order. A
+                // record none of whose rows this worker claimed is another worker's.
+                let mut claims: Vec<(&String, &String)> = records
+                    .iter()
+                    .flat_map(|(record_id, pending_ids)| {
+                        pending_ids.iter().map(move |pending_id| (pending_id, record_id))
+                    })
+                    .collect();
+                claims.sort();
+                let mut claimed_records: Vec<String> = Vec::new();
+                let mut claimed = 0_usize;
+                // a record's origin: the agent of every row claimed for it, else none (the agent triggers' loop guard)
+                let mut origins: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+                for (pending_id, record_id) in claims {
+                    if claim_pending(facade, pending_id)? {
+                        claimed += 1;
+                        if !claimed_records.contains(record_id) {
+                            claimed_records.push(record_id.clone());
+                        }
+                        let origin = row_origins.get(pending_id).cloned();
+                        origins
+                            .entry(record_id.clone())
+                            .and_modify(|known| {
+                                if *known != origin {
+                                    *known = None;
+                                }
+                            })
+                            .or_insert(origin);
                     }
                 }
-                Ok((indexed, deleted))
+                if claimed_records.is_empty() {
+                    return Ok((0, 0, 0));
+                }
+                let origins: std::collections::HashMap<String, String> = origins
+                    .into_iter()
+                    .filter_map(|(record_id, origin)| origin.map(|origin| (record_id, origin)))
+                    .collect();
+                let (indexed, deleted) = deliver(facade, &document_id, &claimed_records, &document_feeds, &origins)?;
+                Ok((indexed, deleted, claimed))
             })
         });
         match delivered {
-            Ok((indexed, deleted)) => {
+            Ok((indexed, deleted, claimed)) => {
+                if claimed < row_count {
+                    tracing::debug!(document = %document_id, rows = row_count - claimed, "data feed rows another worker took");
+                }
                 report.documents_indexed += indexed;
                 report.documents_deleted += deleted;
-                report.rows_done += row_count;
+                report.rows_done += claimed;
             }
             Err(err) => {
                 tracing::warn!(document = %document_id, error = %err, "data feed delivery failed; pending rows stay");
@@ -205,13 +280,29 @@ fn deliver_rows(
     }
 }
 
+/// Deliver the documents of `record_ids`; a record whose every write came from one agent's run (`origins`) carries it as
+/// `_originAgentId` (and a delete as `originAgentId`), so an agent trigger leaves out its own agent's changes.
 fn deliver(
     facade: &EntityFacade,
     document_id: &str,
     record_ids: &[String],
     feeds: &[&Feed],
+    origins: &std::collections::HashMap<String, String>,
 ) -> Result<(usize, usize), Error> {
     let documents = document::documents_by_ids(facade, document_id, record_ids)?;
+    // the search index gets the documents as they are; another receive gets the origin too
+    let tagged: Vec<_> = documents
+        .iter()
+        .filter(|_| !origins.is_empty())
+        .map(|doc| {
+            let mut doc = doc.clone();
+            let id = doc.get("_id").map(to_plain_string).unwrap_or_default();
+            if let Some(origin) = origins.get(&id) {
+                doc.insert("_originAgentId".to_string(), Value::string(origin));
+            }
+            doc
+        })
+        .collect();
     let found: std::collections::HashSet<String> = documents
         .iter()
         .filter_map(|doc| doc.get("_id").map(to_plain_string))
@@ -223,9 +314,10 @@ fn deliver(
             let mut params = BTreeMap::new();
             params.insert("dataFeedId".to_string(), Value::string(&feed.data_feed_id));
             params.insert("feedStamp".to_string(), stamp.clone());
+            let shown = if feed.receive == DEFAULT_RECEIVE || origins.is_empty() { &documents } else { &tagged };
             params.insert(
                 "documentList".to_string(),
-                Value::List(documents.iter().cloned().map(Value::Map).collect()),
+                Value::List(shown.iter().cloned().map(Value::Map).collect()),
             );
             call_checked(&feed.receive, &params)?;
         }
@@ -235,6 +327,9 @@ fn deliver(
             params.insert("feedStamp".to_string(), stamp.clone());
             params.insert("dataDocumentId".to_string(), Value::string(document_id));
             params.insert("documentId".to_string(), Value::string(*id));
+            if let Some(origin) = origins.get(*id) {
+                params.insert("originAgentId".to_string(), Value::string(origin));
+            }
             call_checked(&feed.delete, &params)?;
         }
     }
@@ -256,10 +351,11 @@ pub(super) fn call_checked(name: &str, params: &BTreeMap<String, Value>) -> Resu
     }
 }
 
-fn delete_pending(facade: &EntityFacade, pending_id: &str) -> Result<(), Error> {
+/// Claim a pending row by deleting it: true when this delete removed it, false when another worker already had.
+fn claim_pending(facade: &EntityFacade, pending_id: &str) -> Result<bool, Error> {
     let mut value = facade.make_value(PENDING)?;
     value.set("dataFeedPendingId", Value::string(pending_id));
-    value.delete(facade)
+    Ok(facade.delete_value_counted(&value)? > 0)
 }
 
 /// Real-time push feeds, by the document ids they contain.
@@ -428,6 +524,66 @@ mod tests {
             .one()
             .unwrap();
         assert!(good.is_none());
+    }
+
+    #[test]
+    fn a_row_another_worker_took_is_not_delivered_again() {
+        let ctx = ExecutionContextFactory::test_context();
+        let facade = crate::testing::open();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        create_row(
+            &facade,
+            "moqui.entity.document.DataDocument",
+            &[("dataDocumentId", "GOOD"), ("primaryEntityName", "moqui.test.Foo")],
+        );
+        pending(&facade, "R00001", "GOOD");
+        // This worker read the row; another delivered it and deleted it before this one got to it.
+        let rows = facade.find(PENDING).unwrap().list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let mut gone = facade.make_value(PENDING).unwrap();
+        gone.set("dataFeedPendingId", Value::string("R00001"));
+        gone.delete(&facade).unwrap();
+
+        let mut report = FeedReport::default();
+        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut report);
+        assert_eq!(report, FeedReport::default(), "{report:?}");
+
+        // A row still there is claimed and delivered once; the second pass finds it gone.
+        pending(&facade, "R00002", "GOOD");
+        let rows = facade.find(PENDING).unwrap().list().unwrap();
+        let mut first = FeedReport::default();
+        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut first);
+        assert_eq!((first.rows_done, first.documents_deleted), (1, 1), "{first:?}");
+        let mut second = FeedReport::default();
+        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut second);
+        assert_eq!(second, FeedReport::default(), "{second:?}");
+
+        // A worker given the later row of a record takes the earlier one too (its own delivery waits on whoever has
+        // it), and leaves another record's row alone.
+        pending(&facade, "R00003", "GOOD");
+        pending(&facade, "R00004", "GOOD");
+        create_row(
+            &facade,
+            PENDING,
+            &[
+                ("dataFeedPendingId", "R00005"),
+                ("dataDocumentId", "GOOD"),
+                ("primaryKey", "F2"),
+                ("operation", "index"),
+            ],
+        );
+        let report = process_pending(Some(&["R00004".to_string()])).unwrap();
+        assert_eq!(report.rows_done, 2, "{report:?}");
+        let left: Vec<String> = facade
+            .find(PENDING)
+            .unwrap()
+            .list()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row.get("dataFeedPendingId").map(to_plain_string))
+            .collect();
+        assert_eq!(left, vec!["R00005".to_string()]);
     }
 
     #[test]

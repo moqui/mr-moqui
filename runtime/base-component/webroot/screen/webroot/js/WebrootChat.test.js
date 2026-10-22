@@ -2,8 +2,10 @@
 
 // Tests of the chat store (WebrootChat.js) that need no browser: the socket messages on the state (presence, typing, read
 // markers, unread and mention counts, the room list), a pushed event merged into a timeline (messages, edits, reactions,
-// redactions, pins, threads), the user's own dot and do not disturb, the clear-at choices, the batched presence requests,
-// the start of the store, and the account menu's components (they compile, and WebrootVue.qvt.js registers them). The
+// redactions, pins, threads), a pushed update (link previews, a poll, keeping my own votes), the outbox (its limits, by room
+// and thread, what a failed send does next, sends that wait and go later), the user's own dot and do not disturb, the
+// clear-at choices, the batched presence requests, an agent's room cards (who may act, what they show, the card's button
+// post) and an agent's typing status text, the start of the store, and the account menu's components (they compile, and WebrootVue.qvt.js registers them). The
 // account menu and an avatar's dot in the page are the Chromium smoke of Gate 3 (crates/moqui-host/tests/gate3_browser.rs).
 // Run: node --test runtime/base-component/webroot/screen/webroot/js/WebrootChat.test.js
 "use strict";
@@ -22,7 +24,8 @@ require("./WebrootVue.qvt.js");
 const chat = moqui.chat;
 const compiler = globalThis.VueCompilerDOM;
 
-const freshState = () => ({ me: null, presence: {}, unread: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false });
+const freshState = () => ({ me: null, presence: {}, unread: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
+    online: true, connected: null });
 const push = (topic, message) => ({ topic, message });
 const event = (fields) => Object.assign({ chatRoomId: "R1", type: "message", senderUserId: "bob", sentDate: 1000, mentions: [], content: {} }, fields);
 
@@ -235,6 +238,7 @@ test("the store starts once: its topics, the user's status, the counts and a hea
     chat.start({ userId: "ann", appRootPath: "", notificationClient: client });
     chat.start({ userId: "ann", appRootPath: "", notificationClient: client });
     clearInterval(chat.beatTimer);
+    clearInterval(chat.flushTimer);
     assert.deepEqual(listeners, ["ALL", "chatUser:ann", "userStatus"]);
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual(requests.map((request) => request.method + " " + request.url), ["GET /userStatus", "GET /chatUnread", "POST /userStatusHeartbeat"]);
@@ -276,7 +280,7 @@ test("the store starts once: its topics, the user's status, the counts and a hea
 });
 
 test("the account menu's components compile, and WebrootVue.qvt.js registers them before the shell", () => {
-    ["m-user-status-menu", "m-user-status-dialog"].forEach((name) => {
+    ["m-user-status-menu", "m-user-status-dialog", "m-assist-card"].forEach((name) => {
         const comp = moqui.qvt.components[name];
         assert.ok(comp && comp.template, name);
         const errors = [];
@@ -300,4 +304,177 @@ test("the account menu's components compile, and WebrootVue.qvt.js registers the
     const menu = moqui.qvt.components["m-user-status-menu"];
     assert.deepEqual(menu.computed.options.call({ labels: chat.labels }).map((option) => option.value + ":" + option.dot),
         ["online:online", "away:away", "dnd:dnd", "invisible:offline"]);
+});
+
+test("a thread reply names its root's last reply; a pushed update changes a message and keeps what is mine", () => {
+    const list = [event({ eventSeq: 2, bodyText: "root", threadReplyCount: 0 }),
+        event({ eventSeq: 3, bodyText: "poll", poll: { question: "Lunch?", mine: [1], options: [{ id: 1, text: "Pizza", voteCount: 1, mine: true },
+            { id: 2, text: "Sushi", voteCount: 0, mine: false }] } })];
+    chat.applyEvent(list, event({ eventSeq: 4, threadRootEventSeq: 2, senderUserId: "bob", sentDate: 4000 }), "ann");
+    assert.equal(list[0].threadLastEventSeq, 4);
+    assert.equal(list[0].threadLastUserId, "bob");
+    const state = freshState();
+    const update = chat.reduce(state, push("chatRoom:R1", { kind: "update", chatRoomId: "R1", eventSeq: 3, threadRootEventSeq: null,
+        fields: { poll: { question: "Lunch?", options: [{ id: 2, text: "Sushi", voteCount: 1 }, { id: 1, text: "Pizza", voteCount: 1 }] } } }), "ann", 1);
+    assert.equal(update.kind, "update");
+    assert.equal(update.eventSeq, 3);
+    assert.equal(chat.reduce(state, push("chatRoom:R1", { kind: "update", eventSeq: 3 }), "ann", 1), null, "no fields, nothing");
+    assert.equal(chat.trayReloads(push("chatRoom:R1", { kind: "update" })), false);
+    chat.applyUpdate(list, update, "ann");
+    const poll = list[1].poll;
+    assert.deepEqual(poll.mine, [1], "my votes stay: the push has none");
+    assert.deepEqual(poll.options.map((option) => [option.id, option.voteCount, option.mine]), [[2, 1, false], [1, 1, true]]);
+    chat.applyUpdate(list, { eventSeq: 2, fields: { linkPreviews: [{ url: "https://example.com/", title: "Example" }] } }, "ann");
+    assert.equal(list[0].linkPreviews[0].title, "Example");
+    chat.applyUpdate(list, { eventSeq: 9, fields: { linkPreviews: [] } }, "ann");
+    assert.equal(list.length, 2, "a message not in the list is left");
+});
+
+test("the outbox: at most 50 items of 64 KB, by room and thread, files that wait too long, and what a failed send does next", () => {
+    let list = [];
+    for (let n = 0; n < 50; n++) list = chat.outboxAdd(list, { clientRef: "c" + n, chatRoomId: "R1" });
+    assert.equal(list.length, 50);
+    assert.equal(chat.outboxAdd(list, { clientRef: "c50", chatRoomId: "R1" }), null, "full");
+    assert.equal(chat.outboxAdd([], { clientRef: "big", chatRoomId: "R1", params: { body: "x".repeat(70 * 1024) } }), null, "too large");
+    assert.equal(chat.outboxAdd([], { chatRoomId: "R1" }), null, "no clientRef");
+    assert.equal(chat.outboxRemove(list, "c3").length, 49);
+    const now = 100 * 3600 * 1000;
+    const items = [{ clientRef: "a", chatRoomId: "R1", createdDate: now }, { clientRef: "b", chatRoomId: "R1", threadRootEventSeq: 7, createdDate: now },
+        { clientRef: "c", chatRoomId: "R2", createdDate: now }, { clientRef: "d", chatRoomId: "R1", hasFiles: true, createdDate: now - 21 * 3600 * 1000, status: "waiting" }];
+    assert.deepEqual(chat.outboxFor(items, "R1", null, now).map((item) => item.clientRef), ["a", "d"]);
+    assert.deepEqual(chat.outboxFor(items, "R1", 7, now).map((item) => item.clientRef), ["b"]);
+    assert.equal(chat.outboxFor(items, "R1", null, now)[1].status, "failed", "its files are about to go");
+    assert.equal(chat.outboxFor(items, "R1", null, now)[1].expired, true);
+    assert.deepEqual([0, 408, 429, 500, 503].map(chat.classify), ["retry", "retry", "retry", "retry", "retry"]);
+    assert.deepEqual([401, 403].map(chat.classify), ["hold", "hold"]);
+    assert.deepEqual([400, 404, 200].map(chat.classify), ["fail", "fail", "fail"]);
+    assert.deepEqual([1, 2, 3, 4, 9].map(chat.backoff), [2000, 5000, 15000, 60000, 60000]);
+});
+
+test("a send goes through the outbox: answered now, waiting to try again, held, failed, offline, and dropped by its push", async () => {
+    const stored = new Map();
+    const savedStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: (key) => (stored.has(key) ? stored.get(key) : null), setItem: (key, value) => stored.set(key, String(value)),
+        removeItem: (key) => stored.delete(key) };
+    const original = moqui.request;
+    const answers = [];
+    const requests = [];
+    moqui.request = (url, options) => {
+        requests.push({ url, params: options.params });
+        const answer = answers.shift() || { json: { eventSeq: 9, event: { eventSeq: 9 } } };
+        return answer.status != null ? Promise.reject(answer) : Promise.resolve(answer);
+    };
+    const sent = [];
+    const off = chat.on("sent", (payload) => sent.push(payload.clientRef));
+    chat.state = freshState();
+    chat.me = "ann";
+    chat.started = true;
+    const item = (clientRef, more) => Object.assign({ clientRef, chatRoomId: "R1", url: "/apps/chat/send", params: { body: "<p>hi</p>" }, text: "hi" }, more);
+    try {
+        // answered now: gone from the outbox, and told
+        const now = await chat.send(item("c1"));
+        assert.equal(now.sent, true);
+        assert.equal(requests[0].params.clientRef, "c1");
+        assert.equal(requests[0].params.chatRoomId, "R1");
+        assert.deepEqual(sent, ["c1"]);
+        assert.equal(stored.has("moqui.chat.outbox.ann"), false);
+        // no answer: it waits, kept in the page's storage, and is not due at once
+        answers.push({ status: 0 });
+        const waiting = await chat.send(item("c2"));
+        assert.equal(waiting.queued, true);
+        const kept = JSON.parse(stored.get("moqui.chat.outbox.ann"));
+        assert.equal(kept[0].clientRef, "c2");
+        assert.equal(kept[0].attempts, 1);
+        assert.ok(kept[0].nextDate > Date.now() + 1000, "the next try in 2 seconds");
+        assert.equal(chat.pendingIn("R1", null)[0].status, "waiting");
+        await chat.flush(false);
+        assert.equal(requests.length, 2, "not due yet");
+        await chat.flush(true);
+        assert.equal(requests.length, 3);
+        assert.deepEqual(chat.state.outbox, []);
+        // signed out: held until the next flush that sends all
+        answers.push({ status: 403 });
+        await chat.send(item("c3"));
+        assert.equal(chat.state.outbox[0].status, "held");
+        await chat.flush(false);
+        assert.equal(requests.length, 4);
+        answers.push({ status: 400, json: { errors: ["Join the room to post in it"] } });
+        await chat.flush(true);
+        assert.equal(chat.state.outbox[0].status, "failed");
+        assert.equal(chat.state.outbox[0].error, "Join the room to post in it");
+        await chat.flush(true);
+        assert.equal(requests.length, 5, "a failed one waits for Retry");
+        await chat.retry("c3");
+        assert.deepEqual(chat.state.outbox, []);
+        // offline: kept, not asked; back online it goes; a thread's item is the thread's
+        chat.state.online = false;
+        const offline = await chat.send(item("c4", { threadRootEventSeq: 7 }));
+        assert.equal(offline.queued, true);
+        assert.equal(requests.length, 6);
+        assert.equal(chat.pendingIn("R1", 7).length, 1);
+        assert.equal(chat.pendingIn("R1", null).length, 0);
+        await chat.flush(true);
+        assert.equal(requests.length, 6, "not while offline");
+        // its push came first (another tab sent it): it waits no more
+        chat.receive(push("chatRoom:R1", { kind: "event", chatRoomId: "R1", event: event({ eventSeq: 11, senderUserId: "ann", clientRef: "c4" }) }));
+        assert.deepEqual(chat.state.outbox, []);
+        chat.state.online = true;
+        // too large for the outbox: refused
+        await assert.rejects(chat.send(item("c5", { params: { body: "x".repeat(70 * 1024) } })), (err) => err.outbox === true);
+    } finally {
+        off();
+        moqui.request = original;
+        chat.started = false;
+        if (savedStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = savedStorage;
+    }
+});
+
+test("an agent's room card: any member decides an approval, only the requester answers or opens the run", () => {
+    const approval = event({ eventSeq: 9, senderUserId: "_AGENT_ASSIST_", assist: { kind: "approval", runId: "R9", conversationId: "C9", itemId: "A1",
+        requesterUserId: "ann", requesterName: "Ann", title: "Approval needed", summary: "Status: Approved → Held",
+        rows: [{ field: "statusId", label: "Status", current: "Approved", proposed: "Held" }], state: "pending" } });
+    const forBob = chat.assistCard(approval, "bob");
+    assert.equal(forBob.kind, "approval");
+    assert.ok(forBob.canDecide, "another member may decide (answered question 12)");
+    assert.ok(!forBob.canViewRun, "the run is the requester's");
+    assert.equal(forBob.askedBy, "Asked by Ann");
+    assert.deepEqual(forBob.rows, [{ label: "Status", current: "Approved", proposed: "Held" }]);
+    assert.ok(chat.assistCard(approval, "ann").canViewRun);
+    const decided = event({ assist: Object.assign({}, approval.assist, { state: "executed", decidedBy: { userId: "bob", name: "Bob" } }) });
+    const shown = chat.assistCard(decided, "ann");
+    assert.ok(!shown.canDecide && !shown.pending);
+    assert.equal(shown.decided, "Done by Bob");
+    const question = event({ assist: { kind: "question", itemId: "Q1", requesterUserId: "ann", requesterName: "Ann", summary: "Which one?",
+        options: [{ label: "First", recommended: true }, { label: "Second" }], state: "pending" } });
+    assert.deepEqual(chat.assistCard(question, "ann").options, ["First", "Second"]);
+    assert.ok(chat.assistCard(question, "ann").canAnswer);
+    assert.ok(!chat.assistCard(question, "bob").canAnswer);
+    assert.equal(chat.assistCard(question, "bob").waiting, "Waiting for Ann");
+    assert.equal(chat.assistCard(event({}), "ann"), null, "a message with no card");
+    const reply = chat.assistCard(event({ assist: { kind: "reply", runId: "R9", conversationId: "C9", requesterUserId: "ann" } }), "ann");
+    assert.equal(reply.state, "done");
+    assert.ok(reply.canViewRun);
+});
+
+test("a card's button posts to chatAssistCard; an agent's typing carries its status text", async () => {
+    const original = moqui.request;
+    const sent = [];
+    moqui.request = (url, options) => { sent.push({ url, options }); return Promise.resolve({ json: { status: "approved" } }); };
+    const saved = chat.vm;
+    chat.vm = { appRootPath: "/qapps" };
+    const answer = await chat.decideCard("R1", 9, { decision: "approve" });
+    assert.deepEqual(answer, { status: "approved" });
+    assert.equal(sent[0].url, "/qapps/chatAssistCard");
+    assert.deepEqual(sent[0].options, { method: "POST", params: { chatRoomId: "R1", eventSeq: 9, decision: "approve" } });
+    moqui.request = () => Promise.reject({ status: 409, json: { errors: "this approval was decided already" } });
+    assert.deepEqual(await chat.decideCard("R1", 9, { decision: "reject" }), { error: "this approval was decided already" });
+    moqui.request = original;
+    chat.vm = saved;
+    const state = freshState();
+    const typed = chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "_AGENT_ASSIST_", typing: true,
+        statusText: "Searching…" }), "ann", 1000);
+    assert.equal(typed.statusText, "Searching…");
+    assert.equal(state.typingText.R1._AGENT_ASSIST_, "Searching…");
+    chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "_AGENT_ASSIST_", typing: false }), "ann", 1100);
+    assert.equal(state.typingText.R1._AGENT_ASSIST_, undefined);
 });

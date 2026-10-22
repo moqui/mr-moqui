@@ -149,7 +149,7 @@ impl ParameterDef {
         let name = node.attribute("name").filter(|text| !text.is_empty())?;
         Some(Self {
             name,
-            required: node.attribute("required").as_deref() == Some("true"),
+            required: node.attribute_is("required", "true"),
             from: node.attribute("from").filter(|text| !text.is_empty()),
             value: node.attribute("value").filter(|text| !text.is_empty()),
         })
@@ -214,8 +214,8 @@ impl ResponseDef {
             condition,
             parameters: parameters_of(node),
             parameter_map,
-            save_current_screen: node.attribute("save-current-screen").as_deref() == Some("true"),
-            save_parameters: node.attribute("save-parameters").as_deref() == Some("true"),
+            save_current_screen: node.attribute_is("save-current-screen", "true"),
+            save_parameters: node.attribute_is("save-parameters", "true"),
         })
     }
 
@@ -250,10 +250,13 @@ pub struct TransitionDef {
     pub parameters: Vec<ParameterDef>,
     pub path_parameters: Vec<String>,
     pub condition: Option<Condition>,
-    /// The `service-call` shortcut first, then `actions`.
+    /// The `service-call` shortcut, compiled on its own. Its script returns when the call leaves an
+    /// error, and that return must not skip [`Self::actions`].
+    pub service_actions: Option<Actions>,
+    /// The transition's `<actions>`. They run even when there is already an error.
     pub actions: Option<Actions>,
-    /// Set when the transition has actions that did not compile. The screen still loads, and
-    /// running the transition fails with this message.
+    /// Set when either part did not compile. The screen still loads, and running the transition
+    /// fails with this message before either part runs.
     pub actions_error: Option<String>,
     pub single_service: Option<String>,
     pub conditional_responses: Vec<ResponseDef>,
@@ -272,6 +275,16 @@ pub enum Implicit {
     FormSelectColumns,
     FormSaveFind,
     ScreenDoc,
+}
+
+/// The children as one `<actions>` script. An empty list is still a script: an `<actions>` element
+/// with nothing in it is a transition that has actions.
+fn compile_actions(children: Vec<MNode>, label: &str) -> Result<Actions, String> {
+    let wrapper = MNode::new("actions");
+    for child in children {
+        wrapper.append_node(child);
+    }
+    Actions::from_xml(wrapper.write_string(), label).map_err(|err| err.message().to_string())
 }
 
 impl TransitionDef {
@@ -297,6 +310,7 @@ impl TransitionDef {
             parameters: Vec::new(),
             path_parameters: Vec::new(),
             condition: None,
+            service_actions: None,
             actions: None,
             actions_error: None,
             single_service: None,
@@ -324,51 +338,49 @@ impl TransitionDef {
             .map(|text| text.to_ascii_lowercase())
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| "any".to_string());
-        let mut children = Vec::new();
         let mut single_service = None;
+        let mut service_actions = None;
+        let mut actions = None;
+        let mut actions_error = None;
+        let mut has_actions = false;
         // The service-call shortcut defaults in-map, out-map, and multi as the Java screen does.
+        // It is compiled apart from `<actions>`: the generated call returns on an error, and that
+        // return would skip the actions if they were one script (ScreenDefinition.groovy).
         if let Some(call) = node.first_named("service-call") {
+            has_actions = true;
             let call = call.deep_copy();
             for (key, value) in [("in-map", "true"), ("out-map", "context")] {
                 if call.attribute(key).is_none_or(|text| text.is_empty()) {
                     call.set_attribute(key, value);
                 }
             }
-            if call.attribute("multi").is_none_or(|text| text.is_empty())
-                && call.attribute("async").as_deref() != Some("true")
-            {
+            if call.attribute("multi").is_none_or(|text| text.is_empty()) && !call.attribute_is("async", "true") {
                 call.set_attribute("multi", "parameter");
             }
             single_service = call.attribute("name").filter(|text| !text.is_empty());
-            children.push(call);
-        }
-        let mut has_actions = !children.is_empty();
-        if let Some(actions) = node.first_named("actions") {
-            has_actions = true;
-            children.extend(actions.children().iter().map(MNode::deep_copy));
-        }
-        let mut actions_error = None;
-        let actions = if has_actions {
-            let wrapper = MNode::new("actions");
-            for child in children {
-                wrapper.append_node(child);
+            match compile_actions(vec![call], &label) {
+                Ok(compiled) => service_actions = Some(compiled),
+                Err(message) => actions_error = Some(message),
             }
-            match Actions::from_xml(wrapper.write_string(), &label) {
-                Ok(actions) => Some(actions),
-                Err(err) => {
-                    actions_error = Some(err.message().to_string());
-                    None
+        }
+        if let Some(actions_node) = node.first_named("actions") {
+            has_actions = true;
+            if actions_error.is_none() {
+                let children = actions_node.children().iter().map(MNode::deep_copy).collect();
+                match compile_actions(children, &label) {
+                    Ok(compiled) => actions = Some(compiled),
+                    Err(message) => {
+                        actions_error = Some(message);
+                        service_actions = None;
+                    }
                 }
             }
-        } else {
-            None
-        };
+        }
         let condition = match node.first_named("condition") {
             Some(condition) => Condition::from_element(&condition, &format!("{label} condition"))?,
             None => None,
         };
-        let runs_something = has_actions;
-        let read_only = !runs_something || node.attribute("read-only").as_deref() == Some("true");
+        let read_only = !has_actions || node.attribute_is("read-only", "true");
         let authz_explicit = node.attribute("authz-action").is_some_and(|text| !text.is_empty());
         let authz_action = match node.attribute("authz-action").filter(|text| !text.is_empty()) {
             Some(action) => action,
@@ -392,7 +404,7 @@ impl TransitionDef {
             name,
             method,
             screen_location: screen_location.to_string(),
-            begin_transaction: node.attribute("begin-transaction").as_deref() != Some("false"),
+            begin_transaction: !node.attribute_is("begin-transaction", "false"),
             read_only,
             require_session_token: flag(node.attribute("require-session-token")),
             authz_action,
@@ -405,6 +417,7 @@ impl TransitionDef {
                 .filter(|text| !text.is_empty())
                 .collect(),
             condition,
+            service_actions,
             actions,
             actions_error,
             single_service,
@@ -519,7 +532,7 @@ impl SectionDef {
                 list: node.attribute("list").unwrap_or_default(),
                 entry: node.attribute("entry").unwrap_or_default(),
                 key: node.attribute("key").filter(|text| !text.is_empty()),
-                paginate: node.attribute("paginate").as_deref() == Some("true"),
+                paginate: node.attribute_is("paginate", "true"),
             },
             _ => SectionKind::Section,
         };
@@ -688,7 +701,8 @@ impl ScreenDef {
         self.transitions.iter().any(|transition| transition.name == name)
     }
 
-    /// A transition by name for an HTTP method. A method-specific transition wins over `any`.
+    /// A transition by name for an HTTP method. A method-specific transition wins over `any`. With no method, as for a
+    /// link, `any` comes first, then `get`, then the first declared; Java finds none there (Parity-Diffs P7-11).
     pub fn transition(&self, name: &str, method: Option<&str>) -> Option<&TransitionDef> {
         let method = method.map(str::to_ascii_lowercase).unwrap_or_default();
         self.transitions
@@ -698,6 +712,11 @@ impl ScreenDef {
                 self.transitions
                     .iter()
                     .find(|item| item.name == name && item.method == "any")
+            })
+            .or_else(|| {
+                self.transitions
+                    .iter()
+                    .find(|item| item.name == name && method.is_empty() && item.method == "get")
             })
             .or_else(|| {
                 self.transitions
@@ -768,7 +787,7 @@ impl ScreenDef {
             modified: resource.last_modified(),
         }];
         let node = MNode::parse_text(location, &resource.read_text()?).map_err(Error::from)?;
-        if node.name() != "screen" {
+        if !node.has_name("screen") {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
@@ -806,10 +825,10 @@ impl ScreenDef {
         let web = WebSettings {
             allow_web_request: web
                 .as_ref()
-                .is_none_or(|web| web.attribute("allow-web-request").as_deref() != Some("false")),
+                .is_none_or(|web| !web.attribute_is("allow-web-request", "false")),
             require_encryption: web
                 .as_ref()
-                .is_none_or(|web| web.attribute("require-encryption").as_deref() != Some("false")),
+                .is_none_or(|web| !web.attribute_is("require-encryption", "false")),
             mime_type: web
                 .as_ref()
                 .and_then(|web| web.attribute("mime-type"))
@@ -913,7 +932,7 @@ impl ScreenDef {
                             FormDef {
                                 name: name.clone(),
                                 list: kind == "form-list",
-                                dynamic: item.attribute("dynamic").as_deref() == Some("true"),
+                                dynamic: item.attribute_is("dynamic", "true"),
                                 node: XmlFragment::of(&item),
                                 extensions: extended
                                     .forms
@@ -967,17 +986,17 @@ impl ScreenDef {
             location: location.to_string(),
             screen_name,
             authentication: Authentication::of(node.attribute("require-authentication")),
-            standalone: node.attribute("standalone").as_deref() == Some("true"),
-            allow_extra_path: node.attribute("allow-extra-path").as_deref() == Some("true"),
-            begin_transaction: node.attribute("begin-transaction").as_deref() == Some("true"),
+            standalone: node.attribute_is("standalone", "true"),
+            allow_extra_path: node.attribute_is("allow-extra-path", "true"),
+            begin_transaction: node.attribute_is("begin-transaction", "true"),
             transaction_timeout: int_attr("transaction-timeout"),
-            include_child_content: node.attribute("include-child-content").as_deref() == Some("true"),
-            history: node.attribute("history").as_deref() != Some("false"),
-            track_artifact_hit: node.attribute("track-artifact-hit").as_deref() != Some("false"),
+            include_child_content: node.attribute_is("include-child-content", "true"),
+            history: !node.attribute_is("history", "false"),
+            track_artifact_hit: !node.attribute_is("track-artifact-hit", "false"),
             login_path: node.attribute("login-path").filter(|text| !text.is_empty()),
             default_menu_title,
             default_menu_index: int_attr("default-menu-index"),
-            default_menu_include: node.attribute("default-menu-include").as_deref() != Some("false"),
+            default_menu_include: !node.attribute_is("default-menu-include", "false"),
             menu_image: node.attribute("menu-image").filter(|text| !text.is_empty()),
             menu_image_type: node
                 .attribute("menu-image-type")
@@ -1105,9 +1124,7 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
         };
         let mut matches = Vec::new();
         breadth_first(screen, &mut |candidate| {
-            if candidate.attribute("name").as_deref() == Some(target.as_str())
-                || candidate.attribute("id").as_deref() == Some(target.as_str())
-            {
+            if candidate.attribute_is("name", &target) || candidate.attribute_is("id", &target) {
                 matches.push(candidate.clone());
             }
         });
@@ -1119,7 +1136,7 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             let Some(mut index) = parent.index_of(&matched) else {
                 continue;
             };
-            if widgets_extend.attribute("where").as_deref() == Some("after") {
+            if widgets_extend.attribute_is("where", "after") {
                 index += 1;
             }
             for (offset, child) in widgets_extend.children().iter().enumerate() {
@@ -1140,22 +1157,25 @@ fn breadth_first(root: &MNode, visit: &mut dyn FnMut(&MNode)) {
 /// Every element below `root` that is a section, form, tree, section-include, or subscreens
 /// panel or menu, in document order. Nested ones are included.
 fn descendants(root: &MNode, out: &mut Vec<MNode>) {
-    for child in root.children() {
-        if matches!(
-            child.name().as_str(),
-            "section"
-                | "section-iterate"
-                | "section-include"
-                | "form-single"
-                | "form-list"
-                | "tree"
-                | "subscreens-panel"
-                | "subscreens-menu"
-        ) {
+    root.for_each_child(|child| {
+        let wanted = child.with_name(|name| {
+            matches!(
+                name,
+                "section"
+                    | "section-iterate"
+                    | "section-include"
+                    | "form-single"
+                    | "form-list"
+                    | "tree"
+                    | "subscreens-panel"
+                    | "subscreens-menu"
+            )
+        });
+        if wanted {
             out.push(child.clone());
         }
-        descendants(&child, out);
-    }
+        descendants(child, out);
+    });
 }
 
 /// A screen whose widgets are only the subscreens placeholders renders the same every time.
@@ -1310,7 +1330,7 @@ fn load_subscreens(
             let Ok(root) = MNode::parse_root_only(entry.location(), &entry.read_text()?) else {
                 continue;
             };
-            if root.name() != "screen" {
+            if !root.has_name("screen") {
                 continue;
             }
             let item_location = format!("{base}/{file}");
@@ -1324,7 +1344,7 @@ fn load_subscreens(
                 menu_index: root
                     .attribute("default-menu-index")
                     .and_then(|text| text.trim().parse().ok()),
-                menu_include: root.attribute("default-menu-include").as_deref() != Some("false"),
+                menu_include: !root.attribute_is("default-menu-include", "false"),
                 location: item_location,
                 no_sub_path: false,
                 disable_when: None,
@@ -1334,7 +1354,7 @@ fn load_subscreens(
     }
     if let Some(element) = &element {
         subscreens.default_item = element.attribute("default-item").filter(|text| !text.is_empty());
-        subscreens.always_use_full_path = element.attribute("always-use-full-path").as_deref() == Some("true");
+        subscreens.always_use_full_path = element.attribute_is("always-use-full-path", "true");
         for item in element.children_named("conditional-default") {
             let (condition, name) = (
                 item.attribute("condition").unwrap_or_default(),
@@ -1467,7 +1487,7 @@ fn subscreens_item_of(
             .or_else(|| item.attribute("include-in-menu"))
             .as_deref()
             != Some("false"),
-        no_sub_path: item.attribute("no-sub-path").as_deref() == Some("true"),
+        no_sub_path: item.attribute_is("no-sub-path", "true"),
         disable_when: item.attribute("disable-when").filter(|text| !text.is_empty()),
         user_group_id: None,
         location,
@@ -1766,5 +1786,40 @@ mod tests {
             "a lookup with no method takes names only"
         );
         assert!(def.transition("report_pdf", Some("get")).is_none());
+    }
+
+    #[test]
+    fn a_lookup_with_no_method_prefers_any_then_get_over_the_first_declared() {
+        let context = ExecutionContextFactory::test_context();
+        let facade = ScreenFacade::of(context.factory());
+        let node = MNode::parse_text(
+            "T.xml",
+            r#"<screen><transition name="image" method="post"><default-response type="none"/></transition>
+                <transition name="image" method="get" read-only="true"><default-response type="none"/></transition>
+                <transition name="oneClick" method="post"><default-response type="none"/></transition>
+                <transition name="oneClick" read-only="true"><default-response type="none"/></transition>
+                <transition name="save" method="post"><default-response type="none"/></transition></screen>"#,
+        )
+        .unwrap();
+        let def = ScreenDef::build(
+            &facade,
+            context.factory(),
+            &node,
+            "T.xml",
+            0,
+            Extended::default(),
+            Vec::new(),
+        )
+        .unwrap();
+        let method = |name: &str, request: Option<&str>| def.transition(name, request).map(|t| t.method.as_str());
+        assert_eq!(method("image", None), Some("get"));
+        assert_eq!(method("image", Some("post")), Some("post"));
+        assert_eq!(method("oneClick", None), Some("any"));
+        assert_eq!(method("oneClick", Some("post")), Some("post"));
+        assert_eq!(
+            method("save", None),
+            Some("post"),
+            "the first declared is the last fallback"
+        );
     }
 }

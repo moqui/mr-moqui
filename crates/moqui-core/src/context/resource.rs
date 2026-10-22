@@ -506,6 +506,7 @@ impl ResourceFacade {
     /// Write bytes to a file, creating its parent directories: a `dbresource://` row, or a file under the
     /// `file`, `runtime`, or `component` schemes.
     pub fn write_bytes(&self, location: &str, bytes: &[u8]) -> Result<(), Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes(location, bytes);
         }
@@ -587,6 +588,7 @@ impl ResourceFacade {
     /// Write several files together: a change set of each repository (one commit for the files of a `git://`
     /// repository), else each as [`ResourceFacade::write_bytes`] does. A file that is not written is an error.
     pub fn write_many(&self, files: &[(String, Vec<u8>)]) -> Result<(), Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, files.first().map_or("", |(location, _)| location.as_str()))?;
         let mut by_root: indexmap::IndexMap<String, Vec<ResourceChange>> = indexmap::IndexMap::new();
         for (location, bytes) in files {
             let location = strip_hash(location);
@@ -622,6 +624,7 @@ impl ResourceFacade {
     /// Write a file from `input` (of `size` bytes, when known), creating its parent directories: an upload streamed
     /// to storage, never all in memory where the storage can take it as it is read (a file, a `git://` content blob).
     pub fn write_from(&self, location: &str, input: &mut dyn std::io::Read, size: Option<u64>) -> Result<(), Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_from(location, input, size);
         }
@@ -711,6 +714,7 @@ impl ResourceFacade {
 
     /// Create a directory and any missing parents.
     pub fn make_directory(&self, location: &str) -> Result<(), Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
         if let Some(provider) = self.provider(location) {
             return provider.make_directory(location);
         }
@@ -723,6 +727,7 @@ impl ResourceFacade {
 
     /// Delete a file, or an empty directory. False when nothing is there.
     pub fn delete(&self, location: &str) -> Result<bool, Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
         if let Some(provider) = self.provider(location) {
             return provider.delete(location);
         }
@@ -748,6 +753,7 @@ impl ResourceFacade {
 
     /// Move a file or directory to a new location of the same kind of storage.
     pub fn rename(&self, location: &str, new_location: &str) -> Result<(), Error> {
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
         if let Some(provider) = self.provider(location) {
             if scheme_of(location) != scheme_of(new_location) {
                 return Err(Error::new("cannot rename between resource schemes"));

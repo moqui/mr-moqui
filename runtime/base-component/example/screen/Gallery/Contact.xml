@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A plain edit form whose Save checks what it is given: a name is required and an email must look like one, refused with
+    validation errors on their fields as an app's save is. Assist's Edit in screen hands a proposed write on it to the user
+    (docs/Assist.md, the hand-off; the browser smoke in crates/moqui-host/tests/gate3_browser.rs). Nothing is written: a
+    good save comes back as a message. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Contact" default-menu-include="false">
+
+    <transition name="saveContact"><actions><script><![CDATA[
+        if (!contactName || !String(contactName).trim()) ec.message.addValidationError(null, 'contactName', null, 'Enter the name', null)
+        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(emailAddress))) ec.message.addValidationError(null, 'emailAddress', null, 'Enter an email address', null)
+        if (ec.message.hasError()) return
+        ec.message.addMessage('Contact ' + String(contactName).trim() + ' saved (gallery demo: nothing is written)', 'success')
+    ]]></script></actions><default-response url="."/></transition>
+
+    <actions>
+        <set field="contact" from="{contactName: 'Jane Doe', emailAddress: 'jane.doe@acme.example', phone: '+1 555 0100'}"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Contact"/><box-body>
+            <form-single name="EditContact" transition="saveContact" map="contact">
+                <field name="contactName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="emailAddress"><default-field title="Email"><text-line size="30"/></default-field></field>
+                <field name="phone"><default-field title="Phone"><text-line size="20"/></default-field></field>
+                <field name="saveButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

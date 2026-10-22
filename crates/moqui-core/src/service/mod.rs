@@ -19,10 +19,13 @@ pub(crate) mod rust_services;
 mod backup;
 pub(crate) mod call;
 mod chat;
+mod chat_link;
 #[cfg(test)]
 mod chat_tests;
+mod collab;
 mod content;
 pub mod coverage;
+mod dav;
 pub(crate) mod define;
 mod eca;
 mod eca_rules;
@@ -33,9 +36,13 @@ mod files_tests;
 #[cfg(feature = "git")]
 mod git;
 pub(crate) mod git_eca;
+#[cfg(feature = "git")]
+mod git_hosting;
 #[cfg(feature = "image")]
 mod images;
 pub mod info;
+#[cfg(test)]
+mod fence_tests;
 #[cfg(test)]
 mod inline_tests;
 mod jobs;
@@ -54,7 +61,7 @@ mod security_checks;
 pub(crate) mod semaphore;
 pub(crate) mod shell;
 #[cfg(feature = "xlsx")]
-mod spreadsheet;
+pub(crate) mod spreadsheet;
 mod sso;
 mod system_sync;
 mod tools;
@@ -70,9 +77,10 @@ pub use call::{
 };
 pub use define::load_definitions;
 pub use define::{check, configured_service_files, lint};
-pub(crate) use define::{input_hints, input_js_rules, merge_param, VALIDATE_NUMBER, VALIDATE_NUMBER_INT};
+pub(crate) use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
+pub(crate) use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
 pub use jobs::{run_job_now, PassReport};
@@ -84,11 +92,15 @@ pub(crate) use mail::{SharedSinkGuard, SinkGuard};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
-pub use request_pool::{caps, check_serve_caps, RequestPool};
+pub use request_pool::{caps, check_serve_caps, spare_connections, RequestPool};
 #[cfg(test)]
 pub(crate) use rest::install;
 pub(crate) use rest::openapi_document;
 pub use rest::{resolve_service as resolve_rest_service, root_resource_infos, run};
+#[cfg(test)]
+pub(crate) use rest::install as install_rest;
+#[cfg(all(test, feature = "git"))]
+pub(crate) use git_hosting::signature as git_hosting_signature;
 pub use seca::run_seca_rules;
 pub use security_checks::security_checks_run;
 pub(crate) use security_checks::{assert_privileged_group_membership, assert_sealed_permission_grant};
@@ -97,7 +109,7 @@ pub(crate) use validate::clean_safe_html;
 pub use validate::validate;
 pub(crate) use validate::{auto_entity_name, auto_fields};
 
-/// Start the mail client's IMAP IDLE workers (`email_idle_enabled`, on the scheduler's tick). The host calls it once,
+/// Start the mail client's IMAP IDLE workers (`email-client` `idle-enabled`, on the scheduler's tick). The host calls it once,
 /// after the entity facade is installed; a host built without mail does nothing.
 pub fn start_mail_idle(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>) {
     mail::start_idle(factory);

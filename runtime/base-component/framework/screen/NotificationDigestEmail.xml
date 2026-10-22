@@ -14,8 +14,9 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
     <!-- The daily notification digest (org.moqui.impl.NotificationServices.send#UserNotificationDigest): notificationList
-        (title, link, topicDescription, sentText, type), notificationCount, userFullName. A link becomes a full URL as in
-        NotificationEmail.xml. -->
+        (title, link, topic, topicDescription, sentText, type, appName), notificationCount, userFullName. A link becomes
+        a full URL as in NotificationEmail.xml. The list is grouped by app, then topic, in first-seen order (oldest
+        first, so newest is last inside a group). An empty app name has no app heading. -->
     <actions>
         <script><![CDATA[
             let baseUrl = ''
@@ -25,12 +26,33 @@ along with this software (see the LICENSE.md file). If not, see
                 const rootUrl = ec.web.getWebappRootUrl(sri?.webappName || 'webroot', null, true, false)
                 if (rootUrl && !rootUrl.includes('localhost')) baseUrl = rootUrl
             }
-            digestRows = (notificationList || []).map((nm) => {
+            const digestRows = (notificationList || []).map((nm) => {
                 let linkUrl = nm.link || ''
                 if (linkUrl && !linkUrl.startsWith('http') && baseUrl)
                     linkUrl = baseUrl.replace(/\/$/, '') + (linkUrl.startsWith('/') ? '' : '/') + linkUrl
                 return Object.assign({}, nm, {linkUrl: linkUrl})
             })
+            // first-seen order; the Maps stay local so the template sees only appName and topics
+            const groups = []
+            const byApp = new Map()
+            for (const row of digestRows) {
+                const appName = row.appName || ''
+                let app = byApp.get(appName)
+                if (!app) {
+                    app = {appName: appName, topics: [], byTopic: new Map()}
+                    byApp.set(appName, app)
+                    groups.push(app)
+                }
+                const topicKey = row.topic || ''
+                let topic = app.byTopic.get(topicKey)
+                if (!topic) {
+                    topic = {topic: topicKey, topicDescription: row.topicDescription || topicKey, rows: []}
+                    app.byTopic.set(topicKey, topic)
+                    app.topics.push(topic)
+                }
+                topic.rows.push(row)
+            }
+            digestGroups = groups.map((app) => ({appName: app.appName, topics: app.topics}))
             digestTitle = ec.l10n.localize('Your notifications') + ' (' + (notificationCount || digestRows.length) + ')'
         ]]></script>
     </actions>
@@ -39,20 +61,34 @@ along with this software (see the LICENSE.md file). If not, see
 <html><body>
     <h2>${html(digestTitle)}</h2>
     <#if userFullName><p>${html(userFullName)}</p></#if>
-    <#list digestRows as nm>
+    <#list digestGroups as app>
+    <#if app.appName><h3>${html(app.appName)}</h3></#if>
+    <#list app.topics as topic>
+    <h4>${html(topic.topicDescription ?? "")}</h4>
+    <#list topic.rows as nm>
     <p><#if nm.linkUrl.startsWith("http")><a href="${html(nm.linkUrl)}">${html(nm.title)}</a><#else>${html(nm.title)}</#if><br>
         <small>${html(nm.topicDescription ?? "")} &#183; ${html(nm.sentText ?? "")}</small></p>
+    </#list>
+    </#list>
     </#list>
 </body></html>
         ]]></text>
         <text type="text"><![CDATA[
 ${digestTitle}
 
-<#list digestRows as nm>
-${nm.title}
-  ${nm.topicDescription ?? ""} - ${nm.sentText ?? ""}<#if nm.linkUrl>
-  ${nm.linkUrl}</#if>
+<#list digestGroups as app>
+<#if app.appName>${app.appName}
 
+</#if>
+<#list app.topics as topic>
+  ${topic.topicDescription ?? ""}
+<#list topic.rows as nm>
+    ${nm.title}
+      ${nm.topicDescription ?? ""} - ${nm.sentText ?? ""}<#if nm.linkUrl>
+      ${nm.linkUrl}</#if>
+
+</#list>
+</#list>
 </#list>
         ]]></text>
     </render-mode></widgets>

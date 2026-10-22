@@ -85,7 +85,7 @@ pub(super) fn run_sync(
     sync.update(facade)?;
 
     // The main work is in a separate transaction so it is independent of updating the status.
-    let fields: IndexMap<String, Value> = sync.fields().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let fields: IndexMap<String, Value> = sync.fields().iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
     let results = call_service(
         INTERNAL_RUN,
         pairs([
@@ -227,7 +227,7 @@ pub(super) fn put_data(
         .map(std::time::Duration::from_secs);
     let options = LoadOptions {
         dummy_fks: flag(parameters.get("dummyFks")),
-        use_try_insert: flag(parameters.get("useTryInsert")),
+        // `useTryInsert` is not read: a store is one upsert wherever that fits.
         timeout,
         // A sync partner is not an admin: the loader refuses identity-admin and secret-config records, root or
         // nested, and service elements.

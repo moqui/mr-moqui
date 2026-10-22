@@ -313,11 +313,15 @@ along with this software (see the LICENSE.md file). If not, see
             (NotificationTopicUser.digest=Y, or NotificationTopic.digestDefault=Y and no user row that says N), one email
             of their unviewed notifications on those topics sent in the last hours, that no email carried yet (neither the
             immediate email of a topic the user gets by email, nor an earlier digest); each goes in one digest at most
-            (NotificationMessageUser.digestDate). A user who cannot be signed in (disabled, terminated) or has no email
-            address is passed over; a failing user is logged and the others still get theirs.</description>
+            (NotificationMessageUser.digestDate). The job is hourly; a user is sent only in the hour of their
+            NOTIFICATION_DIGEST_HOUR preference (0–23, missing means 6) in their time zone. A user who cannot be signed
+            in (disabled, terminated) or has no email address is passed over; a failing user is logged and the others
+            still get theirs.</description>
         <in-parameters>
             <parameter name="hours" type="Integer" default="24"/>
             <parameter name="emailTemplateId" default-value="NOTIFICATION_DIGEST"/>
+            <parameter name="ignoreHour" type="Boolean" default="false"><description>When true, send whatever the
+                hour (a test). The scheduled job leaves this false.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="userCount" type="Integer"><description>The users a digest was sent to</description></parameter>
@@ -359,7 +363,8 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 try {
                     const out = ec.service.sync().name('org.moqui.impl.NotificationServices.send#UserNotificationDigest')
-                            .parameters({userId: userId, notificationMessageIdList: ids, emailTemplateId: emailTemplateId})
+                            .parameters({userId: userId, notificationMessageIdList: ids, emailTemplateId: emailTemplateId,
+                                ignoreHour: !!ignoreHour})
                             .requireNewTransaction(true).call()
                     if (ec.message.hasError()) {
                         ec.logger.error(`The notification digest of user ${userId} was not sent: ${ec.message.getErrorsString()}`)
@@ -379,14 +384,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="send" noun="UserNotificationDigest" authenticate="anonymous-all" allow-remote="false">
         <description>One user's digest, for send#NotificationDigests: with nobody signed in (the job) the session takes
-            the user's time zone and locale, so the dates are the user's; sends the template with notificationList,
-            notificationCount, userId and userFullName as its body parameters; and sets digestDate (and emailMessageId,
-            when the email is saved) on each NotificationMessageUser row it carried. A disabled or terminated account
-            gets none.</description>
+            the user's time zone and locale, so the dates are the user's (the machine's zone when the account has none);
+            sends the template with notificationList, notificationCount, userId and userFullName as its body parameters;
+            and sets digestDate (and emailMessageId, when the email is saved) on each NotificationMessageUser row it
+            carried. Unless ignoreHour, it sends only when the local hour is the user's NOTIFICATION_DIGEST_HOUR
+            (0–23, missing means 6), read from UserPreference by userId (the job is not signed in as them), and a
+            skipped hour marks nothing. A disabled or terminated account gets none.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="notificationMessageIdList" type="List" required="true"><parameter name="notificationMessageId"/></parameter>
             <parameter name="emailTemplateId" default-value="NOTIFICATION_DIGEST"/>
+            <parameter name="ignoreHour" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="sentCount" type="Integer"/>
@@ -399,7 +407,20 @@ along with this software (see the LICENSE.md file). If not, see
             // a script sees a time stamp as its epoch millis
             if (account.terminateDate && Number(ec.user.nowTimestamp) > Number(account.terminateDate)) return
             // not ec.user.internalLoginUser: that refuses an account whose password must be changed
-            if (!ec.user.userId) { ec.user.setTimeZone(account.timeZone || null); ec.user.setLocale(account.locale || null) }
+            if (!ec.user.userId) {
+                ec.user.setTimeZone(account.timeZone || ec.user.machineTimeZone)
+                ec.user.setLocale(account.locale || null)
+            }
+            // the job is not signed in as this user, so the hour is the preference row, not ec.user.getPreference
+            if (!ignoreHour) {
+                let want = 6
+                const pref = ec.entity.find('moqui.security.UserPreference').condition('userId', userId)
+                        .condition('preferenceKey', 'NOTIFICATION_DIGEST_HOUR').disableAuthz().one()
+                const parsed = parseInt(pref && pref.preferenceValue, 10)
+                if (parsed >= 0 && parsed <= 23) want = parsed
+                const nowHour = parseInt(ec.l10n.format(ec.user.nowTimestamp, 'H'), 10)
+                if (nowHour !== want) return
+            }
             const wasDisabled = ec.artifactExecution.disableAuthz()
             try {
                 const rows = Array.from(ec.entity.find('moqui.security.user.NotificationMessageByUser').condition('userId', userId)

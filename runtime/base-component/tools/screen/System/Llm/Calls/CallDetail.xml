@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One provider call, with its request and response when content logging was on (redacted): shown only for the
+    viewer's own call, or with AgentAudit, each such read logged in AgentAuditLog (get#LlmCallContent). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Call" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="callId" required="true"/>
+    <transition name="callList"><default-response url="../CallList"/></transition>
+    <transition name="modelDetail"><default-response url="../../Models/ModelDetail"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.llm.LlmCall" value-field="llmCall"/>
+        <!-- the content comes only through the service, which checks who may read it -->
+        <script>if (llmCall) { llmCall.requestJson = null; llmCall.responseJson = null }</script>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#LlmCallContent" in-map="{callId:callId}" out-map="callContent"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Call ${callId ?? ''}"/><box-toolbar>
+            <link url="modelDetail" text="Model" condition="llmCall?.modelId" parameter-map="{modelId:llmCall?.modelId}"/>
+            <link url="callList" text="All Calls"/>
+        </box-toolbar><box-body>
+            <label text="${callContent?.reason ?? ''}" type="p" condition="!callContent?.contentShown"/>
+            <form-single name="CallDetail" map="llmCall">
+                <auto-fields-entity entity-name="moqui.llm.LlmCall" field-type="display"/>
+                <field name="requestJson"><default-field title="Request"><display text="${callContent?.requestJson ?? ''}"/></default-field></field>
+                <field name="responseJson"><default-field title="Response"><display text="${callContent?.responseJson ?? ''}"/></default-field></field>
+                <field-layout>
+                    <field-row><field-ref name="callId"/><field-ref name="startDate"/></field-row>
+                    <field-row><field-ref name="userId"/><field-ref name="source"/></field-row>
+                    <field-row><field-ref name="featureId"/><field-ref name="runId"/></field-row>
+                    <field-row><field-ref name="modelId"/><field-ref name="endpointId"/></field-row>
+                    <field-row><field-ref name="providerModel"/><field-ref name="protocol"/></field-row>
+                    <field-row><field-ref name="httpStatus"/><field-ref name="finishReason"/></field-row>
+                    <field-row><field-ref name="errorClass"/><field-ref name="attempt"/></field-row>
+                    <field-row><field-ref name="firstTokenMs"/><field-ref name="durationMs"/></field-row>
+                    <field-row><field-ref name="inputTokens"/><field-ref name="cachedInputTokens"/></field-row>
+                    <field-row><field-ref name="cacheWriteTokens"/><field-ref name="outputTokens"/></field-row>
+                    <field-row><field-ref name="reasoningTokens"/><field-ref name="cost"/></field-row>
+                    <fields-not-referenced/>
+                </field-layout>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

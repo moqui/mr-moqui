@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-cut","object":"chat.completion.chunk","created":1792500600,"model":"qwen3.8-27b","choices":[{"index":0,"delta":{"role":"assistant","content":"The orders are"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-cut","object":"chat.completion.chunk","created":1792500600,"model":"qwen3.8-27b","choices":[{"index":0,"delta":{"content":" listed in"},"finish_reason":null}]}
+

@@ -699,6 +699,9 @@ along with this software (see the LICENSE.md file). If not, see
             own sign-in; empty for the same sign-in as the store</description></field>
         <field name="smtpPassword" type="text-medium" encrypt="true" enable-audit-log="update"><description>The password
             of smtpUsername, encrypted; empty for mailPassword. Not used without smtpUsername.</description></field>
+        <field name="webBaseUrl" type="text-medium" enable-audit-log="update"><description>Full base URL, scheme and host,
+            for links in emails sent through this server, such as https://shop.example.com. Used when the EmailTemplate has
+            no webHostName; empty for the conf webapp's host. Store emails use ProductStore.storeDomain.</description></field>
         <field name="allowedToDomains" type="text-long" enable-audit-log="update">
             <description>Comma separated list of domain names to allow (like: moqui.org, dejc.com), matched by ends with; if no value specified all domains allowed</description></field>
         <field name="authTypeEnumId" type="id"><description>How SMTP and the store sign in: EatPassword (mailUsername and
@@ -706,7 +709,8 @@ along with this software (see the LICENSE.md file). If not, see
             org.moqui.impl.EmailClientServices.start#OAuthSignIn)</description></field>
         <field name="oauthProviderEnumId" type="id"><description>The EmailOAuthProvider an EatOAuth2 server signs in with</description></field>
         <field name="oauthRefreshToken" type="text-long" encrypt="true"><description>The provider's refresh token, encrypted;
-            never answered by a service. The access tokens made from it are kept in memory only.</description></field>
+            never answered by a service. The access token made from it is kept in memory and, for the other servers of a
+            cluster, encrypted on EmailServerAccessToken.</description></field>
         <field name="oauthSignInDate" type="date-time"><description>When the user last signed in with the provider</description></field>
         <relationship type="one" title="EmailAuthType" related="moqui.basic.Enumeration" short-alias="authType">
             <key-map field-name="authTypeEnumId"/></relationship>
@@ -743,6 +747,17 @@ along with this software (see the LICENSE.md file). If not, see
                 storeProtocol="pop3" storePort="110" (std) storePort="995" (ssl-pop)
             -->
         </seed-data>
+    </entity>
+    <entity entity-name="EmailServerAccessToken" package="moqui.basic.email" use="transactional" cache="never">
+        <description>The current OAuth access token of an EatOAuth2 EmailServer, shared by the servers of a cluster so one
+            refreshes it at a time (EmailServer locked for update) and a refresh token the provider rotates is not lost.
+            Not on EmailServer, which is cached and exported. Written and deleted by the framework only.</description>
+        <field name="emailServerId" type="id" is-pk="true"/>
+        <field name="accessToken" type="text-long" encrypt="true"/>
+        <field name="expiresDate" type="date-time"/>
+        <field name="refreshTokenDigest" type="text-short"><description>The digest of the refresh token the access token
+            came from; a row of another refresh token (a new sign-in) is not used</description></field>
+        <relationship type="one" related="moqui.basic.email.EmailServer" short-alias="server"/>
     </entity>
     <entity entity-name="EmailOAuthProvider" package="moqui.basic.email" use="configuration" cache="true">
         <description>An OAuth 2.0 provider a mail account signs in with instead of a password (docs/Mail-OAuth.md;
@@ -851,7 +866,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastSyncDate" type="date-time"/>
         <field name="lastSyncError" type="text-long"/>
         <field name="syncIntervalMinutes" type="number-integer"><description>How often the sync job syncs the account;
-            empty for the email_sync_interval property (5 minutes)</description></field>
+            empty for the email-client sync-interval in the conf (5 minutes)</description></field>
         <field name="syncLockedUntil" type="date-time"><description>A sync of the account holds it until then
             (sync#EmailAccount), so no two run at once, on this server or another; the lock of a server that stopped
             ends then</description></field>
@@ -1002,7 +1017,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EmailRemoteChange" package="moqui.basic.email" use="transactional" cache="never">
         <description>A local change of an account's mail waiting to be made on its IMAP server (push#RemoteChanges). The
             sync (sync#EmailAccount) applies them in the order made, at the start and the end of each session and, with
-            the email_sync_push_now property on, right after the change commits. One that cannot be made now (the server
+            the email-client sync-push-now in the conf on, right after the change commits. One that cannot be made now (the server
             cannot be reached, the message has no UID yet) waits for the next session; one that fails ten times is dropped
             with an error logged. So a local change is not lost while the server is away.</description>
         <field name="emailRemoteChangeId" type="id" is-pk="true"/>
@@ -1060,7 +1075,8 @@ along with this software (see the LICENSE.md file). If not, see
             cc, subject, body, hasAttachment, listId, size, or header with a header name; operator contains, is, matches
             (a regular expression) or startsWith, and greater or less for the size), matched all or any by
             matchAllEnumId; actionsJson a list of {action, value} (moveToFolder, addLabel, markRead, flag, forwardTo,
-            delete, markSpam, stopProcessing; createTask and createRequest for an app to add). Rules run in sequenceNum
+            delete, markSpam, stopProcessing; or an app's action: an EmailRuleAction enumeration whose enumCode is the
+            action and whose optionValue names the service that does it, as Mantle's createRequest). Rules run in sequenceNum
             order on the account they name, or on all of the owner's when emailAccountId is empty, when the sync stores
             new Inbox mail and on demand (EmailClientServices.run#EmailRules); stopProcessing ends the run.</description>
         <field name="emailRuleId" type="id" is-pk="true"/>
@@ -1084,13 +1100,17 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.EnumerationType description="Email Rule Match" enumTypeId="EmailRuleMatch"/>
             <moqui.basic.Enumeration description="All conditions" enumId="ErmAll" enumTypeId="EmailRuleMatch" sequenceNum="1"/>
             <moqui.basic.Enumeration description="Any condition" enumId="ErmAny" enumTypeId="EmailRuleMatch" sequenceNum="2"/>
+            <!-- the actions an app adds to the rules (EmailClientServices.run#EmailRules): enumCode the action's name in
+                actionsJson, optionValue the service that does it, description its label; none in the framework -->
+            <moqui.basic.EnumerationType description="Email Rule Action (an app's)" enumTypeId="EmailRuleAction"/>
         </seed-data>
     </entity>
     <entity entity-name="EmailOutOfOffice" package="moqui.basic.email" use="transactional" cache="never">
         <description>An account's automatic reply: sent by the receiver while enabled and between the dates, once per sender
-            in replyOncePerDays; internalBodyHtml, when set, to senders of the user's own organization. replyAudienceEnumId
-            says who gets it: everyone (EraEveryone, the default), internal senders and the owner's contacts (EraContacts),
-            or internal senders only (EraInternal).</description>
+            in replyOncePerDays; internalBodyHtml, when set, to senders of the user's own organization (its users, the
+            domains of its hosted and shared accounts, and internalDomains). replyAudienceEnumId says who gets it:
+            everyone (EraEveryone, the default), internal senders and the owner's contacts (EraContacts), or internal
+            senders only (EraInternal).</description>
         <field name="emailAccountId" type="id" is-pk="true"/>
         <field name="enabled" type="text-indicator"/>
         <field name="fromDate" type="date-time"/>
@@ -1102,6 +1122,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="replyAudienceEnumId" type="id"><description>Who gets the reply; empty for everyone. A contact is a
             sender the hook service names (EmailClientServices.filter#ContactAddresses: the email_contact_service property,
             else the owner's theme value STRT_EMAIL_CONTACT_SERVICE); with no hook every sender is one.</description></field>
+        <field name="internalDomains" type="text-medium"><description>More domains whose senders are internal, comma
+            separated in lower case (example.com,example.org), beside the users of this system and the domains of the
+            hosted and shared accounts.</description></field>
         <relationship type="one" related="moqui.basic.email.EmailAccount" short-alias="account"/>
         <relationship type="one" title="EmailReplyAudience" related="moqui.basic.Enumeration" short-alias="replyAudience">
             <key-map field-name="replyAudienceEnumId"/></relationship>

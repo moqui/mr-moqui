@@ -385,7 +385,15 @@ impl HostUser {
     }
 
     /// False with no error when the password was right and a second factor is still needed.
-    fn login_user(&self, ctx: Ctx<'_>, username: String, password: String) -> rquickjs::Result<bool> {
+    /// A null or missing username or password is an empty one, a failed login as Java's: false and the message.
+    fn login_user(
+        &self,
+        ctx: Ctx<'_>,
+        username: Opt<Option<String>>,
+        password: Opt<Option<String>>,
+    ) -> rquickjs::Result<bool> {
+        let username = username.0.flatten().unwrap_or_default();
+        let password = password.0.flatten().unwrap_or_default();
         host_guard(&ctx, || match crate::user::login_user(&username, &password) {
             Ok(()) => Ok(!crate::user::session::session_attribute_flag(
                 crate::user::AUTHC_FACTOR_REQUIRED,
@@ -440,6 +448,15 @@ impl HostUser {
     #[qjs(get, rename = "timeZone")]
     fn time_zone_property(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
         host_guard(&ctx, || Ok(session_time_zone_name()))
+    }
+
+    /// The machine's time zone, the zone a ServiceJob cron is read in. A digest whose account has no
+    /// `UserAccount.timeZone` sets the session to this so the hour is the machine's. Not the server zone.
+    #[qjs(get, rename = "machineTimeZone")]
+    fn machine_time_zone(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
+        host_guard(&ctx, || {
+            Ok(crate::service::job_time_zone().iana_name().unwrap_or("UTC").to_string())
+        })
     }
 
     fn get_time_zone(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
@@ -551,7 +568,7 @@ impl HostUser {
                     Value::Map(
                         row.fields()
                             .iter()
-                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .map(|(key, value)| (key.to_string(), value.clone()))
                             .collect(),
                     )
                 }))
@@ -651,8 +668,8 @@ fn user_account_snapshot() -> Result<Option<indexmap::IndexMap<String, Value>>, 
     Ok(found.map(|row| {
         row.fields()
             .iter()
-            .filter(|(key, _)| !USER_ACCOUNT_PRIVATE.contains(&key.as_str()))
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .filter(|(key, _)| !USER_ACCOUNT_PRIVATE.contains(&&***key))
+            .map(|(key, value)| (key.to_string(), value.clone()))
             .collect()
     }))
 }
@@ -698,6 +715,39 @@ impl HostWeb {
         host_guard(&ctx, || {
             let status = u16::try_from(status).unwrap_or(500);
             crate::web::send_json_error(status, &message);
+            Ok(())
+        })
+    }
+
+    /// `sendError(errorCode, message, throwable)`: the HTML, single-quoted JSON, or plain body `Accept` asks for.
+    fn send_error<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        status: i32,
+        message: Opt<JsValue<'js>>,
+        throwable: Opt<JsValue<'js>>,
+    ) -> rquickjs::Result<()> {
+        host_guard(&ctx, || {
+            let text_of = |value: &Opt<JsValue<'js>>| -> String {
+                let Some(value) = value.0.as_ref() else {
+                    return String::new();
+                };
+                if value.is_null() || value.is_undefined() {
+                    return String::new();
+                }
+                if let Some(text) = value.as_string().and_then(|text| text.to_string().ok()) {
+                    return text;
+                }
+                value
+                    .as_object()
+                    .and_then(|object| object.get::<_, rquickjs::String>("message").ok())
+                    .and_then(|text| text.to_string().ok())
+                    .unwrap_or_default()
+            };
+            let message = text_of(&message);
+            let throwable = text_of(&throwable);
+            let status = u16::try_from(status).unwrap_or(500);
+            crate::web::send_error(status, &message, (!throwable.is_empty()).then_some(throwable.as_str()));
             Ok(())
         })
     }
@@ -928,16 +978,35 @@ impl HostWeb {
         host_guard(&ctx, || host_to_js(&ctx, map_value(crate::web::parameters())))
     }
 
-    /// The root URL of the web app. The arguments are the ones Java takes and are not needed here.
+    /// The root URL of the web app, as Java's two forms: `(requireFullUrl, useEncryption)` for the `webroot` webapp, and
+    /// `(webappName, servletContextPath, requireFullUrl, useEncryption)`; no arguments is `(false, null)`. See
+    /// [`crate::web::webapp_root_url`].
     fn get_webapp_root_url(
         &self,
         ctx: Ctx<'_>,
-        _webapp_name: Opt<JsValue<'_>>,
-        _servlet_context_path: Opt<JsValue<'_>>,
-        _include_webapp_path: Opt<JsValue<'_>>,
-        _is_secure: Opt<JsValue<'_>>,
+        first: Opt<JsValue<'_>>,
+        second: Opt<JsValue<'_>>,
+        third: Opt<JsValue<'_>>,
+        fourth: Opt<JsValue<'_>>,
     ) -> rquickjs::Result<String> {
-        host_guard(&ctx, || Ok(crate::web::base_url().trim_end_matches('/').to_string()))
+        host_guard(&ctx, || {
+            let text = |value: &Option<JsValue<'_>>| {
+                value
+                    .as_ref()
+                    .and_then(|value| value.as_string())
+                    .and_then(|text| text.to_string().ok())
+                    .filter(|text| !text.is_empty())
+            };
+            let flag = |value: &Option<JsValue<'_>>| value.as_ref().and_then(JsValue::as_bool);
+            let named = first.0.as_ref().is_some_and(JsValue::is_string);
+            let (webapp, full, encryption) = if named {
+                (text(&first.0), flag(&third.0), flag(&fourth.0))
+            } else {
+                (None, flag(&first.0), flag(&second.0))
+            };
+            let webapp = webapp.unwrap_or_else(|| "webroot".to_string());
+            Ok(crate::web::webapp_root_url(&webapp, full.unwrap_or(false), encryption))
+        })
     }
 
     /// Reads and writes go to the session, with `remove` and `put` as on the Java map.

@@ -1,0 +1,24 @@
+ ≡ Gallery ▸ Enumerations                                     Tue 14:32
+────────────────────────────────────────────────────────────────────────
+ Type
+   [                  ▾]
+ Description
+   [______________________________]
+ < Find >
+   Identifier Description                              Code           ▸
+ ──────────────────────────────────────────────────────────────────────
+   ENUM_00    Enumeration 00                           ScreenThemeType
+   ENUM_01    Enumeration 01                           CODE
+   ENUM_02    Enumeration 02                           CODE
+   ENUM_03    Description text that should be capped … CODE
+   ENUM_04    Enumeration 04                           CODE
+   ENUM_05    Enumeration 05                           CODE
+   ENUM_06    Enumeration 06                           CODE
+   ENUM_07    Enumeration 07                           CODE
+   ENUM_08    Enumeration 08                           CODE
+   ENUM_09    Enumeration 09                           CODE
+   Rows 1–10 of 20 · Page 1/2
+ Open detail
+────────────────────────────────────────────────────────────────────────
+ Type
+ F1=Help  F4=Prompt  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel

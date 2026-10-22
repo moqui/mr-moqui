@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="gc" noun="ContentBlobs" type="rust" location="moqui_core::service::content::gc_content_blobs"
             transaction="ignore">
         <description>Delete the blobs that no row refers to (by a relationship to moqui.resource.ContentBlob) and that
-            were not written or referenced again in the last blob_gc_prune_days days, and the chunks of uploads with
+            were not written or referenced again in the last resource-facade blob-gc-prune-days days, and the chunks of uploads with
             nothing written for a day (for the gc_ContentBlobs_daily ServiceJob).</description>
         <in-parameters><parameter name="dryRun" type="Boolean" default-value="false"/></in-parameters>
         <out-parameters>
@@ -31,12 +31,33 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="migrate" noun="DbResourceBlobs" type="rust" location="moqui_core::service::content::migrate_db_resource_blobs"
             transaction="ignore">
         <description>Move the dbresource files, and their past versions, written before content blobs and over
-            dbresource_blob_threshold bytes into content blobs, and record the size of the others. Run once after an
+            resource-facade dbresource-blob-threshold bytes into content blobs, and record the size of the others. Run once after an
             upgrade; it can be run again, and goes on from where a timeout stopped it.</description>
         <in-parameters><parameter name="timeoutMinutes" type="Integer" default-value="60"/></in-parameters>
         <out-parameters>
             <parameter name="movedCount" type="Integer"/>
             <parameter name="sizedCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <!-- The body is images.rs (the image feature and its decoder). A signed-in user uploads a png, gif, jpeg or webp;
+        the bytes are stored under dbresource://moqui/rich-text/ and the url is /richTextImage/<id>. -->
+    <service verb="upload" noun="RichTextImage" type="rust" location="moqui_core::service::images::upload_rich_text_image">
+        <description>Store a rich-text image (png, gif, jpeg or webp, at most 8 MiB) and return its url. An svg, a file
+            that does not decode, and a larger file are refused. The original bytes are kept.</description>
+        <in-parameters>
+            <parameter name="contentFile" type="Object" required="true"><description>The uploaded image.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="url"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="RichTextImage" type="rust" location="moqui_core::service::images::get_rich_text_image">
+        <description>The resource location of a rich-text image whose id is 32 lowercase hex digits, when the file exists.</description>
+        <in-parameters>
+            <parameter name="imageId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
         </out-parameters>
     </service>
 </services>

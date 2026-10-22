@@ -31,13 +31,13 @@
 //  - A confirmation is a data-confirm attribute the shell answers, not an inline onclick.
 //  - The background-message of a form is text. The Java client evaluated it as a JavaScript string.
 //  - An editor-type html or md text-area is an m-text-area (QEditor, or a textarea with a Marked preview); rich and rich-light are
-//    the Tiptap editor m-rich-text inside it, with mentions over the mention-transition.
+//    the Tiptap editor m-rich-text inside it, with mentions over the mention-transition and record links over the record-transition.
 //  - lookup is a text line. The Java macros had it commented out.
 //  - The navigation bar sits above the table of a form-list and not in a table row.
 //  - The mask of a text-line is converted from the Inputmask patterns (9, a, *) to Quasar mask tokens.
 //  - In fields-initial a link does not replace the _display text of a display or display-entity before it in the same field.
-//  - A form-list with views (view-board, view-calendar; not in Java) is in an m-list-views with its rows' values and a card slot
-//    per row.
+//  - A form-list with views (view-board, view-calendar, view-tree; not in Java) or a peek-url is in an m-list-views with its rows'
+//    values, a card slot per row and, for a tree, a tree row slot per row.
 (function (T, S) {
     "use strict";
 
@@ -466,16 +466,19 @@
         };
 
         // A text area; editor-type rich or rich-light is the Tiptap editor of m-rich-text (inside m-text-area), whose mentions
-        // search the mention-transition (its URL and fixed parameters).
+        // search the mention-transition and whose record links search the record-transition (each its URL and fixed parameters).
         const textArea = (n) => {
             const name = fnm(n);
             const editorType = x(at(n, "editor-type")) || null;
-            const mention = at(n, "mention-transition") && /^rich/.test(editorType || "") ? remote(n, at(n, "mention-transition")) : null;
+            const rich = /^rich/.test(editorType || "");
+            const mention = at(n, "mention-transition") && rich ? remote(n, at(n, "mention-transition")) : null;
+            const record = at(n, "record-transition") && rich ? remote(n, at(n, "record-transition")) : null;
             w("<m-text-area" + A(Object.assign({
                 name, id: fid(n), label: label(n), "editor-type": editorType, rows: at(n, "rows") || "3",
                 cols: at(n, "cols") || null, style: at(n, "cols") ? null : "width:100%;", readonly: at(n, "read-only") === "true",
                 autogrow: at(n, "autogrow") === "true", maxlength: at(n, "maxlength") || null, disable: st.disabled || null, form: owner(), tooltip: tip(n),
-                "mention-url": mention ? mention.url : null, ":mention-parameters": mention && Object.keys(mention.params).length ? js_(mention.params) : null
+                "mention-url": mention ? mention.url : null, ":mention-parameters": mention && Object.keys(mention.params).length ? js_(mention.params) : null,
+                "record-url": record ? record.url : null, ":record-parameters": record && Object.keys(record.params).length ? js_(record.params) : null
             }, bindOnly(name, sri.getFieldValueString(n)))) + "></m-text-area>");
         };
 
@@ -1211,8 +1214,9 @@
                     textDialog(n, cfg);
                 }
                 if (pdf) {
-                    const print = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "html-print").addParameter("pageNoLimit", "true");
-                    out += exportItem(print.getUrlWithParams(), L("Print"), "_blank");
+                    // the page as a PDF: /fop renders the screen at the rest of the path as html-print and sends the PDF
+                    const print = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("renderMode").removeParameter("lastStandalone").addParameter("pageNoLimit", "true");
+                    out += exportItem("/fop" + print.pathWithParams, L("Print"), "_blank");
                 }
                 out += "</q-list></q-btn-dropdown>";
             }
@@ -1247,15 +1251,44 @@
                 // The user's saved finds: a link that applies one, and buttons that update it to the current parameters,
                 // make it the screen's default or no longer, or delete it.
                 const finds = sri.getUserFormListFinds(at(n, "name"));
+                const base = sri.getScreenUrlInstance().path;
+                const activeId = ctx("formListFindId") || "";
+                const defaultId = finds.length ? sri.getUserDefaultFormListFindId() || "" : "";
+                // The active find, and a form that sends it by email on a schedule unless it is scheduled already.
+                const active = finds.find((find) => find.formListFind.formListFindId === activeId);
+                if (active) {
+                    w("<div><strong>" + t(L("Active Saved Find:")) + "</strong> " + t(active.description || activeId) +
+                        (activeId === defaultId ? ' <span class="text-info">(' + t(L("My Default")) + ")</span>" : "") + "</div>");
+                    const scheduled = sri.getFormListFindScreenScheduled(activeId);
+                    if (scheduled) {
+                        const mode = scheduled.renderMode === "xsl-fo" ? "PDF" : String(scheduled.renderMode || "csv").toUpperCase();
+                        w("<p>(" + t(L("Scheduled for")) + " " + t(mode) + " " + t(scheduled.cronDescription) + ")</p>");
+                    } else {
+                        const modes = [{ value: "xlsx", label: "XLSX" }, { value: "csv", label: "CSV" }, { value: "xsl-fo", label: "PDF" }];
+                        const crons = [{ value: "0 0 6 ? * MON-FRI", label: L("Monday-Friday") }, { value: "0 0 6 ? * *", label: L("Every Day") },
+                            { value: "0 0 6 ? * MON", label: L("Monday Only") }, { value: "0 0 6 1 * ?", label: L("Monthly") }];
+                        w("<m-form" + A({
+                            class: "form-inline", id: formId + "_SCHED", action: saveUrl, "v-slot:default": "formProps",
+                            ":fields-initial": js_({ formListFindId: activeId, screenPath: base, renderMode: "", cronSelected: "" })
+                        }) + "><m-drop-down" + A({
+                            "v-model": "formProps.fields.renderMode", name: "renderMode", label: L("Mode"), id: formId + "_SCHED_renderMode", ":options": js_(modes)
+                        }) + "></m-drop-down><m-drop-down" + A({
+                            "v-model": "formProps.fields.cronSelected", name: "cronSelected", label: L("Schedule"), id: formId + "_SCHED_cronSelected", ":options": js_(crons)
+                        }) + '></m-drop-down><q-btn dense outline no-caps' + A({
+                            type: "submit", name: "ScheduleFind", value: "Y", label: L("Schedule"),
+                            "data-confirm": L("Setup a schedule to send this saved find to you by email?")
+                        }) + "></q-btn></m-form>");
+                    }
+                    if (Object.keys(params).length) w("<hr>");
+                }
+                // Clear Current Find goes to the screen with formListFindId=_clear, which drops an applied find and does not put the user default back.
+                w('<q-list dense separator class="q-my-sm">');
+                w("<q-item><q-item-section><m-link" + A({ href: base + "?formListFindId=_clear" }) + ">" + t(L("Clear Current Find")) + "</m-link></q-item-section></q-item>");
                 if (finds.length) {
-                    const activeId = ctx("formListFindId") || "";
-                    const defaultId = sri.getUserDefaultFormListFindId() || "";
-                    const base = sri.getScreenUrlInstance().path;
-                    w('<q-list dense separator class="q-my-sm">');
                     finds.forEach((find) => {
                         const id = find.formListFind.formListFindId;
                         const label = (find.description || id) + (id === defaultId ? " (" + L("Default") + ")" : "");
-                        const fields = Object.assign({ formLocation: at(n, "name"), formListFindId: id }, params);
+                        const fields = Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), formListFindId: id }, params);
                         const button = (name, text, color) => '<q-btn dense flat no-caps size="sm"' + A({ type: "submit", name, value: name ? "Y" : null, color: color || null, label: text }) + "></q-btn>";
                         w("<q-item" + A({ active: id === activeId ? true : null }) + "><q-item-section><m-link" + A({ href: base + "?formListFindId=" + encodeURIComponent(id) }) + ">" + t(label) + "</m-link></q-item-section>" +
                             "<q-item-section side><m-form" + A({ class: "form-inline", action: saveUrl, ":fields-initial": js_(fields) }) + ">" +
@@ -1264,12 +1297,12 @@
                             (find.isByUserId === "true" ? button("DeleteFind", L("Delete"), "negative") : "") +
                             "</m-form></q-item-section></q-item>");
                     });
-                    w("</q-list>");
                 }
+                w("</q-list>");
                 if (Object.keys(params).length) {
                     w("<m-form" + A({
                         class: "form-inline", id: formId + "_NewFind", action: saveUrl, "v-slot:default": "formProps",
-                        ":fields-initial": js_(Object.assign({ formLocation: at(n, "name"), _findDescription: "" }, params))
+                        ":fields-initial": js_(Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), _findDescription: "" }, params))
                     }) + '><div class="big-row"><div class="q-my-auto big-row-item"><m-text-line' + A({
                         "v-model": "formProps.fields._findDescription", name: "_findDescription", id: formId + "_NewFind_description", label: L("Description"), size: "30", required: true
                     }) + '></m-text-line></div><div class="big-row-item"><q-btn dense unelevated no-caps color="primary" type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></div></m-form>');
@@ -1432,9 +1465,9 @@
             const checkboxAttrs = rowSel ? {
                 "checkbox-parameter": rowSel.parameter || rowSel.idField, ":checkbox-list-mode": rowSel.listMode || "false", ":checkbox-values": arr(ids)
             } : {};
-            // the board and calendar views around the list (a list split in parts with skip-start or skip-end has none)
+            // the board, calendar and tree views and the peek pane around the list (a list split in parts with skip-start or skip-end has none)
             const views = cfg.views && !skipStart && !skipEnd ? Object.assign({ valueDescs: cfg.valueDescs.r }, cfg.views) : null;
-            if (views) viewsOpen(info, n, views, formId);
+            if (views) viewsOpen(info, n, views, formId, { visible, listUrl, multi, skipForm });
 
             if (!skipStart) {
                 if (multi) {
@@ -1543,7 +1576,8 @@
                 sri.startFormListRow(info, i);
                 try {
                     st.entry = String(i);
-                    w('<div class="tr' + (ctx("_moquiRowType") === "total" ? " text-weight-bold" : "") + '">');
+                    // in a list with a peek-url the row's index, by which the peek pane finds its key
+                    w('<div class="tr' + (ctx("_moquiRowType") === "total" ? " text-weight-bold" : "") + '"' + (views && at(n, "peek-url") ? ' data-row="' + i + '"' : "") + ">");
                     if (rowSel) {
                         w('<div class="td">' + (ids[i] ? '<q-checkbox dense size="sm" :model-value="formProps.checkboxStates[' + i + ']" @update:model-value="(value, event) => { formProps.clickCheckbox(event || {}, ' + i + '); formProps.checkboxStates[' + i + '] = value; }"></q-checkbox>' : "") + "</div>");
                     }
@@ -1630,7 +1664,15 @@
         const valueText = (n) => {
             const type = n.name;
             const name = fnm(n);
-            if (["display", "display-entity", "hidden", "ignored", "password", "reset", "submit", "text-area", "link", "label"].indexOf(type) >= 0) return "";
+            // Java's widgetTextValue took display and display-entity out of this list, so the summary shows their values.
+            if (["hidden", "ignored", "password", "reset", "submit", "text-area", "link", "label"].indexOf(type) >= 0) return "";
+            if (type === "display") {
+                // the field's value (not the display's text), or the label a dynamic-transition gives it
+                const value = sri.getFieldValueString(n);
+                const transition = at(n, "dynamic-transition");
+                return transition ? sri.getFieldTransitionValue(transition, n, value, "label", false) || "" : value;
+            }
+            if (type === "display-entity") return sri.getFieldEntityValue(n) || "";
             if (type === "drop-down" || type === "check" || type === "radio") {
                 const current = type === "drop-down" ? sri.getFieldValuePlainString(fieldOf(n), "") : sri.getFieldValueString(n);
                 if (!current) return "";
@@ -1670,7 +1712,8 @@
         // values and their _display text, the board's columns and the calendar's colors, and a card_{index} slot per row: the title, badge and
         // card fields written as the list writes their cells (outside the row's form), so a card reads as its row does and its title link
         // opens the record. A column of a status board is each status of its type in sequence order (get#ListViewColumns), and the flow's
-        // transitions tell the board where a card may go.
+        // transitions tell the board where a card may go. A view-tree (style-guide §3.15) has a tree_{index} slot per row: the row's cells in
+        // a form of the row, as the list writes them, the first with the tree's indent; a peek-url is the detail the peek pane loads.
         // the key of the user's choice of view (the LIST_VIEW_ preference): the screen's path and the form's name
         const viewsKey = (n) => String(sri.getScreenUrlInstance().path || "").replace(/^\/(apps|qapps)(?=\/|$)/, "") + "#" + at(n, "name");
         const listOf = (text) => idList(text) || [];
@@ -1698,19 +1741,26 @@
             Array.from(out.flow || []).forEach((step) => { const from = String(step.statusId); (flow[from] = flow[from] || []).push(String(step.toStatusId)); });
             return { columns, flow };
         };
-        const viewsOpen = (info, n, v, formId) => {
+        const viewsOpen = (info, n, v, formId, list) => {
             const board = v.board;
             const calendar = v.calendar;
+            const tree = v.tree;
             const ab = (name) => (board ? at(board, name) : "");
             const ac = (name) => (calendar ? at(calendar, name) : "");
+            const atr = (name) => (tree ? at(tree, name) : "");
+            const rollupNames = v.rollups.map((part) => part.name);
+            const groupNames = v.groups.map((part) => part.name);
             const needed = [];
             const need = (name) => { if (name && needed.indexOf(name) < 0) needed.push(name); };
-            v.keys.board.concat(v.keys.calendar).forEach(need);
+            v.keys.board.concat(v.keys.calendar, v.keys.tree, at(n, "peek-url") ? v.keys.peek : []).forEach(need);
             need(v.title.name);
             if (v.badge) need(v.badge.name);
             v.fields.forEach((f) => need(f.name));
             ["group-field", "sum-field"].forEach((name) => need(ab(name)));
+            groupNames.forEach(need);
             ["start-field", "end-field", "title-field", "color-field", "all-day-field", "resource-field"].forEach((name) => need(ac(name)));
+            ["parent-field", "child-count-field"].forEach((name) => need(atr(name)));
+            rollupNames.forEach(need);
             const plain = (value) => (value === null || value === undefined ? null : typeof value === "object" ? String(value) : value);
             const rows = [];
             for (let i = 0; i < info.count; i++) {
@@ -1731,14 +1781,19 @@
             }
             const distinct = (list) => list.map((value) => (value === null || value === undefined ? "" : String(value))).filter((value, index, all) => value && all.indexOf(value) === index);
             const hidden = hiddenParams(n);
+            // the screen's form request, which answers the list's find (range-find, all-rows, and the tree's children by default)
+            const formRequest = () => {
+                const actions = sri.makeUrlByType("actions", "transition", null, "false");
+                return actions && !actions.getDisableLink() ? actions.path + "/" + encodeURIComponent(at(n, "name")) : null;
+            };
             let boardCfg = null;
             if (board) {
-                const group = ab("group-field");
+                const group = ab("group-field") || groupNames[0] || "";
                 const order = listOf(ab("column-order"));
                 const statusTypeId = xn(ab("status-type-id"));
                 const statusFlowId = xn(ab("status-flow-id"));
                 const isStatus = !!statusTypeId || /^statusId$|StatusId$/.test(group);
-                const url = viewTransition(ab("transition"));
+                const url = viewTransition(v.moves.board && !v.moves.board() ? "" : ab("transition"));
                 boardCfg = {
                     groupField: group, titleField: v.title.name, sumField: ab("sum-field") || null, sumFormat: ab("sum-format") || null,
                     parameterName: ab("parameter-name") || null, keyFields: v.keys.board, columnOrder: order, statusTypeId: statusTypeId || null,
@@ -1749,6 +1804,20 @@
                     const known = listViewColumns(distinct(order.concat(rows.map((row) => row[group]))), statusTypeId, isStatus, statusFlowId);
                     boardCfg.columns = known.columns;
                     boardCfg.flow = known.flow;
+                }
+                // group-fields: the Group by choice, each field with its title and, for a status field, its statuses and flow
+                if (v.groups.length) {
+                    boardCfg.groups = v.groups.map((part) => {
+                        const out = { field: part.name, label: String(part.label() || part.name) };
+                        if (part.name === group) Object.assign(out, { columns: boardCfg.columns, flow: boardCfg.flow });
+                        else if (/^statusId$|StatusId$/.test(part.name)) Object.assign(out, listViewColumns(distinct(rows.map((row) => row[part.name])), null, true, null));
+                        return out;
+                    });
+                }
+                // all-rows: every row of the find from the screen's form request (no paging, up to max-rows)
+                if (ab("all-rows") === "true") {
+                    const rowsUrl = formRequest();
+                    if (rowsUrl) Object.assign(boardCfg, { allRows: true, rowsUrl, listName: at(n, "list") || null, maxRows: Number(ab("max-rows")) > 0 ? Number(ab("max-rows")) : 500 });
                 }
             }
             let calendarCfg = null;
@@ -1771,15 +1840,34 @@
                 };
                 // range-find: the rows of the dates shown, from the screen's form request with the range added (no paging)
                 if (ac("range-find") === "true") {
-                    const actions = sri.makeUrlByType("actions", "transition", null, "false");
-                    if (actions && !actions.getDisableLink()) {
-                        Object.assign(calendarCfg, { rangeFind: true, rangeUrl: actions.path + "/" + encodeURIComponent(at(n, "name")), listName: at(n, "list") || null });
-                    }
+                    const rangeUrl = formRequest();
+                    if (rangeUrl) Object.assign(calendarCfg, { rangeFind: true, rangeUrl, listName: at(n, "list") || null });
                 }
             }
+            // the tree's columns: the list's, less the roll-up fields, which are columns of their own at the right
+            const treeCols = tree ? list.visible.map((col) => col.filter((f) => rollupNames.indexOf(f.name) < 0)).filter((col) => col.length > 0) : [];
+            let treeCfg = null;
+            if (tree) {
+                const url = viewTransition(v.moves.tree && !v.moves.tree() ? "" : atr("transition"));
+                const children = viewTransition(atr("children-transition"));
+                const ancestors = viewTransition(atr("ancestor-transition"));
+                treeCfg = {
+                    parentField: atr("parent-field"), keyFields: v.keys.tree, childCountField: atr("child-count-field") || null,
+                    rollups: v.rollups.map((part) => ({ name: part.name, label: String(part.label() || part.name) })),
+                    columns: treeCols.map((col) => ({ fields: col.map((f) => f.name), label: col.map((f) => f.title()).filter((text) => text).join(" / "), align: col[0].align || "" })),
+                    childrenUrl: children ? children.path : formRequest(), childrenParameters: children ? children.getParameterMap() : {},
+                    ancestorUrl: ancestors ? ancestors.path : null, listName: at(n, "list") || null,
+                    transition: url ? url.path : null, parameters: url ? Object.assign({}, url.getParameterMap(), hidden) : null
+                };
+            }
+            // peek-url: a row's detail, with its key and peek=true, in a pane beside the list
+            let peekCfg = null;
+            const peek = viewTransition(at(n, "peek-url"));
+            if (peek && v.keys.peek.length) peekCfg = { url: peek.path, parameters: peek.getParameterMap(), keyField: v.keys.peek[0] };
             w("<m-list-views" + A({
                 id: formId + "_views", "form-name": at(n, "name"), "form-location": viewsKey(n), ":views": js_(listOf(at(n, "views"))), ":rows": js_(rows),
-                ":board": boardCfg ? js_(boardCfg) : null, ":calendar": calendarCfg ? js_(calendarCfg) : null
+                ":board": boardCfg ? js_(boardCfg) : null, ":calendar": calendarCfg ? js_(calendarCfg) : null, ":tree": treeCfg ? js_(treeCfg) : null,
+                ":peek": peekCfg ? js_(peekCfg) : null
             }) + ">\n");
             // a card per row, outside the row's form: its cells show their text, links and dialogs as in the list
             push();
@@ -1787,7 +1875,7 @@
             const cell = (part) => {
                 if (part && part.cell) part.cell();
             };
-            for (let i = 0; i < info.count; i++) {
+            for (let i = 0; i < info.count && (board || calendar); i++) {
                 if (rows[i] && rows[i]._moquiRowType) continue;
                 sri.startFormListRow(info, i);
                 try {
@@ -1809,6 +1897,36 @@
                     sri.endFormListRow();
                 }
             }
+            // a tree row per row of the page: its cells as the list writes them, in a form of the row as the list's (none in a multi or
+            // skip-form list), the first with the tree's indent and chevron (m-tree-lead, from the slot's props)
+            const rowForm = !(list.multi || list.skipForm);
+            for (let i = 0; i < info.count && tree; i++) {
+                if (rows[i] && rows[i]._moquiRowType) continue;
+                sri.startFormListRow(info, i);
+                try {
+                    st.entry = "t" + i;
+                    Object.assign(st, { inForm: rowForm, skipForm: !rowForm, owner: rowForm ? formId + "_t" + i : "" });
+                    w('<template v-slot:tree_' + i + '="mqTree">');
+                    if (rowForm) {
+                        w("<m-form" + A({
+                            name: formId + "_t" + i, id: formId + "_t" + i, action: list.listUrl.path, "v-slot:default": "formProps",
+                            ":fields-initial": initial(rowValues(n, v.valueDescs, list.listUrl))
+                        }) + ">");
+                    }
+                    treeCols.forEach((col, c) => {
+                        w('<div class="td">');
+                        if (c === 0) w('<div class="m-tree-cell row no-wrap items-center"><m-tree-lead :t="mqTree.t"></m-tree-lead><div class="m-tree-label">');
+                        col.forEach((f) => f.cell(0));
+                        if (c === 0) w("</div></div>");
+                        w("</div>");
+                    });
+                    if (rowForm) w("</m-form>");
+                    w("</template>\n");
+                } finally {
+                    st.entry = "";
+                    sri.endFormListRow();
+                }
+            }
             pop();
         };
 
@@ -1822,6 +1940,18 @@
                 "heading-prefix": at(n, "heading-prefix") && at(n, "heading-prefix") !== "md-" ? xn(at(n, "heading-prefix")) : null,
                 "strip-title": value(x(at(n, "strip-title"))), ":wiki-links": at(n, "wiki-links") === "true" ? "true" : null, class: value(xn(at(n, "style")))
             }) + "></m-markdown>\n");
+        };
+
+        // code-view: an m-code with the code as an attribute value (never template text, so nothing in it is compiled), its language or
+        // file name and the line options. Nothing for a false condition.
+        const codeView = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return;
+            const value = (text) => (text && text !== "null" ? text : null);
+            w("<m-code" + A({
+                id: nodeId(n) || null, text: value(xn(at(n, "text"))) || "", language: value(xn(at(n, "language"))),
+                "file-name": value(xn(at(n, "file-name"))), ":line-numbers": at(n, "line-numbers") === "false" ? "false" : null,
+                "highlight-lines": value(xn(at(n, "highlight-lines"))), class: value(xn(at(n, "style")))
+            }) + "></m-code>\n");
         };
 
         // ---- the shell ----
@@ -1947,7 +2077,8 @@
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
             quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, chatter, recordFiles, splitOpen, htmlView, statusBar,
-            markdownView
+            markdownView,
+            codeView
         };
         Object.defineProperty(globalThis, "$mqQvt", { value: h, configurable: true });
     };
@@ -2230,13 +2361,15 @@
         `.replace(/\n$/, "");
     };
 
-    // The views of a form-list for the runtime (viewsOpen): the view-board and view-calendar elements, the key fields of each (key-fields,
-    // else the fields whose widget is hidden, else the row-selection id-field), and the cards' title, badge and fields with the code of
-    // their cells, as the list writes them; null without a view element.
+    // The views of a form-list for the runtime (viewsOpen): the view-board, view-calendar and view-tree elements, the key fields of each
+    // (key-fields, else the fields whose widget is hidden, else the row-selection id-field) and of the peek-url, the cards' title, badge
+    // and fields with the code of their cells, as the list writes them, and the titles of the board's group fields and the tree's roll-up
+    // fields; null without a view element or a peek-url.
     const viewsConfig = (node, fields) => {
         const board = child(node, "view-board");
         const calendar = child(node, "view-calendar");
-        if (!board && !calendar) return "null";
+        const tree = child(node, "view-tree");
+        if (!board && !calendar && !tree && !attr(node, "peek-url")) return "null";
         const of = (el, name) => (el ? attr(el, name) : "");
         const names = (text) => String(text || "").split(",").map((name) => name.trim()).filter((name) => name);
         const byName = {};
@@ -2257,11 +2390,19 @@
         const cellOf = (name) => (byName[name] ? `() => {\nconst $m = 0;\n${cellCode(byName[name])}}` : "null");
         const labelOf = (name) => { const sub = byName[name] ? S.headerSub(byName[name]) : null; return sub ? `() => ${titleCode(sub)}` : `() => ec.l10n.localize(${lit(name)})`; };
         const part = (name) => `{"name": ${lit(name)}, "label": ${labelOf(name)}, "cell": ${cellOf(name)}}`;
+        const label = (name) => `{"name": ${lit(name)}, "label": ${labelOf(name)}}`;
         const badge = of(board, "badge-field");
-        return `{"board": ${board ? bareLit(board) : "null"}, "calendar": ${calendar ? bareLit(calendar) : "null"},
-            "keys": {"board": ${JSON.stringify(keyFields(board))}, "calendar": ${JSON.stringify(keyFields(calendar))}},
+        const groupNames = [of(board, "group-field")].concat(names(of(board, "group-fields"))).filter((name, index, all) => name && all.indexOf(name) === index);
+        // move-condition: whether the view's transition is offered for this render; null when the view has none
+        const moveCode = (el, what) => (el && attr(el, "move-condition") ? `() => ${S.heldCode(attr(el, "move-condition"), `moves of the ${what} of form-list ${attr(node, "name")}`)}` : "null");
+        return `{"board": ${board ? bareLit(board) : "null"}, "calendar": ${calendar ? bareLit(calendar) : "null"}, "tree": ${tree ? bareLit(tree) : "null"},
+            "keys": {"board": ${JSON.stringify(keyFields(board))}, "calendar": ${JSON.stringify(keyFields(calendar))}, "tree": ${JSON.stringify(keyFields(tree))},
+                "peek": ${JSON.stringify(keyFields(tree || board || calendar || node))}},
             "title": ${part(titleName)}, "badge": ${badge ? part(badge) : "null"},
-            "fields": [${cardNames.filter((name) => byName[name]).map(part).join(",\n")}]}`;
+            "fields": [${cardNames.filter((name) => byName[name]).map(part).join(",\n")}],
+            "groups": [${groupNames.length > 1 ? groupNames.map(label).join(", ") : ""}],
+            "rollups": [${names(of(tree, "rollup-fields")).map(label).join(", ")}],
+            "moves": {"board": ${moveCode(board, "view-board")}, "tree": ${moveCode(tree, "view-tree")}}}`;
     };
 
     // A form-list for the runtime: its attributes and its hidden-parameters, which every form of the list posts
@@ -2284,6 +2425,8 @@
                 return `{"dialog": ${dialog ? bareLit(dialog) : "null"}, "render": () => {\n${form ? form.source : ""}}}`;
             });
             rowSelection = `{"idField": ${lit(attr(selection, "id-field"))}, "parameter": ${lit(attr(selection, "parameter"))}, "listMode": ${lit(attr(selection, "list-mode"))}, "actions": [${actions.join(",\n")}]}`;
+            // condition: checked each render; when it does not hold the list is written as one without row-selection
+            if (attr(selection, "condition")) rowSelection = `(${S.heldCode(attr(selection, "condition"), `row-selection of form-list ${attr(node, "name")}`)} ? ${rowSelection} : null)`;
         }
         const cfg = js`
             {
@@ -2440,6 +2583,7 @@
         }
     `);
 
+    // A button-menu item does not use v-close-popup: that closes an enclosing dialog as well as the menu.
     const buttonMenuMacro = stmt((node) => {
         const condition = attr(node, "condition");
         const image = child(node, "image");
@@ -2460,7 +2604,7 @@
                     // as Java: the image child in the place of the text
                     ${image ? image.source : "sri.write($text);"}
                     sri.write(($badge ? "<q-badge class=\\"on-right\\" transparent>" + $v.t($badge) + "</q-badge>" : "") + "</template><q-list>");
-                    ${linkItems.map((kid) => condGuard(attr(kid, "condition"), `sri.write("<q-item clickable v-close-popup><q-item-section>");\n${kid.source}sri.write("</q-item-section></q-item>");\n`)).join("")}
+                    ${linkItems.map((kid) => condGuard(attr(kid, "condition"), `sri.write("<q-item clickable><q-item-section>");\n${kid.source}sri.write("</q-item-section></q-item>");\n`)).join("")}
                     sri.write("</q-list></q-btn-dropdown>\\n");
                 }
             }
@@ -2537,6 +2681,7 @@
         "record-files": widget("recordFiles", false),
         "html-view": widget("htmlView", false),
         "markdown-view": widget("markdownView", false),
+        "code-view": widget("codeView", false),
         "status-bar": widget("statusBar", true),
 
         "form-single": formSingleMacro,

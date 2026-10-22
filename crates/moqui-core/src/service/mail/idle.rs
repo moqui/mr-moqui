@@ -14,13 +14,13 @@
 
 //! IMAP IDLE on the Inbox of each active account, so new mail shows at once instead of at the next sync job.
 //!
-//! A worker thread per account, at most `email_idle_max` (8) of them in a server; the others rely on the job. The host
+//! A worker thread per account, at most `email-client` `idle-max` (8) of them in a server; the others rely on the job. The host
 //! starts the pool after boot ([`start`]); the scheduler's tick (every `scheduled_job_check_time`) starts a worker
 //! for an account that became active and stops one whose account was paused, removed or changed. A worker signs in,
 //! selects INBOX and waits in IDLE, renewed every ten minutes; when the server reports EXISTS, EXPUNGE or a flag change
 //! it runs an Inbox sync (`sync#EmailAccount` with `inboxOnly`). A connection that fails is made again after 30
 //! seconds, then twice as long each time up to 15 minutes; a refused sign-in or a server without IDLE ends the worker.
-//! `email_idle_enabled=false` turns it all off, for tests and small deployments that rely on the job. The factory's
+//! `email-client idle-enabled="false"` in the conf turns it all off, for tests and small deployments that rely on the job. The factory's
 //! shutdown stops the workers: each connection is shut down, which ends its wait, and the threads are joined.
 
 use std::collections::HashMap;
@@ -76,17 +76,14 @@ fn pool(factory: &ExecutionContextFactory) -> Arc<IdlePool> {
     factory.extension(|_| IdlePool::default())
 }
 
-fn enabled() -> bool {
-    !moqui_lib::env::get_prop_or_env("email_idle_enabled")
-        .trim()
-        .eq_ignore_ascii_case("false")
+/// The conf's `email-client` `idle-enabled`, true unless it is false.
+fn enabled(factory: &ExecutionContextFactory) -> bool {
+    factory.conf_flag("email-client", "idle-enabled", true)
 }
 
+/// The conf's `email-client` `idle-max`, 8 when unset.
 fn max_workers() -> usize {
-    moqui_lib::env::get_prop_or_env("email_idle_max")
-        .trim()
-        .parse::<usize>()
-        .unwrap_or(8)
+    super::client_setting("idle-max").parse::<usize>().unwrap_or(8)
 }
 
 /// Start the IDLE workers on the scheduler's tick. Called once by the host after boot.
@@ -125,7 +122,7 @@ pub(crate) fn stop_all(factory: &ExecutionContextFactory) {
     }
 }
 
-/// The accounts IDLE should watch: active, with an IMAP server, the first `email_idle_max` by id.
+/// The accounts IDLE should watch: active, with an IMAP server, the first `email-client` `idle-max` by id.
 fn wanted_accounts(facade: &EntityFacade) -> Result<Vec<(String, String)>, moqui_lib::error::Error> {
     let rows = facade
         .find(ACCOUNT)?
@@ -160,7 +157,7 @@ pub(super) fn reconcile(factory: &Arc<ExecutionContextFactory>) {
     if pool.stopped.load(Ordering::SeqCst) {
         return;
     }
-    let wanted = if enabled() {
+    let wanted = if enabled(factory) {
         let ctx = factory.new_context();
         let _entered = ctx.enter();
         let _authz = ctx.disable_authz();

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The lessons the agents learned in use (plans/LLM-A2A-Assist.md 4.9, 7.5): each anchored to a skill, a screen path or a
+    service, proposed by the agent's remember with about, by a rejection with feedback, or by a user. A Proposed lesson is
+    its author's alone; Approve makes it every user's, Reject (or Withdraw of an approved one) its author's no more. A
+    lesson shows only with a skill load or a screen answer on its anchor, as untrusted text, never in the frozen prefix:
+    read it as text that may carry an injected instruction before approving it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Lessons" default-menu-index="11">
+
+    <transition name="reviewLesson"><service-call name="org.moqui.agent.AgentAdminServices.review#AgentLesson"/>
+        <default-response url="."/><error-response url="."/></transition>
+
+    <widgets>
+        <form-list name="LessonList" list="lessonList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.agent.AgentLesson" list="lessonList">
+                <search-form-inputs default-order-by="-createdDate"><default-parameters statusId="AglProposed"/></search-form-inputs>
+                <select-field field-name="lessonId,lessonText,skillName,screenPath,serviceName,authorUserId,triggerText,statusId,reviewerUserId,reviewedDate,createdDate"/>
+            </entity-find>
+            <field name="createdDate"><header-field title="Created" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="lessonText"><header-field title="Lesson"><text-find size="20" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="skillName"><header-field title="Skill"><text-find size="12" hide-options="true"/></header-field><default-field><display/></default-field></field>
+            <field name="screenPath"><header-field title="Screen"><text-find size="15" hide-options="true"/></header-field><default-field><display/></default-field></field>
+            <field name="serviceName"><header-field title="Service"><text-find size="15" hide-options="true"/></header-field><default-field><display/></default-field></field>
+            <field name="triggerText"><header-field title="What taught it"/><default-field><display/></default-field></field>
+            <field name="authorUserId"><header-field title="Author"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username ?? userId}"/></default-field></field>
+            <field name="statusId"><header-field title="Status"><drop-down allow-empty="true"><entity-options key="${statusId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.StatusItem"><econdition field-name="statusTypeId" value="AgentLesson"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                <default-field><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="reviewedDate"><header-field title="Reviewed"/><default-field><display/></default-field></field>
+            <field name="approve"><header-field title="Review"/><default-field>
+                <link url="reviewLesson" text="Approve" condition="statusId != 'AglApproved'" parameter-map="{lessonId:lessonId, statusId:'AglApproved'}"/>
+                <link url="reviewLesson" text="${statusId == 'AglApproved' ? 'Withdraw' : 'Reject'}" condition="statusId != 'AglRejected'"
+                        btn-type="danger" parameter-map="{lessonId:lessonId, statusId:'AglRejected'}"/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

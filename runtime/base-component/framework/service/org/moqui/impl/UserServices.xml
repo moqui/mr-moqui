@@ -1064,4 +1064,24 @@ along with this software (see the LICENSE.md file). If not, see
         <description>End one of the current user's access tokens, by its loginKey (the stored hash).</description>
         <in-parameters><parameter name="loginKey" required="true"/></in-parameters>
     </service>
+    <service verb="create" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::create_app_password">
+        <description>A new app password for the current user, for one device or app: the CalDAV, CardDAV and WebDAV
+            servers and SFTP to drives take it with the username; the web login does not. It is shown only in the out
+            parameters (20 letters and digits in groups of four); only its hash is stored.</description>
+        <in-parameters><parameter name="name" required="true"><description>The device or app, such as "Pat's iPhone"</description></parameter></in-parameters>
+        <out-parameters>
+            <parameter name="appPasswordId"/>
+            <parameter name="password"/>
+        </out-parameters>
+    </service>
+    <service verb="revoke" noun="UserAppPassword" type="rust" location="moqui_core::service::user_keys::revoke_app_password">
+        <description>Revoke one of the current user's app passwords: the device using it is refused from now on.</description>
+        <in-parameters><parameter name="appPasswordId" required="true"/></in-parameters>
+    </service>
+    <service verb="get" noun="UserAppPasswords" type="rust" location="moqui_core::service::user_keys::get_app_passwords">
+        <description>The current user's app passwords, newest first: appPasswordId, name, createdDate, lastUsedDate and
+            revokedDate (revoked ones only with includeRevoked). No password or hash.</description>
+        <in-parameters><parameter name="includeRevoked" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="appPasswordList" type="List"/></out-parameters>
+    </service>
 </services>

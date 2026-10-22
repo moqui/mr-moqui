@@ -37,6 +37,7 @@ const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 const PROVIDER: &str = "moqui.basic.email.EmailOAuthProvider";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 const SERVER: &str = "moqui.basic.email.EmailServer";
+const TOKEN: &str = "moqui.basic.email.EmailServerAccessToken";
 const REDIRECT: &str = "https://mail.example.test/emailOAuth/callback";
 const CLIENT: &str = "client-1";
 const SECRET: &str = "secret-1";
@@ -60,8 +61,6 @@ impl Drop for Properties {
             "email_oauth_redirect_uri",
             "email_oauth_test_client_id",
             "email_oauth_test_client_secret",
-            "email_autoconfig_urls",
-            "email_dns_server",
         ] {
             moqui_lib::env::clear_property(name);
         }
@@ -75,8 +74,13 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 fn setup() -> (ExecutionContext, EntityFacade) {
+    setup_with("")
+}
+
+/// [`setup`] with the conf text `conf`.
+fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        conf,
         crate::service::ServicePools::idle(),
         crate::context::framework_dir(),
     );
@@ -715,7 +719,7 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
     let server_id = field(&one(&facade, ACCOUNT, "emailAccountId", &account_id), "emailServerId");
 
     // four callers at once with no token kept: one refresh
-    super::oauth::forget(&server_id);
+    super::oauth::forget(&facade, &server_id);
     lock(&fake.state).refresh_delay_ms = 300;
     let got: Vec<String> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..4)
@@ -733,7 +737,7 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
     // kept: no refresh; about to expire: refreshed
     assert_eq!(super::oauth::access_token(&facade, &server_id, None).unwrap(), got[0]);
     assert_eq!(lock(&fake.state).count("/token", "refresh_token"), 1);
-    super::oauth::age_cached(&server_id);
+    super::oauth::age_cached(&facade, &server_id);
     let renewed = super::oauth::access_token(&facade, &server_id, None).unwrap();
     assert_ne!(renewed, got[0]);
     assert_eq!(lock(&fake.state).count("/token", "refresh_token"), 2);
@@ -744,13 +748,13 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
     // a provider that rotates refresh tokens: the new one is stored and used next
     lock(&fake.state).rotate = true;
     let first_refresh = field(&one(&facade, SERVER, "emailServerId", &server_id), "oauthRefreshToken");
-    super::oauth::forget(&server_id);
+    super::oauth::forget(&facade, &server_id);
     super::oauth::access_token(&facade, &server_id, None).unwrap();
     let rotated = field(&one(&facade, SERVER, "emailServerId", &server_id), "oauthRefreshToken");
     assert_ne!(rotated, first_refresh);
     lock(&fake.state).refresh_tokens.retain(|token| *token != first_refresh);
     lock(&fake.state).rotate = false;
-    super::oauth::forget(&server_id);
+    super::oauth::forget(&facade, &server_id);
     super::oauth::access_token(&facade, &server_id, None).unwrap();
 
     // a second account with a password, on the same IMAP server
@@ -774,7 +778,7 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
 
     // the sign-in is revoked at the provider: the sync marks the account to sign in again, and only it
     lock(&fake.state).refresh_tokens.clear();
-    super::oauth::forget(&server_id);
+    super::oauth::forget(&facade, &server_id);
     let out = call("sync#EmailAccount", &[("emailAccountId", text(&account_id))]);
     assert_eq!(out_text(&out, "outcome"), "authFailed", "{out:?}");
     assert!(errors().contains("sign in again"));
@@ -810,6 +814,96 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
         field(&one(&facade, ACCOUNT, "emailAccountId", &account_id), "statusId"),
         "EasActive"
     );
+}
+
+/// The access token stored for the other servers of a cluster: encrypted; a server with none in memory uses it with no
+/// refresh; one a server refused is refreshed; with a provider that rotates refresh tokens the new one is on the
+/// EmailServer and its digest on the stored token; forgetting the sign-in deletes it.
+#[test]
+fn the_access_token_is_stored_for_the_other_servers_of_a_cluster() {
+    let _serial = serial();
+    let _lock = crate::user::session::cookie_property_lock();
+    let _properties = Properties::set();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    user(&facade, "alice");
+    login("alice");
+    let fake = FakeProvider::start(CLIENT, SECRET, REDIRECT);
+    provider_row(&facade, "EopTest", &fake, (993, 465), true);
+    let done = sign_in(&fake, "alice@gmail.test", None);
+    assert_eq!(out_text(&done, "status"), "success", "{done:?}");
+    let account_id = out_text(&done, "emailAccountId");
+    let server_id = field(&one(&facade, ACCOUNT, "emailAccountId", &account_id), "emailServerId");
+    let refreshes = || lock(&fake.state).count("/token", "refresh_token");
+
+    // a refresh stores the token, encrypted
+    super::oauth::forget(&facade, &server_id);
+    let first = super::oauth::access_token(&facade, &server_id, None).unwrap();
+    assert_eq!(refreshes(), 1);
+    let raw = crate::entity::info::run_sql(
+        &facade,
+        "transactional",
+        "SELECT \"email_server_id\", \"access_token\" FROM \"email_server_access_token\"",
+        0,
+    )
+    .unwrap();
+    let stored = raw
+        .records
+        .iter()
+        .find(|record| to_plain_string(&record[0]) == server_id)
+        .map(|record| to_plain_string(&record[1]))
+        .expect("the stored token");
+    assert!(!stored.is_empty() && !stored.contains(&first), "{stored}");
+    assert_eq!(
+        crate::entity::crypto::decrypt(&stored, &facade.crypt().unwrap().0).unwrap(),
+        first
+    );
+
+    // another server of the cluster, with nothing in memory: the stored token, no refresh
+    super::oauth::forget_local(&server_id);
+    assert_eq!(super::oauth::access_token(&facade, &server_id, None).unwrap(), first);
+    assert_eq!(refreshes(), 1);
+
+    // a token a server refused is refreshed, though stored, and the new one stored
+    super::oauth::forget_local(&server_id);
+    let replaced = super::oauth::access_token(&facade, &server_id, Some(&first)).unwrap();
+    assert_ne!(replaced, first);
+    assert_eq!(refreshes(), 2);
+    super::oauth::forget_local(&server_id);
+    assert_eq!(super::oauth::access_token(&facade, &server_id, None).unwrap(), replaced);
+    assert_eq!(refreshes(), 2);
+
+    // a provider that rotates refresh tokens: the new one on the EmailServer, its digest on the stored token
+    lock(&fake.state).rotate = true;
+    let used = field(&one(&facade, SERVER, "emailServerId", &server_id), "oauthRefreshToken");
+    super::oauth::age_cached(&facade, &server_id);
+    let renewed = super::oauth::access_token(&facade, &server_id, None).unwrap();
+    assert_ne!(renewed, replaced);
+    assert_eq!(refreshes(), 3);
+    lock(&fake.state).rotate = false;
+    let rotated = field(&one(&facade, SERVER, "emailServerId", &server_id), "oauthRefreshToken");
+    assert!(rotated.starts_with("rt-") && rotated != used, "{rotated}");
+    let row = one(&facade, TOKEN, "emailServerId", &server_id);
+    assert_eq!(field(&row, "accessToken"), renewed);
+    let digest = moqui_lib::codec::hex_encode(&<sha2::Sha256 as sha2::Digest>::digest(rotated.as_bytes())[..16]);
+    assert_eq!(field(&row, "refreshTokenDigest"), digest);
+    // another server uses it with the rotated refresh token, and no refresh
+    super::oauth::forget_local(&server_id);
+    assert_eq!(super::oauth::access_token(&facade, &server_id, None).unwrap(), renewed);
+    assert_eq!(refreshes(), 3);
+
+    // forgetting the sign-in deletes the stored token
+    super::oauth::forget(&facade, &server_id);
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let gone = facade
+        .find(TOKEN)
+        .unwrap()
+        .eq("emailServerId", text(&server_id))
+        .use_cache(false)
+        .one()
+        .unwrap();
+    assert!(gone.is_none(), "{gone:?}");
 }
 
 /// XOAUTH2 for the sync (no LOGIN), the server test, and a send through the account; an access token the IMAP server
@@ -1270,7 +1364,18 @@ fn discover_names_the_provider_by_domain_or_mx() {
     let _serial = serial();
     let _lock = crate::user::session::cookie_property_lock();
     let _properties = Properties::set();
-    let (ctx, facade) = setup();
+    let http = fake_http(HashMap::new());
+    let mut mx = HashMap::new();
+    mx.insert("acme.test".to_string(), vec!["aspmx.l.google.com".to_string()]);
+    mx.insert(
+        "contoso.test".to_string(),
+        vec!["contoso-test.mail.protection.outlook.com".to_string()],
+    );
+    let dns = fake_dns_with_mx(HashMap::new(), mx);
+    let (ctx, facade) = setup_with(&format!(
+        r#"<moqui-conf><email-client autoconfig-urls="http://127.0.0.1:{http}/{{domain}}/config-v1.1.xml"
+            dns-server="127.0.0.1:{dns}"/></moqui-conf>"#
+    ));
     let _entered = ctx.enter();
     install();
     user(&facade, "alice");
@@ -1298,19 +1403,6 @@ fn discover_names_the_provider_by_domain_or_mx() {
             ("storeHost", text("outlook.office365.test")),
         ],
     );
-    let http = fake_http(HashMap::new());
-    moqui_lib::env::set_property(
-        "email_autoconfig_urls",
-        format!("http://127.0.0.1:{http}/{{domain}}/config-v1.1.xml"),
-    );
-    let mut mx = HashMap::new();
-    mx.insert("acme.test".to_string(), vec!["aspmx.l.google.com".to_string()]);
-    mx.insert(
-        "contoso.test".to_string(),
-        vec!["contoso-test.mail.protection.outlook.com".to_string()],
-    );
-    let dns = fake_dns_with_mx(HashMap::new(), mx);
-    moqui_lib::env::set_property("email_dns_server", format!("127.0.0.1:{dns}"));
 
     let started = Instant::now();
     let gmail = ok("discover#EmailServer", &[("emailAddress", text("ann@gmail.test"))]);

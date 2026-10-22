@@ -1,5 +1,5 @@
 (function(){var m=globalThis.moqui=globalThis.moqui||{};(m.qvtStatic=m.qvtStatic||{})["/Parity"]=function(Vue){
-const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, createBlock: _createBlock, withDirectives: _withDirectives, normalizeClass: _normalizeClass, renderList: _renderList, Fragment: _Fragment } = Vue
+const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, normalizeClass: _normalizeClass, renderList: _renderList, Fragment: _Fragment } = Vue
 
 return function render(_ctx, _cache) {
   const _component_q_item_section = _resolveComponent("q-item-section")
@@ -19,7 +19,6 @@ return function render(_ctx, _cache) {
   const _component_q_card_section = _resolveComponent("q-card-section")
   const _component_q_card = _resolveComponent("q-card")
   const _component_m_form_paginate = _resolveComponent("m-form-paginate")
-  const _directive_close_popup = _resolveDirective("close-popup")
 
   return (_openBlock(), _createElementBlock(_Fragment, null, [
     (((_ctx.$mq.compare(_ctx.status,'equals','ACTIVE',null,null,'Object') && (_ctx.qty > 3))))
@@ -71,7 +70,7 @@ return function render(_ctx, _cache) {
       default: _withCtx(() => [
         _createVNode(_component_q_list, null, {
           default: _withCtx(() => [
-            _withDirectives((_openBlock(), _createBlock(_component_q_item, { clickable: "" }, {
+            _createVNode(_component_q_item, { clickable: "" }, {
               default: _withCtx(() => [
                 _createVNode(_component_q_item_section, null, {
                   default: _withCtx(() => [
@@ -88,11 +87,9 @@ return function render(_ctx, _cache) {
                 })
               ]),
               _: 1
-            })), [
-              [_directive_close_popup]
-            ]),
+            }),
             ((_ctx.qty > 3))
-              ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+              ? (_openBlock(), _createBlock(_component_q_item, {
                   key: 0,
                   clickable: ""
                 }, {
@@ -111,12 +108,10 @@ return function render(_ctx, _cache) {
                     })
                   ]),
                   _: 1
-                })), [
-                  [_directive_close_popup]
-                ])
+                }))
               : _createCommentVNode("", true),
             ((_ctx.qty <= 3))
-              ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+              ? (_openBlock(), _createBlock(_component_q_item, {
                   key: 1,
                   clickable: ""
                 }, {
@@ -135,9 +130,7 @@ return function render(_ctx, _cache) {
                     })
                   ]),
                   _: 1
-                })), [
-                  [_directive_close_popup]
-                ])
+                }))
               : _createCommentVNode("", true)
           ]),
           _: 1

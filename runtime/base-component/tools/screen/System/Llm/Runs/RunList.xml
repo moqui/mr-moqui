@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Every user's agent runs: who, which agent and surface, the status and pause, the dates, the counts, tokens and cost.
+    No content: a run's tool arguments, results and events are shown in RunDetail to its own user or with AgentAudit. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Runs" default-menu-index="1">
+
+    <transition name="runDetail"><default-response url="../RunDetail"/></transition>
+    <transition name="conversationDetail"><default-response url="../../Conversations/ConversationDetail"/></transition>
+
+    <widgets>
+        <form-list name="RunList" list="runList" skip-form="true" header-dialog="true" show-csv-button="true">
+            <entity-find entity-name="moqui.agent.AgentRun" list="runList" use-clone="true">
+                <search-form-inputs default-order-by="-submittedDate">
+                    <default-parameters submittedDate_poffset="-1" submittedDate_period="7d"/></search-form-inputs>
+                <select-field field-name="runId,conversationId,userId,agentId,surfaceEnumId,statusId,pauseKindEnumId,submittedDate,endedDate,stepCount,toolCallCount,inputTokens,outputTokens,cost,errorCode,leaseOwner"/>
+            </entity-find>
+            <field name="runId"><header-field title="Run" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="runDetail" text="${runId}" link-type="anchor"/></default-field></field>
+            <field name="conversationId"><header-field title="Conversation"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="conversationDetail" text="${conversationId}" link-type="anchor" condition="conversationId"/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+            <field name="agentId"><header-field title="Agent" show-order-by="true"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="surfaceEnumId"><header-field title="Surface"><drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentSurface"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                <default-field><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="statusId"><header-field title="Status" show-order-by="true"><drop-down allow-empty="true"><entity-options key="${statusId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.StatusItem"><econdition field-name="statusTypeId" value="AgentRun"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                <default-field><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="pauseKindEnumId"><header-field title="Waiting For"/><default-field>
+                <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="submittedDate"><header-field title="Submitted" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="endedDate"><header-field title="Ended"/><default-field><display/></default-field></field>
+            <field name="stepCount"><header-field title="Steps"/><default-field><display/></default-field></field>
+            <field name="toolCallCount"><header-field title="Tool Calls"/><default-field><display/></default-field></field>
+            <field name="inputTokens"><header-field title="Input"/><default-field><display/></default-field></field>
+            <field name="outputTokens"><header-field title="Output"/><default-field><display/></default-field></field>
+            <field name="cost"><header-field show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="errorCode"><header-field title="Error"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="leaseOwner"><header-field title="Node"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

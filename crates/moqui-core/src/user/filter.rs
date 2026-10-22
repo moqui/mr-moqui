@@ -81,7 +81,8 @@ fn apply_filters(target: &Target<'_>, condition: Option<Condition>) -> Option<Co
     match with_user_context(|| extra_conditions(target)) {
         Ok(extra) => combine(condition, extra),
         Err(err) => {
-            tracing::error!(error = %err, "entity filter failed closed");
+            // the entity and the reason in the message, which the console log shows without the fields
+            tracing::error!(entity = %target.name(), error = %err, "entity filter failed closed on {}: {err}", target.name());
             combine(condition, vec![false_constraint()])
         }
     }

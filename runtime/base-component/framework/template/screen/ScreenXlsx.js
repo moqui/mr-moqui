@@ -35,7 +35,8 @@
     const IGNORED = ["ignored", "hidden", "submit", "image", "date-find", "file", "password", "range-find", "reset"];
     const TEXT_WIDGETS = ["display", "display-entity", "link", "label"];
 
-    // The title of a header: the header-field's title, else the default-field's, else the field name in words.
+    // The title of a header: the header-field's title, else the default-field's, else the field name made pretty by
+    // camelCaseToPretty, as FormListExcelRender (the other modes split the name on capitals, as their FTL does).
     const headerTitle = (sub) => {
         let chosen = sub;
         if (sub.name === "header-field") {
@@ -44,7 +45,8 @@
             if (attr(sub, "title")) chosen = sub;
             else if (dflt && attr(dflt, "title")) chosen = dflt;
         }
-        const text = attr(chosen, "title") ? expandExpr(attr(chosen, "title")) : jsString(S.titleText(chosen));
+        const name = chosen.parent ? attr(chosen.parent, "name") : "";
+        const text = attr(chosen, "title") ? expandExpr(attr(chosen, "title")) : `StringUtilities.camelCaseToPretty(${jsString(name)})`;
         return `ec.l10n.localize(${text})`;
     };
 

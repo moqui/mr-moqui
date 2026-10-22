@@ -20,7 +20,8 @@ use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 
 use super::loader::{
-    apply_default_parameters, apply_default_values, call_data_file_service, parse_top, skip_type, store_record, Top,
+    apply_default_parameters, apply_default_values, call_data_file_service, parse_flat_top, parse_top, skip_type,
+    store_record, Top,
 };
 use super::pull::Pull;
 use super::LoadOptions;
@@ -71,7 +72,7 @@ fn load_embedded_document<R: BufRead>(
             match parse_top(facade, location, &child)? {
                 Some(Top::Record(mut record)) => {
                     apply_default_values(facade, options, &mut record);
-                    total = total.saturating_add(store_record(facade, options, &record)?);
+                    total = total.saturating_add(store_record(facade, options, record)?);
                 }
                 Some(Top::Service(mut service)) => {
                     apply_default_parameters(options, &mut service);
@@ -139,11 +140,14 @@ pub(super) fn load_xml_reader(
             return Err(Error::new(format!("{location} ended before the root was closed")));
         }
         let element = input.take_text(xml_element_end, "xml element")?;
-        let node = MNode::parse_text_raw(location, &element)?;
-        match parse_top(facade, location, &node)? {
+        let top = match parse_flat_top(facade, location, &element)? {
+            Some(top) => Some(top),
+            None => parse_top(facade, location, &MNode::parse_text_raw(location, &element)?)?,
+        };
+        match top {
             Some(Top::Record(mut record)) => {
                 apply_default_values(facade, options, &mut record);
-                total = total.saturating_add(store_record(facade, options, &record)?);
+                total = total.saturating_add(store_record(facade, options, record)?);
             }
             Some(Top::Service(mut service)) => {
                 apply_default_parameters(options, &mut service);

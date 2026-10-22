@@ -67,6 +67,10 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.impl.ServiceServices.clean#ServiceJobRun" cronExpression="0 0 2 * * ?" paused="N">
         <parameters parameterName="daysToKeep" parameterValue="30"/>
     </moqui.service.job.ServiceJob>
+    <moqui.service.job.ServiceJob jobName="clean_GitUpdates_daily" description="Clean done GitUpdate rows past 90 days"
+            serviceName="org.moqui.impl.GitServices.clean#GitUpdates" cronExpression="0 0 2 * * ?" paused="N">
+        <parameters parameterName="daysToKeep" parameterValue="90"/>
+    </moqui.service.job.ServiceJob>
 
     <!-- Paused. Set paused to N to run. The counts are how many archives to keep. With this nightly cron, 7 dailies
          is 7 nights. Yearly stays unlimited until yearlyCount is set. plans/PostgresBackup.md -->
@@ -99,6 +103,9 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.impl.SystemMessageServices.consume#AllReceivedSystemMessages" cronExpression="0 0/15 * * * ?" paused="Y"/>
 
     <!-- Fetches the remote kind GitRepository mirrors that have a fetchIntervalMinutes; nothing to do without them -->
+    <!-- Sends again the repository webhook deliveries that failed, each after a wait that doubles with its failures -->
+    <moqui.service.job.ServiceJob jobName="retry_GitWebhookDeliveries_frequent" description="Retry Git webhook deliveries"
+            serviceName="org.moqui.impl.GitServices.retry#GitWebhookDeliveries" cronExpression="0 * * * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="fetch_AllGitRepositories_frequent" description="Fetch remote Git repository mirrors"
             serviceName="org.moqui.impl.GitServices.fetch#AllGitRepositories" cronExpression="0 0/5 * * * ?" paused="N"/>
     <!-- Runs the gitECA post events of git updates left pending (a full git pool, a restart); each runs soon after its
@@ -122,10 +129,12 @@ along with this software (see the LICENSE.md file). If not, see
         <parameters parameterName="emailServerId" parameterValue="SYSTEM"/>
     </moqui.service.job.ServiceJob>
 
-    <!-- The daily notification digest: one email per user of the unviewed notifications on the topics they get as a digest
-         (NotificationTopicUser.digest, NotificationTopic.digestDefault); with no such topic or user it sends nothing -->
-    <moqui.service.job.ServiceJob jobName="send_NotificationDigests_daily" description="Send the daily notification digests"
-            serviceName="org.moqui.impl.NotificationServices.send#NotificationDigests" cronExpression="0 0 6 * * ?" paused="N">
+    <!-- The notification digest: one email per user of the unviewed notifications on the topics they get as a digest
+         (NotificationTopicUser.digest, NotificationTopic.digestDefault); with no such topic or user it sends nothing.
+         Hourly at minute 0 so each user is checked in their hour (NOTIFICATION_DIGEST_HOUR, default 6) in their zone.
+         A database loaded with the old cron 0 0 6 * * ? keeps that row until it is updated; startup does not rewrite it. -->
+    <moqui.service.job.ServiceJob jobName="send_NotificationDigests_daily" description="Send each user's notification digest at their hour"
+            serviceName="org.moqui.impl.NotificationServices.send#NotificationDigests" cronExpression="0 0 * * * ?" paused="N">
         <parameters parameterName="hours" parameterValue="24"/>
     </moqui.service.job.ServiceJob>
     <!-- The mail client (org.moqui.impl.EmailClientServices): scheduled sends and undo-send holds that are due, and
@@ -135,7 +144,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="return_SnoozedMessages_frequent" description="Bring back snoozed email whose time has come"
             serviceName="org.moqui.impl.EmailClientServices.return#SnoozedMessages" cronExpression="0 * * * * ?" paused="N"/>
     <!-- Each IMAP and POP3 account whose last sync is older than its interval (syncIntervalMinutes, else the
-         email_sync_interval property); the IMAP IDLE workers sync an Inbox at once between runs. -->
+         email-client sync-interval in the conf); the IMAP IDLE workers sync an Inbox at once between runs. -->
     <moqui.service.job.ServiceJob jobName="sync_EmailAccounts_frequent" description="Sync the mail accounts that are due"
             serviceName="org.moqui.impl.EmailClientServices.sync#DueEmailAccounts" cronExpression="0 * * * * ?" paused="N"/>
 
@@ -177,14 +186,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== ElasticSearch Setup Data ========== -->
 
-    <moqui.security.UserPermission userPermissionId="ElasticRemote" description="ElasticSearch Remote Access"/>
-    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ElasticRemote" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="SearchRemote" description="Search store access through /search"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SearchRemote" fromDate="0"/>
 
     <moqui.security.UserPermission userPermissionId="REST_SCHEMA" description="REST schema dumps"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REST_SCHEMA" fromDate="0"/>
 
-    <moqui.security.UserPermission userPermissionId="KibanaRemote" description="Kibana Remote Access"/>
-    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="KibanaRemote" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="DashboardRemote" description="OpenSearch Dashboards access through /dashboard"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DashboardRemote" fromDate="0"/>
 
     <!-- Handy cron strings: [0 0 2 * * ?] every night at 2:00 am, [0 0/15 * * * ?] every 15 minutes, [0 0/2 * * * ?] every 2 minutes -->
     <moqui.service.job.ServiceJob jobName="clean_ElasticSearchLogMessages_daily" description="Clean log messages stored in ElasticSearch"

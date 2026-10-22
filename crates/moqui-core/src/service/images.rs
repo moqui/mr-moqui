@@ -43,6 +43,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
+use crate::web::multipart::UploadedFile;
 
 /// The file suffixes of the enabled formats, read and written alike.
 const SUFFIXES: [&str; 8] = ["jpg", "jpeg", "png", "gif", "tif", "tiff", "webp", "bmp"];
@@ -76,6 +77,8 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, convert_image)?;
     rust_service!(map, write_image_service)?;
+    rust_service!(map, upload_rich_text_image)?;
+    rust_service!(map, get_rich_text_image)?;
     rust_service!(map, image_reader_file_suffixes)?;
     rust_service!(map, image_writer_file_suffixes)?;
     rust_service!(map, image_reader_mime_types)?;
@@ -256,6 +259,83 @@ fn put_bytes(location: &str, bytes: &[u8]) -> Result<(), LibError> {
         .map_err(|err| LibError::new(format!("Could not save image to {location}: {}", err.message())))
 }
 
+/// The largest rich-text image accepted, before it is decoded.
+const MAX_RICH_TEXT_IMAGE: usize = 8 * 1024 * 1024;
+
+/// `upload#RichTextImage`: a png, gif, jpeg or webp, stored as the original bytes at
+/// `dbresource://moqui/rich-text/<32 hex>.<ext>`. The url is `/richTextImage/<id>` (the id is the capability). An svg,
+/// a file that does not decode, and a file over 8 MiB are refused. The caller must be logged in.
+fn upload_rich_text_image(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let bytes = content_file_bytes(parameters)?;
+    let (_image, format) = decode(&bytes)?;
+    let ext = match format.as_str() {
+        "png" | "gif" | "jpg" | "webp" => format,
+        _ => return Err(LibError::new("The image must be a png, gif, jpeg or webp")),
+    };
+    let id = rich_text_image_id()?;
+    let location = format!("dbresource://moqui/rich-text/{id}.{ext}");
+    put_bytes(&location, &bytes)?;
+    let mut out = BTreeMap::new();
+    out.insert("url".to_string(), Value::string(format!("/richTextImage/{id}")));
+    Ok(out)
+}
+
+/// `get#RichTextImage`: the stored location of an id that is 32 lowercase hex digits, when that file exists.
+fn get_rich_text_image(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let location = rich_text_image_location(&param_text(parameters, "imageId"))?;
+    let mut out = BTreeMap::new();
+    out.insert("location".to_string(), Value::string(location));
+    Ok(out)
+}
+
+fn content_file_bytes(parameters: &BTreeMap<String, Value>) -> Result<Vec<u8>, LibError> {
+    let Some(Value::Object(object)) = parameters.get("contentFile") else {
+        return Err(LibError::new("contentFile is required"));
+    };
+    let Some(file) = object.downcast::<UploadedFile>() else {
+        return Err(LibError::new("contentFile is not an uploaded file"));
+    };
+    // The size is known before the bytes are read, so a file over the limit is refused before the decode.
+    if file.size() > MAX_RICH_TEXT_IMAGE as u64 {
+        return Err(LibError::new("The image is larger than 8 MiB"));
+    }
+    let bytes = file.read_bytes().map_err(|err| LibError::new(err.message()))?;
+    if bytes.len() > MAX_RICH_TEXT_IMAGE {
+        return Err(LibError::new("The image is larger than 8 MiB"));
+    }
+    Ok(bytes)
+}
+
+fn rich_text_image_id() -> Result<String, LibError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|err| LibError::new(format!("could not read random bytes: {err}")))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// The file for a 32-hex id, trying the formats the upload writes. Anything else is not an image.
+fn rich_text_image_location(id: &str) -> Result<String, LibError> {
+    if id.len() != 32 || !id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
+        return Err(LibError::new("No image"));
+    }
+    for ext in ["png", "gif", "jpg", "webp"] {
+        let location = format!("dbresource://moqui/rich-text/{id}.{ext}");
+        let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(&location))
+            .ok_or_else(|| LibError::new("no execution context is entered"))?;
+        if let Ok(resource) = found {
+            if resource.exists() {
+                return Ok(location);
+            }
+        }
+    }
+    Err(LibError::new("No image"))
+}
+
 /// Write `image` as `format_name` to `location`; when that format refuses it and `retry` holds, write it in the input
 /// format to the same name with that extension. The location written.
 fn write_image(
@@ -296,7 +376,7 @@ fn encode_image(
     }
 }
 
-/// Image conversions that may run at once (`image_max_concurrent`, 2): a decoded image may take hundreds of MB.
+/// Image conversions that may run at once (`resource-facade` `image-max-concurrent`, 2): a decoded image may take hundreds of MB.
 struct Slots {
     used: std::sync::Mutex<usize>,
     freed: std::sync::Condvar,
@@ -317,8 +397,7 @@ fn image_slot() -> Slot {
         used: std::sync::Mutex::new(0),
         freed: std::sync::Condvar::new(),
     };
-    let most = moqui_lib::env::get_prop_or_env("image_max_concurrent")
-        .trim()
+    let most = crate::resource::setting("image-max-concurrent")
         .parse::<usize>()
         .ok()
         .filter(|most| *most > 0)
@@ -571,5 +650,119 @@ mod tests {
         map.insert("location".to_string(), Value::string("runtime://b.png"));
         assert_eq!(location_of(Some(&Value::Map(map))), Some("runtime://b.png".to_string()));
         assert_eq!(location_of(Some(&Value::Null)), None);
+    }
+
+    /// A png is stored and served to a signed-in user. An svg, a file over 8 MiB, and a get with no session are refused.
+    #[test]
+    fn upload_rich_text_image() {
+        let ctx = crate::context::ExecutionContextFactory::test_context_in(
+            "",
+            crate::service::ServicePools::idle(),
+            crate::context::framework_dir(),
+        );
+        let facade = crate::testing::open();
+        facade.assume_db_tables();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        let path = crate::context::framework_dir().join("service/org/moqui/impl/ResourceServices.xml");
+        let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut account = facade.make_value("moqui.security.UserAccount").unwrap();
+        account.set("userId", Value::string("imguser"));
+        account.set("username", Value::string("imguser"));
+        account.set("userFullName", Value::string("Image User"));
+        account.create(&facade).unwrap();
+        drop(_authz);
+
+        let refused = crate::service::sync(
+            "org.moqui.impl.ResourceServices.get#RichTextImage",
+            &std::iter::once(("imageId".to_string(), Value::string("a".repeat(32)))).collect(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused.kind(),
+            crate::context::ErrorKind::AuthenticationRequired,
+            "{refused}"
+        );
+
+        crate::user::internal_login_user("imguser").unwrap();
+        let png = png_with_alpha();
+        let uploaded = service_call(
+            "upload#RichTextImage",
+            upload_file("photo.png", "image/png", png.clone()),
+        );
+        let url = out_text(&uploaded, "url");
+        assert!(url.starts_with("/richTextImage/"), "{url}");
+        let id = url.trim_start_matches("/richTextImage/");
+        assert!(
+            id.len() == 32 && id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "{url}"
+        );
+        let found = service_call("get#RichTextImage", [("imageId", Value::string(id))]);
+        let location = out_text(&found, "location");
+        assert_eq!(location, format!("dbresource://moqui/rich-text/{id}.png"));
+        let stored = ctx.factory().resource().get(&location).unwrap().read_bytes().unwrap();
+        assert_eq!(stored, png);
+
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>"#;
+        let svg_errors = service_errors(
+            "upload#RichTextImage",
+            upload_file("photo.png", "image/svg+xml", svg.to_vec()),
+        );
+        assert!(
+            svg_errors.contains("read") || svg_errors.contains("png"),
+            "{svg_errors}"
+        );
+        let big = service_errors(
+            "upload#RichTextImage",
+            upload_file("big.png", "image/png", vec![0; MAX_RICH_TEXT_IMAGE + 1]),
+        );
+        assert!(big.contains("8 MiB"), "{big}");
+    }
+
+    fn service_call(
+        name: &str,
+        parameters: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> BTreeMap<String, Value> {
+        let parameters: BTreeMap<String, Value> = parameters
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
+        let out = crate::service::sync(&format!("org.moqui.impl.ResourceServices.{name}"), &parameters)
+            .unwrap_or_else(|err| panic!("{name}: {err}"));
+        let errors = message_errors();
+        assert!(errors.is_empty(), "{name}: {errors}");
+        out
+    }
+
+    fn service_errors(name: &str, parameters: impl IntoIterator<Item = (&'static str, Value)>) -> String {
+        let parameters: BTreeMap<String, Value> = parameters
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
+        crate::service::sync(&format!("org.moqui.impl.ResourceServices.{name}"), &parameters)
+            .unwrap_or_else(|err| panic!("{name}: {err}"));
+        message_errors()
+    }
+
+    fn message_errors() -> String {
+        ExecutionContext::with_current(|ec| {
+            let text = ec.message().errors().join("\n");
+            ec.message().clear_errors();
+            text
+        })
+        .unwrap_or_default()
+    }
+
+    fn out_text(out: &BTreeMap<String, Value>, key: &str) -> String {
+        out.get(key).map(to_plain_string).unwrap_or_default()
+    }
+
+    fn upload_file(name: &str, content_type: &str, bytes: Vec<u8>) -> Vec<(&'static str, Value)> {
+        vec![(
+            "contentFile",
+            UploadedFile::in_memory("contentFile", name, content_type, bytes).into_value(),
+        )]
     }
 }

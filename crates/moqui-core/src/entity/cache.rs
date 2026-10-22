@@ -23,6 +23,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
@@ -36,6 +37,7 @@ use moqui_lib::cache::{CacheConfig, MCache};
 use moqui_lib::error::Error;
 use moqui_lib::object::{compare_like, compare_obj, to_plain_string, Value};
 
+use super::value::FieldMap;
 use super::exec::{execute_conn, execute_script, query_conn, query_tx};
 use super::facade::EntityFacade;
 use super::field_rw;
@@ -99,15 +101,15 @@ enum Op {
 struct Held {
     entity_name: String,
     operation: Op,
-    plain: BTreeMap<String, Value>,
-    sealed: BTreeMap<String, Value>,
+    plain: FieldMap,
+    sealed: FieldMap,
     pk: String,
 }
 
 struct SealedWrite {
     full_name: String,
     pk: String,
-    sealed: BTreeMap<String, Value>,
+    sealed: FieldMap,
 }
 
 struct ReadMeta {
@@ -134,7 +136,7 @@ impl ReadMeta {
 }
 
 struct MemRow {
-    fields: BTreeMap<String, Value>,
+    fields: FieldMap,
     trusted: bool,
 }
 
@@ -258,16 +260,20 @@ const SIM_TOTAL_COPY_CAP: usize = 200_000;
 /// Java's `TransactionCacheDb.SEQ_START`: where the ids of a sim's sequences start.
 const SIM_SEQ_START: i64 = 900_000_000;
 
-/// Java's `TransactionCacheDb.PRODUCTION_ENTITIES`: written to the real database during a sim. The LLM's own records
-/// (a sim is itself a conversation) and the sequence banks.
+/// Java's `TransactionCacheDb.PRODUCTION_ENTITIES`: written to the real database during a sim. The agent's bookkeeping
+/// (a preview runs inside a run: its conversation, run, steps, events, messages, tool calls and approvals, and the
+/// provider calls and their usage, plans/LLM-A2A-Assist.md section 5) and the sequence banks.
 const SIM_PRODUCTION_ENTITIES: &[&str] = &[
-    "moqui.llm.LlmConversation",
-    "moqui.llm.LlmMessage",
-    "moqui.llm.LlmCallLog",
-    "moqui.llm.LlmSkill",
-    "moqui.llm.LlmSkillUse",
-    "moqui.llm.LlmLesson",
-    "moqui.llm.LlmCallUsage",
+    "moqui.agent.AgentConversation",
+    "moqui.agent.AgentRun",
+    "moqui.agent.AgentRunStep",
+    "moqui.agent.AgentRunEvent",
+    "moqui.agent.AgentMessage",
+    "moqui.agent.AgentMessagePart",
+    "moqui.agent.AgentToolCall",
+    "moqui.agent.AgentApproval",
+    "moqui.llm.LlmCall",
+    "moqui.llm.LlmUsageDaily",
     "moqui.entity.SequenceValueItem",
 ];
 
@@ -323,7 +329,7 @@ struct CachedCount {
 type FrameWrites = HashMap<String, Option<Vec<FrameWrite>>>;
 
 /// How an overlay gets the stored row a held update applies to.
-type StoredRow<'a> = &'a mut dyn FnMut(&Held) -> Result<Option<BTreeMap<String, Value>>, Error>;
+type StoredRow<'a> = &'a mut dyn FnMut(&Held) -> Result<Option<FieldMap>, Error>;
 
 /// Writes of an open frame, by entity, replayed against the caches when it ends. Past this many the entity's caches are
 /// cleared whole instead.
@@ -390,9 +396,10 @@ pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Option<i64> {
         }
     }
     if meta.caches(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
-        let key = lookup_key(lookup);
-        let cache = facade.with_slot(OneCaches::default, |caches| caches.counts.get(&meta.full_name).cloned())?;
-        return cache.get(&key).ok().flatten().map(|cached| cached.count);
+        let cache = facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(&meta.full_name).cloned())?;
+        return with_lookup_key(lookup, |key| {
+            cache.get_arc(key).ok().flatten().map(|cached| cached.count)
+        });
     }
     None
 }
@@ -403,14 +410,17 @@ pub fn after_count(facade: &EntityFacade, lookup: &FindLookup, count: i64) -> Re
     if !meta.caches(lookup) || frame_wrote(facade, &lookup.entity_name, &meta) {
         return Ok(());
     }
-    let key = lookup_key(lookup);
-    let name = meta.full_name;
-    let cache = facade.with_slot(OneCaches::default, |caches| {
-        caches
-            .counts
-            .entry(name.clone())
-            .or_insert_with(|| count_cache(&name))
-            .clone()
+    let key = owned_lookup_key(lookup);
+    let name = &meta.full_name;
+    let known = facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(name).cloned());
+    let cache = known.unwrap_or_else(|| {
+        facade.with_slot(OneCaches::default, |caches| {
+            caches
+                .counts
+                .entry(name.clone())
+                .or_insert_with(|| count_cache(name))
+                .clone()
+        })
     });
     cache.put(
         key,
@@ -430,14 +440,17 @@ pub fn after_find(facade: &EntityFacade, lookup: &FindLookup, rows: &EntityList)
     if !meta.caches(lookup) || frame_wrote(facade, &lookup.entity_name, &meta) {
         return Ok(());
     }
-    let key = lookup_key(lookup);
-    let name = meta.full_name;
-    let cache = facade.with_slot(OneCaches::default, |caches| {
-        caches
-            .lists
-            .entry(name.clone())
-            .or_insert_with(|| list_cache(&name))
-            .clone()
+    let key = owned_lookup_key(lookup);
+    let name = &meta.full_name;
+    let known = facade.with_slot_read(OneCaches::default, |caches| caches.lists.get(name).cloned());
+    let cache = known.unwrap_or_else(|| {
+        facade.with_slot(OneCaches::default, |caches| {
+            caches
+                .lists
+                .entry(name.clone())
+                .or_insert_with(|| list_cache(name))
+                .clone()
+        })
     });
     cache.put(
         key,
@@ -475,11 +488,19 @@ fn frame_wrote(facade: &EntityFacade, entity_name: &str, meta: &ReadMeta) -> boo
 /// Inside a transaction, record the write on the frame and clear the one-cache again when the frame commits or
 /// rolls back, so rows read and cached by other threads before the commit do not stay. Hooks go on once per entity
 /// per frame.
-fn note_frame_write(facade: &EntityFacade, entity_name: &str, full_name: &str, write: FrameWrite) -> Result<(), Error> {
+/// `write` runs only inside a frame, so a write with none does not copy its values. When it gives `None` the entity's
+/// writes in the frame are not kept, and its caches are cleared whole at the end.
+fn note_frame_write(
+    facade: &EntityFacade,
+    entity_name: &str,
+    full_name: &str,
+    write: impl FnOnce() -> Option<FrameWrite>,
+) -> Result<(), Error> {
     let tx = facade.transactions_for(entity_name)?;
     let Some(token) = tx.frame_token() else {
         return Ok(());
     };
+    let write = write();
     TX_WRITES.with(|slot| {
         let mut frames = slot.borrow_mut();
         let entry = frames
@@ -487,8 +508,8 @@ fn note_frame_write(facade: &EntityFacade, entity_name: &str, full_name: &str, w
             .or_default()
             .entry(full_name.to_string())
             .or_insert_with(|| Some(Vec::new()));
-        match entry {
-            Some(writes) if writes.len() < FRAME_WRITES_MAX => writes.push(write),
+        match (entry.as_mut(), write) {
+            (Some(writes), Some(write)) if writes.len() < FRAME_WRITES_MAX => writes.push(write),
             _ => *entry = None,
         }
     });
@@ -531,7 +552,7 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
     let result = match (writes.flatten(), read_meta(facade, full_name)) {
         (Some(writes), Ok(meta)) => writes
             .iter()
-            .try_for_each(|write| evict(facade, &meta, &write.operation, &write.values)),
+            .try_for_each(|write| evict(facade, &meta, write.operation, &write.values).map(|_| ())),
         _ => clear_named(facade, full_name),
     };
     if let Err(err) = result {
@@ -543,20 +564,32 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
 
 /// One write of a frame, kept to evict again at the frame's end.
 struct FrameWrite {
-    operation: String,
-    values: BTreeMap<String, Value>,
+    operation: &'static str,
+    values: Arc<FieldMap>,
+}
+
+/// `operation` as the static name [`FrameWrite`] keeps; `None` for one [`evict`] does not name.
+fn frame_operation(operation: &str) -> Option<&'static str> {
+    match operation {
+        "create" => Some("create"),
+        "update" => Some("update"),
+        "upsert" => Some("upsert"),
+        "delete" => Some("delete"),
+        _ => None,
+    }
 }
 
 /// Java's `EntityCache.clearCacheForValue`: each cached find of the entity that the write may have changed (it held
 /// the row, or its condition may match the values written; a field the write did not set counts as a match), each
-/// count it may have changed, and every cached find of a view that has the entity as a member.
+/// count it may have changed, and every cached find of a view that has the entity as a member. True when the entity
+/// has a cache of finds or of counts.
 fn evict(
     facade: &EntityFacade,
     meta: &ReadMeta,
     operation: &str,
-    values: &BTreeMap<String, Value>,
-) -> Result<(), Error> {
-    let (lists, counts) = facade.with_slot(OneCaches::default, |caches| {
+    values: &FieldMap,
+) -> Result<bool, Error> {
+    let (lists, counts) = facade.with_slot_read(OneCaches::default, |caches| {
         (
             caches.lists.get(&meta.full_name).cloned(),
             caches.counts.get(&meta.full_name).cloned(),
@@ -567,11 +600,12 @@ fn evict(
         .iter()
         .map(|name| {
             values
-                .get(name)
+                .get(name.as_str())
                 .filter(|value| !value.is_null())
                 .map(|value| (name.as_str(), value))
         })
         .collect();
+    let cached = lists.is_some() || counts.is_some();
     if let Some(cache) = lists {
         cache.remove_where(|_, cached| list_affected(cached, operation, values, pk.as_deref()))?;
     }
@@ -583,10 +617,11 @@ fn evict(
             cache.clear()?;
         }
     }
-    for view in views_using(facade, &meta.full_name).iter() {
+    let views = views_by_member(facade);
+    for view in views.get(&meta.full_name).into_iter().flatten() {
         clear_named(facade, view)?;
     }
-    Ok(())
+    Ok(cached)
 }
 
 /// Whether a write may change a cached list: a delete when the list held the row, a create when the row may match,
@@ -594,7 +629,7 @@ fn evict(
 fn list_affected(
     cached: &CachedList,
     operation: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
     pk: Option<&[(&str, &Value)]>,
 ) -> bool {
     let Some(pk) = pk else {
@@ -617,17 +652,17 @@ fn list_affected(
 
 /// False only when the condition surely does not match the values: a field they do not hold, a comparison this
 /// cannot judge, or values of different types count as a possible match.
-fn may_match(condition: Option<&Condition>, values: &BTreeMap<String, Value>) -> bool {
+fn may_match(condition: Option<&Condition>, values: &FieldMap) -> bool {
     condition.is_none_or(|condition| judge(condition, values) != Some(false))
 }
 
 /// A three-valued match: `None` when it cannot be told from `values`.
-fn judge(condition: &Condition, values: &BTreeMap<String, Value>) -> Option<bool> {
+fn judge(condition: &Condition, values: &FieldMap) -> Option<bool> {
     let field = |field: &FieldRef| -> Option<&Value> {
         if field.entity_alias.is_some() {
             return None;
         }
-        values.get(&field.name)
+        values.get(field.name.as_str())
     };
     let same = |left: &Value, right: &Value| -> Option<bool> {
         if left == right || to_plain_string(left) == to_plain_string(right) {
@@ -704,10 +739,10 @@ fn judge(condition: &Condition, values: &BTreeMap<String, Value>) -> Option<bool
     }
 }
 
-/// The view entities that have `full_name` as a member, at any depth.
-fn views_using(facade: &EntityFacade, full_name: &str) -> Vec<String> {
-    let known = facade.with_slot(OneCaches::default, |caches| caches.views_by_member.clone());
-    let map = match known {
+/// Each entity to the view entities that have it as a member, at any depth.
+fn views_by_member(facade: &EntityFacade) -> Arc<HashMap<String, Vec<String>>> {
+    let known = facade.with_slot_read(OneCaches::default, |caches| caches.views_by_member.clone());
+    match known {
         Some(map) => map,
         None => {
             let map = Arc::new(build_views_by_member(facade));
@@ -716,8 +751,7 @@ fn views_using(facade: &EntityFacade, full_name: &str) -> Vec<String> {
             });
             map
         }
-    };
-    map.get(full_name).cloned().unwrap_or_default()
+    }
 }
 
 fn build_views_by_member(facade: &EntityFacade) -> HashMap<String, Vec<String>> {
@@ -764,9 +798,15 @@ pub fn gate_write(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<WriteGate, Error> {
     let op = parse_op(operation)?;
+    if super::fence::active() {
+        let full_name = facade
+            .with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))
+            .unwrap_or_else(|_| entity_name.to_string());
+        super::fence::check_write(&full_name, operation)?;
+    }
     // A sim leaves its own records and the sequence banks on the real database, as Java's `allowsProductionWrite`.
     let sim = sim_session_open()
         && !facade
@@ -853,19 +893,39 @@ pub fn on_write(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
+) -> Result<(), Error> {
+    write_hooks(facade, entity_name, operation, values, || Arc::new(values.clone()))
+}
+
+/// [`on_write`] for values the write's other hooks share, so a transaction frame keeps them without a copy.
+pub(crate) fn on_write_shared(
+    facade: &EntityFacade,
+    entity_name: &str,
+    operation: &str,
+    values: &Arc<FieldMap>,
+) -> Result<(), Error> {
+    write_hooks(facade, entity_name, operation, values, || Arc::clone(values))
+}
+
+fn write_hooks(
+    facade: &EntityFacade,
+    entity_name: &str,
+    operation: &str,
+    values: &FieldMap,
+    shared: impl FnOnce() -> Arc<FieldMap>,
 ) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;
-    evict(facade, &meta, operation, values)?;
-    note_frame_write(
-        facade,
-        entity_name,
-        &meta.full_name,
-        FrameWrite {
-            operation: operation.to_string(),
-            values: values.clone(),
-        },
-    )?;
+    // With no cache of the entity's finds or counts there is nothing to evict the write from at the frame's end
+    // either, unless one is made meanwhile; the entity is then cleared whole, and its values are not kept.
+    let cached = evict(facade, &meta, operation, values)?;
+    note_frame_write(facade, entity_name, &meta.full_name, || {
+        let operation = frame_operation(operation).filter(|_| cached)?;
+        Some(FrameWrite {
+            operation,
+            values: shared(),
+        })
+    })?;
     note_screen_config(facade, &meta.full_name);
     note_feed_definition(facade, &meta.full_name);
     super::derived::note_write(facade, &meta.full_name);
@@ -877,13 +937,13 @@ pub fn on_write(
 pub(crate) fn clear_one_cache(
     facade: &EntityFacade,
     entity_name: &str,
-    primary_key: Option<&BTreeMap<String, Value>>,
+    primary_key: Option<&FieldMap>,
 ) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;
     note_screen_config(facade, &meta.full_name);
     note_feed_definition(facade, &meta.full_name);
-    let cleared = match primary_key.filter(|keys| meta.pk_fields.iter().all(|name| keys.contains_key(name))) {
-        Some(keys) => evict(facade, &meta, "update", keys),
+    let cleared = match primary_key.filter(|keys| meta.pk_fields.iter().all(|name| keys.contains_key(name.as_str()))) {
+        Some(keys) => evict(facade, &meta, "update", keys).map(|_| ()),
         None => clear_named(facade, &meta.full_name),
     };
     super::derived::note_write(facade, &meta.full_name);
@@ -1050,7 +1110,7 @@ pub(super) fn sim_deleted_count() -> usize {
 pub(super) fn sim_written_rows(
     facade: &EntityFacade,
     entity_name: &str,
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+) -> Result<Vec<FieldMap>, Error> {
     let meta = read_meta(facade, entity_name)?;
     let view = sim_view(&meta.full_name);
     if !view.table {
@@ -1061,6 +1121,81 @@ pub(super) fn sim_written_rows(
         .into_iter()
         .filter(|row| pk_of(row, &meta.pk_fields).is_some_and(|pk| view.hide.contains(&row_key(&meta.full_name, &pk))))
         .collect())
+}
+
+/// A row this thread's sim changed: its entity (full name), its primary key as `(field, value)` pairs, and its values in
+/// the sim, none for a row it deleted.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SimChange {
+    pub entity: String,
+    pub key: Vec<(String, String)>,
+    pub values: Option<std::collections::BTreeMap<String, Value>>,
+}
+
+/// What the innermost sim of this thread wrote and deleted, by entity and key, beside [`sim_written_rows`]: each written
+/// row with its values in the sim, each deleted one with its key. An agent's approval preview compares them with
+/// production (plans/LLM-A2A-Assist.md 4.8). The entities a sim leaves on production are not among them.
+///
+/// # Errors
+///
+/// Returns an error when a written table cannot be read.
+pub fn sim_changes(facade: &EntityFacade) -> Result<Vec<SimChange>, Error> {
+    let (written, deleted) = SIM.with(|slot| {
+        let guard = slot.borrow();
+        let Some(session) = guard.last() else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut written: Vec<(String, String)> = session
+            .written
+            .iter()
+            .filter_map(|key| key.split_once(PK_SEP).map(|(entity, pk)| (entity.to_string(), pk.to_string())))
+            .collect();
+        written.sort();
+        let mut deleted: Vec<(String, String)> = session
+            .tombstones
+            .iter()
+            .flat_map(|(entity, pks)| pks.iter().map(move |pk| (entity.clone(), pk.clone())))
+            .collect();
+        deleted.sort();
+        (written, deleted)
+    });
+    let key_of = |pk: &str| -> Vec<(String, String)> {
+        pk.split(PK_SEP)
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    };
+    let mut out = Vec::new();
+    let mut entities: Vec<&String> = written.iter().map(|(entity, _)| entity).collect();
+    entities.dedup();
+    for entity in entities {
+        let meta = read_meta(facade, entity)?;
+        let rows = sim_written_rows(facade, entity)?;
+        for (_, pk) in written.iter().filter(|(name, _)| name == entity) {
+            let values = rows
+                .iter()
+                .find(|row| pk_of(row, &meta.pk_fields).as_deref() == Some(pk.as_str()))
+                .map(|row| row.iter().map(|(name, value)| (name.to_string(), value.clone())).collect());
+            out.push(SimChange {
+                entity: entity.clone(),
+                key: key_of(pk),
+                values,
+            });
+        }
+    }
+    for (entity, pk) in deleted {
+        out.push(SimChange {
+            entity,
+            key: key_of(&pk),
+            values: None,
+        });
+    }
+    Ok(out)
+}
+
+/// Why this thread's innermost sim can no longer be trusted (a rolled-back transaction wrote to it), if it cannot.
+pub fn sim_poisoned() -> Option<String> {
+    SIM.with(|slot| slot.borrow().last().and_then(|session| session.poisoned.clone()))
 }
 
 /// Create the table of `entity_name` in the sim schema when the sim has none yet.
@@ -1096,7 +1231,7 @@ pub(super) fn ensure_sim_table(facade: &EntityFacade, entity_name: &str) -> Resu
 pub(super) fn copy_replica(
     facade: &EntityFacade,
     entity_name: &str,
-    plain: BTreeMap<String, Value>,
+    plain: FieldMap,
 ) -> Result<bool, Error> {
     let owner = facade.clone();
     let (full_name, pk, sealed) = facade.with_entity(entity_name, |entity, _, _| {
@@ -1244,7 +1379,7 @@ fn write_sim(
     facade: &EntityFacade,
     entity_name: &str,
     op: Op,
-    plain: &BTreeMap<String, Value>,
+    plain: &FieldMap,
     prepared: &SealedWrite,
 ) -> Result<(), Error> {
     let hit = sim_hit(&prepared.full_name, &prepared.pk)?;
@@ -1296,8 +1431,8 @@ fn sim_statements(
     entity_name: &str,
     op: Op,
     hit: &SimHit,
-    sealed: &BTreeMap<String, Value>,
-    sealed_copy: Option<&BTreeMap<String, Value>>,
+    sealed: &FieldMap,
+    sealed_copy: Option<&FieldMap>,
 ) -> Result<Vec<(String, Vec<Value>)>, Error> {
     let mut statements = Vec::new();
     if let Some(copied) = sealed_copy {
@@ -1399,6 +1534,10 @@ fn overlay_rows(
         SimView::empty()
     };
     if !sim.affects() {
+        // Nothing held and no overlay: the database answers alone.
+        if holds.is_empty() {
+            return Ok(None);
+        }
         // A find by the whole primary key sees only the held rows of that key.
         if let Some(pk) = pinned_pk(condition, &meta.pk_fields) {
             holds.retain(|held| held.pk == pk);
@@ -1441,9 +1580,10 @@ fn overlay_rows(
     if !order.is_empty() {
         sort_rows(&mut rows, order);
     }
+    let name: Arc<str> = Arc::from(meta.full_name.as_str());
     let values = rows
         .into_iter()
-        .map(|row| EntityValue::from_fields(meta.full_name.clone(), row.fields))
+        .map(|row| EntityValue::from_fields(Arc::clone(&name), row.fields))
         .collect();
     Ok(Some(values))
 }
@@ -1504,7 +1644,7 @@ fn pinned_pk(condition: Option<&Condition>, pk_fields: &[String]) -> Option<Stri
     for part in parts {
         if let Condition::Equals(field, value) = part {
             if field.entity_alias.is_none() && pk_fields.contains(&field.name) && !value.is_null() {
-                keys.insert(field.name.clone(), value.clone());
+                keys.insert(Arc::from(field.name.as_str()), value.clone());
             }
         }
     }
@@ -1550,21 +1690,21 @@ fn load_plain(
     condition: Option<&Condition>,
     order: &[OrderBy],
     overlay_schema: Option<&str>,
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+) -> Result<Vec<FieldMap>, Error> {
     let plan = plan_select(facade, &meta.full_name, condition, order)?;
     let db_rows = if let Some(schema) = overlay_schema {
         query_sim(facade, schema, &plan.sql, &plan.params)?
     } else {
         query_tx(&plan.tx, &plan.sql, &plan.params)?
     };
-    rows_plain(facade, &meta.full_name, &plan.columns, &db_rows)
+    rows_plain(facade, &meta.full_name, &plan.columns, db_rows)
 }
 
 fn load_by_pk(
     facade: &EntityFacade,
     entity_name: &str,
-    values: &BTreeMap<String, Value>,
-) -> Result<Option<BTreeMap<String, Value>>, Error> {
+    values: &FieldMap,
+) -> Result<Option<FieldMap>, Error> {
     let owner = facade.clone();
     let plan = facade.with_group(entity_name, |entity, dialect, model, tx| {
         let condition = pk_condition(entity, values)?;
@@ -1578,14 +1718,14 @@ fn load_by_pk(
         })
     })?;
     let db_rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
-    let mut plain = rows_plain(&owner, entity_name, &plan.columns, &db_rows)?;
+    let mut plain = rows_plain(&owner, entity_name, &plan.columns, db_rows)?;
     Ok(plain.pop())
 }
 
 struct SelectPlan {
     sql: String,
     params: Vec<Value>,
-    columns: Vec<(String, String)>,
+    columns: Vec<(Arc<str>, String)>,
     tx: TransactionManager,
 }
 
@@ -1613,9 +1753,9 @@ fn plan_select(
 fn rows_plain(
     facade: &EntityFacade,
     entity_name: &str,
-    columns: &[(String, String)],
-    rows: &[DbRow],
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+    columns: &[(Arc<str>, String)],
+    rows: Vec<DbRow>,
+) -> Result<Vec<FieldMap>, Error> {
     let owner = facade.clone();
     facade.with_entity(entity_name, |entity, _, _| {
         let mut out = Vec::with_capacity(rows.len());
@@ -1637,7 +1777,7 @@ fn dml(
     facade: &EntityFacade,
     entity_name: &str,
     op: Op,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<Option<(String, Vec<Value>)>, Error> {
     facade.with_group(entity_name, |entity, dialect, _, _| {
         statement_for(entity, dialect, op, values)
@@ -1648,7 +1788,7 @@ fn statement_for(
     entity: &EntityDefinition,
     dialect: &Dialect,
     operation: Op,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<Option<(String, Vec<Value>)>, Error> {
     match operation {
         Op::Delete => {
@@ -1688,7 +1828,7 @@ fn statement_for(
 
 fn present_columns<'a>(
     entity: &'a EntityDefinition,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
     include_null: bool,
     skip_pk: bool,
 ) -> Vec<&'a str> {
@@ -1699,20 +1839,20 @@ fn present_columns<'a>(
             if skip_pk && field.is_pk {
                 return false;
             }
-            matches!(values.get(&field.name), Some(value) if include_null || !value.is_null())
+            matches!(values.get(field.name.as_str()), Some(value) if include_null || !value.is_null())
         })
         .map(|field| field.name.as_str())
         .collect()
 }
 
-fn bind_columns(columns: &[&str], values: &BTreeMap<String, Value>) -> Vec<Value> {
+fn bind_columns(columns: &[&str], values: &FieldMap) -> Vec<Value> {
     columns
         .iter()
         .map(|column| values.get(*column).cloned().unwrap_or(Value::Null))
         .collect()
 }
 
-fn pk_condition(entity: &EntityDefinition, values: &BTreeMap<String, Value>) -> Result<Condition, Error> {
+fn pk_condition(entity: &EntityDefinition, values: &FieldMap) -> Result<Condition, Error> {
     let mut parts = Vec::new();
     for name in entity.pk_field_names() {
         let value = values
@@ -1735,7 +1875,7 @@ fn prepare_handled(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<SealedWrite, Error> {
     let owner = facade.clone();
     let operation = operation.to_string();
@@ -1759,8 +1899,8 @@ fn seal(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
-    values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+) -> Result<FieldMap, Error> {
     let owner = facade.clone();
     let operation = operation.to_string();
     facade.with_entity(entity_name, |entity, _, _| {
@@ -1768,8 +1908,32 @@ fn seal(
     })
 }
 
-fn read_meta(facade: &EntityFacade, entity_name: &str) -> Result<ReadMeta, Error> {
-    facade.with_entity(entity_name, |entity, _, _| {
+/// The cache facts of each entity looked up, by the name it was looked up by.
+type ReadMetas = super::derived::ByDefinition<Arc<ReadMeta>>;
+
+/// Read once per entity name: every find and write asks.
+/// The primary key field names of `entity_name`, read once per entity.
+pub(crate) fn pk_field_names(facade: &EntityFacade, entity_name: &str) -> Result<PkNames, Error> {
+    read_meta(facade, entity_name).map(PkNames)
+}
+
+/// See [`pk_field_names`].
+pub(crate) struct PkNames(Arc<ReadMeta>);
+
+impl std::ops::Deref for PkNames {
+    type Target = [String];
+
+    fn deref(&self) -> &[String] {
+        &self.0.pk_fields
+    }
+}
+
+fn read_meta(facade: &EntityFacade, entity_name: &str) -> Result<Arc<ReadMeta>, Error> {
+    let generation = super::derived::generation(facade);
+    if let Some(meta) = facade.with_slot_read(ReadMetas::default, |metas| metas.get(entity_name, generation)) {
+        return Ok(meta);
+    }
+    let meta = Arc::new(facade.with_entity(entity_name, |entity, _, _| {
         Ok(ReadMeta {
             full_name: entity.full_name.clone(),
             is_view: entity.is_view,
@@ -1777,10 +1941,12 @@ fn read_meta(facade: &EntityFacade, entity_name: &str) -> Result<ReadMeta, Error
             cache_never: entity.cache == "never",
             pk_fields: entity.pk_field_names().into_iter().map(str::to_string).collect(),
         })
-    })
+    })?);
+    facade.with_slot(ReadMetas::default, |metas| metas.insert(entity_name, generation, Arc::clone(&meta)));
+    Ok(meta)
 }
 
-fn identity(entity: &EntityDefinition, values: &BTreeMap<String, Value>) -> Result<String, Error> {
+fn identity(entity: &EntityDefinition, values: &FieldMap) -> Result<String, Error> {
     let names = entity.pk_field_names();
     if names.is_empty() {
         return Err(Error::new(format!("{} has no primary key", entity.full_name)));
@@ -1801,13 +1967,13 @@ fn identity(entity: &EntityDefinition, values: &BTreeMap<String, Value>) -> Resu
     Ok(key)
 }
 
-fn pk_of(fields: &BTreeMap<String, Value>, pk_fields: &[String]) -> Option<String> {
+fn pk_of(fields: &FieldMap, pk_fields: &[String]) -> Option<String> {
     if pk_fields.is_empty() {
         return None;
     }
     let mut key = String::new();
     for (index, name) in pk_fields.iter().enumerate() {
-        let value = fields.get(name).filter(|value| !value.is_null())?;
+        let value = fields.get(name.as_str()).filter(|value| !value.is_null())?;
         if index > 0 {
             key.push(PK_SEP);
         }
@@ -1901,9 +2067,10 @@ impl SimView {
 }
 
 fn cache_get(facade: &EntityFacade, entity_name: &str, lookup: &FindLookup) -> Option<EntityList> {
-    let key = lookup_key(lookup);
-    let cache = facade.with_slot(OneCaches::default, |caches| caches.lists.get(entity_name).cloned())?;
-    cache.get(&key).ok().flatten().map(|cached| cached.rows)
+    let cache = facade.with_slot_read(OneCaches::default, |caches| caches.lists.get(entity_name).cloned())?;
+    with_lookup_key(lookup, |key| {
+        cache.get_arc(key).ok().flatten().map(|cached| cached.rows.clone())
+    })
 }
 
 fn list_cache(name: &str) -> MCache<String, CachedList> {
@@ -1920,30 +2087,242 @@ fn count_cache(name: &str) -> MCache<String, CachedCount> {
     )
 }
 
-/// The key of a find: its condition with the parts of each `and` and `or` in one order, so the same condition
-/// built in another order is the same entry, then the order.
-fn lookup_key(lookup: &FindLookup) -> String {
-    format!(
-        "{:?}|{:?}|{:?}|{:?}",
-        lookup.condition.clone().map(canonical),
-        lookup.order,
-        lookup.limit,
-        lookup.offset
-    )
+thread_local! {
+    /// Reused find-key text. A hit looks the key up as `&str` and does not allocate it again.
+    static LOOKUP_KEY: RefCell<String> = RefCell::new(String::with_capacity(128));
 }
 
-fn canonical(condition: Condition) -> Condition {
-    let sorted = |list: Vec<Condition>| {
-        let mut list: Vec<Condition> = list.into_iter().map(canonical).collect();
-        list.sort_by_cached_key(|item| format!("{item:?}"));
-        list
-    };
-    match condition {
-        Condition::And(list) => Condition::And(sorted(list)),
-        Condition::Or(list) => Condition::Or(sorted(list)),
-        Condition::Not(inner) => Condition::Not(Box::new(canonical(*inner))),
-        other => other,
+/// Run `body` with the canonical key of `lookup`. `body` must not look up another find key.
+fn with_lookup_key<T>(lookup: &FindLookup, body: impl FnOnce(&str) -> T) -> T {
+    LOOKUP_KEY.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        write_lookup_key(lookup, &mut buf);
+        body(buf.as_str())
+    })
+}
+
+/// The key stored on a miss. Hits use [`with_lookup_key`] and do not allocate this.
+fn owned_lookup_key(lookup: &FindLookup) -> String {
+    let mut key = String::with_capacity(128);
+    write_lookup_key(lookup, &mut key);
+    key
+}
+
+/// The key of a find. The parts of each `and` and `or` are written in one order, so the same condition built another
+/// way is the same entry. A single comparison writes straight into `out`.
+fn write_lookup_key(lookup: &FindLookup, out: &mut String) {
+    match &lookup.condition {
+        Some(condition) => write_condition(condition, out),
+        None => out.push_str("none"),
     }
+    out.push('|');
+    for entry in &lookup.order {
+        write_field(&entry.field, out);
+        out.push(if entry.descending { 'D' } else { 'A' });
+        match entry.nulls {
+            Some(Nulls::First) => out.push('F'),
+            Some(Nulls::Last) => out.push('L'),
+            None => out.push('-'),
+        }
+        match entry.case {
+            Some(true) => out.push('U'),
+            Some(false) => out.push('L'),
+            None => out.push('-'),
+        }
+        out.push(';');
+    }
+    out.push('|');
+    push_opt_i64(out, lookup.limit);
+    out.push('|');
+    push_opt_i64(out, lookup.offset);
+}
+
+fn push_opt_i64(out: &mut String, value: Option<i64>) {
+    match value {
+        Some(number) => {
+            let _ = write!(out, "s{number}");
+        }
+        None => out.push('n'),
+    }
+}
+
+fn write_condition(condition: &Condition, out: &mut String) {
+    match condition {
+        Condition::Equals(field, value) => write_cmp("eq", field, std::slice::from_ref(value), out),
+        Condition::NotEquals(field, value) => write_cmp("ne", field, std::slice::from_ref(value), out),
+        Condition::Less(field, value) => write_cmp("lt", field, std::slice::from_ref(value), out),
+        Condition::Greater(field, value) => write_cmp("gt", field, std::slice::from_ref(value), out),
+        Condition::LessEqual(field, value) => write_cmp("le", field, std::slice::from_ref(value), out),
+        Condition::GreaterEqual(field, value) => write_cmp("ge", field, std::slice::from_ref(value), out),
+        Condition::Like(field, value) => write_cmp("like", field, std::slice::from_ref(value), out),
+        Condition::NotLike(field, value) => write_cmp("nlike", field, std::slice::from_ref(value), out),
+        Condition::Between(field, low, high) => write_cmp("between", field, &[low.clone(), high.clone()], out),
+        Condition::NotBetween(field, low, high) => write_cmp("nbetween", field, &[low.clone(), high.clone()], out),
+        Condition::In(field, values) => write_cmp("in", field, values, out),
+        Condition::NotIn(field, values) => write_cmp("nin", field, values, out),
+        Condition::IsNull(field) => write_cmp("null", field, &[], out),
+        Condition::IsNotNull(field) => write_cmp("nnull", field, &[], out),
+        Condition::Matches(field, value) => write_cmp("match", field, std::slice::from_ref(value), out),
+        Condition::CompareFields(left, op, right) => {
+            out.push_str("cmpf(");
+            write_field(left, out);
+            out.push(',');
+            out.push_str(match op {
+                CompareOp::Equals => "eq",
+                CompareOp::NotEquals => "ne",
+                CompareOp::Less => "lt",
+                CompareOp::Greater => "gt",
+                CompareOp::LessEqual => "le",
+                CompareOp::GreaterEqual => "ge",
+            });
+            out.push(',');
+            write_field(right, out);
+            out.push(')');
+        }
+        Condition::IgnoreCase(inner) => {
+            out.push_str("ci(");
+            write_condition(inner, out);
+            out.push(')');
+        }
+        Condition::Not(inner) => {
+            out.push_str("not(");
+            write_condition(inner, out);
+            out.push(')');
+        }
+        Condition::Where(sql) => {
+            out.push_str("where(");
+            push_text(out, sql);
+            out.push(')');
+        }
+        Condition::Bound(field, op) => {
+            out.push_str("bound(");
+            write_field(field, out);
+            out.push(',');
+            out.push_str(match op {
+                CompareOp::Equals => "eq",
+                CompareOp::NotEquals => "ne",
+                CompareOp::Less => "lt",
+                CompareOp::Greater => "gt",
+                CompareOp::LessEqual => "le",
+                CompareOp::GreaterEqual => "ge",
+            });
+            out.push(')');
+        }
+        Condition::And(list) => write_group("and", list, out),
+        Condition::Or(list) => write_group("or", list, out),
+    }
+}
+
+/// `and` and `or` children in one order, so the same condition built another way is one cache entry.
+fn write_group(op: &str, list: &[Condition], out: &mut String) {
+    let mut parts: Vec<String> = list
+        .iter()
+        .map(|child| {
+            let mut part = String::new();
+            write_condition(child, &mut part);
+            part
+        })
+        .collect();
+    parts.sort();
+    out.push_str(op);
+    out.push('(');
+    for part in &parts {
+        out.push_str(part);
+        out.push(';');
+    }
+    out.push(')');
+}
+
+fn write_cmp(op: &str, field: &FieldRef, values: &[Value], out: &mut String) {
+    out.push_str(op);
+    out.push('(');
+    write_field(field, out);
+    for value in values {
+        out.push(',');
+        write_value(value, out);
+    }
+    out.push(')');
+}
+
+fn write_field(field: &FieldRef, out: &mut String) {
+    if let Some(alias) = &field.entity_alias {
+        push_text(out, alias);
+        out.push('.');
+    }
+    push_text(out, &field.name);
+    if let Some(expr) = &field.expr {
+        out.push('=');
+        push_text(out, expr);
+    }
+}
+
+/// The value as the condition was built. `String("1")` and `I64(1)` stay different keys.
+fn write_value(value: &Value, out: &mut String) {
+    match value {
+        Value::Null => out.push('N'),
+        Value::String(text) => {
+            out.push('S');
+            push_text(out, text);
+        }
+        Value::Bool(flag) => out.push(if *flag { 'T' } else { 'F' }),
+        Value::I32(number) => {
+            let _ = write!(out, "i{number}");
+        }
+        Value::I64(number) => {
+            let _ = write!(out, "l{number}");
+        }
+        Value::F64(number) => {
+            let _ = write!(out, "f{}", number.to_bits());
+        }
+        Value::Decimal(number) => {
+            out.push('d');
+            push_text(out, &number.to_string());
+        }
+        // Every digit the value holds: two moments in one millisecond are different finds.
+        Value::Timestamp(stamp) => {
+            let _ = write!(out, "ts{}", stamp.as_nanosecond());
+        }
+        Value::Date(date) => {
+            out.push_str("dt");
+            push_text(out, &date.to_string());
+        }
+        Value::Time(time) => {
+            out.push_str("tm");
+            push_text(out, &time.to_string());
+        }
+        Value::Bytes(bytes) => {
+            let _ = write!(out, "b{}:", bytes.len());
+            for byte in bytes {
+                let _ = write!(out, "{byte:02x}");
+            }
+        }
+        Value::List(list) => {
+            out.push('[');
+            for item in list {
+                write_value(item, out);
+                out.push(';');
+            }
+            out.push(']');
+        }
+        Value::Map(map) => {
+            out.push('{');
+            for (name, item) in map {
+                push_text(out, name);
+                out.push(':');
+                write_value(item, out);
+                out.push(';');
+            }
+            out.push('}');
+        }
+        Value::Object(_) => out.push('O'),
+    }
+}
+
+fn push_text(out: &mut String, text: &str) {
+    let _ = write!(out, "{}:", text.len());
+    out.push_str(text);
+    out.push(';');
 }
 
 fn page_rows(mut rows: Vec<EntityValue>, limit: Option<i64>, offset: Option<i64>) -> Vec<EntityValue> {
@@ -1967,7 +2346,7 @@ fn sort_rows(rows: &mut [MemRow], order: &[OrderBy]) {
     rows.sort_by(|left, right| {
         for entry in order {
             let read = |row: &MemRow| {
-                let value = row.fields.get(&entry.field.name).cloned().unwrap_or(Value::Null);
+                let value = row.fields.get(entry.field.name.as_str()).cloned().unwrap_or(Value::Null);
                 match (entry.case, value) {
                     (Some(true), Value::String(text)) => Value::String(text.to_uppercase()),
                     (Some(false), Value::String(text)) => Value::String(text.to_lowercase()),
@@ -2002,14 +2381,14 @@ fn cmp_order(left: &Value, right: &Value, descending: bool, nulls_first: bool) -
     }
 }
 
-fn row_matches(condition: Option<&Condition>, fields: &BTreeMap<String, Value>) -> bool {
+fn row_matches(condition: Option<&Condition>, fields: &FieldMap) -> bool {
     match condition {
         None => true,
         Some(condition) => eval_condition(condition, fields),
     }
 }
 
-fn eval_condition(condition: &Condition, fields: &BTreeMap<String, Value>) -> bool {
+fn eval_condition(condition: &Condition, fields: &FieldMap) -> bool {
     match condition {
         Condition::Equals(field, expected) => field_value(fields, &field.name) == *expected,
         Condition::NotEquals(field, expected) => {
@@ -2085,7 +2464,7 @@ fn eval_condition(condition: &Condition, fields: &BTreeMap<String, Value>) -> bo
             }
         }
         Condition::IgnoreCase(inner) => {
-            let upper: BTreeMap<String, Value> = fields
+            let upper: FieldMap = fields
                 .iter()
                 .map(|(name, value)| match value {
                     Value::String(text) => (name.clone(), Value::String(text.to_uppercase())),
@@ -2120,7 +2499,7 @@ fn upper_values(condition: Condition) -> Condition {
     }
 }
 
-fn field_value(fields: &BTreeMap<String, Value>, name: &str) -> Value {
+fn field_value(fields: &FieldMap, name: &str) -> Value {
     fields.get(name).cloned().unwrap_or(Value::Null)
 }
 
@@ -2158,7 +2537,6 @@ fn schema_name_ok(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
     use moqui_db::sql::{CompareOp, Condition};
@@ -2170,10 +2548,10 @@ mod tests {
     use crate::testing;
     use crate::transaction::{TransactionAttribute, TransactionManager};
 
-    fn row(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
+    fn row(pairs: &[(&str, Value)]) -> crate::entity::FieldMap {
         pairs
             .iter()
-            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .map(|(name, value)| ((*name).into(), value.clone()))
             .collect()
     }
 
@@ -2456,7 +2834,7 @@ mod tests {
         assert!(err.to_string().contains("terminated"), "{err}");
         assert!(super::sim_check_find(&facade, TEST).is_err());
         // The sim's own records on production are still read.
-        assert!(super::sim_check_find(&facade, "moqui.llm.LlmConversation").is_ok());
+        assert!(super::sim_check_find(&facade, "moqui.agent.AgentRun").is_ok());
         super::SIM.with(|slot| slot.borrow_mut().clear());
     }
 
@@ -2601,6 +2979,82 @@ mod tests {
     }
 
     #[test]
+    fn a_cached_enumeration_is_shared_until_set() {
+        let facade = testing::open();
+        let mut made = facade.make_value("moqui.basic.Enumeration").unwrap();
+        made.set("enumId", Value::string("Share1"));
+        made.set("enumTypeId", Value::string("ShareType"));
+        made.create(&facade).unwrap();
+        let load = || {
+            facade
+                .find("moqui.basic.Enumeration")
+                .unwrap()
+                .eq("enumId", Value::string("Share1"))
+                .use_cache(true)
+                .one()
+                .unwrap()
+                .unwrap()
+        };
+        let mut first = load();
+        let second = load();
+        assert!(first.shares_fields(&second), "a cache hit shares the stored row");
+        first.set("description", Value::string("changed"));
+        assert!(!first.shares_fields(&second), "set copies the row");
+        assert!(second.get("description").is_none_or(Value::is_null));
+        assert_eq!(first.get("description").and_then(Value::as_str), Some("changed"));
+        let third = load();
+        assert!(second.shares_fields(&third), "the cache keeps the unmodified row");
+        assert!(!first.shares_fields(&third));
+    }
+
+    #[test]
+    fn find_keys_keep_sub_millisecond_timestamps_and_value_types_apart() {
+        let key = |value: Value| {
+            super::owned_lookup_key(&FindLookup {
+                entity_name: "moqui.test.TestEntity".to_string(),
+                use_cache: Some(true),
+                condition: Some(Condition::equals("testDateTime", value)),
+                order: Vec::new(),
+                limit: None,
+                offset: None,
+                filtered: false,
+            })
+        };
+        let stamp = |micros: i64| Value::Timestamp(jiff::Timestamp::from_microsecond(micros).unwrap());
+        assert_ne!(key(stamp(1_700_000_000_000_001)), key(stamp(1_700_000_000_000_002)));
+        assert_eq!(key(stamp(1_700_000_000_000_001)), key(stamp(1_700_000_000_000_001)));
+        assert_ne!(key(Value::string("1")), key(Value::I64(1)));
+    }
+
+    #[test]
+    fn an_and_in_either_order_is_one_cache_entry() {
+        let tape = Arc::new(Mutex::new(Vec::new()));
+        let facade = testing::open_with_tape(Arc::clone(&tape));
+        let mut made = facade.make_value("moqui.basic.Enumeration").unwrap();
+        made.set("enumId", Value::string("And1"));
+        made.set("enumTypeId", Value::string("AndType"));
+        made.set("description", Value::string("hello"));
+        made.create(&facade).unwrap();
+        let find = |first_field: &str, first: &str, second_field: &str, second: &str| {
+            facade
+                .find("moqui.basic.Enumeration")
+                .unwrap()
+                .condition(Condition::and(vec![
+                    Condition::equals(first_field, Value::string(first)),
+                    Condition::equals(second_field, Value::string(second)),
+                ]))
+                .use_cache(true)
+                .list()
+                .unwrap()
+                .len()
+        };
+        assert_eq!(find("enumId", "And1", "enumTypeId", "AndType"), 1);
+        let selects = statements(&tape, "SELECT");
+        assert_eq!(find("enumTypeId", "AndType", "enumId", "And1"), 1);
+        assert_eq!(statements(&tape, "SELECT"), selects, "the reversed and hits the cache");
+    }
+
+    #[test]
     fn a_cached_find_of_an_entity_the_frame_wrote_is_not_kept_after_rollback() {
         let facade = testing::open();
         let tx = facade.transactions_for(TYPE).unwrap();
@@ -2643,5 +3097,73 @@ mod tests {
             "the commit cleared the cache"
         );
         assert!(super::TX_WRITTEN.with(|slot| slot.borrow().is_empty()));
+    }
+
+    /// The writes of each open frame kept for `full_name`: `None` when the frame keeps none (clears it whole), else
+    /// how many.
+    fn kept_writes(full_name: &str) -> Vec<Option<usize>> {
+        super::TX_WRITES.with(|slot| {
+            slot.borrow()
+                .values()
+                .filter_map(|entities| entities.get(full_name).map(|writes| writes.as_ref().map(Vec::len)))
+                .collect()
+        })
+    }
+
+    fn found_by(facade: &EntityFacade, field: &str, value: &str) -> usize {
+        facade
+            .find(TYPE)
+            .unwrap()
+            .eq(field, Value::string(value))
+            .use_cache(true)
+            .list()
+            .unwrap()
+            .len()
+    }
+
+    /// A frame's update of an entity with a cached find keeps the values written, and the commit evicts a find by a
+    /// field outside the primary key that another thread cached before it.
+    #[test]
+    fn an_update_evicts_a_find_by_another_field_at_commit() {
+        let facade = testing::open();
+        let mut row = facade.make_value(TYPE).unwrap();
+        row.set("enumTypeId", Value::string("UPD"));
+        row.set("description", Value::string("before"));
+        row.create(&facade).unwrap();
+        assert_eq!(found_by(&facade, "description", "after"), 0, "caches the empty result");
+        let tx = facade.transactions_for(TYPE).unwrap();
+        assert!(tx.begin(None).unwrap());
+        row.set("description", Value::string("after"));
+        row.update(&facade).unwrap();
+        assert_eq!(kept_writes(TYPE), vec![Some(1)]);
+        let reader = facade.clone();
+        let before_commit = std::thread::spawn(move || found_by(&reader, "description", "after"))
+            .join()
+            .unwrap();
+        assert_eq!(before_commit, 0, "another thread caches the committed rows");
+        tx.commit().unwrap();
+        assert_eq!(found_by(&facade, "description", "after"), 1, "the commit evicted the find");
+    }
+
+    /// A frame's write of an entity with no cached find or count keeps no values; a find another thread caches during
+    /// the frame, by a field the write set, is still cleared at the commit.
+    #[test]
+    fn a_find_cached_during_the_frame_is_cleared_at_commit_without_kept_values() {
+        let facade = testing::open();
+        let tx = facade.transactions_for(TYPE).unwrap();
+        assert!(tx.begin(None).unwrap());
+        let mut row = facade.make_value(TYPE).unwrap();
+        row.set("enumTypeId", Value::string("LATE"));
+        row.set("description", Value::string("late"));
+        row.create(&facade).unwrap();
+        assert_eq!(kept_writes(TYPE), vec![None], "nothing cached, nothing kept");
+        let reader = facade.clone();
+        let before_commit = std::thread::spawn(move || found_by(&reader, "description", "late"))
+            .join()
+            .unwrap();
+        assert_eq!(before_commit, 0, "another thread caches the committed rows");
+        tx.commit().unwrap();
+        assert_eq!(found_by(&facade, "description", "late"), 1, "the commit cleared the entity's caches");
+        assert!(kept_writes(TYPE).is_empty());
     }
 }

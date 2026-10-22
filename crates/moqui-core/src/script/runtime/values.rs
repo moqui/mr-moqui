@@ -34,7 +34,7 @@ pub(crate) fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
                     guard
                         .fields()
                         .iter()
-                        .map(|(key, item)| (key.clone(), item.clone()))
+                        .map(|(key, item)| (key.to_string(), item.clone()))
                         .collect(),
                 );
             }
@@ -45,7 +45,7 @@ pub(crate) fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
                 Some(facade) => copy.localized_fields(&facade),
                 None => copy.fields().clone(),
             };
-            Some(fields.into_iter().collect())
+            Some(fields.into_iter().map(|(key, item)| (key.to_string(), item)).collect())
         }
         _ => None,
     }
@@ -62,7 +62,7 @@ pub(crate) fn value_map_stored(value: &Value) -> Option<IndexMap<String, Value>>
                 guard
                     .fields()
                     .iter()
-                    .map(|(key, item)| (key.clone(), item.clone()))
+                    .map(|(key, item)| (key.to_string(), item.clone()))
                     .collect(),
             )
         }

@@ -40,6 +40,10 @@ macro_rules! rust_service {
     }};
 }
 
+// for the services of moqui_core::llm, outside this module
+#[cfg(feature = "llm")]
+pub(crate) use rust_service;
+
 static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new();
 
 /// The Rust service locations of the features a build may leave out (docs/Packaging.md), by path prefix; the first
@@ -47,6 +51,7 @@ static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new
 /// call reports that the feature is not built into this host.
 const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
     ("moqui_core::service::git::", "git", cfg!(feature = "git")),
+    ("moqui_core::service::git_hosting::", "git", cfg!(feature = "git")),
     ("moqui_core::service::images::", "image", cfg!(feature = "image")),
     ("moqui_core::service::spreadsheet::", "xlsx", cfg!(feature = "xlsx")),
     (
@@ -68,6 +73,7 @@ const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
     // the app's contacts hook, with or without mail built in
     ("moqui_core::service::mail::filter_contact_addresses", "", true),
     ("moqui_core::service::mail::", "imap", cfg!(feature = "imap")),
+    ("moqui_core::llm::", "llm", cfg!(feature = "llm")),
 ];
 
 /// The feature `location` belongs to when this build leaves that feature out.
@@ -104,9 +110,18 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::spreadsheet::register(&mut map),
         super::shell::register(&mut map),
         super::user_keys::register(&mut map),
+        super::dav::register(&mut map),
+        super::collab::register(&mut map),
         super::chat::register(&mut map),
+        super::chat_link::register(&mut map),
         #[cfg(feature = "git")]
         super::git::register(&mut map),
+        #[cfg(feature = "git")]
+        super::git_hosting::register(&mut map),
+        #[cfg(feature = "llm")]
+        crate::llm::services::register(&mut map),
+        #[cfg(feature = "llm")]
+        crate::llm::assist::register(&mut map),
     ] {
         if let Err(error) = result {
             errors.push(error);
@@ -126,15 +141,24 @@ mod tests {
         let mut expected = vec![
             "moqui_core::service::backup::backup_embedded_database",
             "moqui_core::service::chat::check_record_visible",
+            "moqui_core::service::chat::get_external_users",
             "moqui_core::service::chat::push_signal",
+            "moqui_core::service::chat_link::extract_link_urls",
+            "moqui_core::service::chat_link::fetch_link_page",
+            "moqui_core::service::collab::get_document",
+            "moqui_core::service::collab::save_document",
             "moqui_core::service::content::gc_content_blobs",
             "moqui_core::service::content::migrate_db_resource_blobs",
+            "moqui_core::service::dav::get_sync_addresses",
+            "moqui_core::service::dav::serve_request",
             "moqui_core::service::elfinder::run_command",
             "moqui_core::service::images::convert_image",
+            "moqui_core::service::images::get_rich_text_image",
             "moqui_core::service::images::image_reader_file_suffixes",
             "moqui_core::service::images::image_reader_mime_types",
             "moqui_core::service::images::image_writer_file_suffixes",
             "moqui_core::service::images::image_writer_mime_types",
+            "moqui_core::service::images::upload_rich_text_image",
             "moqui_core::service::images::write_image_service",
             "moqui_core::service::mail::complete_oauth_sign_in",
             "moqui_core::service::mail::discover_server",
@@ -181,9 +205,12 @@ mod tests {
             "moqui_core::service::tools::send_document_notifications",
             "moqui_core::service::tools::send_print_job_internal",
             "moqui_core::service::user_keys::create_access_token",
+            "moqui_core::service::user_keys::create_app_password",
             "moqui_core::service::user_keys::create_ssh_key",
             "moqui_core::service::user_keys::delete_ssh_key",
+            "moqui_core::service::user_keys::get_app_passwords",
             "moqui_core::service::user_keys::revoke_access_token",
+            "moqui_core::service::user_keys::revoke_app_password",
         ];
         if cfg!(feature = "git") {
             expected.extend([
@@ -204,6 +231,81 @@ mod tests {
                 "moqui_core::service::git::process_pending_updates",
                 "moqui_core::service::git::process_update",
                 "moqui_core::service::git::setup_lfs",
+                "moqui_core::service::git_hosting::archive_repository",
+                "moqui_core::service::git_hosting::create_commit_status",
+                "moqui_core::service::git_hosting::create_ref",
+                "moqui_core::service::git_hosting::delete_ref",
+                "moqui_core::service::git_hosting::find_repositories",
+                "moqui_core::service::git_hosting::find_updates",
+                "moqui_core::service::git_hosting::get_branch_rules",
+                "moqui_core::service::git_hosting::get_commit_statuses",
+                "moqui_core::service::git_hosting::get_compare",
+                "moqui_core::service::git_hosting::get_merge_request_approvals",
+                "moqui_core::service::git_hosting::get_repository_access",
+                "moqui_core::service::git_hosting::get_tree",
+                "moqui_core::service::git_hosting::merge_merge_request",
+                "moqui_core::service::git_hosting::merge_refs",
+                "moqui_core::service::git_hosting::queue_webhook_event",
+                "moqui_core::service::git_hosting::queue_webhook_push",
+                "moqui_core::service::git_hosting::send_webhook_delivery",
+                "moqui_core::service::git_hosting::test_webhook",
+                "moqui_core::service::git_hosting::unarchive_repository",
+                "moqui_core::service::git_hosting::update_repository",
+            ]);
+            expected.sort_unstable();
+        }
+        if cfg!(feature = "llm") {
+            expected.extend([
+                "moqui_core::llm::assist::audit::cancel_run_admin",
+                "moqui_core::llm::assist::audit::get_audit_view",
+                "moqui_core::llm::assist::call_drawer",
+                "moqui_core::llm::services::abandon_agent_handoff",
+                "moqui_core::llm::services::cancel_agent_run",
+                "moqui_core::llm::services::check_quota",
+                "moqui_core::llm::services::clean_call_content",
+                "moqui_core::llm::services::decide_agent_approval",
+                "moqui_core::llm::services::get_agent_approval",
+                "moqui_core::llm::services::get_agent_run_events",
+                "moqui_core::llm::services::get_call_content",
+                "moqui_core::llm::services::get_dashboard_totals",
+                "moqui_core::llm::services::get_effective_config",
+                "moqui_core::llm::services::get_prompt_preview",
+                "moqui_core::llm::services::preview_agent_approval",
+                "moqui_core::llm::services::probe_model",
+                "moqui_core::llm::services::rollup_usage",
+                "moqui_core::llm::services::set_model_capability",
+                "moqui_core::llm::services::start_agent_run",
+                "moqui_core::llm::services::store_tool_exposure",
+                "moqui_core::llm::services::submit_agent_input",
+                "moqui_core::llm::services::test_endpoint",
+                "moqui_core::llm::ai_task::execute_ai_task",
+                "moqui_core::llm::ai_task::get_ai_task",
+                "moqui_core::llm::ai_task::list_ai_task_types",
+                "moqui_core::llm::ai_task::propose_ai_field_value",
+                "moqui_core::llm::ai_task::run_ai_task",
+                "moqui_core::llm::ai_task::run_classify",
+                "moqui_core::llm::ai_task::run_extract",
+                "moqui_core::llm::ai_task::run_generate",
+                "moqui_core::llm::ai_task::run_summarize",
+                "moqui_core::llm::ai_task::run_translate",
+                "moqui_core::llm::chat::decide_chat_card",
+                "moqui_core::llm::chat::handle_chat_message",
+                "moqui_core::llm::gateway::store_api_client",
+                "moqui_core::llm::remote::store_mcp_server",
+                "moqui_core::llm::remote::store_mcp_server_tool",
+                "moqui_core::llm::remote::store_remote_agent",
+                "moqui_core::llm::remote::test_mcp_server",
+                "moqui_core::llm::remote::test_remote_agent",
+                "moqui_core::llm::trigger::delete_trigger_document",
+                "moqui_core::llm::trigger::fire_agent_trigger",
+                "moqui_core::llm::trigger::receive_trigger_documents",
+                "moqui_core::llm::trigger::reset_trigger_breaker",
+                "moqui_core::llm::trigger::store_agent_trigger",
+                "moqui_core::llm::skills::services::get_agent_skill",
+                "moqui_core::llm::skills::services::get_skill_retrieval",
+                "moqui_core::llm::skills::services::review_agent_lesson",
+                "moqui_core::llm::skills::services::store_agent_skill",
+                "moqui_core::llm::skills::services::sync_agent_skills",
             ]);
             expected.sort_unstable();
         }

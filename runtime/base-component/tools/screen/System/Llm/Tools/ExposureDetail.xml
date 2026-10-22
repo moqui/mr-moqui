@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One exposed service: its row, saved with the version it was read at (a row someone else saved since is refused, and
+    the form shows it as it is now), the class the service has of its own, and Remove. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Exposed Service" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="toolName" required="true"/>
+
+    <transition name="exposureList"><default-response url="../ExposureList"/></transition>
+    <transition name="storeExposure"><service-call name="org.moqui.agent.AgentAdminServices.store#AgentToolExposure"/>
+        <default-response url="."/><error-response url="."/></transition>
+    <transition name="deleteExposure"><service-call name="delete#moqui.agent.AgentToolExposure"/>
+        <default-response url="../ExposureList"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentToolExposure" value-field="exposure"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Exposed Service ${toolName}"/><box-toolbar>
+            <link url="deleteExposure" text="Remove" condition="exposure" parameter-map="{toolName:toolName}"
+                    confirmation="Remove this tool? Agents can no longer run the service through it."/>
+            <link url="exposureList" text="All Exposed Services"/>
+        </box-toolbar><box-body>
+            <section name="MissingSection" condition="!exposure"><widgets>
+                <label text="No service is exposed as ${toolName ?? ''}." type="p" style="text-warning"/>
+            </widgets><fail-widgets>
+                <label text="Saved with the version you opened (${exposure.lockVersion ?? 0}): if someone saved it since, your save is refused and this shows it as it is now. Each save moves the version on, so an approval asked for under the older one runs nothing." type="p"/>
+                <form-single name="ExposureForm" map="exposure" transition="storeExposure">
+                    <field name="toolName"><default-field title="Tool Name"><display/></default-field></field>
+                    <field name="lockVersion"><default-field><hidden/></default-field></field>
+                    <field name="serviceName"><default-field title="Service"><text-line size="60"/></default-field></field>
+                    <field name="title"><default-field><text-line size="40"/></default-field></field>
+                    <field name="description"><default-field tooltip="What the model reads in find_tools and describe_tools">
+                        <text-area rows="4" cols="70"/></default-field></field>
+                    <field name="classificationEnumId"><default-field title="Classification" tooltip="Empty is the service's own: view is a read, delete is destructive, anything else a write">
+                        <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                            <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentClassification"/>
+                                <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="exposeAssistant"><default-field title="For the Assistant" tooltip="Empty is Y"><drop-down allow-empty="true">
+                        <option key="Y"/><option key="N"/></drop-down></default-field></field>
+                    <field name="exposeMcp"><default-field title="For MCP"><drop-down allow-empty="true">
+                        <option key="Y"/><option key="N"/></drop-down></default-field></field>
+                    <field name="previewMode"><default-field title="Preview" tooltip="Sim preview of a write: on demand (the card's button), always before the card, or none; a destructive one is previewed unless none">
+                        <drop-down allow-empty="true"><option key="on-demand"/><option key="always"/><option key="none"/></drop-down></default-field></field>
+                    <field name="schemaOverrideJson"><default-field title="Schema Override" tooltip="A JSON schema object for the parameters, in place of the one made from the service's">
+                        <text-area rows="6" cols="70"/></default-field></field>
+                    <field name="disabled"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </fail-widgets></section>
+        </box-body></container-box>
+    </widgets>
+</screen>

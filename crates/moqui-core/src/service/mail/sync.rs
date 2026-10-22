@@ -23,8 +23,8 @@
 //! 3. Each subscribed folder, the Inbox first. `STATUS` skips one with nothing new. A UIDVALIDITY change voids its
 //!    UIDs: its rows are kept for their Message-IDs and the folder is read again. New mail is the UIDs from
 //!    `remoteUidNext` on, within the account's sync window (`SEARCH SINCE` on the first sync), at most
-//!    `email_sync_batch` a session. With CONDSTORE the flags that changed come from `CHANGEDSINCE`, and with QRESYNC
-//!    the expunged UIDs from `VANISHED`; without them the flags of every message are read every `email_flag_scan`
+//!    `email-client` `sync-batch` a session. With CONDSTORE the flags that changed come from `CHANGEDSINCE`, and with QRESYNC
+//!    the expunged UIDs from `VANISHED`; without them the flags of every message are read every `email-client` `flag-scan`
 //!    minutes and an expunge is found by comparing the UIDs.
 //! 4. A message is stored once: one already kept under its folder and UID is not fetched again; one whose
 //!    Message-ID is a row that left another folder in this session is that row, moved (its links and labels kept);
@@ -794,7 +794,7 @@ pub(super) struct SyncReport {
     pub(super) folder_count: usize,
     pub(super) skipped_messages: usize,
     pub(super) folder_errors: Vec<String>,
-    /// A folder had more new mail than `email_sync_batch`: the job syncs the account again at its next run, whatever
+    /// A folder had more new mail than `email-client` `sync-batch`: the job syncs the account again at its next run, whatever
     /// its interval, until the backlog is in (a first sync of a large mailbox).
     pub(super) capped: bool,
 }
@@ -837,6 +837,7 @@ pub(super) fn sync_account_service(
         note_error("Email sync is disabled in LLM sim session");
         return Ok(BTreeMap::new());
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "sync#EmailAccount")?;
     let account_id = param_text(parameters, "emailAccountId");
     let flag = |name: &str| match parameters.get(name) {
         Some(Value::Bool(on)) => *on,
@@ -1100,7 +1101,7 @@ const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 /// A sync's live progress for a screen ("Syncing 1,204 of 8,000"), sent on [`PROGRESS_TOPIC`] to the account's users
 /// (its owner and current members, as `publish#AccountCounts` finds them): `{emailAccountId, done, folderCount,
 /// foldersDone, folderName, folderPath, folderKept, folderFetched, folderToFetch, folderPending, fetched, toFetch,
-/// pending}`, and when it ends also `outcome`, `message` and `newCount`. A session fetches at most `email_sync_batch`
+/// pending}`, and when it ends also `outcome`, `message` and `newCount`. A session fetches at most `email-client` `sync-batch`
 /// messages a folder (`folderToFetch`); `folderPending` is all the new mail of the folder in the sync window, the rest
 /// coming in later sessions, and `folderKept` what was kept of it before, so a first sync shows "{folderKept +
 /// folderFetched} of {folderKept + folderPending}" across its sessions. `toFetch` and `pending` add up the folders read
@@ -1375,9 +1376,9 @@ impl From<LibError> for FolderError {
     }
 }
 
+/// The conf's `email-client` attribute `name` as a positive number, else `default`.
 fn property_number(name: &str, default: i64) -> i64 {
-    moqui_lib::env::get_prop_or_env(name)
-        .trim()
+    super::client_setting(name)
         .parse::<i64>()
         .ok()
         .filter(|number| *number > 0)
@@ -1414,8 +1415,8 @@ impl<'a> Session<'a> {
             pending: Vec::new(),
             new_inbox_ids: Vec::new(),
             window,
-            batch: usize::try_from(property_number("email_sync_batch", 500)).unwrap_or(500),
-            flag_scan_millis: property_number("email_flag_scan", 15) * 60_000,
+            batch: usize::try_from(property_number("sync-batch", 500)).unwrap_or(500),
+            flag_scan_millis: property_number("flag-scan", 15) * 60_000,
             labels: None,
         }
     }
@@ -2668,7 +2669,7 @@ fn pop_sync(
     let mut unknown: Vec<(u32, String)> = listing.into_iter().filter(|(_, uidl)| !known.contains(uidl)).collect();
     unknown.sort_by_key(|item| std::cmp::Reverse(item.0));
     let pending = unknown.len();
-    unknown.truncate(usize::try_from(property_number("email_sync_batch", 500)).unwrap_or(500));
+    unknown.truncate(usize::try_from(property_number("sync-batch", 500)).unwrap_or(500));
     progress.new_mail(unknown.len(), pending, known.len());
     let mut new_ids = Vec::new();
     for (number, uidl) in unknown {
@@ -2789,7 +2790,7 @@ pub(super) fn open_pop(
 
 // ---- the job ----
 
-/// The accounts of this server whose last sync stopped at `email_sync_batch` with new mail left on the server.
+/// The accounts of this server whose last sync stopped at `email-client` `sync-batch` with new mail left on the server.
 #[derive(Default)]
 struct Backlog(std::sync::Mutex<HashSet<String>>);
 
@@ -2813,8 +2814,8 @@ fn has_backlog(account_id: &str) -> bool {
 }
 
 /// `sync#DueEmailAccounts`, the job `sync_EmailAccounts_frequent`: each account with an incoming server whose last
-/// sync is older than its interval (`syncIntervalMinutes`, else `email_sync_interval`, 5 minutes; three times that
-/// after an error), or whose last sync stopped at `email_sync_batch` with mail left (at every run of the job, so a
+/// sync is older than its interval (`syncIntervalMinutes`, else `email-client` `sync-interval`, 5 minutes; three times that
+/// after an error), or whose last sync stopped at `email-client` `sync-batch` with mail left (at every run of the job, so a
 /// large first sync goes on a batch a minute), each on its own. A paused account, one whose sign-in failed and one
 /// syncing now are left.
 pub(super) fn sync_due_accounts(
@@ -2825,8 +2826,9 @@ pub(super) fn sync_due_accounts(
     if facade.sim_active() {
         return Ok(out);
     }
+    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "sync#DueEmailAccounts")?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let default_interval = property_number("email_sync_interval", 5);
+    let default_interval = property_number("sync-interval", 5);
     let rows = facade
         .find(ACCOUNT)?
         .condition(Condition::is_not_null("emailServerId"))

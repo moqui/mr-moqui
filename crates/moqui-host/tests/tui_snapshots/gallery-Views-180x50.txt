@@ -1,0 +1,50 @@
+ gallery ▸ Views                                                                                                                                                john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Section 8.2 List views: board and calendar ─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ One form-list of example records with views="board,list,calendar": the switch at the right above the list keeps the choice per form (the LIST_VIEW_  │
+     List                │ ┃ preference; a view parameter in the URL picks one). The board has a column per Example status in its flow order with the count and the sum of sizes; │
+     Detail              │ ┃ a card shows the name (its link opens the example above the list), the type and start, and the size as a badge. Drag a card to another column: the   │
+     360                 │ ┃ status moves through update#moqui.example.Example, and a move the flow refuses (In Design to Complete) goes back with its message.                   │
+     Task                │ ┃ The calendar shows each example from its start to its end, colored by status, in month, week, day and list modes; in day mode each type is a column. │
+     Board               │ ┃ Drag an event to move it, its lower edge to resize it (the start and end are posted), and click or drag on empty time to create an example there.    │
+     Calendar            │ ┃ The Find Options, saved finds and page size of the list apply to every view.                                                                         │
+     Split               │ ┃ The board groups by status or by type (Group by, view-board group-fields: a move posts the field and its new value) and shows every example the find │
+     Settings            │ ┃ matches, not the page (all-rows). From 1280 px wide, Peek (peek-url) puts the list beside a pane: a click on a row or card opens the example there,  │
+     Wizard              │ ┃ Up and Down move through the rows, Escape closes it.                                                                                                 │
+     Dialog              │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Report              │ No groups
+     Panel               │ ┌─ Section 3.15 Tree list ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Widgets             │ ┃ A work breakdown as a tree (view-tree): the top-level items, each opened to its children as the tree asks the screen's form request for them; the    │
+     Editor              │ ┃ totals of each branch (Total est., Total act., Done) come with the rows, and the totals row adds the top-level items. Expand opens to a level or all │
+     Message             │ ┃ of it; past six levels a row shows its level. A find on the item shows every match under its ancestors, which are muted. Drag a row onto another's   │
+   ▶ Views               │ ┃ upper or lower edge to move it there, or onto its middle to put it under it; Tab and Shift+Tab indent and outdent the focused row. The estimate is   │
+ ▾ Home                  │ ┃ edited in place.                                                                                                                                     │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │ Item                                                                                               Status       Est.  Act.  Total est.  Total act.  Done
+                         │   W-1 Customer portal                                                                              In Progress        3             59        32.5  2/14
+                         │   W-2 Data migration                                                                               Approved           0             40           0   0/3
+                         │   W-3 Training                                                                                     In Planning        0              2           0
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  v=View  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

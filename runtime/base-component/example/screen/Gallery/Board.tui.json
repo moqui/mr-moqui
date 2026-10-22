@@ -1,0 +1,16 @@
+{
+    "t": "component",
+    "name": "board",
+    "props": {
+        "source": "boardRows",
+        "groups": "stages",
+        "groupId": "id",
+        "groupLabel": "name",
+        "groupOf": "stage",
+        "title": "title",
+        "fields": ["amount", "owner", "next"],
+        "move": "moveCard",
+        "moveGroup": "stage",
+        "open": "../Detail?opportunityId={id}"
+    }
+}

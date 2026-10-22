@@ -16,10 +16,10 @@
 //! `git-receive-pack`) and `POST git-upload-pack` / `git-receive-pack`. The dumb protocol is not served. The request
 //! body streams into, and the response streams out of, a job of the git pool that runs
 //! `moqui_core::resource::git::server::serve_http`, so a clone or push is not held in memory, takes no request worker
-//! from the screens, and is exempt from `webapp_request_timeout` (a gap of `git_idle_timeout`, 120 seconds, in the
-//! request body ends it). Bodies are limited by `git_max_request` (64 MB, upload-pack) and `git_max_push_size` (2 GB).
+//! from the screens, and is exempt from `webapp_request_timeout` (a gap of `git-server` `idle-timeout`, 120 seconds, in the
+//! request body ends it). Bodies are limited by `git-server` `max-request` (64 MB, upload-pack) and `git-server` `max-push-size` (2 GB).
 //! Credentials are taken only over HTTPS (the listener, or `X-Forwarded-Proto` behind the proxy that
-//! `webapp_client_ip_header` names), from loopback, or with `git_allow_http=true`.
+//! `webapp_client_ip_header` names), from loopback, or with `git-server` `allow-http="true"`.
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -42,12 +42,18 @@ const DEFAULT_MAX_REQUEST: u64 = 64 * 1024 * 1024;
 const DEFAULT_MAX_PUSH: u64 = 2 * 1024 * 1024 * 1024;
 const DEFAULT_IDLE: Duration = Duration::from_secs(120);
 
-fn property(name: &str) -> String {
-    moqui_lib::env::get_prop_or_env(name).trim().to_string()
+/// An attribute of the conf's `git-server` as a positive number, else `default`.
+fn size_setting(state: &HttpState, name: &str, default: u64) -> u64 {
+    Some(state.factory.conf_number("git-server", name, default))
+        .filter(|size| *size > 0)
+        .unwrap_or(default)
 }
 
-fn size_property(name: &str, default: u64) -> u64 {
-    property(name).parse().ok().filter(|size| *size > 0).unwrap_or(default)
+/// The conf's `git-server` `idle-timeout` in seconds, else [`DEFAULT_IDLE`].
+fn idle_timeout(state: &HttpState) -> Duration {
+    Some(state.factory.conf_number("git-server", "idle-timeout", 0u64))
+        .filter(|seconds| *seconds > 0)
+        .map_or(DEFAULT_IDLE, Duration::from_secs)
 }
 
 /// The response body: chunks from the job until it drops its writer.
@@ -174,8 +180,8 @@ pub(crate) async fn handle(
     };
     let limit = match (advertise, service) {
         (true, _) => 0,
-        (false, GitService::UploadPack) => size_property("git_max_request", DEFAULT_MAX_REQUEST),
-        (false, GitService::ReceivePack) => size_property("git_max_push_size", DEFAULT_MAX_PUSH),
+        (false, GitService::UploadPack) => size_setting(&state, "max-request", DEFAULT_MAX_REQUEST),
+        (false, GitService::ReceivePack) => size_setting(&state, "max-push-size", DEFAULT_MAX_PUSH),
     };
     if header("content-length")
         .and_then(|length| length.parse::<u64>().ok())
@@ -195,11 +201,7 @@ pub(crate) async fn handle(
         secure,
         client_ip: client.to_string(),
     };
-    let idle = property("git_idle_timeout")
-        .parse::<u64>()
-        .ok()
-        .filter(|seconds| *seconds > 0)
-        .map_or(DEFAULT_IDLE, Duration::from_secs);
+    let idle = idle_timeout(&state);
     let (body_tx, body_rx) = mpsc::channel(QUEUED);
     let (out_tx, out_rx) = mpsc::channel(QUEUED);
     let (head_tx, head_rx) = oneshot::channel();
@@ -244,12 +246,12 @@ struct Origin {
 }
 
 /// Whether credentials may be taken: over TLS (the listener's, or a believed proxy's `X-Forwarded-Proto`), from
-/// loopback, or with `git_allow_http=true`.
+/// loopback, or with the conf's `git-server` `allow-http="true"`.
 fn secure(state: &HttpState, over_tls: bool, headers: &axum::http::HeaderMap, peer: SocketAddr) -> bool {
     over_tls
         || forwarded_https(headers, peer.ip(), state.guard.conf.addressing())
         || peer.ip().is_loopback()
-        || property("git_allow_http") == "true"
+        || state.factory.conf_flag("git-server", "allow-http", false)
 }
 
 async fn handle_lfs(
@@ -290,11 +292,7 @@ async fn handle_lfs(
         secure,
         client_ip: client.to_string(),
     };
-    let idle = property("git_idle_timeout")
-        .parse::<u64>()
-        .ok()
-        .filter(|seconds| *seconds > 0)
-        .map_or(DEFAULT_IDLE, Duration::from_secs);
+    let idle = idle_timeout(&state);
     let (body_tx, body_rx) = mpsc::channel(QUEUED);
     let (out_tx, out_rx) = mpsc::channel(QUEUED);
     let (head_tx, head_rx) = oneshot::channel();

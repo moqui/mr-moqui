@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Typed AI tasks and AI fields for app code (plans/LLM-A2A-Assist.md 4.14, after Nextcloud's task processing and Odoo's
+    AI fields; crates/moqui-core/src/llm/ai_task.rs). A task has typed input and a JSON schema for its output and runs as
+    one structured completion on the model of its feature (summarize, classify, extract, translate, generate; else
+    assist), as the current user and counted against their api quota; the caller's text is wrapped as untrusted. A
+    component adds a task type with an ai-task element of the llm-facade conf naming an implementation of
+    prepare#AiTask. With async true a task is a job: its record is a tool-less AgentRun (get#AiTask reads it) and its user
+    hears of the end in the agent inbox, and at webhookUrl (https, public addresses only) when given. The AI field
+    proposal never writes: the user saves the value, or approves it as an "Update with AI" run's approval card. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="run" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::run_ai_task" transaction="ignore">
+        <description>Run a task of the registry by its type, with its input map; out its output (fitting the task's
+            schema) and the model that answered, or with async true the taskId of the job.</description>
+        <in-parameters>
+            <parameter name="taskType" required="true"/>
+            <parameter name="input" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="Summarize" type="rust" location="moqui_core::llm::ai_task::run_summarize" transaction="ignore">
+        <description>The summary of a text, in at most maxWords words (120), with an optional focus.</description>
+        <in-parameters>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="maxWords" type="Integer"/>
+            <parameter name="focus"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="summary"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="Classify" type="rust" location="moqui_core::llm::ai_task::run_classify" transaction="ignore">
+        <description>The label of a text among labelList (2 to 50), or with multiple true the labels that fit.</description>
+        <in-parameters>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="labelList" type="List" required="true"/>
+            <parameter name="multiple" type="Boolean" default="false"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="label"/>
+            <parameter name="labelList" type="List"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="Extract" type="rust" location="moqui_core::llm::ai_task::run_extract" transaction="ignore">
+        <description>Named values from a text: fieldMap names each value with a description (each a string, empty when
+            the text does not give it), or schema is the JSON schema of the values object.</description>
+        <in-parameters>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="fieldMap" type="Map"/>
+            <parameter name="schema"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valueMap" type="Map"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="Translate" type="rust" location="moqui_core::llm::ai_task::run_translate" transaction="ignore">
+        <description>A text in targetLanguage (a language name or code).</description>
+        <in-parameters>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="targetLanguage" required="true"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="translatedText"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="run" noun="Generate" type="rust" location="moqui_core::llm::ai_task::run_generate" transaction="ignore">
+        <description>A text written from instructions, from an optional text to work from.</description>
+        <in-parameters>
+            <parameter name="instructions" required="true" allow-html="any"/>
+            <parameter name="text" allow-html="any"/>
+            <parameter name="async" type="Boolean" default="false"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="generatedText"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="modelId"/>
+            <parameter name="taskId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::get_ai_task" transaction="ignore">
+        <description>An async task of the current user: its type, its state (working, completed, failed), and its output
+            or error. Another user's task is not found.</description>
+        <in-parameters><parameter name="taskId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="taskType"/>
+            <parameter name="state"/>
+            <parameter name="output" type="Map"/>
+            <parameter name="errorText"/>
+        </out-parameters>
+    </service>
+
+    <service verb="list" noun="AiTaskTypes" type="rust" location="moqui_core::llm::ai_task::list_ai_task_types"
+            transaction="ignore">
+        <description>The task registry: each type with its description, its feature and the service that prepares a
+            component's type.</description>
+        <out-parameters><parameter name="taskTypeList" type="List"/></out-parameters>
+    </service>
+
+    <service verb="execute" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::execute_ai_task"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: the job of an async task (run on a service worker as its user), which ends its record and
+            tells the user.</description>
+        <in-parameters>
+            <parameter name="taskId" required="true"/>
+            <parameter name="taskType" required="true"/>
+            <parameter name="input" allow-html="any"/>
+            <parameter name="webhookUrl"/>
+        </in-parameters>
+    </service>
+
+    <service verb="prepare" noun="AiTask" type="interface">
+        <description>What a component's task service implements (an ai-task element of the llm-facade conf names it): the
+            call of its task for an input: the system text, the prompt (put the caller's text inside untrusted markers)
+            and the JSON schema of the output.</description>
+        <in-parameters>
+            <parameter name="taskType" required="true"/>
+            <parameter name="input" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="system"/>
+            <parameter name="prompt" required="true"/>
+            <parameter name="schema" type="Map" required="true"/>
+        </out-parameters>
+    </service>
+
+    <service verb="propose" noun="AiFieldValue" type="rust" location="moqui_core::llm::ai_task::propose_ai_field_value"
+            transaction="ignore">
+        <description>"Update with AI" for one field of one record (entityName, the key as pk or a one-field recordId,
+            fieldName; not a key or a secret field), which the current user must be able to read: the model proposes a
+            value (the ai-field feature, else assist) with a reason, and nothing is written. mode value (the default)
+            returns it for the user's own Save; mode approval starts a drawer run of agentId (assist) attached to the
+            record, whose first step asks for the approval of the write as a card (current against proposed), run as
+            the user only when approved, and refused when the record changed meanwhile.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="pk" type="Map"/>
+            <parameter name="recordId"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="instructions" allow-html="any"/>
+            <parameter name="mode" default-value="value"><description>value or approval</description></parameter>
+            <parameter name="agentId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="proposedValue"/>
+            <parameter name="currentValue"/>
+            <parameter name="reason"/>
+            <parameter name="runId"/>
+            <parameter name="conversationId"/>
+        </out-parameters>
+    </service>
+</services>

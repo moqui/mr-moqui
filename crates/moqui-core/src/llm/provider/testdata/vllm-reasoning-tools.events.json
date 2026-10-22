@@ -1,0 +1,98 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-6f2d0c8a1e9b4f37",
+      "model": "Qwen/Qwen3.8-32B",
+      "type": "started"
+    },
+    {
+      "delta": "I need the customer first.",
+      "type": "reasoning"
+    },
+    {
+      "call_id": "chatcmpl-tool-9c1e7b02",
+      "index": 0,
+      "name": "data",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"entity\": \"moqui.basic.Enumeration\", ",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "delta": "\"limit\": 5}",
+      "index": 0,
+      "type": "tool_args"
+    },
+    {
+      "call_id": "chatcmpl-tool-4a7f33d1",
+      "index": 1,
+      "name": "screen",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"path\": \"/apps/system\"}",
+      "index": 1,
+      "type": "tool_args"
+    },
+    {
+      "index": 0,
+      "type": "tool_end"
+    },
+    {
+      "index": 1,
+      "type": "tool_end"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 2944,
+      "input": 3021,
+      "output": 84,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "finish": "tool_calls",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "Qwen/Qwen3.8-32B",
+    "reasoning": "I need the customer first.",
+    "replay": null,
+    "response_id": "chatcmpl-6f2d0c8a1e9b4f37",
+    "text": "",
+    "text_deltas": 0,
+    "tool_calls": [
+      {
+        "arguments": {
+          "entity": "moqui.basic.Enumeration",
+          "limit": 5
+        },
+        "id": "chatcmpl-tool-9c1e7b02",
+        "name": "data"
+      },
+      {
+        "arguments": {
+          "path": "/apps/system"
+        },
+        "id": "chatcmpl-tool-4a7f33d1",
+        "name": "screen"
+      }
+    ],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 2944,
+      "input": 3021,
+      "output": 84,
+      "reasoning": 0
+    }
+  }
+}

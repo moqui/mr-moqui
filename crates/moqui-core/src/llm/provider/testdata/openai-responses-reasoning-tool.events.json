@@ -1,0 +1,104 @@
+{
+  "events": [
+    {
+      "id": "resp_68f2a1c0b7e48190",
+      "model": "gpt-5.4",
+      "type": "started"
+    },
+    {
+      "delta": "**Finding the user**\n\nLook up the account",
+      "type": "reasoning"
+    },
+    {
+      "delta": " by username.",
+      "type": "reasoning"
+    },
+    {
+      "item": {
+        "item": {
+          "encrypted_content": "gAAAAABo8qHBZW5jcnlwdGVkLXJlYXNvbmluZy1mb3ItdGhlLXByb2Jl",
+          "id": "rs_68f2a1c1d4b88190",
+          "summary": [],
+          "type": "reasoning"
+        },
+        "kind": "responses-reasoning"
+      },
+      "type": "replay"
+    },
+    {
+      "call_id": "call_Zk4pQ8sW2mN1vB7x",
+      "index": 1,
+      "name": "data",
+      "type": "tool_start"
+    },
+    {
+      "delta": "{\"entity\":\"moqui.security.UserAccount\",",
+      "index": 1,
+      "type": "tool_args"
+    },
+    {
+      "delta": "\"where\":{\"username\":\"john.doe\"}}",
+      "index": 1,
+      "type": "tool_args"
+    },
+    {
+      "index": 1,
+      "type": "tool_end"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 3968,
+      "input": 4218,
+      "output": 166,
+      "reasoning": 128,
+      "type": "usage"
+    },
+    {
+      "finish": "stop",
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "finish": "tool_calls",
+      "type": "finish"
+    },
+    "model": "gpt-5.4",
+    "reasoning": "**Finding the user**\n\nLook up the account by username.",
+    "replay": [
+      {
+        "item": {
+          "encrypted_content": "gAAAAABo8qHBZW5jcnlwdGVkLXJlYXNvbmluZy1mb3ItdGhlLXByb2Jl",
+          "id": "rs_68f2a1c1d4b88190",
+          "summary": [],
+          "type": "reasoning"
+        },
+        "kind": "responses-reasoning"
+      }
+    ],
+    "response_id": "resp_68f2a1c0b7e48190",
+    "text": "",
+    "text_deltas": 0,
+    "tool_calls": [
+      {
+        "arguments": {
+          "entity": "moqui.security.UserAccount",
+          "where": {
+            "username": "john.doe"
+          }
+        },
+        "id": "call_Zk4pQ8sW2mN1vB7x",
+        "name": "data"
+      }
+    ],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 3968,
+      "input": 4218,
+      "output": 166,
+      "reasoning": 128
+    }
+  }
+}

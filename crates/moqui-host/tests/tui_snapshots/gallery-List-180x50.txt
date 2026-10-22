@@ -1,0 +1,50 @@
+ gallery ▸ List                                                                                                                                                 john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.2 List ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ The find and list screen over one record type, here Enumeration with its type through display-entity: the identifier first as a text link to the     │
+   ▶ List                │ ┃ Detail, a chip for the state, Find Options for the rest of the filters, saved finds, the column picker, paging with a page size, exports, row        │
+     Detail              │ ┃ selection with one bulk action in the header menu, two row actions, and New as a dialog. Nothing posted here is written.                             │
+     360                 │ ┃ Fallbacks for §8: the state chip is a tonal anchor-button link (Enumeration has no status, so the state is derived per row) until the m-tonal status │
+     Task                │ ┃ chip exists; the two inline finds are a form-single above the table because header-dialog moves every header-field into Find Options; the view       │
+     Board               │ ┃ switch is a button-menu to the Views screen, where one form-list of example records has the board and calendar views of §8.2 (Enumeration has no     │
+     Calendar            │ ┃ status flow or times to show them on).                                                                                                               │
+     Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Settings            │ Enumerations
+     Wizard              │ [ View: list ▾ ]  [ New enumeration… ]
+     Dialog              │ Type . . . . : [                                ▾] Description  : [____________________]              Find . . . . :
+     Report              │       ID                           Description                     Type                                  State   Code      Seq Parent Changed          ▸
+     Panel               │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Widgets             │   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a       3          <today> hh:mm
+     Editor              │   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable 2          <today> hh:mm
+     Message             │   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered           2          <today> hh:mm
+     Views               │   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain                        <today> hh:mm
+ ▾ Home                  │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                 System <today> hh:mm
+                         │   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain                        <today> hh:mm
+                         │   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent     4          <today> hh:mm
+                         │   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL                  <today> hh:mm
+                         │   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered           1          <today> hh:mm
+                         │   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all       1          <today> hh:mm
+                         │   [ ] AUTHZT_ALLOW                 Allow                           Authorization Type                    Plain                        <today> hh:mm
+                         │   [ ] GmaMerged                    Already in the target           Git Mergeability                      Ordered merged    4          <today> hh:mm
+                         │   [ ] AUTHZT_ALWAYS                Always Allow (overrides Deny)   Authorization Type                    Plain                        <today> hh:mm
+                         │   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered           3          <today> hh:mm
+                         │   [ ] AgikAnswer                   Answer                          Agent Run Input Kind                  Ordered answer    2          <today> hh:mm
+                         │   [ ] ErmAny                       Any condition                   Email Rule Match                      Ordered           2          <today> hh:mm
+                         │   [ ] CrvUsers                     Any user may read and join      Chat Room Visibility                  Ordered users     2          <today> hh:mm
+                         │   [ ] OctApple                     Apple                           OpenID Connect Client Type            Plain                        <today> hh:mm
+                         │   [ ] AgpsApproval                 Approval                        Agent Run Pause Kind                  Ordered approval  1          <today> hh:mm
+                         │   [ ] NrApproval                   Approval                        Notification Reason                   Ordered approval  3          <today> hh:mm
+                         │   Rows 1–20 of 320 · Page 1/16
+                         │ Back to the Landing
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F10=Actions  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

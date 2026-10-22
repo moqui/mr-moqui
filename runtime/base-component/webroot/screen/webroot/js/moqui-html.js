@@ -259,6 +259,22 @@
         }
     };
 
+    // A rich text-area in html mode: the div is the note, and the next input is what the form posts. Copy on each edit
+    // and again as the form is submitted, so a save without a later input event still has the edit.
+    const copyRichText = (node) => {
+        const field = node.nextElementSibling;
+        if (field && field.tagName === "INPUT") field.value = node.innerHTML;
+    };
+    const initRichText = (node) => {
+        node.addEventListener("input", () => copyRichText(node));
+        const form = node.closest("form");
+        if (!form || form.dataset.richText) return;
+        form.dataset.richText = "true";
+        const copyAll = () => form.querySelectorAll("[data-rich-text]").forEach(copyRichText);
+        form.addEventListener("formdata", copyAll);
+        form.addEventListener("submit", copyAll);
+    };
+
     // ---------- remote options, defaults and autocomplete ----------
 
     const readValue = (id) => { const field = doc.getElementById(id); return field ? field.value : ""; };
@@ -560,6 +576,7 @@
         each(scope, "nav.tabs[data-dynamic]", initTabsDynamic);
         each(scope, "nav[data-tab-hash]", initHashTabs);
         each(scope, "[data-move-to]", initMove);
+        each(scope, "[data-rich-text]", initRichText);
         each(scope, "[data-nav-toggle]", (button) => button.addEventListener("click", () => button.closest(".navbar").classList.toggle("open")));
     }
 

@@ -19,9 +19,13 @@
 //! The engine's page makes no request, so an `<img>` whose `src` is a resource location (`component://`,
 //! `dbresource://`, and the other schemes of the resource facade) is given its bytes as a `data:` URL first, as Java's
 //! FOP resolved image URIs through the resource facade. An `http` or `https` source is not fetched.
+//!
+//! The same engine previews a PDF ([`PdfRenderer::preview`]): the vendored pdf.js (`webroot/libs/pdfjs`) runs in the
+//! engine's page, draws page 1 to a PNG and reads the text of the first pages. An engine that has no page to run it in
+//! keeps the default [`PdfEngine::preview`], which reports that previews are not supported.
 
 use std::borrow::Cow;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -40,6 +44,59 @@ pub trait PdfEngine: Send + Sync {
     ///
     /// Returns an error when the browser fails, exits, or the render passes its timeout.
     fn render(&self, html_print_document: &str) -> Result<Vec<u8>, Error>;
+
+    /// Page 1 of a PDF as a PNG, with the page count and the text of the first pages. Blocks like [`Self::render`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the engine cannot preview (the default), the PDF does not open, or the browser fails.
+    fn preview(&self, request: &PdfPreviewRequest<'_>) -> Result<PdfPreview, Error> {
+        let _ = request;
+        Err(Error::new(PREVIEW_UNSUPPORTED))
+    }
+}
+
+/// What the default [`PdfEngine::preview`] reports.
+pub const PREVIEW_UNSUPPORTED: &str = "PDF preview is not supported by the installed PDF engine";
+
+/// Where the vendored pdf.js modules are.
+pub const PDFJS_LOCATION: &str = "component://webroot/screen/webroot/libs/pdfjs/pdf.min.mjs";
+/// The pdf.js worker module, run on the page's main thread.
+pub const PDFJS_WORKER_LOCATION: &str = "component://webroot/screen/webroot/libs/pdfjs/pdf.worker.min.mjs";
+
+/// The source text of the pdf.js modules, given to the engine's page.
+#[derive(Debug)]
+pub struct PdfLibrary {
+    /// `pdf.min.mjs`.
+    pub main: String,
+    /// `pdf.worker.min.mjs`.
+    pub worker: String,
+}
+
+/// What to preview, and how much.
+pub struct PdfPreviewRequest<'a> {
+    /// The PDF.
+    pub pdf: &'a [u8],
+    /// pdf.js.
+    pub library: &'a PdfLibrary,
+    /// Whether to draw page 1; false reads only the text.
+    pub image: bool,
+    /// The longest side of the image, in pixels.
+    pub max_size: u32,
+    /// The pages whose text is read, from page 1.
+    pub text_pages: u32,
+    /// The most characters of text returned.
+    pub max_chars: usize,
+}
+
+/// A preview: page 1 as a PNG (empty when no image was asked for), its size, the page count, and the text.
+#[derive(Debug, Default)]
+pub struct PdfPreview {
+    pub png: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub pages: u32,
+    pub text: String,
 }
 
 enum Installed {
@@ -91,6 +148,67 @@ impl PdfRenderer {
         };
         engine.render(&inline_images(html_print_document))
     }
+
+    /// A preview of `pdf` from the installed engine: page 1 drawn to fit `max_size` pixels when `image` is set, and up
+    /// to `max_chars` of the text of the first `text_pages` pages.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PDF_UNAVAILABLE`] (or the installed reason) when there is no engine, an error when pdf.js cannot be
+    /// read, else the engine's error.
+    pub fn preview(
+        pdf: &[u8],
+        image: bool,
+        max_size: u32,
+        text_pages: u32,
+        max_chars: usize,
+    ) -> Result<PdfPreview, Error> {
+        let engine = match &*read(slot()) {
+            Some(Installed::Engine(engine)) => Arc::clone(engine),
+            Some(Installed::Unavailable(reason)) => return Err(Error::new(reason.clone())),
+            None => return Err(Error::new(PDF_UNAVAILABLE)),
+        };
+        let library = pdf_library()?;
+        engine.preview(&PdfPreviewRequest {
+            pdf,
+            library: &library,
+            image,
+            max_size,
+            text_pages,
+            max_chars,
+        })
+    }
+}
+
+/// pdf.js, read once through the resource facade. A failed read is not kept, so a later call tries again.
+fn pdf_library() -> Result<Arc<PdfLibrary>, Error> {
+    static LIBRARY: OnceLock<Arc<PdfLibrary>> = OnceLock::new();
+    if let Some(library) = LIBRARY.get() {
+        return Ok(Arc::clone(library));
+    }
+    let read = |location: &str| {
+        let text = ExecutionContext::with_current(|ctx| {
+            ctx.factory()
+                .resource()
+                .get(location)
+                .and_then(|resource| resource.read_text())
+        })
+        .unwrap_or_else(|| Err(Error::new("no execution context is entered")));
+        // A test context has no webroot component.
+        #[cfg(test)]
+        let text = text.or_else(|_| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../runtime/base-component/webroot/screen/webroot")
+                .join(location.trim_start_matches("component://webroot/screen/webroot/"));
+            std::fs::read_to_string(path).map_err(|err| Error::new(err.to_string()))
+        });
+        text.map_err(|err| Error::new(format!("pdf.js is not available at {location}: {}", err.message())))
+    };
+    let library = Arc::new(PdfLibrary {
+        main: read(PDFJS_LOCATION)?,
+        worker: read(PDFJS_WORKER_LOCATION)?,
+    });
+    Ok(Arc::clone(LIBRARY.get_or_init(|| library)))
 }
 
 /// The document with the `src` of each `<img>` that names a resource location replaced by a `data:` URL of the image.

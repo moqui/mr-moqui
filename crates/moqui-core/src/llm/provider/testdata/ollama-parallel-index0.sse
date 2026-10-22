@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl-417","object":"chat.completion.chunk","created":1792500200,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_q1n4z8kd","index":0,"type":"function","function":{"name":"get_time","arguments":"{}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-417","object":"chat.completion.chunk","created":1792500200,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_w7d2m0vc","index":0,"type":"function","function":{"name":"get_date","arguments":"{\"zone\":\"UTC\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-417","object":"chat.completion.chunk","created":1792500200,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-417","object":"chat.completion.chunk","created":1792500200,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":212,"completion_tokens":31,"total_tokens":243}}
+
+data: [DONE]
+

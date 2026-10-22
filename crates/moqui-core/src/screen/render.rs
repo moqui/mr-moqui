@@ -32,16 +32,16 @@ use std::time::Instant;
 use moqui_lib::codec::constant_time_eq;
 use moqui_lib::object::Value;
 
-use super::cache::{canonical_render_mode, ScreenFacade};
+use super::cache::{canonical_render_mode, OutputKind, ScreenFacade};
 use super::definition::{
     Actions, Authentication, Condition, ParameterDef, ResponseDef, ResponseKind, ScreenDef, TransitionDef,
     CONDITION_FIELD,
 };
 use super::dispatch;
+use super::gate::{self, HeldWrite, RenderOptions, RenderOrigin, TransitionGate, TransitionOutcome};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
 use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
 use crate::script::{self, ContextFrame};
-use crate::service::util::has_error;
 use crate::user;
 use crate::web::{self, WebRequest};
 
@@ -87,6 +87,8 @@ pub struct ScreenRender {
     render_mode: Option<String>,
     /// Request headers the render sees, such as `X-Moqui-Client-Modes`.
     headers: Vec<(String, String)>,
+    history: bool,
+    options: RenderOptions,
 }
 
 /// A render that needs no socket. Set the root screen and path, then call [`ScreenRender::render`].
@@ -101,10 +103,20 @@ pub fn make_render(factory: &Arc<ExecutionContextFactory>) -> ScreenRender {
         base_url: String::new(),
         render_mode: None,
         headers: Vec::new(),
+        history: false,
+        options: RenderOptions::default(),
     }
 }
 
 impl ScreenRender {
+    /// Put the screen on the user's screen history, as a browser request does. A render with no socket otherwise does
+    /// not: a job or a test is not a visit. The terminal client asks for it.
+    #[must_use]
+    pub fn history(mut self, history: bool) -> Self {
+        self.history = history;
+        self
+    }
+
     /// Location of the root screen. The default is `webroot.xml`.
     #[must_use]
     pub fn root_screen(mut self, location: impl Into<String>) -> Self {
@@ -162,6 +174,35 @@ impl ScreenRender {
         self
     }
 
+    /// Where the render comes from ([`RenderOrigin`]); the default is internal code.
+    #[must_use]
+    pub fn origin(mut self, origin: RenderOrigin) -> Self {
+        self.options.origin = origin;
+        self
+    }
+
+    /// The gate a transition that writes meets ([`TransitionGate`]); the default is none.
+    #[must_use]
+    pub fn transition_gate(mut self, gate: TransitionGate) -> Self {
+        self.options.gate = gate;
+        self
+    }
+
+    /// Run the render under the read fence ([`crate::entity::fence`]), except a transition the gate approved. A gate other
+    /// than [`TransitionGate::Open`] turns the fence on whatever this says.
+    #[must_use]
+    pub fn write_fence(mut self, fence: bool) -> Self {
+        self.options.write_fence = fence;
+        self
+    }
+
+    /// The origin, gate and fence at once, as the in-process transport passes them on.
+    #[must_use]
+    pub fn options(mut self, options: RenderOptions) -> Self {
+        self.options = options;
+        self
+    }
+
     /// Run the render in this thread's execution context, or in a new one when none is entered.
     ///
     /// # Errors
@@ -189,9 +230,15 @@ impl ScreenRender {
             header_authenticated: true,
             render_mode: self.render_mode.as_deref(),
             enforce_request_checks: false,
+            history: self.history,
             new_session: false,
             started: Instant::now(),
+            options: &self.options,
         };
+        // A gate means an agent's render: what the gate does not let through (the screens, read-only transitions, the
+        // path of a held one) runs fenced too, and an approved transition is lifted out of it.
+        let fenced = self.options.write_fence || self.options.gate != TransitionGate::Open;
+        let _fence = fenced.then(|| crate::entity::fence::enter(format!("the screen render of {}", self.path)));
         run_job(&self.factory, &job)?;
         let (status, headers, body, sent) = web::take_output();
         Ok(RenderOutput {
@@ -215,9 +262,13 @@ pub(crate) struct Job<'a> {
     pub render_mode: Option<&'a str>,
     /// False for a render with no socket: no session-token check.
     pub enforce_request_checks: bool,
+    /// Record the screen history although the request checks are off (the terminal client).
+    pub history: bool,
     /// The session began with this request, so its token cannot have been sent yet (Java's `moqui.session.token.created`).
     pub new_session: bool,
     pub started: Instant,
+    /// The origin, the transition gate and the fence: in-process options an HTTP request cannot set.
+    pub options: &'a RenderOptions,
 }
 
 /// What a running render exposes to the code that writes the screen: `sri` reads this.
@@ -231,6 +282,8 @@ pub struct RenderState {
     pub character_encoding: String,
     /// The mode's `screen-text-output` says it is always standalone.
     pub always_standalone: bool,
+    /// How this mode writes a failed section, and whether the level is a JSON envelope.
+    pub output_kind: OutputKind,
     /// A `screen-output` mode: text writes are dropped and the document below is the response.
     pub binary: bool,
     /// The workbook of the `xlsx` mode.
@@ -256,6 +309,13 @@ pub struct RenderState {
     /// `ScreenRenderImpl.baseLinkUrl`; `None` is the current screen's path. Nothing in the port reads it yet: Java
     /// rewrites the relative links of rendered markdown with it, and the port's markdown leaves them as written.
     pub base_link_url: RefCell<Option<String>>,
+    /// The first form focus id of this render (`form.field`). Empty until a form macro sets it.
+    pub focus: RefCell<String>,
+    /// Node ids `sri.uniqueId` has given out in this document, and the next suffix to try for each id asked for.
+    pub node_ids: RefCell<(
+        std::collections::HashSet<String>,
+        std::collections::HashMap<String, usize>,
+    )>,
     /// Keys `sri.once` has seen, so a mode writes its document wrapper only for the outermost screen.
     pub once: RefCell<std::collections::HashSet<String>>,
     /// The theme of this render and its resource values by type, found once as Java's `curThemeId`.
@@ -273,6 +333,7 @@ impl RenderState {
         character_encoding: String,
     ) -> Self {
         let always_standalone = facade.is_always_standalone(&mode);
+        let output_kind = facade.output_kind(&mode);
         let binary = facade.is_render_mode_binary(&mode);
         let macro_location = info
             .path_defs
@@ -294,6 +355,7 @@ impl RenderState {
             content_type,
             character_encoding,
             always_standalone,
+            output_kind,
             binary,
             xlsx: RefCell::new(super::xlsx::XlsxBook::default()),
             macro_location,
@@ -306,6 +368,8 @@ impl RenderState {
             form_lists: RefCell::new(Vec::new()),
             dynamic_forms: RefCell::new(std::collections::HashMap::new()),
             base_link_url: RefCell::new(None),
+            focus: RefCell::new(String::new()),
+            node_ids: RefCell::default(),
             once: RefCell::new(std::collections::HashSet::new()),
             theme_id: RefCell::new(None),
             theme_values: RefCell::new(std::collections::HashMap::new()),
@@ -341,7 +405,9 @@ pub fn with_current_render<R>(body: impl FnOnce(&RenderState) -> R) -> Option<R>
 }
 
 /// `sri.sendRedirectAndStopRender`: redirect and skip the screen. A standalone mode, which a
-/// client router fetches, gets 205 and `X-Redirect-To` instead of a 302.
+/// client router fetches, gets 205 and `X-Redirect-To` instead of a 302. Both answers go through
+/// the same location rule, including when no execution context is entered: then there is no
+/// `http-host`, so an `http(s)` URL is still reduced.
 pub fn send_redirect_and_stop_render(url: &str) {
     let base = web::base_url();
     let location = if url.starts_with('/') && !url.starts_with("//") {
@@ -354,11 +420,163 @@ pub fn send_redirect_and_stop_render(url: &str) {
         state.always_standalone
     })
     .unwrap_or(false);
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()));
+    let location = match factory.as_deref() {
+        Some(factory) => http_redirect_location(factory, &location),
+        None => redirect_location(&location, true),
+    };
     if standalone {
         web::send_reset_content(&location);
     } else {
         web::send_redirect(&with_query(location, &BTreeMap::new()));
     }
+}
+
+/// Java's `ScreenRenderImpl.sendHttpRedirect`: the `Location` of a screen redirect.
+///
+/// The location is sanitized (Java's `WebUtilities.sanitizeRedirectLocation`: no CR, LF or NUL, so a
+/// value cannot split the header). An `http(s)` target is reduced to its path and query when the webapp
+/// names no `http-host` (the default). That path is kept only when it starts with a single `/` and holds
+/// no `\`, so `//phish` and `/\evil.com` become `/`. A URL Java's `URI.create` rejects — a space, or
+/// another character outside the URI set — becomes `/` too, as Java's catch does. With an `http-host`
+/// the absolute target is sent, as Java sends it.
+///
+/// A target that is not a path of this site and not an `http(s)` URL — a protocol-relative one, or another
+/// scheme — goes to the root. Java sends those as they are; the port does not, and the difference is
+/// recorded in `plans/Parity-Diffs.md`.
+pub(super) fn http_redirect_location(factory: &ExecutionContextFactory, location: &str) -> String {
+    let reduce = factory.webapp_setting(WEBAPP, "http-host").is_empty();
+    redirect_location(location, reduce)
+}
+
+/// [`http_redirect_location`] with the host decision already made. `reduce_http` is true when the webapp
+/// names no `http-host`, and when no execution context is entered.
+fn redirect_location(location: &str, reduce_http: bool) -> String {
+    let mut clean = String::with_capacity(location.len());
+    for ch in location.chars() {
+        if ch != '\r' && ch != '\n' && ch != '\0' {
+            clean.push(ch);
+        }
+    }
+    let clean = clean.trim();
+    if clean.is_empty() {
+        return "/".to_string();
+    }
+    if clean.starts_with("http://") || clean.starts_with("https://") {
+        if reduce_http {
+            if !uri_create_accepts(clean) {
+                return "/".to_string();
+            }
+            return site_path(url_path_and_query(clean));
+        }
+        return clean.to_string();
+    }
+    if clean.starts_with("//") || has_scheme(clean) {
+        return "/".to_string();
+    }
+    clean.to_string()
+}
+
+/// A reduced `http(s)` target stays only when its path starts with a single `/` and holds no backslash.
+/// `//phish` is another host once a browser sees it, and so is `/\evil.com`.
+fn site_path(path_and_query: String) -> String {
+    let path = path_and_query
+        .split_once('?')
+        .map_or(path_and_query.as_str(), |(path, _)| path);
+    if path.starts_with('/') && !path.starts_with("//") && !path.contains('\\') {
+        path_and_query
+    } else {
+        "/".to_string()
+    }
+}
+
+/// Whether Java's `URI.create` accepts `url`. The legal set is Java's unreserved, reserved and `#`,
+/// plus a `%` escape and a non-ASCII character that is not a space or a control.
+fn uri_create_accepts(url: &str) -> bool {
+    let mut chars = url.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            match (chars.next(), chars.next()) {
+                (Some(high), Some(low)) if high.is_ascii_hexdigit() && low.is_ascii_hexdigit() => {}
+                _ => return false,
+            }
+            continue;
+        }
+        if !uri_char(ch) {
+            return false;
+        }
+    }
+    true
+}
+
+fn uri_char(ch: char) -> bool {
+    if ch.is_ascii_alphanumeric() {
+        return true;
+    }
+    if matches!(
+        ch,
+        '-' | '_'
+            | '.'
+            | '!'
+            | '~'
+            | '*'
+            | '\''
+            | '('
+            | ')'
+            | ','
+            | ';'
+            | ':'
+            | '$'
+            | '&'
+            | '+'
+            | '='
+            | '?'
+            | '/'
+            | '['
+            | ']'
+            | '@'
+            | '#'
+    ) {
+        return true;
+    }
+    !ch.is_ascii() && !ch.is_control() && !ch.is_whitespace()
+}
+
+/// The path and query of an `http(s)` URL, or `/` when it has no path: Java's `URI` and its
+/// `getRawPath` and `getRawQuery`.
+fn url_path_and_query(url: &str) -> String {
+    let after = url.split_once("://").map_or("", |(_, rest)| rest);
+    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
+    let rest = &after[end..];
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query.split('#').next().unwrap_or(""))),
+        None => (rest.split('#').next().unwrap_or(""), None),
+    };
+    let path = if path.is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    };
+    match query {
+        Some(query) if !query.is_empty() => format!("{path}?{query}"),
+        _ => path,
+    }
+}
+
+/// Whether a location names a scheme, as `URI.create` reads one: letters, then letters, digits, `+`, `-`
+/// and `.`, then a colon.
+fn has_scheme(location: &str) -> bool {
+    let Some((name, _)) = location.split_once(':') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '+' || ch == '-' || ch == '.')
 }
 
 /// `ec.web.saveScreenLastInfo`: remember `path`, or the screen being rendered, with the request parameters, for a
@@ -384,11 +602,29 @@ fn plain_request_parameters() -> BTreeMap<String, String> {
 
 /// Resolve and run one job. Anything written is in the thread's web slot.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
-    let last_standalone = parse_last_standalone(&text_of(job.parameters.get("lastStandalone")), 0);
-    let info = ScreenUrlInfo::parse(factory, job.root, job.path, last_standalone)?;
+    let _origin = gate::OriginGuard::install(job.options.origin.clone(), job.header_authenticated);
     let facade = ScreenFacade::of(factory);
+    // An always-standalone JSON mode (`tui`) renders only the last level. Without a `lastStandalone` the walk would
+    // otherwise render the webroot shell, whose html text is not a JSON array. The mode may come from the
+    // render-mode argument or a `renderMode` parameter, known now, or from the path's query or extension, known once
+    // the path is parsed.
+    let standalone_json = |mode: Option<String>| {
+        mode.is_some_and(|mode| {
+            let mode = canonical_render_mode(&mode);
+            facade.is_always_standalone(mode) && facade.output_kind(mode) == OutputKind::Json
+        })
+    };
+    let mut last_standalone = parse_last_standalone(&text_of(job.parameters.get("lastStandalone")), 0);
+    if last_standalone == 0 && standalone_json(requested_mode(job, None)) {
+        last_standalone = 1;
+    }
+    let mut info = ScreenUrlInfo::parse(factory, job.root, job.path, last_standalone)?;
+    if last_standalone == 0 && standalone_json(requested_mode(job, Some(&info))) {
+        info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
+    }
     check_web_settings(&info)?;
-    if job.enforce_request_checks && (redirect_to_https(factory, job, &info) || redirect_to_login(job, &info)?) {
+    if job.enforce_request_checks && (redirect_to_https(factory, job, &info) || redirect_to_login(factory, job, &info)?)
+    {
         return Ok(());
     }
     check_authentication(&info)?;
@@ -430,6 +666,10 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
     let mode = client.unwrap_or(picked);
     let rendered = mode_screen(&info, &mode);
     if !rendered.allows_render_mode(&mode) {
+        // A qvue-only screen still answers tui: one placeholder, so the screen list stays a document.
+        if facade.output_kind(&mode) == OutputKind::Json {
+            return tui_unsupported_screen(&info);
+        }
         return Err(Error::of_kind(
             ErrorKind::NotFound,
             format!("render mode {mode} is not supported by {}", rendered.location),
@@ -439,7 +679,9 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
     let state = Rc::new(RenderState::new(factory, &facade, info, mode, content_type, encoding));
     let _active = ActiveGuard::install(Rc::clone(&state));
     // A screen marked server-static for qvt is sent as a template that holds no request data, from the cache.
+    // Record history after the send: a later failure must not record a screen the user did not get.
     if state.render_mode == "qvt" && super::statics::serve_template(&state, job.request, job.path)? {
+        record_history(job, &state);
         return Ok(());
     }
     let begin = state.url_info.begin_transaction;
@@ -522,7 +764,7 @@ fn add_server_static_header(state: &RenderState) {
         .iter()
         .any(|name| name == "all" || canonical_render_mode(name) == mode);
     if marked {
-        web::add_header("Cache-Control", super::statics::SERVER_STATIC_CACHE_CONTROL);
+        web::add_header("Cache-Control", super::statics::server_static_cache_control());
     }
 }
 
@@ -547,7 +789,7 @@ fn add_client_component_headers(state: &RenderState) {
 /// render with no socket. A qvt screen the `/qapps` shell loads counts, as Java counted the vapps fetches.
 fn record_history(job: &Job<'_>, state: &RenderState) {
     let target = &state.url_info.target_screen;
-    if !job.enforce_request_checks
+    if !(job.enforce_request_checks || job.history)
         || !job.method.eq_ignore_ascii_case("get")
         || state.url_info.last_standalone < 0
         || target.standalone
@@ -660,26 +902,36 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
         }
     }
     // The screens above the render start stay on the artifact stack so the screens below inherit. Each must be a
-    // subscreens item the user may have, as Java's doActualRender checks `isValidInCurrentContext`.
+    // subscreens item the user may have, as Java's doActualRender checks `isValidInCurrentContext`; so must the first
+    // screen rendered (a lastStandalone render starts at the last), which no `sri.renderSubscreen` decides.
+    path_items_available(info, (info.render_path_difference + 1).min(defs.len()))?;
     let mut inherited = Frames::default();
-    for (index, def) in defs[..info.render_path_difference.min(defs.len())].iter().enumerate() {
-        if index > 0 {
-            let item = info
-                .full_path
-                .get(index - 1)
-                .and_then(|name| defs[index - 1].subscreens.get(name));
-            if item.is_some_and(|item| !item.is_valid_in_current_context()) {
-                return Err(Error::of_kind(
-                    ErrorKind::Unauthorized,
-                    format!("The screen {} is not available", def.screen_name),
-                ));
-            }
-        }
+    for def in defs[..info.render_path_difference.min(defs.len())].iter() {
         inherited.push_screen(def, false)?;
         inherited.hit_detail(Some(&state.content_type), true);
     }
     state.screen_path_index.set(info.render_path_difference);
     render_body(state)
+}
+
+/// Refuse a path whose screens before `count` include a subscreens item limited to a user group the user is not in
+/// (`SubscreensItem.userGroupId`, `isValidInCurrentContext`): the screens a render starts above or at, and every screen
+/// of a transition's path.
+fn path_items_available(info: &ScreenUrlInfo, count: usize) -> Result<(), Error> {
+    let defs = &info.path_defs;
+    for index in 1..count.min(defs.len()) {
+        let item = info
+            .full_path
+            .get(index - 1)
+            .and_then(|name| defs[index - 1].subscreens.get(name));
+        if item.is_some_and(|item| !item.is_valid_in_current_context()) {
+            return Err(Error::of_kind(
+                ErrorKind::Unauthorized,
+                format!("The screen {} is not available", defs[index].screen_name),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Render the first screen to render, which renders the ones below it through `sri.renderSubscreen`.
@@ -699,26 +951,172 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         return Ok(());
     }
     super::sri::flush_end_text(state);
+    if state.output_kind == OutputKind::Json && !state.dont_do_render.get() {
+        wrap_json_envelope(state);
+    }
     if !web::output_sent() && !state.dont_do_render.get() {
         web::start_output(200, &super::sri::content_type_header(state));
     }
     Ok(())
 }
 
+/// A screen whose `render-modes` omit `tui`. The document is one placeholder, not an error page.
+fn tui_unsupported_screen(info: &ScreenUrlInfo) -> Result<(), Error> {
+    let placeholder = serde_json::json!([{ "t": "placeholder", "text": "render-mode", "url": screen_path(info) }]);
+    let body = json_envelope(info, placeholder, serde_json::json!({}), "", empty_messages());
+    web::send_bytes_with_headers(
+        200,
+        vec![("Content-Type".to_string(), "application/json".to_string())],
+        body.to_string().into_bytes(),
+    );
+    Ok(())
+}
+
+/// The outermost `tui` render: the root array becomes `c` of one envelope. A nested unit writes its own array
+/// and does not come through here.
+fn wrap_json_envelope(state: &RenderState) {
+    if !web::output_sent() {
+        web::start_output(200, &super::sri::content_type_header(state));
+    }
+    let raw = web::with_body(<[u8]>::to_vec);
+    let nodes = json_root_array(&raw, &state.url_info);
+    let envelope = json_envelope(
+        &state.url_info,
+        nodes,
+        envelope_parameters(),
+        &state.focus.borrow(),
+        envelope_messages(),
+    );
+    web::replace_body(envelope.to_string().into_bytes());
+}
+
+/// The `tui` envelope of section 2.3 of the plan. Every string from the request or the screen is stripped of
+/// controls; the nodes were stripped as they were written.
+fn json_envelope(
+    info: &ScreenUrlInfo,
+    nodes: serde_json::Value,
+    parameters: serde_json::Value,
+    focus: &str,
+    messages: serde_json::Value,
+) -> serde_json::Value {
+    let strip = super::sri::strip_controls;
+    let target = &info.target_screen;
+    let title = if target.default_menu_title.is_empty() {
+        &target.screen_name
+    } else {
+        &target.default_menu_title
+    };
+    let path_list: Vec<String> = info.full_path.iter().map(|name| strip(name)).collect();
+    let render_modes: Vec<String> = target.render_modes.iter().map(|mode| strip(mode)).collect();
+    serde_json::json!({
+        "v": 1,
+        "screen": {
+            "path": strip(&screen_path(info)),
+            "pathList": path_list,
+            "title": strip(title),
+            "renderModes": render_modes,
+            "standalone": info.render_path_difference,
+        },
+        "parameters": parameters,
+        "messages": messages,
+        "focus": strip(focus),
+        "c": nodes,
+    })
+}
+
+fn screen_path(info: &ScreenUrlInfo) -> String {
+    if info.full_path.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", info.full_path.join("/"))
+    }
+}
+
+fn empty_messages() -> serde_json::Value {
+    serde_json::json!({ "info": [], "errors": [], "validationErrors": [] })
+}
+
+/// The root array a level wrote. Bytes that are not one JSON array are logged and become one error node, so the
+/// client still gets a document.
+fn json_root_array(raw: &[u8], info: &ScreenUrlInfo) -> serde_json::Value {
+    let trimmed = raw.trim_ascii();
+    if trimmed.is_empty() {
+        return serde_json::Value::Array(Vec::new());
+    }
+    match serde_json::from_slice::<serde_json::Value>(trimmed) {
+        Ok(value) if value.is_array() => value,
+        Ok(_) => {
+            tracing::error!("Screen {} did not render a JSON array", screen_path(info));
+            serde_json::json!([{"t":"error","text":"the screen did not render as JSON"}])
+        }
+        Err(err) => {
+            tracing::error!("Screen {} did not render as JSON: {err}", screen_path(info));
+            serde_json::json!([{"t":"error","text":"the screen did not render as JSON"}])
+        }
+    }
+}
+
+fn envelope_parameters() -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (name, value) in web::parameters() {
+        if matches!(value, Value::Object(_)) {
+            continue;
+        }
+        let text = super::sri::strip_controls(&moqui_lib::object::to_plain_string(&value));
+        map.insert(super::sri::strip_controls(&name), serde_json::Value::String(text));
+    }
+    map.remove("moquiSessionToken");
+    let mut value = serde_json::Value::Object(map);
+    web::strip_credential_parameters(&mut value);
+    value
+}
+
+fn envelope_messages() -> serde_json::Value {
+    let (info, errors, validation) = ExecutionContext::with_current(|ec| {
+        let facade = ec.message();
+        let mut info = Vec::new();
+        let mut errors = Vec::new();
+        for (index, text) in facade.messages().iter().enumerate() {
+            let cleaned = super::sri::strip_controls(text);
+            if matches!(facade.message_type(index), "danger" | "error") {
+                errors.push(cleaned);
+            } else {
+                info.push(cleaned);
+            }
+        }
+        let validation_text: Vec<String> = facade
+            .validation_errors()
+            .iter()
+            .map(|error| error.message.clone())
+            .collect();
+        for error in facade.errors() {
+            if !validation_text.iter().any(|message| message == error) {
+                errors.push(super::sri::strip_controls(error));
+            }
+        }
+        let validation: Vec<serde_json::Value> = facade
+            .validation_errors()
+            .iter()
+            .map(|error| {
+                serde_json::json!({
+                    "form": super::sri::strip_controls(&error.form),
+                    "field": super::sri::strip_controls(&error.field),
+                    "message": super::sri::strip_controls(&error.message),
+                })
+            })
+            .collect();
+        (info, errors, validation)
+    })
+    .unwrap_or_default();
+    serde_json::json!({
+        "info": info,
+        "errors": errors,
+        "validationErrors": validation,
+    })
+}
+
 fn pick_render_mode(facade: &ScreenFacade, job: &Job<'_>, info: &ScreenUrlInfo) -> Result<String, Error> {
-    // A `?renderMode=` on the screen path counts as the parameter, as Java's ScreenTest puts the path's query in the
-    // request parameters.
-    let parameter = Some(text_of(job.parameters.get("renderMode")))
-        .filter(|text| !text.is_empty())
-        .or_else(|| info.inline_parameters.get("renderMode").cloned())
-        .unwrap_or_default();
-    let chosen = job
-        .render_mode
-        .map(str::to_string)
-        .filter(|text| !text.is_empty())
-        .or_else(|| Some(parameter).filter(|text| !text.is_empty()))
-        .or_else(|| info.target_render_mode.clone())
-        .unwrap_or_else(|| DEFAULT_MODE.to_string());
+    let chosen = requested_mode(job, Some(info)).unwrap_or_else(|| DEFAULT_MODE.to_string());
     if !facade.is_render_mode_valid(&chosen) {
         return Err(Error::of_kind(
             ErrorKind::NotFound,
@@ -726,6 +1124,22 @@ fn pick_render_mode(facade: &ScreenFacade, job: &Job<'_>, info: &ScreenUrlInfo) 
         ));
     }
     Ok(canonical_render_mode(&chosen).to_string())
+}
+
+/// The mode a request asks for, not yet checked: the render-mode argument, then a `renderMode` parameter, then the
+/// path's extension. A `?renderMode=` on the screen path counts as the parameter, as Java's ScreenTest puts the path's
+/// query in the request parameters. With no parsed path, only the first two.
+fn requested_mode(job: &Job<'_>, info: Option<&ScreenUrlInfo>) -> Option<String> {
+    let present = |text: &String| !text.is_empty();
+    job.render_mode
+        .map(str::to_string)
+        .filter(present)
+        .or_else(|| Some(text_of(job.parameters.get("renderMode"))).filter(present))
+        .or_else(|| {
+            info.and_then(|info| info.inline_parameters.get("renderMode").cloned())
+                .filter(present)
+        })
+        .or_else(|| info.and_then(|info| info.target_render_mode.clone()))
 }
 
 /// Content type and encoding. A `web-settings` mime type on a screen in the render path wins over
@@ -794,8 +1208,9 @@ fn redirect_to_https(factory: &ExecutionContextFactory, job: &Job<'_>, info: &Sc
 
 /// A browser page that needs a user, asked for with none, saves itself as the screen to come back to and redirects
 /// to the last `login-path` of the path, `/Login` by default (Java's `checkWebappSettings`). A fragment, which a client
-/// fetches with `lastStandalone`, and a transition get the 401 instead.
-fn redirect_to_login(job: &Job<'_>, info: &ScreenUrlInfo) -> Result<bool, Error> {
+/// fetches with `lastStandalone`, a transition, and a `tui` request (the terminal client shows its own login dialog) get
+/// the 401 instead.
+fn redirect_to_login(factory: &ExecutionContextFactory, job: &Job<'_>, info: &ScreenUrlInfo) -> Result<bool, Error> {
     if info.file_resource.is_some()
         || super::statics::report_active()
         || user::current_username()?.is_some()
@@ -815,7 +1230,10 @@ fn redirect_to_login(job: &Job<'_>, info: &ScreenUrlInfo) -> Result<bool, Error>
     };
     user::session::save_screen_last(&path, &plain_request_parameters());
     save_messages();
-    if info.last_standalone != 0 || info.target_transition_name.is_some() {
+    if info.last_standalone != 0
+        || info.target_transition_name.is_some()
+        || requested_mode(job, Some(info)).as_deref() == Some("tui")
+    {
         return Ok(false);
     }
     let login_path = info
@@ -829,7 +1247,7 @@ fn redirect_to_login(job: &Job<'_>, info: &ScreenUrlInfo) -> Result<bool, Error>
         web::base_url().trim_end_matches('/'),
         login_path.trim_start_matches('/')
     );
-    web::send_redirect(&location);
+    web::send_redirect(&http_redirect_location(factory, &location));
     Ok(true)
 }
 
@@ -860,6 +1278,8 @@ pub(super) struct Frames {
     anonymous: bool,
     /// The frames are not artifact hits: a check, or the screens that run actions before the render.
     untracked: bool,
+    /// The base of the isolated check these frames are, restored when they drop ([`Frames::check`]).
+    check_base: Option<usize>,
 }
 
 impl Frames {
@@ -867,6 +1287,17 @@ impl Frames {
     pub(super) fn untracked() -> Self {
         Self {
             untracked: true,
+            ..Self::default()
+        }
+    }
+
+    /// Frames of an authorization check, Java's `ScreenUrlInfo.isPermitted`: not artifact hits, and decided against a
+    /// fresh stack, so the frames of the render the check runs in neither grant nor deny anything (a menu screen's
+    /// inheritable grant does not reach the screens it lists).
+    pub(super) fn check() -> Self {
+        Self {
+            untracked: true,
+            check_base: ExecutionContext::with_current(ExecutionContext::begin_isolated_check),
             ..Self::default()
         }
     }
@@ -936,6 +1367,9 @@ impl Drop for Frames {
                 let _ = ec.pop();
             });
         }
+        if let Some(previous) = self.check_base {
+            ExecutionContext::with_current(|ec| ec.end_isolated_check(previous));
+        }
         if self.anonymous {
             user::logout_anonymous_only();
         }
@@ -967,7 +1401,7 @@ fn run_transition(
         return Ok(());
     };
     if job.enforce_request_checks {
-        if let Some(reason) = insecure_transition(factory, job, &transition) {
+        if let Some(reason) = insecure_transition(factory, job, &transition, &info.inline_parameters) {
             web::send_json_error(400, reason);
             return Ok(());
         }
@@ -975,31 +1409,159 @@ fn run_transition(
             web::send_json_error(401, "Session token is missing or is not valid");
             return Ok(());
         }
+        // a cookie session that presented its token: a person at a browser, who may decide an agent's approval
+        if !job.header_authenticated && session_token_presented(job)? {
+            gate::note_session_token_checked();
+        }
     }
 
+    let observer = gate::observer().filter(|observer| {
+        let user_id = user::current_user_id().ok().flatten();
+        observer.wants(user_id.as_deref())
+    });
+    let gated = !transition.read_only && runs_actions(&transition);
+    let held = gated.then(|| held_write(job, &info, &transition)).flatten();
+    let result = match &held {
+        Some((write, mismatch)) => {
+            send_held(write, mismatch.as_deref());
+            Ok(())
+        }
+        None => {
+            // An approved write runs outside the render's read fence; any other stays inside it.
+            let _lifted = (gated && matches!(job.options.gate, TransitionGate::Approved { .. }))
+                .then(crate::entity::fence::lift);
+            run_gated_transition(factory, job, &info, &transition)
+        }
+    };
+    if let Some(observer) = observer {
+        observer.observed(&transition_outcome(job, &info, &transition, held.is_some(), &result));
+    }
+    result
+}
+
+/// The write the gate holds, with the approval that did not match it: `None` when the transition may run.
+fn held_write(job: &Job<'_>, info: &ScreenUrlInfo, transition: &TransitionDef) -> Option<(HeldWrite, Option<String>)> {
+    let approved = match &job.options.gate {
+        TransitionGate::Open => return None,
+        TransitionGate::Hold => None,
+        TransitionGate::Approved { approval_id, args_hash } => Some((approval_id, args_hash)),
+    };
+    let write = HeldWrite {
+        screen_location: transition.screen_location.clone(),
+        transition: transition.name.clone(),
+        service: transition.single_service.clone(),
+        authz_action: transition_authz_action(transition),
+        method: job.method.to_ascii_uppercase(),
+        path: info.full_path_url(),
+        extra_path: info.extra_path.clone(),
+        path_parameters: transition
+            .path_parameters
+            .iter()
+            .zip(info.extra_path.iter())
+            .map(|(name, value)| (name.clone(), serde_json::Value::String(value.clone())))
+            .collect(),
+        inline_parameters: gate::gate_inline_parameters(&info.inline_parameters),
+        parameters: gate::gate_parameters(job.parameters),
+    };
+    match approved {
+        Some((_, args_hash)) if constant_time_eq(write.hash().as_bytes(), args_hash.as_bytes()) => None,
+        Some((approval_id, _)) => {
+            tracing::warn!(
+                "the write {}#{} does not match approval {approval_id}, so it is held",
+                write.screen_location,
+                write.transition
+            );
+            Some((write, Some(approval_id.clone())))
+        }
+        None => Some((write, None)),
+    }
+}
+
+/// The 409 answer of a held write: `{"heldWrite": {...}}`, with `approvalMismatch` when an approval did not match.
+fn send_held(write: &HeldWrite, mismatch: Option<&str>) {
+    let mut body = serde_json::json!({"heldWrite": write.to_json()});
+    if let Some(approval_id) = mismatch {
+        body["approvalMismatch"] = serde_json::json!({"approvalId": approval_id});
+    }
+    web::send_bytes_with_headers(
+        409,
+        vec![("Content-Type".to_string(), "application/json; charset=UTF-8".to_string())],
+        body.to_string().into_bytes(),
+    );
+}
+
+/// What the observer is told about a transition.
+fn transition_outcome(
+    job: &Job<'_>,
+    info: &ScreenUrlInfo,
+    transition: &TransitionDef,
+    held: bool,
+    result: &Result<(), Error>,
+) -> TransitionOutcome {
+    let (errors, validation_errors, messages) = ExecutionContext::with_current(|ec| {
+        let message = ec.message();
+        (
+            message.errors().to_vec(),
+            message
+                .validation_errors()
+                .iter()
+                .map(|error| format!("{}: {}", error.field, error.message))
+                .collect(),
+            message.messages().to_vec(),
+        )
+    })
+    .unwrap_or_default();
+    TransitionOutcome {
+        origin: job.options.origin.clone(),
+        user_id: user::current_user_id().ok().flatten(),
+        screen_location: transition.screen_location.clone(),
+        transition: transition.name.clone(),
+        method: job.method.to_ascii_uppercase(),
+        parameters: gate::gate_parameters(job.parameters),
+        extra_path: info.extra_path.clone(),
+        inline_parameters: gate::gate_inline_parameters(&info.inline_parameters),
+        held,
+        header_authenticated: (job.header_authenticated && job.options.origin == RenderOrigin::Browser)
+            || user::header_login_session(),
+        status: if web::output_sent() { web::output_status() } else { 200 },
+        location: web::response_header_values("Location").into_iter().next(),
+        error: result.as_ref().err().map(|error| error.message().to_string()),
+        errors,
+        validation_errors,
+        messages,
+    }
+}
+
+/// The transition past the gate: its path's always-actions, its actions and its response, in one transaction.
+fn run_gated_transition(
+    factory: &Arc<ExecutionContextFactory>,
+    job: &Job<'_>,
+    info: &Arc<ScreenUrlInfo>,
+    transition: &TransitionDef,
+) -> Result<(), Error> {
     let mode = DEFAULT_MODE.to_string();
     let facade = ScreenFacade::of(factory);
-    let (content_type, encoding) = output_type(&facade, &info, &mode);
+    let (content_type, encoding) = output_type(&facade, info, &mode);
     let state = Rc::new(RenderState::new(
         factory,
         &facade,
-        Arc::clone(&info),
+        Arc::clone(info),
         mode,
         content_type,
         encoding,
     ));
     let _active = ActiveGuard::install(Rc::clone(&state));
-    let json = wants_json(job, &info);
+    let json = wants_json(job, info);
     // The REST screen's transitions and the implicit actions transition manage their own transactions. Any other
     // transition runs the always-actions of its path, its actions and its responses' conditions in one, as Java's
     // ScreenRenderImpl does, so a write in an always-action rolls back with the transition.
     let own_transaction =
         transition.implicit == super::Implicit::Actions || transition.screen_location.ends_with("/webroot/rest.xml");
     let begin = transition.begin_transaction && !own_transaction;
-    let step = in_transaction(begin, None, || run_transition_steps(job, &info, &state, &transition))?;
+    let step = in_transaction(begin, None, || run_transition_steps(job, info, &state, transition))?;
     match step {
         Step::Sent => Ok(()),
-        Step::Respond(response) => respond(factory, &info, &response, json),
+        Step::Respond(response) => respond(factory, info, &response, json),
     }
 }
 
@@ -1028,7 +1590,9 @@ fn run_transition_steps(
     state: &Rc<RenderState>,
     transition: &TransitionDef,
 ) -> Result<Step, Error> {
-    // Screens above the transition are only on the stack, so they inherit but are not decided.
+    // Screens above the transition are only on the stack, so they inherit but are not decided; a screen limited to a
+    // user group the user is not in refuses its transitions as it refuses its render.
+    path_items_available(info, info.path_defs.len())?;
     let mut frames = Frames::default();
     for (index, def) in info.path_defs.iter().enumerate() {
         frames.push_screen(def, false)?;
@@ -1102,7 +1666,23 @@ fn run_transition_steps(
             return Ok(Step::Respond(response));
         }
         super::Implicit::ScreenDoc => {
+            // The terminal asks with renderMode=tui (or screenDoc.tui) and reads the document as an html node.
+            let tui = text_of(job.parameters.get("renderMode")) == "tui"
+                || info.target_transition_extension.as_deref() == Some("tui");
             match super::saved_finds::screen_document(&transition.screen_location)? {
+                super::saved_finds::ScreenDocument::Text(text) if tui => {
+                    let mut node = super::html_text::html_text(&text).to_json();
+                    node["t"] = "html".into();
+                    node["id"] = "screenDoc".into();
+                    web::send_bytes_with_headers(
+                        200,
+                        vec![(
+                            "Content-Type".to_string(),
+                            "application/json; charset=UTF-8".to_string(),
+                        )],
+                        node.to_string().into_bytes(),
+                    );
+                }
                 super::saved_finds::ScreenDocument::Text(text) => web::send_bytes_with_headers(
                     200,
                     vec![("Content-Type".to_string(), "text/html; charset=UTF-8".to_string())],
@@ -1132,10 +1712,16 @@ fn run_transition_steps(
         return Err(Error::new(message.clone()));
     }
     reject_html_for_entity_auto(transition);
-    if let Some(actions) = &transition.actions {
-        if !has_error() {
+    // The service-call runs only when there is no error and no validation error. `<actions>` always
+    // run, so they can handle an error (ScreenDefinition.groovy). The two are separate scripts, so
+    // the call's `if (ec.message.hasError()) return` cannot skip the actions.
+    if let Some(actions) = &transition.service_actions {
+        if !screen_has_error() {
             run_transition_actions(actions)?;
         }
+    }
+    if let Some(actions) = &transition.actions {
+        run_transition_actions(actions)?;
     }
     let response = pick_response(transition)?;
     hit.count(response_type(response));
@@ -1156,7 +1742,8 @@ pub(super) fn transition_authz_action(transition: &TransitionDef) -> String {
 /// Whether a transition runs something that can change data, as Java's `hasActionsOrSingleService`: its actions (or
 /// actions that did not compile), or the implicit saved find and column transitions, which write rows.
 fn runs_actions(transition: &TransitionDef) -> bool {
-    transition.actions.is_some()
+    transition.service_actions.is_some()
+        || transition.actions.is_some()
         || transition.actions_error.is_some()
         || matches!(
             transition.implicit,
@@ -1166,10 +1753,12 @@ fn runs_actions(transition: &TransitionDef) -> bool {
 
 /// A transition that writes is refused from a request that is not encrypted when https is on, or that carries its
 /// parameters in the URL, where they are not protected (Java's ScreenRenderImpl). A read-only one is not.
+/// `inline_parameters` are the `/~name=value/` segments. A `path-parameter` extra path is not one of those.
 fn insecure_transition(
     factory: &ExecutionContextFactory,
     job: &Job<'_>,
     transition: &TransitionDef,
+    inline_parameters: &BTreeMap<String, String>,
 ) -> Option<&'static str> {
     if transition.read_only || !runs_actions(transition) {
         return None;
@@ -1184,7 +1773,9 @@ fn insecure_transition(
         .query
         .iter()
         .any(|(name, _)| !matches!(name.as_str(), "lastStandalone" | "renderMode"));
-    if query {
+    // Java also refuses when `getPathInfoParameterMap` is non-empty. `lastStandalone` and `renderMode` stay
+    // allowed on the query: screen links put them there for CSV, XLS, print, and text export.
+    if query || !inline_parameters.is_empty() {
         return Some(
             "Cannot run screen transition with actions with URL parameters; send them in the body of a form or declare the transition read-only",
         );
@@ -1274,8 +1865,12 @@ fn response_type(response: &ResponseDef) -> &'static str {
 
 /// A transition asked for with `.json` or by a client that accepts JSON (the qvt `m-form`) answers a redirect as JSON, as Java's
 /// `sendJsonRedirect`.
+/// A `.json` transition, an `Accept: application/json` request, or a `tui` one: the terminal client asks for each screen
+/// as its own request with no session between them, so a link to a transition (`runJob`) gets its redirect as JSON,
+/// messages and all, rather than a Location whose flash messages the next request would never see.
 fn wants_json(job: &Job<'_>, info: &ScreenUrlInfo) -> bool {
     info.target_transition_extension.as_deref() == Some("json")
+        || requested_mode(job, Some(info)).as_deref() == Some("tui")
         || job
             .request
             .header("accept")
@@ -1286,10 +1881,20 @@ fn run_transition_actions(actions: &Actions) -> Result<(), Error> {
     script::run_actions(&actions.xml)
 }
 
+/// Java's `messageFacade.hasError()` on the screen path: the error list or a validation error.
+/// `service::util::has_error` and the script's `ec.message.hasError` stay the error list only.
+fn screen_has_error() -> bool {
+    ExecutionContext::with_current(|ctx| {
+        let messages = ctx.message();
+        !messages.errors().is_empty() || !messages.validation_errors().is_empty()
+    })
+    .unwrap_or(false)
+}
+
 /// The error response when there are errors, else the last conditional response that holds (Java checks them all
 /// and keeps the last), else the default response.
 fn pick_response(transition: &TransitionDef) -> Result<&ResponseDef, Error> {
-    if has_error() {
+    if screen_has_error() {
         if let Some(response) = &transition.error_response {
             return Ok(response);
         }
@@ -1338,13 +1943,16 @@ fn respond(
     json: bool,
 ) -> Result<(), Error> {
     if response.save_current_screen {
-        user::session::push_screen_history(&info.full_path_url());
+        // Java's `saveScreenLastInfo(full path, null)`: the target a later `screen-last` returns to,
+        // with the request parameters. Screen history is a different list (`record_history`).
+        let path = info.full_path_url();
+        user::session::save_screen_last(&path, &plain_request_parameters());
     }
     if response.kind == ResponseKind::None {
         if response.save_parameters {
             save_parameters();
         }
-        if has_error() {
+        if screen_has_error() {
             save_error_parameters();
         }
         return Ok(());
@@ -1356,7 +1964,7 @@ fn respond(
     if !json {
         save_messages();
     }
-    if has_error() {
+    if screen_has_error() {
         save_error_parameters();
     }
     let mut url = script::expand(&response.url)?;
@@ -1438,9 +2046,10 @@ fn respond(
                 // A missing `//` path is `#`, as Java's getUrlWithBase when the target does not exist.
                 let location = "#".to_string();
                 if json {
-                    send_json_redirect(None, &location, &parameters);
+                    send_json_redirect(None, &http_redirect_location(factory, &location), &parameters);
                 } else {
-                    web::send_redirect(&with_query(location, &parameters));
+                    let location = with_query(location, &parameters);
+                    web::send_redirect(&http_redirect_location(factory, &location));
                 }
                 return Ok(());
             }
@@ -1461,9 +2070,12 @@ fn respond(
         location
     };
     if json {
-        send_json_redirect(screen_path, &location, &parameters);
+        // The client follows the URL in the JSON, so it is held to the same rule as the Location of a
+        // redirect: a target that is not a path of this site goes to the root.
+        send_json_redirect(screen_path, &http_redirect_location(factory, &location), &parameters);
     } else {
-        web::send_redirect(&with_query(location, &parameters));
+        let location = with_query(location, &parameters);
+        web::send_redirect(&http_redirect_location(factory, &location));
     }
     Ok(())
 }
@@ -1746,7 +2358,7 @@ fn in_transaction<T>(begin: bool, timeout: Option<i64>, body: impl FnOnce() -> R
     let outcome = tx.run(crate::transaction::TransactionAttribute::UseOrBegin, timeout, || {
         let _deadline = script::DeadlineGuard::new(tx.time_remaining());
         kept = Some(body()?);
-        if has_error() {
+        if screen_has_error() {
             rolled_back = true;
             tx.set_rollback_only("Errors running screen actions")?;
         }
@@ -1808,6 +2420,25 @@ fn csrf_rejected(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Erro
         presented
     };
     Ok(!constant_time_eq(presented.as_bytes(), expected.as_bytes()))
+}
+
+/// Whether the request presented the session's token (a parameter or a header) and it matches.
+fn session_token_presented(job: &Job<'_>) -> Result<bool, Error> {
+    let expected = user::csrf_token()?;
+    if expected.is_empty() {
+        return Ok(false);
+    }
+    let presented = text_of(job.parameters.get("moquiSessionToken"));
+    let presented = if presented.is_empty() {
+        ["moquisessiontoken", "sessiontoken", "x-csrf-token"]
+            .iter()
+            .find_map(|name| job.request.header(name).filter(|text| !text.is_empty()))
+            .unwrap_or("")
+            .to_string()
+    } else {
+        presented
+    };
+    Ok(!presented.is_empty() && constant_time_eq(presented.as_bytes(), expected.as_bytes()))
 }
 
 pub(super) fn text_of(value: Option<&Value>) -> String {

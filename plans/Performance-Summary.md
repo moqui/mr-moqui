@@ -11,6 +11,9 @@ Digest of [Performance.md](Performance.md), [Performance-Implementation.md](Perf
 - SQL text generation: 0.18–0.60 µs per statement (insert, update, delete, upsert, PK select). Excludes execution, auth, commit.
 - Search, 50,000 generated documents (`tests/search_bench.rs`, [Performance.md, Search](Performance.md)): Postgres indexes 3,190 docs/s (3.75 KB per document) and answers selective queries in about 1 ms p50, but broad ones in 80–580 ms p50; OpenSearch indexes 490 docs/s with about 1 s to visibility and answers everything in 1–5 ms p50.
 
+## Profiling rounds ([Profiling](Profiling.md))
+Entity, service, data load and XML/definition work profiled and optimized against embedded Postgres, with five opt-in speed tests. Data load records about 8x faster than at the start (one pipelined upsert each), PK finds about 30% faster, allocations down 2.5–9x across the rows; a blocking wire-protocol Postgres client replaces `tokio_postgres`. Next: the same tests against an external Postgres.
+
 ## Implementation goals ([Performance-Implementation](Performance-Implementation.md))
 1. Inspect schema in bulk and install atomically (the browser build already does this in one transaction: 18 s → 2.0 s).
 2. Reuse XML-action macro compilation across loads.

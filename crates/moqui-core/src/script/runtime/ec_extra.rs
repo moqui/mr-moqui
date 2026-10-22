@@ -1197,7 +1197,8 @@ mod tests {
         holds(
             r#"ec.screen.isRenderModeValid("csv") && ec.screen.isRenderModeValid("xsl-fo") && !ec.screen.isRenderModeValid("vuet")"#,
         );
-        holds(r#"ec.web.getWebappRootUrl("webroot", "", true, true) === """#);
+        // With no request a full URL is needed, the conf webapp's, and the test conf has no webapp.
+        holds(r#"ec.web.getWebappRootUrl("webroot", "", true, true) === "" && ec.web.getWebappRootUrl() === """#);
         clear_context_stack();
     }
 

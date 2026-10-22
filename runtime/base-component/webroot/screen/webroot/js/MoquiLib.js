@@ -9,6 +9,10 @@
     "use strict";
     const node = typeof module === "object" && module.exports;
     const moqui = node ? {} : (root.moqui = root.moqui || {});
+    // $mq is the name the server's field rules use ($mq.isStringNumber and the rest). Scripts see this
+    // page global. A merged qvt template does not: Vue resolves $mq on app.config.globalProperties,
+    // which qvt.start sets. A server-static template resolves it on the scope host.
+    root.$mq = moqui;
     factory(root, moqui);
     if (node) module.exports = moqui;
 })(globalThis, function (root, moqui) {
@@ -459,20 +463,37 @@
         },
 
         // A WebSocket for the topics a page listens to. It connects when the first listener is registered, and
-        // only when an endpoint is configured: the object is not made without one.
+        // only when an endpoint is configured: the object is not made without one. onState(fn) calls fn("open") or
+        // fn("closed") as the socket opens and closes (a chat store sends what waited, and reads what it missed); the
+        // browser coming back online reopens a closed socket at once, with its tries counted again. send(message)
+        // writes an object as JSON (the frames of m-coedit); while the socket is not open it waits, the last 200 of
+        // them, and goes after the subscribe of the next open.
         NotificationClient: function (webSocketUrl) {
             this.displayEnable = true;
             this.webSocketUrl = webSocketUrl;
             this.topicListeners = {};
+            this.stateListeners = [];
+            this.sendQueue = [];
             this.tryReopenCount = 0;
             this.disableDisplay = () => { this.displayEnable = false; };
             this.enableDisplay = () => { this.displayEnable = true; };
+            this.isOpen = () => !!this.webSocket && this.webSocket.readyState === root.WebSocket.OPEN;
+            // Calls fn(state) for each change, "open" or "closed"; returns a function that removes it.
+            this.onState = (fn) => {
+                this.stateListeners.push(fn);
+                return () => { const index = this.stateListeners.indexOf(fn); if (index >= 0) this.stateListeners.splice(index, 1); };
+            };
+            const tellState = (state) => this.stateListeners.slice().forEach((fn) => {
+                try { fn(state, this); } catch (err) { console.error("notification state listener failed", err); }
+            });
             this.initWebSocket = () => {
                 const socket = new root.WebSocket(this.webSocketUrl);
                 this.webSocket = socket;
                 socket.onopen = () => {
                     this.tryReopenCount = 0;
                     socket.send("subscribe:" + Object.keys(this.topicListeners).join(","));
+                    this.sendQueue.splice(0).forEach((text) => socket.send(text));
+                    tellState("open");
                 };
                 socket.onmessage = (event) => {
                     let jsonObj;
@@ -481,7 +502,11 @@
                     (this.topicListeners[jsonObj.topic] || []).slice().forEach((callback) => callback(jsonObj, this));
                     (this.topicListeners.ALL || []).slice().forEach((callback) => callback(jsonObj, this));
                 };
-                socket.onclose = () => { setTimeout(() => this.tryReopen(), 30 * 1000); };
+                socket.onclose = () => {
+                    // a socket replaced by a reopen is not the client's state
+                    if (this.webSocket === socket) tellState("closed");
+                    setTimeout(() => this.tryReopen(), 30 * 1000);
+                };
                 socket.onerror = (event) => { console.log(event); };
             };
             this.tryReopen = () => {
@@ -491,9 +516,25 @@
                     this.initWebSocket();
                 }
             };
+            // back online: a socket that was made and closed opens now, with its six tries again
+            if (root.addEventListener) root.addEventListener("online", () => {
+                if (!this.webSocket) return;
+                this.tryReopenCount = 0;
+                this.tryReopen();
+            });
             this.displayNotify = (jsonObj) => {
                 if (!this.displayEnable) return;
                 if (jsonObj.title && jsonObj.showAlert === true) moqui.notifyNotification(jsonObj, moqui.notifyGrowl);
+            };
+            // Sends message as JSON text; true when it went now, false when it waits for the socket to open (the oldest
+            // of more than 200 waiting is dropped). The first send without a socket opens one.
+            this.send = (message) => {
+                const text = JSON.stringify(message);
+                if (this.isOpen()) { this.webSocket.send(text); return true; }
+                this.sendQueue.push(text);
+                if (this.sendQueue.length > 200) this.sendQueue.shift();
+                if (!this.webSocket) this.initWebSocket();
+                return false;
             };
             // Calls callback(message, client) for each message of the topic (ALL: every message); no callback is the
             // alert display. Returns a function that unregisters it, as unregisterListener(topic, callback) does.

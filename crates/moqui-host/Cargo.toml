@@ -14,15 +14,15 @@ publish.workspace = true
 # cover everything.
 [features]
 default = ["maximal"]
-# Default package (`./moq build`): the web server on embedded Postgres, PDF, and outbound mail.
-lite = ["axum", "embedded-postgres", "pdf", "smtp"]
+# Default package (`./moq build`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
+lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
 embedded-postgres = ["postgres", "dep:postgresql_embedded", "dep:tar", "dep:flate2"]
-postgres = ["dep:postgres", "dep:tokio-postgres-rustls"]
+postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterator", "dep:webpki-roots"]
 mysql = ["dep:mysql"]
 axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util", "dep:futures-util"]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
@@ -43,12 +43,22 @@ imap = ["moqui-core/imap"]
 git = ["moqui-core/git"]
 image = ["moqui-core/image"]
 xlsx = ["moqui-core/xlsx"]
+# The agents and the model providers (moqui_core::llm).
+llm = ["moqui-core/llm"]
+# The terminal client (`moqui tui`, plans/archive/Screen-TUI-Impl.md 4.6): in every package, so it compiles Revue; lite has it
+# for a quick terminal loop while developing and testing.
+# Its remote client (`moqui tui --server`) takes pushed notifications from `/notws` over tungstenite, with the web's
+# root certificates for https.
+tui = ["dep:moqui-tui", "dep:tungstenite", "dep:webpki-roots"]
 
 [dependencies]
 # The workspace entry has default features off (moqui-browser). The host always has HTTP and the cluster
 # certificate; the other core features follow the host's own.
 moqui-core = { workspace = true, features = ["http", "cluster-tls"] }
 moqui-lib = { workspace = true, features = ["http"] }
+# `ui` pulls Revue. The `tui` feature above links it.
+moqui-tui = { workspace = true, optional = true, features = ["ui"] }
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }
 tracing = { workspace = true }
 # Log line and log entry timestamps (crates/moqui-host/src/logging.rs). Already in the graph under moqui-lib.
 jiff = { workspace = true }
@@ -62,8 +72,10 @@ serde_json = { workspace = true }
 postgresql_embedded = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
-postgres = { workspace = true, optional = true }
-tokio-postgres-rustls = { workspace = true, optional = true }
+postgres-protocol = { workspace = true, optional = true }
+postgres-types = { workspace = true, optional = true }
+fallible-iterator = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
 mysql = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
@@ -92,6 +104,8 @@ workspace = true
 
 [dev-dependencies]
 indexmap = { workspace = true }
+# The entity model the definition_speed test builds.
+moqui-db = { workspace = true }
 # The example component is on by default and its MoquiConf.xml selects a tool factory, so a test that boots the
 # repository runtime (tests/it, gate3, gate3_browser, search_logs_postgres) links the crate as the moqui binary does.
 example = { workspace = true }
@@ -100,6 +114,8 @@ calamine = { workspace = true }
 image = { workspace = true }
 # Same 0.29 handshake set axum's ws feature already links. No native-tls and no rustls.
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+# A browser editor's Yjs document in tests/it/collab.rs.
+yrs = { workspace = true }
 
 # Out of the default `cargo test`: each test boots its own embedded Postgres and seed, and the browser
 # tests drive Chromium. Run them by name: `cargo test -p moqui-host --test gate3 --test gate3_browser`.
@@ -109,4 +125,43 @@ test = false
 
 [[test]]
 name = "gate3_browser"
+test = false
+
+# Opt-in entity facade timings. Not linked by a default `cargo test`.
+# CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test entity_speed -- --ignored --nocapture
+[[test]]
+name = "entity_speed"
+test = false
+
+# Opt-in service facade timings, the service calls of SpeedTest.xml. Not linked by a default `cargo test`.
+# CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test service_speed -- --ignored --nocapture
+[[test]]
+name = "service_speed"
+test = false
+
+# Opt-in entity data loader timings: generated XML, CSV and JSON files and the framework data. Not linked by a
+# default `cargo test`.
+# CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test data_load_speed -- --ignored --nocapture
+[[test]]
+name = "data_load_speed"
+test = false
+
+# Opt-in MNode parse and read timings over the runtime XML files. No database. Not linked by a default `cargo test`.
+# CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test xml_speed -- --ignored --nocapture
+[[test]]
+name = "xml_speed"
+test = false
+
+# Opt-in definition load timings: the entity model, service and screen definitions. No database. Not linked by a
+# default `cargo test`.
+# CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test definition_speed -- --ignored --nocapture
+[[test]]
+name = "definition_speed"
+test = false
+
+# Scripted Gallery and Party screens on embedded Postgres, run by scripts/check-packages.sh:
+# `cargo test -p moqui-host --test tui_screens`.
+[[test]]
+name = "tui_screens"
+required-features = ["tui"]
 test = false

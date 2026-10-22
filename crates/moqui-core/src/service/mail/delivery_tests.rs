@@ -16,11 +16,11 @@
 //! authorization disabled: routing by account and identity address, case and plus tag, and which accounts it takes;
 //! delivery once per account with the trace fields, files, threading, rules and email ECAs once, a resend not doubled;
 //! the gateway's spam verdict to Junk and only its Authentication-Results kept; a store that fails as that account's
-//! error, and the steps after the store failure tolerant.
+//! error, and the steps after the store failure tolerant; DSN's Original-Recipient and "delivered" report.
 
 use moqui_lib::object::Value;
 
-use super::delivery::{deliver, find_recipient, Envelope, Options, Outcome, Recipients, Report};
+use super::delivery::{deliver, find_recipient, Envelope, Options, Outcome, RecipientDsn, Recipients, Report};
 use super::sync_tests::{
     alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, stamp, text, update,
 };
@@ -51,6 +51,7 @@ fn envelope(from: &str) -> Envelope {
         protocol: "ESMTP".to_string(),
         session_id: "S1".to_string(),
         hostname: "moqui.example.com".to_string(),
+        ..Envelope::default()
     }
 }
 
@@ -65,6 +66,7 @@ fn to(account: &str, addresses: &[&str]) -> Recipients {
     Recipients {
         email_account_id: account.to_string(),
         addresses: addresses.iter().map(|address| (*address).to_string()).collect(),
+        ..Recipients::default()
     }
 }
 
@@ -493,4 +495,84 @@ fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() 
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].to, ["dan@example.org"]);
     assert!(rows(&facade, MESSAGE, &[("emailAccountId", &broken)]).is_empty());
+}
+
+/// A recipient with NOTIFY=SUCCESS gets one "delivered" report through its account's server, and an ORCPT its
+/// Original-Recipient field; the gateway's resend (a duplicate) and a recipient that did not ask tell nothing.
+#[test]
+fn a_delivered_report_goes_to_the_sender_for_notify_success() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let server = [
+        ("smtpHost", text("127.0.0.1")),
+        ("smtpPort", text("2525")),
+        ("smtpStartTls", text("N")),
+    ];
+    let sales = account("EakHosted", "sales@example.com", &server);
+    let support = account("EakShared", "support@example.com", &server);
+    crate::user::logout().unwrap();
+    let sink = super::SinkGuard::install();
+    let recipients = [
+        Recipients {
+            dsn: vec![RecipientDsn {
+                address: "sales@example.com".to_string(),
+                notify: "SUCCESS,FAILURE".to_string(),
+                original: "rfc822;Sales+news@example.com".to_string(),
+            }],
+            ..to(&sales, &["sales@example.com"])
+        },
+        Recipients {
+            dsn: vec![RecipientDsn {
+                address: "support@example.com".to_string(),
+                notify: "FAILURE".to_string(),
+                original: String::new(),
+            }],
+            ..to(&support, &["support@example.com"])
+        },
+    ];
+    let raw = plain(
+        "<dsn@example.org>",
+        "Tell me",
+        "sales@example.com, support@example.com",
+        "",
+    );
+    let envelope = Envelope {
+        dsn_envid: "QQ314159".to_string(),
+        ..envelope("dan@example.org")
+    };
+    let delivered = || {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        deliver(&facade, raw.as_bytes(), &envelope, &recipients, &options()).unwrap()
+    };
+    let report = delivered();
+    let (id, _) = stored(&report, &sales);
+    let headers = field(&one(&facade, MESSAGE, "emailMessageId", &id), "headersString");
+    assert!(
+        headers.contains("Original-Recipient: rfc822;Sales+news@example.com"),
+        "{headers}"
+    );
+    let sent = sink.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].to, ["dan@example.org"]);
+    assert_eq!(sent[0].subject, "Delivery Status Notification (delivered)");
+    let report_text = &sent[0].body_text;
+    assert!(
+        report_text.contains("Original-Envelope-Id: QQ314159\r\n"),
+        "{report_text}"
+    );
+    assert!(
+        report_text.contains("Final-Recipient: rfc822; sales@example.com\r\nAction: delivered\r\n"),
+        "{report_text}"
+    );
+    assert!(!report_text.contains("support@example.com\r\nAction"), "{report_text}");
+    assert!(report_text.contains("Subject: Tell me\r\n"), "the header is returned");
+    let again = delivered();
+    assert!(again
+        .deliveries
+        .iter()
+        .all(|delivery| delivery.result == Ok(Outcome::Duplicate)));
+    assert_eq!(sink.sent().len(), 1, "a resend tells nothing again");
 }

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- What a new conversation of an agent would send (plans/LLM-A2A-Assist.md 4.18 and 7.1): for an agent, a surface, a
+    prompt variant, a model and a user, the frozen prefix section by section with its characters, calibrated tokens, cap
+    and share of the model's budget, the tools with their schema sizes, a sample tail for a page, and the request as
+    the model's protocol sends it ("copy as sent"). get#PromptPreview builds it; nothing is stored. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Prompt Preview" default-menu-index="5">
+
+    <parameter name="agentId"/>
+    <parameter name="surface"/>
+    <parameter name="variant"/>
+    <parameter name="modelId"/>
+    <parameter name="userId"/>
+    <parameter name="samplePath"/>
+    <transition name="modelDetail"><default-response url="../Models/ModelDetail"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#PromptPreview" out-map="preview"
+                in-map="{agentId: agentId || 'assist', surface: surface, variant: variant, modelId: modelId, userId: userId, samplePath: samplePath}"/>
+        <set field="totals" from="preview.totals || {}"/>
+        <set field="sectionList" from="preview.sectionList || []"/>
+        <set field="toolList" from="preview.toolList || []"/>
+        <entity-find entity-name="moqui.agent.AgentDefinition" list="agentList"><order-by field-name="agentId"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Prompt of ${preview?.agentId ?? ''} on ${preview?.surface ?? ''} (${preview?.variant ?? ''})"/>
+            <box-toolbar>
+                <link url="modelDetail" text="Model ${preview?.modelId}" condition="preview?.modelId" parameter-map="{modelId: preview.modelId}"/>
+            </box-toolbar><box-body>
+            <form-single name="PreviewOptions" transition=".">
+                <field name="agentId"><default-field title="Agent"><drop-down allow-empty="false" no-current-selected-key="assist">
+                    <list-options list="agentList" key="${agentId}" text="${agentName ?? agentId}"/></drop-down></default-field></field>
+                <field name="surface"><default-field><drop-down allow-empty="true">
+                    <option key="drawer"/><option key="chat"/><option key="a2a"/><option key="mcp"/><option key="job"/><option key="tui"/>
+                </drop-down></default-field></field>
+                <field name="variant"><default-field title="Prompt Variant"><drop-down allow-empty="true">
+                    <option key="standard"/><option key="small"/></drop-down></default-field></field>
+                <field name="modelId"><default-field title="Model"><text-line size="20"/></default-field></field>
+                <field name="userId"><default-field title="User ID"><text-line size="20"/></default-field></field>
+                <field name="samplePath"><default-field title="Sample Page"><text-line size="50"/></default-field></field>
+                <field name="submitButton"><default-field title="Preview"><submit/></default-field></field>
+                <field-layout>
+                    <field-row><field-ref name="agentId"/><field-ref name="surface"/></field-row>
+                    <field-row><field-ref name="variant"/><field-ref name="modelId"/></field-row>
+                    <field-row><field-ref name="userId"/><field-ref name="samplePath"/></field-row>
+                    <field-ref name="submitButton"/>
+                </field-layout>
+            </form-single>
+            <label text="Total: ${totals.totalChars ?? 0} characters, about ${totals.totalTokens ?? 0} tokens (${totals.charsPerToken ?? ''} characters per token) of a budget of ${totals.budget ?? 0} in a window of ${totals.contextWindow ?? 0}; compaction starts at ${totals.highWatermark ?? 0}." type="p"/>
+            <label text="Tools: ${totals.toolCount ?? 0}, ${totals.toolsChars ?? 0} characters of schema. Tools hash ${preview?.toolsHash ?? ''}." type="p"/>
+            <label text="The user's memory is shown only for your own user." type="p" condition="!preview?.memoryShown"/>
+        </box-body></container-box>
+
+        <container-box><box-header title="Sections"/><box-body>
+            <form-list name="SectionList" list="sectionList" skip-form="true">
+                <field name="name"><default-field title="Section"><display/></default-field></field>
+                <field name="chars"><default-field title="Characters"><display/></default-field></field>
+                <field name="tokens"><default-field><display/></default-field></field>
+                <field name="cap"><default-field><display/></default-field></field>
+                <field name="share"><default-field title="% of Budget"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Tools"/><box-body>
+            <form-list name="ToolList" list="toolList" skip-form="true">
+                <field name="name"><default-field title="Tool"><display/></default-field></field>
+                <field name="chars"><default-field title="Characters"><display/></default-field></field>
+                <field name="tokens"><default-field><display/></default-field></field>
+                <field name="share"><default-field title="% of Budget"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+
+        <container-box><box-header title="System Text"/><box-body>
+            <label text="${preview?.systemText ?? ''}" type="pre" encode="true"/>
+        </box-body></container-box>
+        <container-box><box-header title="Sample Tail"/><box-body>
+            <label text="${preview?.tailText ?? ''}" type="pre" encode="true"/>
+        </box-body></container-box>
+        <container-box><box-header title="Copy as Sent"/><box-body>
+            <label text="No model resolves, so there is no request to show." type="p" condition="!preview?.requestJson"/>
+            <label text="${preview?.requestJson ?? ''}" type="pre" encode="true" condition="preview?.requestJson"/>
+        </box-body></container-box>
+    </widgets>
+</screen>

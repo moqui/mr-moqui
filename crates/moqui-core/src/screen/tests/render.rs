@@ -47,7 +47,6 @@ fn trace_of(output: &RenderOutput) -> Vec<String> {
 fn location_of(output: &RenderOutput) -> Option<&str> {
     output.header("Location")
 }
-
 fn parameters(pairs: &[(&str, &str)]) -> BTreeMap<String, Value> {
     pairs
         .iter()
@@ -216,7 +215,10 @@ fn make_render_without_a_socket_sends_status_content_type_and_an_empty_body() {
 
 #[test]
 fn make_render_fills_parameters_session_and_base_url_from_maps() {
-    let context = ExecutionContextFactory::test_context();
+    // A webapp that names a host, so a redirect keeps the absolute URL, as Java's sendHttpRedirect does.
+    let context = ExecutionContextFactory::test_context_with_conf(
+        "<moqui-conf><webapp-list><webapp name=\"webroot\" http-host=\"app.example\"/></webapp-list></moqui-conf>",
+    );
     let output = make_render(context.factory())
         .root_screen(fixture_root())
         .screen_path("/echo")
@@ -237,6 +239,133 @@ fn make_render_fills_parameters_session_and_base_url_from_maps() {
         .unwrap();
     assert_eq!(redirect.status, 302);
     assert_eq!(location_of(&redirect), Some("https://app.example/Sub"));
+}
+
+/// Java's `sendHttpRedirect`: a redirect stays on this site. An `http(s)` target is its path and query
+/// when the webapp names no `http-host`, and a target that is not a path of this site goes to the root.
+#[test]
+fn a_redirect_location_stays_on_this_site() {
+    let context = ExecutionContextFactory::test_context();
+    let location = |target: &str| super::super::render::http_redirect_location(context.factory(), target);
+
+    // No http-host: an absolute target is its path, so the browser stays here.
+    assert_eq!(location("https://evil.example/steal"), "/steal");
+    assert_eq!(location("https://evil.example"), "/");
+    assert_eq!(location("https://evil.example/steal?x=1"), "/steal?x=1");
+    assert_eq!(location("http://evil.example/steal"), "/steal");
+    // A path of this site is as it is.
+    assert_eq!(location("/Sub/Deep"), "/Sub/Deep");
+    assert_eq!(location("Sub/Deep"), "Sub/Deep");
+    // A reduced path that is not a single slash, or that holds a backslash, is the root. A URL
+    // Java's URI.create rejects is the root too.
+    assert_eq!(location("https://evil.example//phish"), "/");
+    assert_eq!(location("https://evil.example/\\evil.com"), "/");
+    assert_eq!(location("https://evil.example/a b"), "/");
+    // A target that is not a path of this site goes to the root, where Java sends it as it is.
+    assert_eq!(location("//evil.example/steal"), "/");
+    assert_eq!(location("javascript:alert(1)"), "/");
+    assert_eq!(location("mailto:someone@example.com"), "/");
+    // A line break cannot split the header.
+    assert_eq!(location("/Sub\r\nX-Evil: 1"), "/SubX-Evil: 1");
+    assert_eq!(location("/Sub\0"), "/Sub");
+    // An empty location is the root.
+    assert_eq!(location("  "), "/");
+
+    // With an http-host the absolute target is sent, as Java sends it.
+    let named = ExecutionContextFactory::test_context_with_conf(
+        "<moqui-conf><webapp-list><webapp name=\"webroot\" http-host=\"app.example\"/></webapp-list></moqui-conf>",
+    );
+    assert_eq!(
+        super::super::render::http_redirect_location(named.factory(), "https://evil.example/steal"),
+        "https://evil.example/steal"
+    );
+}
+
+/// A screen whose response is an absolute URL redirects to its path, as Java's `sendHttpRedirect` does
+/// when the webapp names no `http-host`.
+#[test]
+fn a_screen_that_answers_with_an_absolute_url_redirects_to_its_path() {
+    let context = ExecutionContextFactory::test_context();
+    let redirect = make_render(context.factory())
+        .root_screen(fixture_root())
+        .screen_path("/goExternal")
+        .render()
+        .unwrap();
+    assert_eq!(redirect.status, 302);
+    assert_eq!(location_of(&redirect), Some("/steal"));
+
+    // The same screen path, for a URL whose path is protocol-relative after the host is dropped.
+    let phish = make_render(context.factory())
+        .root_screen(fixture_root())
+        .screen_path("/goPhish")
+        .render()
+        .unwrap();
+    assert_eq!(phish.status, 302);
+    assert_eq!(location_of(&phish), Some("/"));
+}
+
+/// A qvt screen is always standalone, so `sri.sendRedirectAndStopRender` answers 205. The
+/// `X-Redirect-To` value is held to the same rule as a `Location`.
+#[test]
+fn a_standalone_redirect_stays_on_this_site() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-redirect-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Hop.xml"),
+        r#"<screen require-authentication="false">
+            <always-actions><script>sri.sendRedirectAndStopRender('https://evil.example//phish')</script></always-actions>
+            <widgets><label text="no"/></widgets>
+        </screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let response = serve_at(&world.factory, request("GET", "/Hop.qvt"), &root);
+    assert_eq!(response.status, 205, "{}", response.body_text());
+    assert_eq!(super::header_value(&response, "X-Redirect-To").as_deref(), Some("/"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// No execution context: the location is still sanitized and an off-site `http(s)` URL still collapses.
+#[test]
+fn a_redirect_with_no_context_is_still_held_to_this_site() {
+    assert!(
+        !crate::context::ExecutionContext::is_entered(),
+        "this thread already has a context, so the no-factory path is not what runs"
+    );
+    let held = |url: &str| {
+        let _web = crate::web::install(BTreeMap::new());
+        crate::screen::send_redirect_and_stop_render(url);
+        let (status, headers, _, sent) = crate::web::take_output();
+        assert!(sent, "{url}");
+        assert_eq!(status, 302, "{url}");
+        headers
+            .into_iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("Location"))
+            .map(|(_, value)| value)
+            .unwrap_or_default()
+    };
+    assert_eq!(held("https://evil.example//phish\r\n\0"), "/");
+    assert_eq!(held("https://evil.example/steal?x=1"), "/steal?x=1");
+    assert_eq!(held("https://evil.example/a b"), "/");
+}
+
+/// A JSON answer carries the URL the client follows, so it is held to the same rule as the `Location`
+/// of a redirect: a target that is not a path of this site goes to the root.
+#[test]
+fn a_json_redirect_holds_the_url_to_this_site_too() {
+    let context = ExecutionContextFactory::test_context();
+    let mut request = request("GET", "/goExternal");
+    request.set_header("accept", "application/json");
+    let response = serve_at(context.factory(), request, &fixture_root());
+    let text = response.body_text();
+    assert!(text.contains("\"redirectUrl\" : \"/steal\""), "{text}");
 }
 
 #[test]
@@ -263,6 +392,40 @@ fn a_screen_that_requires_authentication_is_401_for_nobody_and_200_for_a_user() 
     let output = render(&world.factory, "/Secure").unwrap();
     assert_eq!(output.status, 200);
     assert!(output.body_text().contains("secure"), "{}", output.body_text());
+}
+
+/// The HTTP log reads the bound session after the screen runs: session id, visitor, and username.
+#[test]
+fn a_screen_request_records_the_session_the_visitor_and_the_user() {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+
+    struct ClearKey;
+    impl Drop for ClearKey {
+        fn drop(&mut self) {
+            moqui_lib::env::clear_property("session_cookie_key");
+        }
+    }
+
+    let _lock = crate::user::session::cookie_property_lock();
+    moqui_lib::env::set_property("session_cookie_key", STANDARD.encode([0x09_u8; 32]));
+    let _clear = ClearKey;
+    let context = ExecutionContextFactory::test_context();
+    let entered = context.enter();
+    let guard = crate::user::bind(context.factory(), None, None, false).expect("bind");
+    crate::user::session::set_user("user-1", "ada");
+    crate::user::session::set_visit("visit-1", "visitor-1");
+    let session_id = guard.session_id();
+    let header = crate::user::format_session_cookie(&session_id, false).expect("cookie");
+    let cookie = header.split(';').next().expect("cookie pair").to_string();
+    drop(guard);
+    drop(entered);
+    let mut request = request("GET", "/");
+    request.set_header("cookie", &cookie);
+    let response = serve_at(context.factory(), request, &fixture_root());
+    assert_eq!(response.http_log.session.as_deref(), Some(session_id.as_str()));
+    assert_eq!(response.http_log.visitor_id.as_deref(), Some("visitor-1"));
+    assert_eq!(response.http_log.remote_user.as_deref(), Some("ada"));
 }
 
 #[test]
@@ -330,6 +493,56 @@ fn a_page_asked_for_before_login_is_where_screen_last_goes_back_to() {
     again.session_cookie = Some(session);
     let response = serve_at(&world.factory, again, &root);
     assert_eq!(location_of_response(&response), Some("/".to_string()));
+}
+
+/// `save-current-screen` stores the transition path and the request parameters for the next
+/// `screen-last`. It does not add a screen-history line.
+#[test]
+fn a_save_current_screen_is_where_screen_last_goes() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let dir = std::env::temp_dir().join(format!("moqui-screen-last-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Last")).unwrap();
+    std::fs::write(
+        dir.join("Last.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="saveHere">
+                <default-response url="Kept" save-current-screen="true"/>
+            </transition>
+            <transition name="goLast"><default-response type="screen-last"/></transition>
+            <subscreens default-item="Kept"/>
+            <widgets/>
+        </screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Last/Kept.xml"),
+        r#"<screen require-authentication="false"><widgets/></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Last.xml").to_string_lossy().into_owned();
+    let saved = make_render(context.factory())
+        .root_screen(root.clone())
+        .screen_path("/saveHere")
+        .parameters(parameters(&[("tab", "two"), ("password", "secret")]))
+        .render()
+        .unwrap();
+    assert_eq!(location_of(&saved), Some("/Kept"));
+    assert!(
+        crate::user::screen_history().unwrap().is_empty(),
+        "{:?}",
+        crate::user::screen_history()
+    );
+    let back = make_render(context.factory())
+        .root_screen(root)
+        .screen_path("/goLast")
+        .render()
+        .unwrap();
+    let location = location_of(&back).unwrap_or("");
+    assert_eq!(location, "/saveHere?tab=two", "{location}");
+    assert!(!location.contains("secret"), "{location}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn with_query(mut request: crate::web::WebRequest, name: &str, value: &str) -> crate::web::WebRequest {
@@ -529,6 +742,139 @@ fn the_error_response_is_used_when_the_actions_leave_errors() {
     assert_eq!(location_of(&fine), Some("/Sub"));
 }
 
+/// An error already on the list, or a validation error, skips the service-call and still runs `<actions>`.
+/// An error the service itself adds does not skip the actions. With neither, the service runs and then the actions.
+#[test]
+fn a_transition_runs_its_actions_when_there_is_already_an_error() {
+    let world = World::open("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-transition-split-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Split")).unwrap();
+    let services = dir.join("SplitServices.xml");
+    std::fs::write(
+        &services,
+        r#"<services>
+            <service verb="mark" noun="Ran" authenticate="false">
+                <out-parameters><parameter name="y"/></out-parameters>
+                <actions><set field="y" value="svc"/></actions>
+            </service>
+            <service verb="fail" noun="Marked" authenticate="false">
+                <out-parameters><parameter name="y"/></out-parameters>
+                <actions><set field="y" value="svc"/><message error="true">boom</message></actions>
+            </service>
+        </services>"#,
+    )
+    .unwrap();
+    let actions = r#"<actions>
+            <set field="order" value="actions"/>
+            <if condition="y == 'svc'"><then><set field="order" value="service-then-actions"/></then></if>
+        </actions>
+        <default-response url="Ok"><parameter name="order" from="order"/></default-response>
+        <error-response url="Err"><parameter name="order" from="order"/></error-response>"#;
+    std::fs::write(
+        dir.join("Split.xml"),
+        format!(
+            r#"<screen require-authentication="false">
+            <always-actions>
+                <if condition="priorError"><then><script>ec.message.addError('prior')</script></then></if>
+                <if condition="priorValidation"><then><script>ec.message.addValidationError('Form', 'field', 'svc', 'bad field')</script></then></if>
+            </always-actions>
+            <transition name="go"><service-call name="mark#Ran"/>{actions}</transition>
+            <transition name="failGo"><service-call name="fail#Marked"/>{actions}</transition>
+            <widgets/>
+        </screen>"#
+        ),
+    )
+    .unwrap();
+    for name in ["Ok", "Err"] {
+        std::fs::write(
+            dir.join(format!("Split/{name}.xml")),
+            r#"<screen require-authentication="false"><widgets/></screen>"#,
+        )
+        .unwrap();
+    }
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&services)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    let root = dir.join("Split.xml").to_string_lossy().into_owned();
+    let facade = ScreenFacade::of(&world.factory);
+    let def = facade.screen_def(&world.factory, &root).unwrap();
+    let go = def.transition("go", None).unwrap();
+    let service_xml = go.service_actions.as_ref().unwrap().xml.to_string();
+    let action_xml = go.actions.as_ref().unwrap().xml.to_string();
+    assert!(
+        service_xml.contains("service-call") && !action_xml.contains("service-call"),
+        "{service_xml}\n{action_xml}"
+    );
+
+    let run = |path: &str, prior_error: bool, prior_validation: bool| {
+        let mut parameters = BTreeMap::new();
+        if prior_error {
+            parameters.insert("priorError".to_string(), Value::string("true"));
+        }
+        if prior_validation {
+            parameters.insert("priorValidation".to_string(), Value::string("true"));
+        }
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path(path)
+            .parameters(parameters)
+            .render()
+            .unwrap()
+    };
+    // An error already on the list: the service does not run, the actions do, and the error response is chosen.
+    assert_eq!(location_of(&run("/go", true, false)), Some("/Err?order=actions"));
+    // A validation error already on the facade does the same.
+    assert_eq!(location_of(&run("/go", false, true)), Some("/Err?order=actions"));
+    // The service itself adds an error: its result is visible, and the actions still run.
+    assert_eq!(
+        location_of(&run("/failGo", false, false)),
+        Some("/Err?order=service-then-actions")
+    );
+    // No error: the service runs, then the actions, and the default response is the one chosen.
+    assert_eq!(
+        location_of(&run("/go", false, false)),
+        Some("/Ok?order=service-then-actions")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A field `<set>` follows the XSD: `set-if-empty="false"` skips a null or empty new value, and any other
+/// value is assigned, including an empty one. `value` is not localized.
+#[test]
+fn a_field_set_follows_the_xsd_rule() {
+    let world = World::open("");
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    let set = |attrs: &[(&str, &str)]| {
+        let mut node = crate::screen::sri::NodeLit {
+            name: "set".to_string(),
+            ..Default::default()
+        };
+        for (key, value) in attrs {
+            node.attrs.insert((*key).to_string(), (*value).to_string());
+        }
+        crate::screen::sri::set_in_context(&node).unwrap();
+    };
+    let text = |name: &str| crate::script::context_value(name).map(|value| moqui_lib::object::to_plain_string(&value));
+
+    crate::script::set_context_name("status", Value::string("old")).unwrap();
+    set(&[("field", "status"), ("value", ""), ("set-if-empty", "false")]);
+    assert_eq!(text("status").as_deref(), Some("old"));
+
+    set(&[("field", "status"), ("value", "new"), ("set-if-empty", "false")]);
+    assert_eq!(text("status").as_deref(), Some("new"));
+
+    set(&[("field", "status"), ("value", "")]);
+    assert_eq!(text("status").as_deref(), Some(""));
+
+    set(&[("field", "label"), ("value", "Status##keep")]);
+    assert_eq!(text("label").as_deref(), Some("Status##keep"));
+}
+
 #[test]
 fn a_transition_rejects_the_wrong_method_and_a_missing_required_parameter() {
     let context = ExecutionContextFactory::test_context();
@@ -554,10 +900,11 @@ fn the_definition_model_holds_what_the_xml_declares() {
     assert!(root.always_actions.is_some() && root.pre_actions.is_some() && root.root.actions.is_some());
     assert_eq!(root.subscreens.default_item.as_deref(), Some("Home"));
 
-    // The service-call shortcut becomes the first action with the defaults the Java screen sets.
+    // The service-call shortcut is its own script, with the defaults the Java screen sets.
     let service = root.transition("service", None).unwrap();
     assert_eq!(service.single_service.as_deref(), Some("moqui.Missing.noop"));
-    let xml = &service.actions.as_ref().unwrap().xml;
+    let xml = &service.service_actions.as_ref().unwrap().xml;
+    assert!(service.actions.is_none(), "{xml}");
     assert!(
         xml.contains("in-map=\"true\"") && xml.contains("multi=\"parameter\""),
         "{xml}"
@@ -825,7 +1172,10 @@ fn subscreens_item_rows_mount_screens_and_a_user_group_limits_them() {
     .unwrap();
     std::fs::write(
         dir.join("App.xml"),
-        r#"<screen require-authentication="false"><widgets><label text="mounted app"/></widgets></screen>"#,
+        r#"<screen require-authentication="false">
+            <transition name="peek" read-only="true"><actions><script>ec.web.sendJsonResponse({peeked: true})</script></actions>
+                <default-response type="none"/></transition>
+            <widgets><label text="mounted app"/></widgets></screen>"#,
     )
     .unwrap();
     let root = dir.join("Base.xml").to_string_lossy().into_owned();
@@ -834,6 +1184,19 @@ fn subscreens_item_rows_mount_screens_and_a_user_group_limits_them() {
             .root_screen(root.clone())
             .screen_path(path)
             .render_mode("text")
+            .render()
+    };
+    // F133: the first screen of a lastStandalone render, which no renderSubscreen decides, and a transition below it
+    let render_standalone = |path: &str| {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path(path)
+            .render_mode("text")
+            .parameters(
+                [("lastStandalone".to_string(), Value::string("true"))]
+                    .into_iter()
+                    .collect(),
+            )
             .render()
     };
     // Loaded before the rows exist.
@@ -859,6 +1222,16 @@ fn subscreens_item_rows_mount_screens_and_a_user_group_limits_them() {
     assert!(render_path("/").unwrap().body_text().contains("mounted app"));
     // A user who is not in the row's group does not get the screen.
     let denied = render_path("/Admins").unwrap_err();
+    assert_eq!(denied.kind(), ErrorKind::Unauthorized, "{denied}");
+    // Nor alone (lastStandalone), nor its transitions; the ALL_USERS item still renders alone and runs its transition.
+    assert!(render_standalone("/Mounted")
+        .unwrap()
+        .body_text()
+        .contains("mounted app"));
+    let denied = render_standalone("/Admins").unwrap_err();
+    assert_eq!(denied.kind(), ErrorKind::Unauthorized, "{denied}");
+    assert!(render_path("/Mounted/peek").unwrap().body_text().contains("peeked"));
+    let denied = render_path("/Admins/peek").unwrap_err();
     assert_eq!(denied.kind(), ErrorKind::Unauthorized, "{denied}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1019,20 +1392,151 @@ fn a_transition_link_carries_its_service_keys_and_a_failed_condition_disables_it
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Allow `group` the `action` on one artifact, with the authorization inherited by what runs under it.
+fn grant(world: &World, id: &str, group: &str, artifact_type: &str, name: &str, action: &str) {
+    let mut member = world.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();
+    member.set("artifactGroupId", Value::string(id));
+    member.set("artifactName", Value::string(name));
+    member.set("artifactTypeEnumId", Value::string(artifact_type));
+    member.set("nameIsPattern", Value::string("N"));
+    member.set("inheritAuthz", Value::string("Y"));
+    member.create(&world.facade).unwrap();
+    let mut authz = world.facade.make_value("moqui.security.ArtifactAuthz").unwrap();
+    authz.set("artifactAuthzId", Value::string(id));
+    authz.set("userGroupId", Value::string(group));
+    authz.set("artifactGroupId", Value::string(id));
+    authz.set("authzTypeEnumId", Value::string("AUTHZT_ALWAYS"));
+    authz.set("authzActionEnumId", Value::string(action));
+    authz.create(&world.facade).unwrap();
+}
+
+#[test]
+fn a_link_to_a_transition_whose_service_the_user_may_not_call_is_disabled_and_counts_no_hit() {
+    let world = World::open(
+        "<moqui-conf><artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
+         <artifact-execution type=\"AT_SERVICE\" authz-enabled=\"true\"/></artifact-execution-facade>\
+         <server-stats><artifact-stats type=\"AT_XML_SCREEN\" persist-bin=\"true\"/>\
+         <artifact-stats type=\"AT_XML_SCREEN_TRANS\" persist-bin=\"true\"/></server-stats></moqui-conf>",
+    );
+    world.enumeration_type();
+    world.user("plain", Some("VIEWERS"));
+    world.user("admin", Some("ADMIN"));
+    let dir = std::env::temp_dir().join(format!("moqui-screen-link-service-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let screen = |authentication: &str| {
+        format!(
+            r#"<screen require-authentication="{authentication}">
+            <transition name="deleteType"><service-call name="delete#moqui.basic.EnumerationType"/><default-response url="."/></transition>
+            <widgets><link url="deleteType" text="Remove" link-type="anchor" parameter-map="{{enumTypeId: 'TestType'}}"/></widgets></screen>"#
+        )
+    };
+    std::fs::write(dir.join("Links.xml"), screen("true")).unwrap();
+    std::fs::write(dir.join("Open.xml"), screen("anonymous-all")).unwrap();
+    let links = dir.join("Links.xml").to_string_lossy().into_owned();
+    for group in ["VIEWERS", "ADMIN"] {
+        grant(
+            &world,
+            &format!("LINKS_{group}"),
+            group,
+            "AT_XML_SCREEN",
+            &links,
+            "AUTHZA_VIEW",
+        );
+    }
+    grant(
+        &world,
+        "DELETE_TYPE",
+        "ADMIN",
+        "AT_SERVICE",
+        "delete#moqui.basic.EnumerationType",
+        "AUTHZA_ALL",
+    );
+    let page = |root: &str, username: &str| {
+        let mut get = request("GET", "/");
+        get.set_header("authorization", super::basic(username));
+        let response = serve_at(&world.factory, get, root);
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        response.body_text()
+    };
+
+    // Java greys the link when the user may view the screen but not call its service.
+    let html = page(&links, "plain");
+    assert!(html.contains("Remove") && !html.contains("deleteType"), "{html}");
+    let html = page(&links, "admin");
+    assert!(html.contains("deleteType?enumTypeId=TestType"), "{html}");
+    // An anonymous-all screen needs no allow record for the service either.
+    let html = page(&dir.join("Open.xml").to_string_lossy(), "plain");
+    assert!(html.contains("deleteType?enumTypeId=TestType"), "{html}");
+
+    // The checks are not artifact hits: the transition never ran, so it has no bin.
+    world.factory.flush_artifact_hits().unwrap();
+    let bins = world
+        .facade
+        .find("moqui.server.ArtifactHitBin")
+        .unwrap()
+        .list()
+        .unwrap();
+    let names: Vec<String> = bins
+        .values()
+        .iter()
+        .map(|bin| {
+            bin.get("artifactName")
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        })
+        .collect();
+    assert!(names.iter().any(|name| name.ends_with("Links.xml")), "{names:?}");
+    assert!(!names.iter().any(|name| name.contains("deleteType")), "{names:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_transition_that_writes_refuses_parameters_in_the_url() {
     let world = World::open("");
+    let root = fixture_root();
     let mut posted = request("POST", "/okTx");
     posted.query.push(("x".to_string(), "1".to_string()));
-    let response = serve_at(&world.factory, posted, &fixture_root());
+    let response = serve_at(&world.factory, posted, &root);
     assert_eq!(response.status, 400, "{}", response.body_text());
     assert!(
         response.body_text().contains("URL parameters"),
         "{}",
         response.body_text()
     );
-    // A read-only transition takes them.
+    // A `~name=value` segment is a URL parameter too. The action does not run, so this is not the redirect to Sub.
+    for method in ["GET", "POST"] {
+        let response = serve_at(&world.factory, request(method, "/okTx/~orderId=1"), &root);
+        assert_eq!(response.status, 400, "{method} {}", response.body_text());
+        assert!(
+            response.body_text().contains("URL parameters"),
+            "{method} {}",
+            response.body_text()
+        );
+        assert!(response.header("Location").is_none(), "{method}");
+    }
+    // A path-parameter extra path is not a `~name=value` parameter.
+    let by_id = serve_at(&world.factory, request("GET", "/byId/7"), &root);
+    assert_eq!(by_id.status, 200, "{}", by_id.body_text());
+    assert!(by_id.body_text().contains("\"id\" : \"7\""), "{}", by_id.body_text());
+    // A read-only transition with actions still takes a tilde parameter.
+    let read_tilde = serve_at(&world.factory, request("GET", "/readTx/~orderId=1"), &root);
+    assert_eq!(read_tilde.status, 302, "{}", read_tilde.body_text());
+    assert_eq!(location_of_response(&read_tilde).as_deref(), Some("/Sub"));
+    // A read-only transition takes a query parameter.
     let mut read = request("GET", "/goUrl");
     read.query.push(("x".to_string(), "1".to_string()));
-    assert_eq!(serve_at(&world.factory, read, &fixture_root()).status, 302);
+    assert_eq!(serve_at(&world.factory, read, &root).status, 302);
+    // CSV, XLS, print, and text-export links put these two names on the query. Any other name is still refused.
+    let mut allowed = request("GET", "/okTx");
+    allowed.query.push(("lastStandalone".to_string(), "1".to_string()));
+    allowed.query.push(("renderMode".to_string(), "csv".to_string()));
+    let allowed = serve_at(&world.factory, allowed, &root);
+    assert_eq!(allowed.status, 302, "{}", allowed.body_text());
+    assert_eq!(location_of_response(&allowed).as_deref(), Some("/Sub"));
+    let mut mixed = request("GET", "/okTx");
+    mixed.query.push(("lastStandalone".to_string(), "1".to_string()));
+    mixed.query.push(("x".to_string(), "1".to_string()));
+    let mixed = serve_at(&world.factory, mixed, &root);
+    assert_eq!(mixed.status, 400, "{}", mixed.body_text());
 }

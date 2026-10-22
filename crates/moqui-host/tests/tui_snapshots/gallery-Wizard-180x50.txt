@@ -1,0 +1,50 @@
+ gallery ▸ Wizard ▸ Customer                                                                                                                                    john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.10 Wizard ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ Multi-step creation: subscreens-panel type="wizard" is a stepper with one step per subscreen (the menu titles, in menu order), so the URL holds the  │
+     List                │ ┃ step. Next submits the step's form to its transition and moves on when the answer has no errors; Back goes to the step before, whose entries the     │
+     Detail              │ ┃ draft kept; the last step is a review with a single primary.                                                                                         │
+     360                 │ ┃ The steps keep a draft in the session; a real wizard saves a draft record. Try Next with an empty customer name: the field shows the error and the   │
+     Task                │ ┃ wizard stays.                                                                                                                                        │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ Step 1 of 3 · Customer  ● Customer ─ ○ Options ─ ○ Review
+     Split               │ [ Next ]
+     Settings            │ ┌─ Customer ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   ▶ Wizard              │ │ Who the customer is and how to reach them.                                                                                                           │
+     Dialog              │ │ Customer name  : [Acme Co. _______________________________]               Contact  . . . : [Jane Doe______________________]                          │
+     Report              │ │ Email  . . . . : [jane.doe@acme.example_________]                         Phone  . . . . : [+1 555 0100_________]                                    │
+     Panel               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Widgets             │
+     Editor              │
+     Message             │
+     Views               │
+ ▾ Home                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Customer name
+ F1=Help  Alt+Enter=Save  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

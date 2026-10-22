@@ -17,12 +17,14 @@
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use moqui_db::model::{EntityDefinition, EntityModel, PqAlias};
 use moqui_db::sql::{Condition, FieldRef};
 use moqui_lib::error::Error;
 use moqui_lib::object::{decimal_compare, to_plain_string, Value};
 
+use super::value::FieldMap;
 use super::crypto::{decrypt_with_alts, encrypt};
 use super::facade::EntityFacade;
 use crate::context::ExecutionContext;
@@ -52,7 +54,7 @@ impl Drop for RawReadGuard {
     }
 }
 
-fn raw_read() -> bool {
+pub(crate) fn raw_read() -> bool {
     RAW_READ.with(Cell::get)
 }
 
@@ -61,8 +63,8 @@ pub fn before_write(
     facade: &EntityFacade,
     entity: &EntityDefinition,
     operation: &str,
-    values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+) -> Result<FieldMap, Error> {
     before_write_known(facade, entity, operation, values, None)
 }
 
@@ -72,19 +74,35 @@ pub(crate) fn before_write_known(
     facade: &EntityFacade,
     entity: &EntityDefinition,
     operation: &str,
-    values: BTreeMap<String, Value>,
-    stored: Option<&BTreeMap<String, Value>>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+    stored: Option<&FieldMap>,
+) -> Result<FieldMap, Error> {
     audit_log(facade, entity, operation, &values, stored)?;
     encrypt_fields(facade, entity, values)
+}
+
+/// [`before_write_known`] for values a caller keeps: borrowed back when no field is encrypted, so a write of an entity
+/// with no encrypted field does not copy them.
+pub(crate) fn before_write_shared<'a>(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    operation: &str,
+    values: std::borrow::Cow<'a, FieldMap>,
+    stored: Option<&FieldMap>,
+) -> Result<std::borrow::Cow<'a, FieldMap>, Error> {
+    audit_log(facade, entity, operation, &values, stored)?;
+    if !has_encrypted(entity) {
+        return Ok(values);
+    }
+    encrypt_fields(facade, entity, values.into_owned()).map(std::borrow::Cow::Owned)
 }
 
 /// Encrypt a row read from the database for a copy of it, with no audit: nothing about it changed.
 pub(crate) fn seal_stored(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+) -> Result<FieldMap, Error> {
     encrypt_fields(facade, entity, values)
 }
 
@@ -93,8 +111,8 @@ pub(crate) fn seal_stored(
 pub fn after_read(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+) -> Result<FieldMap, Error> {
     decrypt_fields(facade, entity, values)
 }
 
@@ -102,16 +120,16 @@ pub fn after_read(
 pub(crate) fn decrypt_stored(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: FieldMap,
+) -> Result<FieldMap, Error> {
     decrypt_fields(facade, entity, values)
 }
 
 fn encrypt_fields(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    mut values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    mut values: FieldMap,
+) -> Result<FieldMap, Error> {
     if !has_encrypted(entity) {
         return Ok(values);
     }
@@ -132,7 +150,7 @@ fn encrypt_fields(
             )));
         }
         let stored = encrypt(&plain, &primary)?;
-        values.insert(field.name.clone(), Value::string(stored));
+        values.insert(Arc::from(field.name.as_str()), Value::string(stored));
     }
     Ok(values)
 }
@@ -143,8 +161,8 @@ pub const DECRYPT_FAILED: &str = "_DECRYPT_FAILED_";
 fn decrypt_fields(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    mut values: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    mut values: FieldMap,
+) -> Result<FieldMap, Error> {
     let names = encrypted_names(entity);
     if names.is_empty() {
         return Ok(values);
@@ -158,14 +176,14 @@ fn decrypt_fields(
         };
         match decrypt_with_alts(&stored, &primary, &alts) {
             Ok(plain) => {
-                values.insert(name.to_string(), Value::string(plain));
+                values.insert(Arc::from(name), Value::string(plain));
             }
             // A value with no colon that is not hex was stored as plaintext.
             Err(_) if !stored.contains(':') && !is_hex_ciphertext(&stored) => {}
             // As Java's `FieldInfo`, the read goes on with a clear placeholder, which a write refuses.
             Err(err) => {
                 tracing::error!(error = %err, "Error decrypting field {name} of entity {}", entity.full_name);
-                values.insert(name.to_string(), Value::string(DECRYPT_FAILED));
+                values.insert(Arc::from(name), Value::string(DECRYPT_FAILED));
             }
         }
     }
@@ -257,7 +275,7 @@ fn has_encrypted(entity: &EntityDefinition) -> bool {
 fn take_string(
     entity: &EntityDefinition,
     field: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
 ) -> Result<Option<String>, Error> {
     let Some(value) = values.get(field) else {
         return Ok(None);
@@ -284,8 +302,8 @@ fn audit_log(
     facade: &EntityFacade,
     entity: &EntityDefinition,
     operation: &str,
-    values: &BTreeMap<String, Value>,
-    stored: Option<&BTreeMap<String, Value>>,
+    values: &FieldMap,
+    stored: Option<&FieldMap>,
 ) -> Result<(), Error> {
     if operation == "delete" || facade.flags().disable_audit_log || facade.sim_active() {
         return Ok(());
@@ -314,11 +332,11 @@ fn audit_log(
         let Some(flag) = field.enable_audit_log.as_deref() else {
             continue;
         };
-        if !field_selected(operation, flag) || !values.contains_key(&field.name) {
+        if !field_selected(operation, flag) || !values.contains_key(field.name.as_str()) {
             continue;
         }
-        let new_value = values.get(&field.name);
-        let old_value = old.get(&field.name);
+        let new_value = values.get(field.name.as_str());
+        let old_value = old.get(field.name.as_str());
         if operation == "create" && new_value.is_none_or(Value::is_null) {
             continue;
         }
@@ -348,8 +366,8 @@ fn field_selected(operation: &str, flag: &str) -> bool {
 fn stored_row(
     facade: &EntityFacade,
     entity: &EntityDefinition,
-    values: &BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, Error> {
+    values: &FieldMap,
+) -> Result<FieldMap, Error> {
     let _guard = RawReadGuard::enter();
     let mut find = facade.find(&entity.full_name)?;
     for name in entity.pk_field_names() {
@@ -416,7 +434,7 @@ fn insert_audit(
     facade: &EntityFacade,
     entity: &EntityDefinition,
     field_name: &str,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
     new_text: Option<String>,
     old_text: Option<String>,
 ) -> Result<(), Error> {
@@ -474,7 +492,7 @@ fn insert_audit(
     value.create(facade)
 }
 
-fn put_pk(row: &mut BTreeMap<String, Value>, entity: &EntityDefinition, values: &BTreeMap<String, Value>) {
+fn put_pk(row: &mut BTreeMap<String, Value>, entity: &EntityDefinition, values: &FieldMap) {
     let names = entity.pk_field_names();
     if let Some(name) = names.first() {
         if let Some(text) = plain_text(values.get(*name)) {
@@ -598,7 +616,7 @@ pub(crate) fn current_locale(facade: &EntityFacade) -> String {
 pub(crate) fn localize_field(
     facade: &EntityFacade,
     targets: &L10nTargets,
-    values: &BTreeMap<String, Value>,
+    values: &FieldMap,
     column: &str,
     locale: &str,
 ) -> Option<Value> {
@@ -607,8 +625,8 @@ pub(crate) fn localize_field(
     if locales.is_empty() {
         return None;
     }
-    let pk = target.pk_column.as_ref().and_then(|column| pk_text(values.get(column)));
-    let stored = plain_text(values.get(&target.column)).filter(|text| !text.is_empty());
+    let pk = target.pk_column.as_ref().and_then(|column| pk_text(values.get(column.as_str())));
+    let stored = plain_text(values.get(target.column.as_str())).filter(|text| !text.is_empty());
     if pk.is_none() && stored.is_none() {
         return None;
     }

@@ -57,10 +57,10 @@ $v.dynamicDialog({"name":"dynamic-dialog","attrs":{"id":"DynDlg","button-text":"
         // as Java: the image child in the place of the text
         sri.write($text);
         sri.write(($badge ? "<q-badge class=\"on-right\" transparent>" + $v.t($badge) + "</q-badge>" : "") + "</template><q-list>");
-        sri.write("<q-item clickable v-close-popup><q-item-section>");
+        sri.write("<q-item clickable><q-item-section>");
         $v.link({"name":"link","attrs":{"url":"one","text":"One","link-type":"anchor"}}, false);
         sri.write("</q-item-section></q-item>");
-        sri.write("<q-item clickable v-close-popup><q-item-section>");
+        sri.write("<q-item clickable><q-item-section>");
         $v.link({"name":"link","attrs":{"url":"two","text":"Two","link-type":"anchor","confirmation":"Sure?"}}, false);
         sri.write("</q-item-section></q-item>");
         sri.write("</q-list></q-btn-dropdown>\n");

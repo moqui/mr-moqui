@@ -284,6 +284,8 @@ impl NotificationMessage {
         if self.topic.is_empty() {
             return Err(Error::new("notification topic is required"));
         }
+        // under the read fence or in a sim preview nothing is published
+        crate::entity::fence::check_effect(crate::entity::fence::Effect::Notify, &self.topic)?;
         let facade = current_facade()?;
         let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
         let topic = facade.find(TOPIC)?.eq("topic", Value::string(&self.topic)).one()?;

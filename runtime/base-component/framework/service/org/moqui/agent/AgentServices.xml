@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The internal entry to the run engine (plans/LLM-A2A-Assist.md 4.4, 4.5 and 4.8; crates/moqui-core/src/llm/run and
+    llm/approval): start a run of an agent for the current user, cancel it, give it input, read its stored events, and
+    decide, preview and read its approvals. They need AgentUse and act only on the user's own runs and approvals. The bodies are Rust (crates/moqui-core/src/llm/services.rs), in builds with the llm
+    feature. The drawer's own calls are the transitions of the assist subscreen (AssistServices.xml, docs/Assist.md); a run streams over the
+    host route /assist/runs/{runId}/events. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="start" noun="AgentRun" type="rust" location="moqui_core::llm::services::start_agent_run"
+            transaction="ignore">
+        <description>Start a run of agentId (default assist) for the current user on a surface (default drawer), in a
+            conversation of theirs or a new one. While the conversation has an active run, the message goes to that
+            run as input instead (queued true), which it folds in at its next step. The same clientRequestId again
+            returns the run it made. The run works in the background on the agent pool.</description>
+        <in-parameters>
+            <parameter name="agentId"/>
+            <parameter name="conversationId"/>
+            <parameter name="surface"><description>drawer, chat or tui; a2a, mcp and job need AgentAdmin. The
+                tools always run as the current user.</description></parameter>
+            <parameter name="messageText" required="true" allow-html="any"/>
+            <parameter name="tail" allow-html="any"><description>The context block of this message</description></parameter>
+            <parameter name="clientRequestId"/>
+            <parameter name="clientMessageId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="conversationId"/>
+            <parameter name="statusId"/>
+            <parameter name="queued" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="cancel" noun="AgentRun" type="rust" location="moqui_core::llm::services::cancel_agent_run"
+            transaction="ignore">
+        <description>Ask a run of the current user to stop. A run that holds no worker ends Canceled now; one working
+            stops at its next check (a service call already running finishes). The text streamed so far is kept.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+
+    <service verb="submit" noun="AgentInput" type="rust" location="moqui_core::llm::services::submit_agent_input"
+            transaction="ignore">
+        <description>Input for a run of the current user: a message (steering, folded in at the next step), an answer
+            to its question, a decision or a remote reply. A paused run resumes with it.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="inputKind" default-value="message"><description>message, answer, decision or remote</description></parameter>
+            <parameter name="messageText" allow-html="any"/>
+            <parameter name="data" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="AgentRunEvents" type="rust" location="moqui_core::llm::services::get_agent_run_events"
+            transaction="ignore">
+        <description>The stored events of a run of the current user after afterSeq (at most 1000), with the last
+            sequence and the run's status: the catch-up of a client that polls.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="afterSeq" type="Long" default="0"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="eventList" type="List"/>
+            <parameter name="lastEventSeq" type="Long"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="decide" noun="AgentApproval" type="rust" location="moqui_core::llm::services::decide_agent_approval"
+            transaction="ignore">
+        <description>The current user's decision on an approval of theirs: approve (with edited arguments for a service
+            or tool call), reject with feedback (the agent's next task), or edit (Edit in screen: the user's page gets
+            the proposed values and the user saves it; the run waits for that save). Taken only from an interactive
+            session: a browser session authenticated by its cookie whose transition presented the session token, or
+            the terminal. A header-authenticated request (Basic, api_key, login_key), an agent's own screen session,
+            agent-apps and internal code are refused; another user's approval is not found; a second decision, an
+            expired approval and one whose run no longer waits are refused. The run resumes with the decision.</description>
+        <in-parameters>
+            <parameter name="approvalId" required="true"/>
+            <parameter name="decision" required="true"><description>approve, reject or edit</description></parameter>
+            <parameter name="feedback" allow-html="any"/>
+            <parameter name="arguments" type="Map"><description>Edited arguments of a service or tool call (approve
+                only); a screen write is edited in the screen</description></parameter>
+            <parameter name="channel"><description>drawer (default), chat or link</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="handoffId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="preview" noun="AgentApproval" type="rust" location="moqui_core::llm::services::preview_agent_approval"
+            transaction="ignore">
+        <description>The effects of a pending approval of the current user, run in the sim overlay as the user: the rows
+            it would create, change or delete, against production, or why it failed in the preview. Kept on the
+            approval. Only a server with the sim overlay can preview.</description>
+        <in-parameters><parameter name="approvalId" required="true"/></in-parameters>
+        <out-parameters><parameter name="preview" type="Map"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="AgentApproval" type="rust" location="moqui_core::llm::services::get_agent_approval"
+            transaction="ignore">
+        <description>An approval of the current user as its card shows it: the summary, the changes (current against
+            proposed), the record, the status, the expiry, whether it may be edited in the screen and previewed, and
+            the preview and result when there are. Another user's approval is not found.</description>
+        <in-parameters><parameter name="approvalId" required="true"/></in-parameters>
+        <out-parameters><parameter name="approval" type="Map"/></out-parameters>
+    </service>
+
+    <service verb="abandon" noun="AgentHandoff" type="rust" location="moqui_core::llm::services::abandon_agent_handoff"
+            transaction="ignore">
+        <description>The current user left a hand-off (Edit in screen) without saving, as when the drawer navigates
+            away: the watch is abandoned and the run goes on with that. Only from an interactive session, only the
+            watch's user.</description>
+        <in-parameters>
+            <parameter name="handoffId" required="true"/>
+            <parameter name="reason"/>
+            <parameter name="channel"/>
+        </in-parameters>
+    </service>
+
+    <service verb="handle" noun="ChatMessage" type="rust" location="moqui_core::llm::chat::handle_chat_message"
+            authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>The agentRef of an agent's chat member (plans/LLM-A2A-Assist.md 4.13; ChatServices.deliver#AgentMessage
+            calls it for each message of the room): the message is read from the room, and a message that mentions the
+            agent, any message of a direct room with it, or the sender's next message in a thread where the agent works
+            for them starts a run of the agent (the AgentDefinition whose chatUserId is agentUserId) as the sender, on
+            the chat surface, in the conversation of the room, the thread and the sender. Messages of agents start
+            nothing. The reply, the approval and question cards and the typing status go to the room as the run works.
+            The same message again starts no second run. It trusts none of its parameters but the room, the message's
+            eventSeq and the agent member (the sender is the message's), so any caller may hand it a message, and the run
+            is always the sender's; not callable remotely.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="agentUserId" required="true"/>
+            <parameter name="senderUserId"/>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="bodyText" allow-html="any"/>
+            <parameter name="threadRootEventSeq" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="conversationId"/>
+        </out-parameters>
+    </service>
+
+    <service verb="decide" noun="ChatCard" type="rust" location="moqui_core::llm::chat::decide_chat_card"
+            transaction="ignore">
+        <description>The current user's press of a button on an agent's card in a chat room (content.assist of message
+            eventSeq): approve or reject an approval, which any human user who may post in the room may do (answered
+            question 12; the write still runs as the person who asked), or answer a question (choice or text), which
+            only that person may. Taken only from an interactive browser session by its cookie with the session token,
+            as decide#AgentApproval: a header login, an agent's context and internal code are refused, and an agent
+            member or the chat or run-as user of any agent never decides. Edit in screen is the requester's, from the
+            drawer.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="decision"><description>approve or reject, for an approval</description></parameter>
+            <parameter name="feedback" allow-html="any"/>
+            <parameter name="choice" allow-html="any"/>
+            <parameter name="text" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="status"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="UserFacts" type="interface">
+        <description>What a user-facts provider implements (plans/LLM-A2A-Assist.md 7.6; crates/moqui-core/src/llm/facts.rs):
+            facts about the user for the prompt of a new conversation with an agent, such as the active organization,
+            and the organization's instructions. A component names its implementation in a user-facts element of the
+            llm-facade conf. It runs under the read fence, so it may only read; a label the framework or an earlier
+            provider gave keeps its first value.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="agentId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="factList" type="List"><description>Maps of label and value, one line each</description>
+                <parameter name="fact" type="Map">
+                    <parameter name="label"/>
+                    <parameter name="value"/>
+                </parameter>
+            </parameter>
+            <parameter name="instructions"><description>The organization's instructions (at most 800 characters are
+                used)</description></parameter>
+        </out-parameters>
+    </service>
+</services>

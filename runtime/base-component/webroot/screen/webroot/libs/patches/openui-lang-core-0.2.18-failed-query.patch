@@ -1,0 +1,52 @@
+@openuidev/lang-core 0.2.18: a failed Query is not fetched again until its arguments change.
+
+The query manager keeps a cache entry per Query and its arguments. A fetch that fails leaves the entry with no data,
+so the next evaluateQueries (every state change and every re-render of the canvas) starts the same fetch again, and a
+canvas whose Query fails loops on requests. The entry now records that it failed, and evaluateQueries fetches it again
+only when the Query's cache key (its tool and arguments) changed; a manual refresh (invalidate, @Run(query)) still
+fetches. The Java prototype hand-patched the same fix into its minified bundle (runtime commit 90960c4).
+Reviewed Oct 22, 2026. Applied by libs/refresh.mjs to dist/index.mjs after the telemetry patch.
+
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3862,6 +3862,7 @@
+ 			};
+ 			cache.set(fetchKey, entry);
+ 		} else entry.inFlight = true;
++		entry.failed = false;
+ 		q.loading = true;
+ 		rebuildSnapshot();
+ 		notify();
+@@ -3874,6 +3875,7 @@
+ 				return;
+ 			}
+ 			entry.data = data ?? null;
++			entry.failed = false;
+ 			current.everFetched = true;
+ 			current.error = void 0;
+ 			if (current.prevCacheKey && current.prevCacheKey !== fetchKey) {
+@@ -3882,6 +3884,7 @@
+ 				cleanupCacheEntry(prevKey);
+ 			}
+ 		} catch (err) {
++			entry.failed = true;
+ 			const current = queries.get(statementId);
+ 			if (current && current.cacheKey === fetchKey) if (err instanceof ToolNotFoundError) current.error = {
+ 				source: "query",
+@@ -3940,6 +3943,7 @@
+ 			if (!node.complete) continue;
+ 			const cacheKey = buildCacheKey(node.toolName, node.args, node.deps);
+ 			const existing = queries.get(node.statementId);
++			const keyChanged = !existing || existing.cacheKey !== cacheKey;
+ 			if (existing) {
+ 				if (existing.cacheKey !== cacheKey) existing.prevCacheKey = existing.cacheKey;
+ 				existing.toolName = node.toolName;
+@@ -3959,7 +3963,7 @@
+ 			const q = queries.get(node.statementId);
+ 			const entry = cache.get(cacheKey);
+ 			const hasSettledData = entry && entry.data !== void 0 && !entry.inFlight;
+-			if (toolProvider && !hasSettledData && !entry?.inFlight) executeFetch(cacheKey, node.statementId);
++			if (toolProvider && !hasSettledData && !entry?.inFlight && !(entry?.failed && !keyChanged)) executeFetch(cacheKey, node.statementId);
+ 			const newInterval = node.refreshInterval ?? 0;
+ 			if (newInterval !== q.refreshInterval) {
+ 				if (q.timer) {

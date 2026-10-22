@@ -1,0 +1,50 @@
+ gallery ▸ Task                                                                                                                                                 john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Archetype 3.5 Task ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Landing             │ ┃ One operational job at a time: the current pick line with large read-only location and product, a focused scan field (Enter confirms), Confirm as    │
+     List                │ ┃ the one primary and Short / Skip as tonal actions, then a compact list of what remains. The step is a dynamic-container that reloads after Confirm;  │
+     Detail              │ ┃ Short and Skip move to the next line through the URL.                                                                                                │
+     360                 │ ┃ Fallbacks: the handheld density of §8 (48 px controls) does not exist yet, so the controls are the dense defaults; pick lines have no framework      │
+   ▶ Task                │ ┃ entity, so they are an inline list built in the screen actions.                                                                                      │
+     Board               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Calendar            │ ┌─ Pick · Wave W-118 · line 1 of 7 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Split               │ │ Location  : A-03-12                                                       Product . : WIDGET-RED-L · Red widget, large                               │
+     Settings            │ │ Pick  . . : [4_________]                                                  Pick  . . : of 4 · scan or type                                            │
+     Wizard              │ │ < Confirm >  [ Short ]  Skip                                                                                                                         │
+     Dialog              │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Report              │ ┌─ Remaining lines (6) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     Panel               │ │   Line Location Product                            Qty                                                                                               │
+     Widgets             │ │ ───────────────────────────────────────────────────────                                                                                              │
+     Editor              │ │ ▌ 2    A-03-14  WIDGET-BLU-L · Blue widget, large  2                                                                                                 │
+     Message             │ │   3    A-04-01  GADGET-STD · Gadget, standard      12                                                                                                │
+     Views               │ │   4    B-01-07  GIZMO-MINI · Gizmo, mini           1                                                                                                 │
+ ▾ Home                  │ │   5    B-02-03  WIDGET-GRN-S · Green widget, small 6                                                                                                 │
+                         │ │   6    C-11-20  BRACKET-L · Bracket, left          8                                                                                                 │
+                         │ │   7    C-11-21  BRACKET-R · Bracket, right         8                                                                                                 │
+                         │ │   Rows 1–6 of 6 · Page 1/1                                                                                                                           │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ F1=Help  F8=Page down  s=Sort  f=Find  F10=Actions  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

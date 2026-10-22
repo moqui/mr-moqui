@@ -1106,13 +1106,13 @@ impl HostEntity {
     fn field_map(&self) -> std::collections::BTreeMap<String, Value> {
         let value = self.val();
         if !value.has_l10n() {
-            return value.fields().clone();
+            return crate::entity::string_map(value.fields());
         }
         let copy = value.clone();
         drop(value);
         match ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() {
-            Some(facade) => copy.localized_fields(&facade),
-            None => copy.fields().clone(),
+            Some(facade) => crate::entity::string_map(&copy.localized_fields(&facade)),
+            None => crate::entity::string_map(copy.fields()),
         }
     }
 
@@ -1125,7 +1125,7 @@ impl HostEntity {
     /// definition can be reached, any name is set.
     fn set_field(&self, ctx: &Ctx<'_>, field: String, value: &JsValue<'_>) -> rquickjs::Result<()> {
         let host = js_to_host(ctx, value)?;
-        let known = self.val().fields().contains_key(&field);
+        let known = self.val().fields().contains_key(field.as_str());
         if !known
             && self
                 .member(&field)
@@ -1239,7 +1239,7 @@ impl HostEntity {
 
     /// The fields the value holds, so `Object.keys`, `for...in`, spread and `JSON.stringify` see the field map.
     fn own_names<'js>(&self, ctx: &Ctx<'js>) -> Result<Vec<PropertyName<'js>>, JsError> {
-        let names: Vec<String> = self.val().fields().keys().cloned().collect();
+        let names: Vec<String> = self.val().fields().keys().map(|name| name.to_string()).collect();
         names
             .iter()
             .map(|name| {
@@ -1424,11 +1424,11 @@ impl HostEntity {
                     moqui_lib::object::to_plain_string(value)
                 }
             };
-            let same = |name: &String| {
+            let same = |name: &str| {
                 comparable(fields.get(name).unwrap_or(&Value::Null))
                     == comparable(theirs.get(name).unwrap_or(&Value::Null))
             };
-            Ok(fields.keys().all(same) && theirs.keys().all(same))
+            Ok(fields.keys().all(|name| same(name)) && theirs.keys().all(|name| same(name)))
         })
     }
 

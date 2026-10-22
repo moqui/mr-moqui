@@ -31,15 +31,14 @@ pub(crate) use parse::check_program;
 pub use parse::parse_js;
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
-#[cfg(test)]
 pub(crate) use runtime::with_ctx as walker_context;
 pub use runtime::{
     clear_context_stack, context_value, eval_map, eval_value, expand, push_context_frame, run_script,
     run_script_location, script_list_values, set_context_name, set_widget_wrap, top_context_entries,
 };
 pub(crate) use runtime::{
-    context_combined, eval_named_value, mark_request_thread, put_context_all, text_upload_to_js, value_entity_name,
-    value_field, value_items, value_map, with_ctx, with_screen_runner,
+    context_combined, eval_named_value, invoke_web_handler, mark_request_thread, put_context_all, text_upload_to_js,
+    value_entity_name, value_field, value_items, value_map, with_ctx, with_screen_runner,
 };
 pub use runtime::{eval_condition, expand_localized, ContextFrame, DeadlineGuard, IsolatedContext};
 

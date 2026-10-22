@@ -294,7 +294,7 @@ pub(super) fn dispatch(
     parameters.insert("tokenRoute".to_string(), Value::Map(route));
     let mut inner = request.clone();
     inner.path = path;
-    super::dispatch_request(factory, &inner, &root, &parameters, json_list, login_error, flags)
+    super::dispatch_request(factory, &inner, &root, &parameters, json_list, login_error, flags, None)
 }
 
 #[cfg(test)]

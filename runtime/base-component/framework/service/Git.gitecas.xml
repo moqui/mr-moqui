@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The framework's own gitECA rules (docs/Git-Hosting.md): webhooks and merge requests follow every change of a
+    repository's refs, from a push, a mirror fetch, an import or a write through Moqui (create#GitRef, merge#GitRefs,
+    a wiki save). Each runs even after another rule of the change failed. Branch rules are not rules here: the git
+    server enforces them, so no component can remove them. -->
+<gitecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/git-eca-3.xsd">
+    <giteca rule-name="Merge requests follow their branches" id="FrameworkRefreshMergeRequests" event="ref-update"
+            ref-type="branch" source="push,fetch,import,write" priority="7" run-on-error="true">
+        <actions><service-call name="org.moqui.impl.GitReviewServices.refresh#MergeRequests" in-map="context"/></actions>
+    </giteca>
+    <giteca rule-name="Webhooks of pushes and tags" id="FrameworkWebhookPush" event="post-receive"
+            source="push,fetch,import,write" priority="8" run-on-error="true">
+        <actions><service-call name="org.moqui.impl.GitServices.queue#GitWebhookPush" in-map="context"/></actions>
+    </giteca>
+</gitecas>

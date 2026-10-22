@@ -26,6 +26,10 @@ pub mod entity_db;
 pub mod entity_facade;
 pub mod jdbc_extract;
 pub mod mysql;
+#[cfg(feature = "postgres")]
+pub mod pg_tls;
+#[cfg(feature = "postgres")]
+mod pgwire;
 pub mod postgres;
 pub mod sim;
 #[cfg(any(feature = "mysql", feature = "postgres"))]

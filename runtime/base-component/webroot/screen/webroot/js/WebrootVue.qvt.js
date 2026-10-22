@@ -237,13 +237,23 @@
         }
     };
 
-    const addStyle = (css, scoped) => {
-        if (root.document.head.querySelector("style[data-mq-style=\"" + css.length + css.slice(0, 40) + "\"]")) return;
-        const style = root.document.createElement("style");
-        style.setAttribute("data-mq-style", css.length + css.slice(0, 40));
-        style.textContent = scoped ? css : css;
-        root.document.head.appendChild(style);
+    // a .qvue component's <style>, once per page: the key is the text's length and a hash, compared as an attribute value and never
+    // put in a selector (the text's first characters, with a line break or a quote, made an invalid selector and lost the style)
+    const styleKey = (css) => {
+        let hash = 0;
+        for (let i = 0; i < css.length; i++) hash = (Math.imul(hash, 31) + css.charCodeAt(i)) | 0;
+        return css.length + "-" + (hash >>> 0).toString(36);
     };
+    const addStyle = (css, scoped) => {
+        const key = styleKey(String(css));
+        const head = root.document.head;
+        if (Array.from(head.querySelectorAll("style[data-mq-style]")).some((el) => el.getAttribute("data-mq-style") === key)) return;
+        const style = root.document.createElement("style");
+        style.setAttribute("data-mq-style", key);
+        style.textContent = scoped ? css : css;
+        head.appendChild(style);
+    };
+    moqui.addComponentStyle = addStyle;
 
     // path: the screen path, extraPath, search and bodyParameters as the router has them. renderModes lists the render
     // modes the screen says it supports: qjs or qvue makes the request for that companion instead of qvt. Without them (a string
@@ -469,6 +479,12 @@
         str: (value) => (value === null || value === undefined ? "" : String(value)),
         dflt: (value, fallback) => (value === null || value === undefined || value === "" ? fallback : value),
         nul: (value) => (value === undefined || value === "" ? null : value),
+        // The number checks of a field's browser rules, the same the server writes into the rule text
+        // ($mq.isStringNumber and the rest). They are the client's own, so the locale separators are
+        // the user's.
+        isStringNumber: (value) => moqui.isStringNumber(value),
+        isStringInteger: (value) => moqui.isStringInteger(value),
+        parseNumber: (value) => moqui.parseNumber(value),
         // The current value of a drop-down, check or radio: a list for several, else the first of a comma list, as the server reads it.
         cur: (value, multiple, none) => {
             let text = value === null || value === undefined || value === "" ? (none === undefined || none === null ? "" : String(none)) : value;
@@ -778,9 +794,9 @@
         name: "mStaticFormList",
         inject: { mqScope: { default: null }, mqScreen: { default: null } },
         props: { name: { type: String, required: true }, id: String, action: String, listName: String, multi: Boolean, skipForm: Boolean, skipHeader: Boolean,
-            rowInitial: Function, formLocation: String, findAction: String, defaultColumns: Array, columnFields: Array, columnsAction: String,
+            rowInitial: Function, hiddenInitial: Function, formLocation: String, findAction: String, defaultColumns: Array, columnFields: Array, columnsAction: String,
             headerInitial: Function, subFields: Array, specialRows: Object, selectionIdField: String, selectionParameter: String, selectionListMode: Boolean,
-            views: [Array, String], board: Object, calendar: Object, viewsLocation: String },
+            views: [Array, String], board: Object, calendar: Object, tree: Object, peek: Object, viewsLocation: String },
         data() { return { pkg: null, searchObj: {}, loading: false, generation: 0 }; },
         computed: {
             idVal() { return this.id && this.id.length ? this.id : this.name; },
@@ -827,15 +843,21 @@
                 const params = this.findParameters();
                 const linkPath = (this.$root && this.$root.currentLinkPath) || screen.path;
                 const query = (extra) => moqui.objToSearch(Object.assign({}, screen.parameters, this.searchObj, extra));
+                const finds = Array.isArray(pkg.formListFinds) ? pkg.formListFinds : [];
+                const activeFindId = pkg.formListFindId || "";
                 return {
-                    finds: Array.isArray(pkg.formListFinds) ? pkg.formListFinds : [], activeFindId: pkg.formListFindId || "", defaultFindId: pkg.defaultFormListFindId || "",
+                    finds, activeFindId, defaultFindId: pkg.defaultFormListFindId || "",
+                    // the active find of the list, its schedule if it has one, and the fields of the form that schedules it
+                    activeFind: finds.find((find) => find.formListFindId === activeFindId) || null, activeScheduled: pkg.formListFindScheduled || null,
+                    scheduleFields: () => ({ formListFindId: activeFindId, screenPath: screen.path, renderMode: "", cronSelected: "" }),
                     params, hasParams: Object.keys(params).length > 0, orderByField: this.searchObj.orderByField || pkg.orderByField || "",
                     findAction: linkPath, saveFindAction: this.findAction || "", screenPath: screen.path,
                     findUrl: (id) => linkPath + "?formListFindId=" + encodeURIComponent(id),
                     findFields: (id) => Object.assign({ formLocation: this.formLocation, formListFindId: id }, params),
                     newFindFields: () => Object.assign({ formLocation: this.formLocation, _findDescription: "" }, params),
                     exportUrl: (mode) => screen.path + "?" + query({ renderMode: mode, pageNoLimit: "true", lastStandalone: "true", saveFilename: this.name + "." + mode }),
-                    printUrl: () => screen.path + "?" + query({ renderMode: "html-print", pageNoLimit: "true" }),
+                    // the page as a PDF, under /fop as Java's MoquiFopServlet
+                    printUrl: () => "/fop" + screen.path + "?" + query({ pageNoLimit: "true" }),
                     columnsAction: this.columnsAction || "", columnsTree: this.columnsTree()
                 };
             },
@@ -873,7 +895,9 @@
             },
             // The fields of a form that posts every row: each row's starting values under name_rowIndex, as the server-merged form has them.
             multiFields(formScope) {
-                const out = { moquiFormName: this.name, _isMulti: "true", pageIndex: String((this.pkg && this.pkg.pageIndex) || 0) };
+                // Hidden parameters are posted once, unsuffixed. Row values are name_rowIndex, so they are not this map.
+                const hidden = this.hiddenInitial ? (this.hiddenInitial(formScope) || {}) : {};
+                const out = Object.assign({}, hidden, { moquiFormName: this.name, _isMulti: "true", pageIndex: String((this.pkg && this.pkg.pageIndex) || 0) });
                 const order = this.searchObj.orderByField || (this.pkg && this.pkg.orderByField);
                 if (order) out.orderByField = String(order);
                 if (!this.rowInitial) return out;
@@ -1009,7 +1033,9 @@
             ]);
             return table;
             };
-            const nav = h("div", { class: "form-list-nav-row row items-center" }, [
+            // hideNav is on the screen package. It hides the tools and the page buttons, as the merged nav row does.
+            const hideNav = !!(this.mqScope && this.mqScope.hideNav === "true");
+            const nav = hideNav ? null : h("div", { class: "form-list-nav-row row items-center" }, [
                 slots.nav ? h("div", { class: "row items-center q-gutter-xs" }, slots.nav(this.navProps())) : null,
                 h(V.resolveComponent("q-space")),
                 h(V.resolveComponent("m-form-paginate"), { paginate: this.paginate, formList: this }),
@@ -1022,19 +1048,23 @@
                 }, { default: (sel) => [build(sel)] })
                 : build(null);
             // the page buttons again under a list of more than one page, after the table so they are not a row of its first column
-            const bottomNav = this.paginate && this.paginate.pageMaxIndex > 0 && !this.skipHeader
+            const bottomNav = !hideNav && this.paginate && this.paginate.pageMaxIndex > 0 && !this.skipHeader
                 ? h("div", { class: "form-list-nav-row row items-center" }, [
                     h(V.resolveComponent("q-space")),
                     h(V.resolveComponent("m-form-go-page"), { idVal: this.idVal, formList: this }),
                     h(V.resolveComponent("m-form-paginate"), { paginate: this.paginate, formList: this })])
                 : null;
             const list = h("div", { class: "q-my-sm q-table__container q-table__card q-table--horizontal-separator q-table--dense q-table--flat" }, [nav, table, bottomNav]);
-            if (!this.board && !this.calendar) return list;
-            // the board and calendar views over the rows fetched, a card the card slot over the row's scope (m-list-views)
+            if (!this.board && !this.calendar && !this.tree && !this.peek) return list;
+            // the board, calendar and tree views over the rows fetched, a card the card slot over the row's scope, a tree row the tree slot
+            // over the scope of its row, which may be one the tree fetched (m-list-views)
             const viewSlots = { default: () => [list] };
             if (slots.card) viewSlots.card = (props) => slots.card(this.rowScope(props.index, formScope, null));
+            if (slots.tree) {
+                viewSlots.tree = (props) => slots.tree(qvt.makeScope(() => Object.assign({}, props.row, { rowIndex: "t" + (props.t ? props.t.key : ""), _formMap: props.row, mqTree: props }), formScope));
+            }
             return h(V.resolveComponent("m-list-views"), { id: this.idVal + "_views", formName: this.name, formLocation: this.viewsLocation || this.formLocation,
-                views: this.views, rows: this.rows, board: this.board, calendar: this.calendar, reload: this.fetchRows }, viewSlots);
+                views: this.views, rows: this.rows, board: this.board, calendar: this.calendar, tree: this.tree, peek: this.peek, reload: this.fetchRows }, viewSlots);
         }
     });
 
@@ -1633,6 +1663,25 @@
         return some(resp.errors) || some(resp.validationErrors);
     };
 
+    // The answers of m-form's background submits, for the Assist hand-off (WebrootAssist.js, which reports the user's own save):
+    // fn({form, ok, json, status}) after each answer, a refused one too (ok false, the error's json). moqui.onFormAnswer returns the
+    // function that takes the listener back.
+    moqui.formAnswerListeners = [];
+    moqui.onFormAnswer = (fn) => {
+        if (typeof fn !== "function") return () => {};
+        moqui.formAnswerListeners.push(fn);
+        return () => { const index = moqui.formAnswerListeners.indexOf(fn); if (index >= 0) moqui.formAnswerListeners.splice(index, 1); };
+    };
+    moqui.formAnswered = (vm, info) => {
+        // once per submit: an answer whose handling failed is not told again as refused
+        if (!vm || vm.answerTold) return;
+        vm.answerTold = true;
+        const answer = Object.assign({ form: vm }, info);
+        moqui.formAnswerListeners.slice().forEach((fn) => {
+            try { fn(answer); } catch (err) { console.error("form answer listener failed", err); }
+        });
+    };
+
     // The fields and the buttons of a form. The value a field starts with is the fields-initial, and a changed field is
     // tinted by the widget through fieldChanged.
     component("m-form", {
@@ -1698,6 +1747,7 @@
             },
             submitGo() {
                 this.fieldErrors = {};
+                this.answerTold = false;
                 const formEl = this.$refs.qForm.$el;
                 const button = submitButton(formEl, this.buttonClicked);
                 let btnName = null;
@@ -1764,6 +1814,9 @@
                     });
                 }).catch((err) => {
                     if (!arrived) root_.loading--;
+                    // a refused save: the user fixes it and saves again at once (a good one keeps its button off for 3 s)
+                    if (button) button.disabled = false;
+                    moqui.formAnswered(this, { ok: false, json: err && moqui.isPlainObject(err.json) ? err.json : null, status: err && err.status !== undefined ? err.status : 0 });
                     if (err && err.json) err = Object.assign({}, err, { json: moqui.placeFieldErrors(this, err.json) });
                     moqui.handleLoadError(err && err.status !== undefined ? err : { status: 0, error: err, text: "" });
                     if (this.mWizard) this.mWizard.stepRefused(this);
@@ -1790,6 +1843,7 @@
                 } else if (!notified) notify(Object.assign({}, moqui.notifyOpts, { message: "Submit successful" }));
                 if (wizard) wizard.stepAnswered(this, resp);
                 if (!moqui.responseHasErrors(resp)) this.$emit("submitted", resp);
+                moqui.formAnswered(this, { ok: !moqui.responseHasErrors(resp), json: moqui.isPlainObject(resp) ? resp : null, status: 200 });
             }
         },
         mounted() {
@@ -2377,9 +2431,11 @@
             label: String, name: String, id: String, disable: Boolean, onSelectGoTo: String },
         emits: ["update:modelValue"],
         data() { return { curOptions: this.options, allOptions: this.options, lastSearch: null, loading: false }; },
+        // Selected text stays visible. fill-input hid a set value, so hide-selected is only for multiple
+        // (Java WebrootVue.qvt.js m-drop-down).
         template:
             '<q-select ref="qSelect" :model-value="modelValue" @update:model-value="handleInput"' +
-                    ' dense outlined options-dense use-input :use-chips="multiple" :fill-input="!multiple" :hide-selected="!multiple" :name="name" :for="id" :form="form"' +
+                    ' dense outlined options-dense use-input :use-chips="multiple" :hide-selected="multiple" :name="name" :for="id" :form="form"' +
                     ' :input-debounce="serverSearch ? serverDelay : 100" @filter="filterFn" :clearable="allowEmpty||multiple" :disable="disable"' +
                     ' :multiple="multiple" :emit-value="!onSelectGoTo" map-options behavior="menu" :new-value-mode="combo ? \'add-unique\' : undefined"' +
                     ' :rules="[val => allowEmpty||multiple||combo||val===\'\'||(val&&val.length)||\'Please select an option\']"' +
@@ -2551,13 +2607,13 @@
 
     // A text area. editor-type html is the Quasar editor (QEditor); md is a text area with a preview drawn by Marked (and
     // sanitized by DOMPurify), both lazy. The html editor simplifies markup it does not understand. rich and rich-light are the
-    // Tiptap editor m-rich-text (full and light), its mentions over mention-url.
+    // Tiptap editor m-rich-text (full and light), its mentions over mention-url and its record links over record-url.
     component("m-text-area", {
         name: "mTextArea",
         mixins: [fieldMixin, localValueMixin],
         props: { modelValue: String, name: String, id: String, label: String, editorType: String, rows: { type: String, default: "3" }, cols: String,
             readonly: Boolean, autogrow: Boolean, maxlength: String, disable: Boolean, form: String, tooltip: String, mentionUrl: String,
-            mentionParameters: Object },
+            mentionParameters: Object, recordUrl: String, recordParameters: Object },
         emits: ["update:modelValue"],
         data() {
             return { preview: false, previewHtml: "", toolbar: [["bold", "italic", "strike", "underline"], ["unordered", "ordered", "outdent", "indent"],
@@ -2566,7 +2622,7 @@
         template:
             '<m-rich-text v-if="editorType === \'rich\' || editorType === \'rich-light\'" :light="editorType === \'rich-light\'" :model-value="local"' +
                 ' @update:model-value="onInput" :name="name" :id="id" :label="label" :form="form" :disable="disable" :readonly="readonly" :tooltip="tooltip"' +
-                ' :rows="rows" :mention-url="mentionUrl" :mention-parameters="mentionParameters"></m-rich-text>' +
+                ' :rows="rows" :mention-url="mentionUrl" :mention-parameters="mentionParameters" :record-url="recordUrl" :record-parameters="recordParameters"></m-rich-text>' +
             '<div v-else-if="editorType === \'html\'" class="m-text-area-editor">' +
                 '<div v-if="label" class="text-caption text-grey-7">{{label}}</div>' +
                 '<q-editor :model-value="local" @update:model-value="onInput" :toolbar="toolbar" dense min-height="12rem" :readonly="readonly" :disable="disable"></q-editor>' +
@@ -2726,11 +2782,12 @@
 
     /* ========== rich text: m-rich-text (Tiptap, lazy) ========== */
 
-    // The pure part of m-rich-text, tested under Node (WebrootVue.qvt.records.test.js): the HTML of a mention and the mentions
-    // in a text, the editor's empty value, plain text from its HTML and HTML from plain text (the plain-text toggle), and the
-    // answer of a mention search. The editor writes only what allow-html="safe" keeps (js/README.md, Rich text): p, h1-h3, strong,
-    // em, s, u, code, pre, blockquote, ul, ol (start), li, br, hr, a (href, title), img (src, alt, title) and the mention
-    // <span data-mention-id="id">@Label</span>.
+    // The pure part of m-rich-text, tested under Node (WebrootVue.qvt.records.test.js): the HTML of a mention and a record link
+    // and the ones in a text, the editor's empty value, plain text from its HTML and HTML from plain text (the plain-text toggle),
+    // and the answer of a mention or record search. The editor writes only what allow-html="safe" keeps (js/README.md, Rich text):
+    // p, h1-h3, strong, em, s, u, code, pre, blockquote, ul, ol (start), li, br, hr, a (href, title), img (src, alt, title),
+    // table, thead, tbody, tr, th, td (colspan, rowspan), the mention <span data-mention-id="id">@Label</span> and the record
+    // <span data-record-entity="entity" data-record-id="id">#Label</span>.
     const htmlEscape = (text) => String(text === null || text === undefined ? "" : text).replace(/[&<>"']/g,
         (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
     const htmlEntities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
@@ -2765,10 +2822,28 @@
             }
             return out;
         },
+        // a record link as the editor writes it: the entity and id in data attributes, the label shown after the #
+        recordHtml(entity, id, label) {
+            return '<span data-record-entity="' + htmlEscape(entity) + '" data-record-id="' + htmlEscape(id) + '">#' + htmlEscape(label || id) + "</span>";
+        },
+        // the record links in an HTML text, each id once, in order: [{entity, id, label}]; the span text already has the #
+        records(html) {
+            const out = [];
+            const seen = {};
+            const re = /<span\b([^>]*)>([\s\S]*?)<\/span>/gi;
+            let match;
+            while ((match = re.exec(String(html || "")))) {
+                const id = tagAttr(match[1], "data-record-id");
+                if (id === null || id === "" || seen[id]) continue;
+                seen[id] = true;
+                out.push({ entity: tagAttr(match[1], "data-record-entity") || "", id, label: htmlDecode(match[2].replace(/<[^>]*>/g, "")).replace(/^#/, "") });
+            }
+            return out;
+        },
         // nothing but empty paragraphs, breaks and spaces (Tiptap's empty document is <p></p>)
         isEmpty(html) {
             const text = String(html || "");
-            if (/<(img|hr)\b/i.test(text) || /data-mention-id/i.test(text)) return false;
+            if (/<(img|hr|table)\b/i.test(text) || /data-mention-id|data-record-id/i.test(text)) return false;
             return htmlDecode(text.replace(/<[^>]*>/g, "")).replace(/[\s\u00a0]+/g, "") === "";
         },
         // the value of the field for the editor's HTML: empty for an empty document, so a required check and the change tint see it
@@ -2781,7 +2856,8 @@
         },
         // Plain text of the editor's HTML (the plain-text toggle, a plain mail part): paragraphs and blocks apart by a blank
         // line, list items on lines of their own with "- " or their number, a quote's lines after "> ", a link as its text and
-        // (its address) when they differ, an image as its alt text, a mention as @Label, entities decoded.
+        // (its address) when they differ, an image as its alt text, a mention as @Label, a record link as #Label (the span
+        // text already has the hash), a table as cells joined by " | " with a dashed underline under a header row, entities decoded.
         toPlain(html) {
             const out = [];
             const lists = [];
@@ -2791,6 +2867,7 @@
             let lineStart = true;
             let prefix = "";
             const links = [];
+            let table = null;
             const owe = (count) => { if (out.length) breaks = Math.max(breaks, count); };
             const put = (text) => {
                 if (!text) return;
@@ -2809,6 +2886,10 @@
                 if (token.startsWith("<!--")) return;
                 const tagMatch = /^<(\/?)([a-zA-Z0-9]+)/.exec(token);
                 if (!tagMatch) {
+                    if (table) {
+                        if (table.inCell) table.cell += htmlDecode(token).replace(/[\s\u00a0]+/g, " ");
+                        return;
+                    }
                     let text = htmlDecode(token);
                     if (!pre) text = text.replace(/[\s\u00a0]+/g, (space) => (space.indexOf("\u00a0") >= 0 ? "\u00a0" : " "));
                     if (pre) {
@@ -2818,6 +2899,42 @@
                 }
                 const closing = tagMatch[1] === "/";
                 const tag = tagMatch[2].toLowerCase();
+                if (tag === "table") {
+                    if (!closing && !table) {
+                        owe(2);
+                        table = { rows: [], cells: null, cell: "", inCell: false, header: false };
+                    } else if (closing && table) {
+                        if (table.inCell && table.cells) table.cells.push(table.cell.replace(/[\s\u00a0]+/g, " ").trim());
+                        if (table.cells) table.rows.push({ cells: table.cells, header: table.header });
+                        const lines = [];
+                        table.rows.forEach((row) => {
+                            lines.push(row.cells.join(" | "));
+                            if (row.header) lines.push(row.cells.map((cell) => "-".repeat(Math.max(3, cell.length))).join(" | "));
+                        });
+                        lines.forEach((line, index) => { if (index) owe(1); put(line); });
+                        owe(2);
+                        table = null;
+                    }
+                    return;
+                }
+                if (table) {
+                    if (tag === "tr") {
+                        if (!closing) { table.cells = []; table.header = false; table.inCell = false; table.cell = ""; }
+                        else if (table.cells) {
+                            if (table.inCell) { table.cells.push(table.cell.replace(/[\s\u00a0]+/g, " ").trim()); table.inCell = false; }
+                            table.rows.push({ cells: table.cells, header: table.header });
+                            table.cells = null;
+                        }
+                    } else if (tag === "td" || tag === "th") {
+                        if (!closing) { table.inCell = true; table.cell = ""; if (tag === "th") table.header = true; }
+                        else if (table.inCell && table.cells) {
+                            table.cells.push(table.cell.replace(/[\s\u00a0]+/g, " ").trim());
+                            table.inCell = false;
+                            table.cell = "";
+                        }
+                    } else if (tag === "br" && table.inCell) table.cell += " ";
+                    return;
+                }
                 const inList = lists.length > 0;
                 if (/^(p|div|h[1-6])$/.test(tag)) owe(inList ? 1 : 2);
                 else if (tag === "br") { if (out.length) breaks = Math.max(breaks, 1); }
@@ -2856,20 +2973,53 @@
             if (!value) return "";
             return value.split(/\n[ \t]*\n+/).map((para) => "<p>" + para.split("\n").map(htmlEscape).join("<br>") + "</p>").join("");
         },
-        // The rows of a mention search answer: a list (or a map with it in options, mentions or rows) of {id, label}, value and
-        // title or name also read, a plain string as both; at most limit (10), each id once.
+        // The plain-text toggle's way back. When plain is toPlain(originalHtml), the original comes back whole (formatting,
+        // images, chips, tables). An edit is fromPlain, then each mention, record link and table of the original, in order,
+        // replaces the first remaining copy of its own plain text. A second chip with the same label takes the next copy.
+        // A piece whose text was deleted stays gone. Bold, lists, links and images follow fromPlain once the text changed.
+        fromPlainKeeping(plain, originalHtml) {
+            const original = String(originalHtml || "");
+            const normalized = String(plain || "").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").replace(/^\n+|\s+$/g, "");
+            if (normalized === moqui.richText.toPlain(original)) return original;
+            let html = moqui.richText.fromPlain(normalized);
+            const pieces = [];
+            const re = /<table\b[^>]*>[\s\S]*?<\/table>|<span\b[^>]*\bdata-mention-id\b[^>]*>[\s\S]*?<\/span>|<span\b[^>]*\bdata-record-id\b[^>]*>[\s\S]*?<\/span>/gi;
+            let found;
+            while ((found = re.exec(original))) pieces.push(found[0]);
+            let from = 0;
+            pieces.forEach((fragment) => {
+                const token = moqui.richText.toPlain(fragment);
+                if (!token) return;
+                const needle = token.split("\n").map(htmlEscape).join("<br>");
+                const wrapped = "<p>" + needle + "</p>";
+                let at = html.indexOf(wrapped, from);
+                let length = wrapped.length;
+                if (at < 0) { at = html.indexOf(needle, from); length = needle.length; }
+                if (at < 0) return;
+                html = html.slice(0, at) + fragment + html.slice(at + length);
+                from = at + fragment.length;
+            });
+            return html;
+        },
+        // The rows of a mention or record search answer: a list (or a map with it in options, optionList, mentions or rows) of
+        // {id, label}, value and title or name also read, a plain string as both. A record row prefers recordId, and keeps
+        // entity (or recordEntityName) when the row has one. At most limit (10), each id once.
         mentionItems(answer, limit) {
-            const list = Array.isArray(answer) ? answer : moqui.isPlainObject(answer) ? (answer.options || answer.mentions || answer.rows || []) : [];
+            const list = Array.isArray(answer) ? answer : moqui.isPlainObject(answer) ? (answer.options || answer.optionList || answer.mentions || answer.rows || []) : [];
             const out = [];
             const seen = {};
             list.forEach((row) => {
                 if (out.length >= (limit || 10)) return;
                 const item = moqui.isPlainObject(row) ? row : { id: row, label: row };
-                const id = item.id !== undefined && item.id !== null ? item.id : item.value;
+                const recordId = item.recordId;
+                const id = recordId !== undefined && recordId !== null && recordId !== "" ? recordId : (item.id !== undefined && item.id !== null ? item.id : item.value);
                 if (id === undefined || id === null || id === "" || seen[id]) return;
                 seen[id] = true;
                 const label = item.label || item.title || item.name || id;
-                out.push({ id: String(id), label: String(label), image: item.image || null });
+                const found = { id: String(id), label: String(label), image: item.image || null };
+                const entity = item.entity || item.recordEntityName;
+                if (entity) found.entity = String(entity);
+                out.push(found);
             });
             return out;
         },
@@ -2892,7 +3042,7 @@
             const list = [button("block", "sym_o_title", "Paragraph style"), sep("s1"),
                 button("bold", "sym_o_format_bold", "Bold"), button("italic", "sym_o_format_italic", "Italic"), button("strike", "sym_o_strikethrough_s", "Strikethrough"), sep("s2"),
                 button("bulletList", "sym_o_format_list_bulleted", "Bulleted list"), button("orderedList", "sym_o_format_list_numbered", "Numbered list"), sep("s3"),
-                button("link", "sym_o_link", "Link"), button("image", "sym_o_image", "Image"), button("code", "sym_o_code", "Code"),
+                button("link", "sym_o_link", "Link"), button("image", "sym_o_image", "Image"), button("table", "sym_o_table", "Table"), button("code", "sym_o_code", "Code"),
                 button("codeBlock", "sym_o_code_blocks", "Code block"), button("blockquote", "sym_o_format_quote", "Quote"), sep("s4"),
                 button("undo", "sym_o_undo", "Undo"), button("redo", "sym_o_redo", "Redo")];
             if (plainToggle) list.push(sep("s5"), button("plain", "sym_o_text_fields", "Plain text"));
@@ -2902,10 +3052,15 @@
 
     // The editor's extensions: StarterKit (paragraphs, headings 1 to 3, bold, italic, strike, underline, code, code blocks,
     // quotes, lists, rules, breaks, history), Link (no target, class or rel of its own: the safe cleaning adds rel), Image by
-    // URL (no data: URLs), the placeholder, the mention when the editor has a mention URL, and the keys of the component.
+    // URL (no data: URLs), the placeholder, a table (full editor only), the mention when the editor has a mention URL, the
+    // record link when it has a record URL, and the keys of the component. With collab (m-coedit) the document is the Yjs
+    // fragment "default" and the history is Yjs's (undo and redo of this editor's own changes), with the carets of the
+    // others; StarterKit's history and trailing paragraph are off (each editor adding that paragraph would add one each).
     const richTextExtensions = (T, vm) => {
+        const starter = { heading: { levels: [1, 2, 3] }, link: false, codeBlock: { HTMLAttributes: { class: null } } };
+        if (vm.collab) Object.assign(starter, { undoRedo: false, trailingNode: false });
         const list = [
-            T.StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: false, codeBlock: { HTMLAttributes: { class: null } } }),
+            T.StarterKit.configure(starter),
             T.Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true, defaultProtocol: "https",
                 HTMLAttributes: { target: null, rel: null, class: null } }),
             T.Image.configure({ inline: false, allowBase64: false }),
@@ -2926,6 +3081,13 @@
                 }
             })
         ];
+        if (!vm.light && T.Table && T.TableRow && T.TableCell && T.TableHeader) {
+            list.push(T.Table.configure({ resizable: false }), T.TableRow, T.TableHeader, T.TableCell);
+        }
+        if (vm.collab) {
+            list.push(T.Collaboration.configure({ document: vm.collab.doc, field: "default" }),
+                T.CollaborationCaret.configure({ provider: { awareness: vm.collab.awareness }, user: vm.collab.user }));
+        }
         if (vm.mentionUrl) {
             const Mention = T.Mention.extend({
                 // the mention in the HTML: <span data-mention-id="id">@Label</span>, and nothing the safe cleaning drops
@@ -2943,6 +3105,41 @@
                 suggestion: { char: "@", debounce: 150, items: ({ query, signal }) => vm.searchMentions(query, signal), render: () => vm.mentionRenderer() }
             }));
         }
+        if (vm.recordUrl) {
+            const RecordMention = T.Mention.extend({
+                name: "recordMention",
+                // a record link, not a person: <span data-record-entity="entity" data-record-id="id">#Label</span>
+                addAttributes() {
+                    return {
+                        id: { default: null, parseHTML: (el) => el.getAttribute("data-record-id"), renderHTML: () => ({}) },
+                        entity: { default: null, parseHTML: (el) => el.getAttribute("data-record-entity"), renderHTML: () => ({}) },
+                        label: { default: null, parseHTML: (el) => (el.textContent || "").replace(/^#/, ""), renderHTML: () => ({}) },
+                        mentionSuggestionChar: { default: "#", parseHTML: () => "#", renderHTML: () => ({}) }
+                    };
+                },
+                parseHTML() { return [{ tag: "span[data-record-id]" }]; },
+                renderHTML({ node }) {
+                    const attrs = { "data-record-id": node.attrs.id };
+                    if (node.attrs.entity) attrs["data-record-entity"] = node.attrs.entity;
+                    return ["span", attrs, "#" + (node.attrs.label || node.attrs.id || "")];
+                }
+            });
+            list.push(RecordMention.configure({
+                suggestion: {
+                    char: "#",
+                    pluginKey: T.PluginKey ? new T.PluginKey("recordSuggestion") : undefined,
+                    debounce: 150,
+                    items: ({ query, signal }) => vm.searchRecords(query, signal),
+                    render: () => vm.mentionRenderer(),
+                    command: ({ editor, range, props }) => {
+                        editor.chain().focus().insertContentAt(range, [
+                            { type: "recordMention", attrs: { id: props.id, label: props.label, entity: props.entity || null } },
+                            { type: "text", text: " " }
+                        ]).run();
+                    }
+                }
+            }));
+        }
         return list;
     };
 
@@ -2950,29 +3147,62 @@
     // errors inside an m-form, a hidden input for a form that reads the DOM): Tiptap from /libs/tiptap, loaded when the first
     // editor mounts. The value is HTML ("" when empty). light is the compact toolbar; enter="submit" makes Enter submit the
     // form (and emit submit) with Shift+Enter a line break; Ctrl+Enter always submits; mention-url is searched with term for
-    // the @ list; the plain-text toggle (v-model:plain) turns the value into plain text and back. When the library does not
-    // load, the field is the html editor of m-text-area.
+    // the @ list and record-url for the # list (only when that URL is set, on light and full). The plain-text toggle
+    // (v-model:plain, a boolean) shows toPlain in the textarea and keeps the HTML in the model (fromPlainKeeping on each
+    // edit, so a save while the toggle is on still stores HTML). Paste, drop and the full toolbar's file button upload an
+    // image to /richTextImage and insert the returned address; a data: image is uploaded the same way. When the library
+    // does not load, the field is the html editor of m-text-area, with a control that tries the editor again; a later
+    // editor that does load starts the ones still waiting. collab ({doc, awareness, user: {name, color}}, from m-coedit)
+    // makes the document a shared Yjs one: no content of its own, no model, no plain-text toggle, and a failure emits
+    // failed (for m-coedit's host to show its own field) instead of the html editor.
     let richTextCount = 0;
-    // one load of the library for the page, so every editor gets its answer; after a failure the next editor tries again
+    // one load of the library for the page; a failure clears it so the next try starts again
     let tiptapLoad = null;
     const loadTiptap = () => tiptapLoad || (tiptapLoad = moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap)
         .catch((error) => { tiptapLoad = null; throw error; }));
+    // editors whose load or start failed, so a later success (or Try the editor again) can start them
+    const failedRichTexts = [];
+    const dropFailed = (vm) => {
+        const index = failedRichTexts.indexOf(vm);
+        if (index >= 0) failedRichTexts.splice(index, 1);
+    };
+    const rememberFailed = (vm) => { if (failedRichTexts.indexOf(vm) < 0) failedRichTexts.push(vm); };
+    const wakeFailed = () => {
+        failedRichTexts.slice().forEach((other) => {
+            if (!other || other.unmountedNow || other.state !== "failed" || !root.Tiptap) return;
+            other.state = "loading";
+            other.$nextTick(() => {
+                if (other.unmountedNow || other.state !== "loading" || !root.Tiptap) return;
+                try {
+                    other.start();
+                    dropFailed(other);
+                } catch (err) {
+                    other.startFailed("the editor did not start, the html editor stands in: " + err);
+                }
+            });
+        });
+    };
     component("m-rich-text", {
         name: "mRichText",
         mixins: [fieldMixin, localValueMixin],
         props: { modelValue: String, name: String, id: String, label: String, form: String, disable: Boolean, readonly: Boolean, tooltip: String,
             light: Boolean, placeholder: String, rows: [String, Number], enter: { type: String, default: "newline" }, mentionUrl: String,
-            mentionParameters: Object, plain: Boolean, plainToggle: { type: Boolean, default: true }, autofocus: Boolean },
-        emits: ["update:modelValue", "update:plain", "submit", "mention"],
+            mentionParameters: Object, recordUrl: String, recordParameters: Object, plain: Boolean, plainToggle: { type: Boolean, default: true }, autofocus: Boolean,
+            collab: Object },
+        emits: ["update:modelValue", "update:plain", "submit", "mention", "failed"],
         data() {
             richTextCount += 1;
-            return { state: "loading", isPlain: this.plain, focused: false, active: {}, blockLabel: "Paragraph", asking: null, askValue: "",
+            return { state: "loading", isPlain: this.plain, focused: false, plainFocused: false, htmlBeforePlain: "", plainText: "",
+                active: {}, blockLabel: "Paragraph", asking: null, askValue: "", proposal: null,
                 mention: { open: false, items: [], index: 0, loading: false }, uid: "m-rich-text-" + richTextCount };
         },
         template:
             '<div class="m-rich-text" :class="{\'m-rich-text-light\': light, \'m-rich-text-focused\': focused}" :data-state="state">' +
-                '<m-text-area v-if="state === \'failed\'" editor-type="html" :model-value="local" @update:model-value="onInput" :name="name" :id="id"' +
-                    ' :label="label" :form="form" :disable="disable" :readonly="readonly" :tooltip="tooltip"></m-text-area>' +
+                '<div v-if="state === \'failed\' && !collab">' +
+                    '<div class="row items-center q-mb-xs"><q-btn dense flat no-caps icon="sym_o_refresh" :label="t(\'Try the editor again\')" @click="retryEditor"></q-btn></div>' +
+                    '<m-text-area editor-type="html" :model-value="local" @update:model-value="onInput" :name="name" :id="id"' +
+                        ' :label="label" :form="form" :disable="disable" :readonly="readonly" :tooltip="tooltip"></m-text-area>' +
+                '</div>' +
                 '<template v-else>' +
                     '<div v-if="label" class="text-caption m-muted m-rich-text-label">{{label}}</div>' +
                     '<div class="m-rich-text-box" :class="[bg ? \'bg-\' + bg : \'\', errorAttrs.error ? \'m-rich-text-error\' : \'\']">' +
@@ -2986,23 +3216,48 @@
                                             '<q-item-section>{{t(block.label)}}</q-item-section></q-item>' +
                                     '</q-list>' +
                                 '</q-btn-dropdown>' +
+                                '<q-btn-dropdown v-else-if="button.key === \'table\'" flat dense size="sm" icon="sym_o_table" :disable="!editable || isPlain"' +
+                                        ' class="m-rich-text-table" content-class="m-rich-text-menu" :aria-label="t(\'Table\')" @mousedown.prevent>' +
+                                    '<q-list dense>' +
+                                        '<q-item v-for="item in tableItems" :key="item.key" clickable v-close-popup @click="run(item.key)">' +
+                                            '<q-item-section>{{t(item.label)}}</q-item-section></q-item>' +
+                                    '</q-list>' +
+                                '</q-btn-dropdown>' +
                                 '<q-btn v-else flat dense size="sm" :icon="button.icon" :data-command="button.key" :aria-label="t(button.label)"' +
                                         ' :color="(button.key === \'plain\' ? isPlain : active[button.key]) ? \'primary\' : undefined"' +
                                         ' :class="{\'m-rich-text-on\': button.key === \'plain\' ? isPlain : active[button.key]}"' +
                                         ' :disable="button.key === \'plain\' ? (disable || state !== \'ready\') : (!editable || isPlain)" @mousedown.prevent @click="run(button.key)">' +
                                     '<q-tooltip>{{t(button.label)}}</q-tooltip></q-btn>' +
                             '</template>' +
+                            // Assist's text actions (moqui.assist, js/WebrootAssist.js): a proposal below, applied only by a click
+                            '<q-btn-dropdown v-if="textActions.length" flat dense size="sm" icon="sym_o_auto_awesome" :disable="!canEdit || (state !== \'ready\' && !isPlain)"' +
+                                    ' class="m-rich-text-assist" content-class="m-rich-text-menu" data-assist-text-actions :aria-label="assistLabel" @mousedown.prevent>' +
+                                '<q-list dense><q-item v-for="item in textActions" :key="item.key" clickable v-close-popup :data-assist-text-action="item.key" @click="textAction(item)">' +
+                                    '<q-item-section>{{item.label}}</q-item-section></q-item></q-list>' +
+                            '</q-btn-dropdown>' +
                         '</div>' +
+                        '<input ref="imageFile" type="file" accept="image/png,image/gif,image/jpeg,image/webp" style="display:none" @change="onImageFile">' +
                         '<div v-if="asking" class="m-rich-text-ask row items-center no-wrap q-px-sm q-py-xs q-gutter-x-xs">' +
                             '<q-input ref="askInput" dense outlined hide-bottom-space class="col" v-model="askValue" :placeholder="asking === \'image\' ? \'https://\u2026/picture.png\' : \'https://\u2026\'"' +
                                 ' :aria-label="t(asking === \'image\' ? \'Image address\' : \'Link address\')" @keydown.enter.prevent="applyAsk" @keydown.esc.prevent.stop="asking = null"></q-input>' +
+                            '<q-btn v-if="asking === \'image\'" dense flat no-caps icon="sym_o_upload" :label="t(\'File\')" @click="pickImage"></q-btn>' +
                             '<q-btn dense unelevated no-caps class="m-btn-tonal" :label="t(\'Apply\')" @click="applyAsk"></q-btn>' +
                             '<q-btn v-if="asking === \'link\' && active.link" dense flat no-caps :label="t(\'Remove\')" @click="removeLink"></q-btn>' +
                             '<q-btn dense flat round size="sm" icon="sym_o_close" :aria-label="t(\'Close\')" @click="asking = null"></q-btn>' +
                         '</div>' +
-                        '<textarea v-if="isPlain" :id="id ? id + \'_plain\' : null" class="m-rich-text-plain" :style="{minHeight: minHeight}" :value="local"' +
-                            ' :readonly="readonly" :disabled="disable" @input="onInput($event.target.value)" @keydown="plainKey"' +
-                            ' @focus="focused = true" @blur="focused = false"></textarea>' +
+                        '<div v-if="proposal" class="m-rich-text-proposal q-px-sm q-py-xs" data-assist-text-proposal :data-state="proposal.state" :data-action="proposal.key">' +
+                            '<div v-if="proposal.state === \'loading\'" class="row items-center text-caption m-muted"><q-spinner-dots size="16px" class="q-mr-xs"></q-spinner-dots>{{proposal.label}}</div>' +
+                            '<div v-else-if="proposal.state === \'failed\'" class="text-caption text-negative">{{proposal.error}}</div>' +
+                            '<div v-else class="m-rich-text-proposal-text">{{proposal.text}}</div>' +
+                            '<div class="row q-gutter-x-xs q-mt-xs">' +
+                                '<template v-if="proposal.state === \'ready\'"><q-btn dense unelevated no-caps color="primary" :label="proposal.labels.replace" data-assist-text-apply="replace" @click="useProposal(\'replace\')"></q-btn>' +
+                                    '<q-btn dense flat no-caps :label="proposal.labels.insertBelow" data-assist-text-apply="insert" @click="useProposal(\'insert\')"></q-btn></template>' +
+                                '<q-btn dense flat no-caps :label="proposal.labels.discard" data-assist-text-apply="discard" @click="proposal = null"></q-btn>' +
+                            '</div>' +
+                        '</div>' +
+                        '<textarea v-if="isPlain" ref="plainArea" :id="id ? id + \'_plain\' : null" class="m-rich-text-plain" :style="{minHeight: minHeight}" :value="plainText"' +
+                            ' :readonly="readonly" :disabled="disable" @input="onPlainInput($event.target.value)" @keydown="plainKey"' +
+                            ' @focus="plainFocused = true; focused = true" @blur="plainFocused = false; focused = false"></textarea>' +
                         '<div v-show="!isPlain" ref="content" class="m-rich-text-content" :style="{minHeight: minHeight}" @click="focusEnd"></div>' +
                         '<div v-if="state === \'loading\'" class="m-rich-text-loading m-muted text-caption q-px-sm">{{t(\'Loading the editor\')}}</div>' +
                     '</div>' +
@@ -3023,10 +3278,15 @@
                 '</template>' +
             '</div>',
         computed: {
-            buttons() { return moqui.richText.toolbar(this.light, this.plainToggle && !this.light); },
+            buttons() { return moqui.richText.toolbar(this.light, this.plainToggle && !this.light && !this.collab); },
             blocks() { return [{ key: "paragraph", label: "Paragraph" }, { key: "h1", label: "Heading 1" }, { key: "h2", label: "Heading 2" }, { key: "h3", label: "Heading 3" }]; },
+            tableItems() { return [{ key: "insertTable", label: "Insert table" }, { key: "addRowAfter", label: "Add row" }, { key: "addColumnAfter", label: "Add column" },
+                { key: "deleteRow", label: "Delete row" }, { key: "deleteColumn", label: "Delete column" }, { key: "deleteTable", label: "Delete table" }]; },
             canEdit() { return !this.disable && !this.readonly; },
             editable() { return this.state === "ready" && this.canEdit; },
+            // Assist's text actions when the server offers them (bootstrap.features.textActions), never on a shared document
+            textActions() { const assist = moqui.assist; return assist && assist.textActionsOn && !this.collab && assist.textActionsOn() ? assist.textActionList() : []; },
+            assistLabel() { return moqui.assist ? moqui.assist.labels.textActions : "Assist"; },
             minHeight() {
                 const rows = parseInt(this.rows, 10) || (this.light ? 2 : 6);
                 return (Math.max(rows, this.light ? 1 : 2) * 1.5 + 0.6) + "em";
@@ -3034,8 +3294,20 @@
         },
         watch: {
             modelValue(value) {
+                if (this.collab) return;
+                if (this.isPlain) {
+                    // the textarea is the plain text; do not rewrite it from the model while it is focused
+                    if (this.plainFocused) return;
+                    const html = value || "";
+                    const kept = moqui.richText.fromPlainKeeping(this.plainText, this.htmlBeforePlain);
+                    if (html !== kept && html !== moqui.richText.value(kept)) {
+                        this.htmlBeforePlain = html;
+                        this.plainText = moqui.richText.toPlain(html);
+                    }
+                    return;
+                }
                 const editor = this.editor;
-                if (!editor || this.isPlain) return;
+                if (!editor) return;
                 if ((value || "") !== moqui.richText.value(editor.getHTML())) editor.commands.setContent(moqui.richText.toHtml(value), { emitUpdate: false });
             },
             plain(value) { if (value !== this.isPlain) this.togglePlain(); },
@@ -3045,16 +3317,31 @@
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             start() {
                 const T = root.Tiptap;
+                if (this.editor) { this.editor.destroy(); this.editor = null; }
+                const vm = this;
                 this.editor = markRaw(new T.Editor({
                     element: this.$refs.content,
                     extensions: richTextExtensions(T, this),
-                    content: moqui.richText.toHtml(this.local),
+                    // a shared document starts empty and takes the server's content through Yjs
+                    content: this.collab ? "" : moqui.richText.toHtml(this.local),
                     editable: this.canEdit,
                     autofocus: this.autofocus ? "end" : false,
-                    editorProps: { attributes: Object.assign({ class: "m-rich-text-editor", role: "textbox", "aria-multiline": "true" },
-                        this.id ? { id: this.id } : {}, this.label ? { "aria-label": this.label } : {}) },
+                    editorProps: {
+                        attributes: Object.assign({ class: "m-rich-text-editor", role: "textbox", "aria-multiline": "true" },
+                            this.id ? { id: this.id } : {}, this.label ? { "aria-label": this.label } : {}),
+                        handlePaste(_view, event) {
+                            if (!vm.takeImages(event.clipboardData)) return false;
+                            event.preventDefault();
+                            return true;
+                        },
+                        handleDrop(_view, event) {
+                            if (!vm.takeImages(event.dataTransfer)) return false;
+                            event.preventDefault();
+                            return true;
+                        }
+                    },
                     onUpdate: ({ editor }) => {
-                        if (this.isPlain) return;
+                        if (this.isPlain || this.collab) return;
                         const html = moqui.richText.value(editor.getHTML());
                         if (html !== (this.local || "")) this.onInput(html);
                     },
@@ -3084,9 +3371,58 @@
                     bold: () => chain.toggleBold(), italic: () => chain.toggleItalic(), strike: () => chain.toggleStrike(), code: () => chain.toggleCode(),
                     bulletList: () => chain.toggleBulletList(), orderedList: () => chain.toggleOrderedList(), codeBlock: () => chain.toggleCodeBlock(),
                     blockquote: () => chain.toggleBlockquote(), undo: () => chain.undo(), redo: () => chain.redo(), paragraph: () => chain.setParagraph(),
-                    h1: () => chain.toggleHeading({ level: 1 }), h2: () => chain.toggleHeading({ level: 2 }), h3: () => chain.toggleHeading({ level: 3 })
+                    h1: () => chain.toggleHeading({ level: 1 }), h2: () => chain.toggleHeading({ level: 2 }), h3: () => chain.toggleHeading({ level: 3 }),
+                    insertTable: () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }), addRowAfter: () => chain.addRowAfter(),
+                    addColumnAfter: () => chain.addColumnAfter(), deleteRow: () => chain.deleteRow(), deleteColumn: () => chain.deleteColumn(),
+                    deleteTable: () => chain.deleteTable()
                 };
                 if (commands[key]) commands[key]().run();
+            },
+            // An Assist text action on the selection, or the whole field without one, as plain text: the proposal is shown under the
+            // toolbar and applied (moqui.assist.proposalEdit, applyTextProposal) only by Replace or Insert below.
+            textAction(item) {
+                const assist = moqui.assist;
+                const editor = this.editor;
+                let source;
+                if (this.isPlain) {
+                    const area = this.$refs.plainArea;
+                    const from = area ? area.selectionStart : 0;
+                    const to = area ? area.selectionEnd : 0;
+                    source = { selected: to > from, from, to, text: to > from ? this.plainText.slice(from, to) : this.plainText };
+                } else if (editor) {
+                    const sel = editor.state.selection;
+                    source = { selected: !sel.empty, from: sel.from, to: sel.to, text: sel.empty ? moqui.richText.toPlain(this.local) : editor.state.doc.textBetween(sel.from, sel.to, "\n\n") };
+                } else return;
+                const labels = assist.labels;
+                const token = assist.newId("t-");
+                this.proposal = { token, key: item.key, state: "loading", label: labels.proposing, source, plain: this.isPlain, text: "", error: "", labels };
+                const mine = () => this.proposal && this.proposal.token === token;
+                assist.runTextAction(item.key, source.text, { field: this.label }).then((json) => {
+                    if (mine()) Object.assign(this.proposal, { state: "ready", text: String(json.text || "") });
+                }, (err) => { if (mine()) Object.assign(this.proposal, { state: "failed", error: (err && err.errors) || labels.errorTitle }); });
+            },
+            useProposal(mode) {
+                const proposal = this.proposal;
+                this.proposal = null;
+                const assist = moqui.assist;
+                if (!proposal || proposal.state !== "ready" || !assist) return;
+                if (this.isPlain) { if (proposal.plain) this.onPlainInput(assist.applyTextProposal(this.plainText, proposal.source, proposal.text, mode)); return; }
+                const editor = this.editor;
+                if (!editor || !this.editable || proposal.plain) return;
+                const doc = editor.state.doc;
+                const src = proposal.source;
+                const current = src.selected && src.to <= doc.content.size ? doc.textBetween(src.from, src.to, "\n\n") : null;
+                const edit = assist.proposalEdit(src, proposal.text, mode, current);
+                if (!edit.content) return;
+                const chain = editor.chain().focus();
+                if (edit.kind === "range") chain.insertContentAt({ from: edit.from, to: edit.to }, edit.content).run();
+                else if (edit.kind === "all") chain.setContent(edit.content).run();
+                else {
+                    // below the block the selection ends in, else below the whole text
+                    const end = doc.content.size;
+                    const at = edit.kind === "after" ? (() => { const pos = doc.resolve(Math.min(edit.pos, end)); return pos.depth ? pos.after(1) : end; })() : end;
+                    chain.insertContentAt(at, edit.content).run();
+                }
             },
             // the address of a link or an image, asked in a line under the toolbar
             ask(kind) {
@@ -3119,17 +3455,111 @@
             togglePlain() {
                 const editor = this.editor;
                 if (!this.isPlain) {
+                    this.htmlBeforePlain = this.local || "";
+                    this.plainText = moqui.richText.toPlain(this.local);
                     this.isPlain = true;
-                    this.onInput(moqui.richText.toPlain(this.local));
                 } else {
-                    const html = moqui.richText.fromPlain(this.local);
+                    const html = moqui.richText.fromPlainKeeping(this.plainText, this.htmlBeforePlain);
                     this.isPlain = false;
                     if (editor) {
                         editor.commands.setContent(html, { emitUpdate: false });
                         this.onInput(moqui.richText.value(editor.getHTML()));
-                    } else this.onInput(html);
+                    } else this.onInput(moqui.richText.value(html));
                 }
                 this.$emit("update:plain", this.isPlain);
+            },
+            // each edit writes the kept HTML into the model; the textarea stays the plain text
+            onPlainInput(value) {
+                this.plainText = value;
+                this.onInput(moqui.richText.value(moqui.richText.fromPlainKeeping(value, this.htmlBeforePlain)));
+            },
+            // the plain string on screen, for a mail part; the model stays the HTML
+            plainValue() { return this.isPlain ? this.plainText : moqui.richText.toPlain(this.local); },
+            pickImage() { if (this.$refs.imageFile) this.$refs.imageFile.click(); },
+            onImageFile(event) {
+                const file = event.target.files && event.target.files[0];
+                event.target.value = "";
+                this.asking = null;
+                if (file) this.uploadImage(file);
+            },
+            // paste or drop of an image file, or a data: image, uploads and inserts nothing of the original
+            takeImages(data) {
+                if (!data || !this.editable || this.isPlain) return false;
+                const files = [];
+                const list = data.files || [];
+                for (let i = 0; i < list.length; i++) if (list[i] && /^image\//i.test(list[i].type || "")) files.push(list[i]);
+                if (!files.length && data.items) {
+                    for (let i = 0; i < data.items.length; i++) {
+                        const item = data.items[i];
+                        if (item.kind === "file" && /^image\//i.test(item.type || "")) {
+                            const file = item.getAsFile && item.getAsFile();
+                            if (file) files.push(file);
+                        }
+                    }
+                }
+                if (!files.length) {
+                    const html = data.getData ? (data.getData("text/html") || "") : "";
+                    const match = /src\s*=\s*["'](data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)["']/i.exec(html);
+                    const text = !match && data.getData ? String(data.getData("text/plain") || "").trim() : "";
+                    const url = match ? match[1] : (/^data:image\/[a-z0-9.+-]+;base64,/i.test(text) ? text : "");
+                    const file = url ? this.fileFromDataUrl(url) : null;
+                    if (file) files.push(file);
+                }
+                if (!files.length) return false;
+                files.forEach((file) => this.uploadImage(file));
+                return true;
+            },
+            fileFromDataUrl(url) {
+                const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(String(url || "").replace(/\s/g, ""));
+                if (!match || typeof root.atob !== "function") return null;
+                let binary;
+                try { binary = root.atob(match[2]); } catch (err) { return null; }
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const subtype = match[1].slice(6).toLowerCase();
+                const ext = subtype === "jpeg" ? "jpg" : subtype === "svg+xml" ? "svg" : (subtype.replace(/[^a-z0-9]/g, "") || "img");
+                try { return new File([bytes], "image." + ext, { type: match[1].toLowerCase() }); } catch (err) { return null; }
+            },
+            uploadImage(file) {
+                if (!file || !this.editor) { moqui.notifyMessages(null, this.t("The image was not saved")); return; }
+                const body = new FormData();
+                body.append("contentFile", file, file.name || "image.png");
+                const alt = file.name || "";
+                moqui.request("/richTextImage", { method: "POST", params: body }).then((result) => {
+                    const url = result.json && result.json.url;
+                    if (!url || !this.editor) { moqui.notifyMessages(null, this.t("The image was not saved")); return; }
+                    this.editor.chain().focus().setImage({ src: url, alt: alt }).run();
+                }, () => { moqui.notifyMessages(null, this.t("The image was not saved")); });
+            },
+            // the load or the start failed: the html editor stands in and waits for a later success, or with collab the host
+            // is told (failed) and shows its own field
+            startFailed(message) {
+                this.state = "failed";
+                if (this.collab) {
+                    console.error("m-rich-text: " + message.replace(/, the html editor stands in/, ""));
+                    this.$emit("failed", message);
+                    return;
+                }
+                console.error("m-rich-text: " + message);
+                rememberFailed(this);
+            },
+            retryEditor() {
+                this.state = "loading";
+                this.$nextTick(() => {
+                    loadTiptap().then(() => {
+                        if (this.unmountedNow) return;
+                        try {
+                            this.start();
+                            dropFailed(this);
+                            wakeFailed();
+                        } catch (err) {
+                            this.startFailed("the editor did not start, the html editor stands in: " + err);
+                        }
+                    }, (err) => {
+                        if (this.unmountedNow) return;
+                        this.startFailed("Tiptap did not load, the html editor stands in: " + err);
+                    });
+                });
             },
             plainKey(event) {
                 if (event.key !== "Enter" || event.isComposing) return;
@@ -3149,6 +3579,15 @@
                 return moqui.request(this.mentionUrl, { params, signal }).then((result) => moqui.richText.mentionItems(result.json),
                     (err) => {
                         if (!err || !err.aborted) console.info("m-rich-text: the mention search " + this.mentionUrl + " failed, status " + (err && err.status));
+                        return [];
+                    });
+            },
+            searchRecords(query, signal) {
+                if (!this.recordUrl) return Promise.resolve([]);
+                const params = Object.assign({}, this.recordParameters, { term: query || "" });
+                return moqui.request(this.recordUrl, { params, signal }).then((result) => moqui.richText.mentionItems(result.json),
+                    (err) => {
+                        if (!err || !err.aborted) console.info("m-rich-text: the record search " + this.recordUrl + " failed, status " + (err && err.status));
                         return [];
                     });
             },
@@ -3191,8 +3630,16 @@
             pickMention(index) {
                 const item = this.mention.items[index];
                 if (!item || !this.mentionProps) return;
-                this.mentionProps.command({ id: item.id, label: item.label });
+                const picked = { id: item.id, label: item.label };
+                if (item.entity) picked.entity = item.entity;
+                this.mentionProps.command(picked);
                 this.$emit("mention", item);
+            }
+        },
+        created() {
+            if (this.isPlain) {
+                this.htmlBeforePlain = this.local || "";
+                this.plainText = moqui.richText.toPlain(this.local);
             }
         },
         mounted() {
@@ -3200,21 +3647,396 @@
                 if (this.unmountedNow) return;
                 try {
                     this.start();
+                    dropFailed(this);
+                    wakeFailed();
                 } catch (err) {
-                    console.error("m-rich-text: the editor did not start, the html editor stands in: " + err);
-                    this.state = "failed";
+                    this.startFailed("the editor did not start, the html editor stands in: " + err);
                 }
             }, (err) => {
                 if (this.unmountedNow) return;
-                console.error("m-rich-text: Tiptap did not load, the html editor stands in: " + err);
-                this.state = "failed";
+                this.startFailed("Tiptap did not load, the html editor stands in: " + err);
             });
         },
         beforeUnmount() {
             this.unmountedNow = true;
+            dropFailed(this);
             if (this.mentionUnmount) { this.mentionUnmount(); this.mentionUnmount = null; }
             if (this.editor) { this.editor.destroy(); this.editor = null; }
         }
+    });
+
+    /* ========== collaborative editing: m-coedit (Yjs over the notification socket) ========== */
+
+    // The pure part of m-coedit, tested under Node with a fake notification client (WebrootVue.qvt.coedit.test.js): base64 of
+    // the binary Yjs updates (btoa in a browser, Buffer where there is none), the caret color of a user, and the provider,
+    // the protocol of js/README.md (Collaborative editing) between a Y.Doc and its Awareness and the socket.
+    const coeditColors = ["#1e88e5", "#e53935", "#43a047", "#8e24aa", "#fb8c00", "#00897b", "#d81b60", "#3949ab", "#6d4c41",
+        "#00acc1", "#7cb342", "#f4511e"];
+    moqui.coedit = {
+        toBase64(bytes) {
+            if (typeof root.btoa !== "function") return Buffer.from(bytes).toString("base64");
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            return root.btoa(binary);
+        },
+        fromBase64(text) {
+            if (typeof root.atob !== "function") return new Uint8Array(Buffer.from(String(text || ""), "base64"));
+            const binary = root.atob(String(text || ""));
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        },
+        // a color for a user id (or a name), the same each time; #rrggbb, the only form the caret extension takes
+        userColor(id) {
+            let hash = 0;
+            for (const ch of String(id || "")) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+            return coeditColors[hash % coeditColors.length];
+        }
+    };
+
+    // One editor's side of a shared document. options: client (a moqui.NotificationClient: send, registerListener, onState,
+    // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Tiptap global: Y and the awareness functions),
+    // onStatus({state, peers, pending}), onAccess(canEdit), onSaved(message), onFallback({reason, code, message}), batchMs
+    // (50: local updates in that time go as one message), joinTimeoutMs (20 s: a join no one answers on an open socket is a
+    // fallback). A remote update is applied with the provider as its origin, so it is not sent back. Each open of the socket
+    // joins again with the state vector, so what was edited offline merges; an update sent and not acknowledged before a
+    // close is in that exchange too.
+    class CoeditProvider {
+        constructor(options) {
+            this.options = options;
+            this.client = options.client;
+            this.doc = options.doc;
+            this.awareness = options.awareness;
+            this.lib = options.lib;
+            this.docKey = options.docKey;
+            this.clientId = options.clientId || "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            this.batchMs = options.batchMs === undefined ? 50 : options.batchMs;
+            this.joined = false;
+            this.joinedOnce = false;
+            this.wasOpen = false;
+            this.canEdit = false;
+            this.failed = null;
+            this.destroyed = false;
+            this.peers = [];
+            this.unacked = new Set();
+            this.nextId = 0;
+            this.queue = [];
+            this.retries = 0;
+            this.lastStatus = "";
+            this.onMessage = (message) => this.receive(message);
+            this.onDocUpdate = (update, origin) => {
+                if (origin === this || this.destroyed) return;
+                this.queue.push(update);
+                if (!this.batchTimer) this.batchTimer = setTimeout(() => this.flush(), this.batchMs);
+                this.tell();
+            };
+            // the local state changed (a caret, the user; the Awareness renews it every 15 s): sent once per batch
+            this.onAwarenessUpdate = (changes, origin) => {
+                if (origin === this || this.destroyed) return;
+                const own = this.awareness.clientID;
+                if (![].concat(changes.added, changes.updated, changes.removed).includes(own)) return;
+                if (!this.awarenessTimer) this.awarenessTimer = setTimeout(() => { this.awarenessTimer = null; this.sendAwareness(); }, this.batchMs);
+            };
+        }
+        start() {
+            this.listenerOff = this.client.registerListener("collab:" + this.docKey, this.onMessage);
+            this.stateOff = this.client.onState((state) => { if (state === "open") this.join(); else this.closed(); });
+            this.doc.on("update", this.onDocUpdate);
+            this.awareness.on("update", this.onAwarenessUpdate);
+            if (this.client.isOpen()) this.join();
+            else this.tell();
+        }
+        send(message) { this.client.send(Object.assign({ doc: this.docKey, client: this.clientId }, message)); }
+        join() {
+            if (this.destroyed || this.failed) return;
+            this.joined = false;
+            this.wasOpen = true;
+            this.unacked.clear();
+            this.dropQueue();
+            this.send({ collab: "join", awareness: this.doc.clientID, sv: moqui.coedit.toBase64(this.lib.Y.encodeStateVector(this.doc)) });
+            clearTimeout(this.joinTimer);
+            this.joinTimer = setTimeout(() => {
+                if (!this.joined && !this.destroyed && this.client.isOpen()) this.fail("timeout", null, "no answer to the join");
+            }, this.options.joinTimeoutMs || 20000);
+            this.tell();
+        }
+        // the socket closed: the others' carets go, and what is sent from here on waits for the next join's exchange
+        closed() {
+            if (this.destroyed) return;
+            this.joined = false;
+            this.unacked.clear();
+            this.dropQueue();
+            clearTimeout(this.joinTimer);
+            const others = Array.from(this.awareness.getStates().keys()).filter((id) => id !== this.awareness.clientID);
+            if (others.length) this.lib.removeAwarenessStates(this.awareness, others, this);
+            this.peers = [];
+            this.tell();
+        }
+        dropQueue() {
+            clearTimeout(this.batchTimer);
+            this.batchTimer = null;
+            this.queue = [];
+        }
+        // the local updates of the batch as one message; nothing while not joined (the join's exchange carries them)
+        flush() {
+            this.batchTimer = null;
+            const updates = this.queue.splice(0);
+            if (updates.length && this.joined && this.canEdit && this.client.isOpen()) {
+                this.sendUpdate(updates.length === 1 ? updates[0] : this.lib.Y.mergeUpdates(updates));
+            }
+            this.tell();
+        }
+        sendUpdate(update) {
+            this.nextId += 1;
+            this.unacked.add(this.nextId);
+            this.send({ collab: "update", id: this.nextId, update: moqui.coedit.toBase64(update) });
+        }
+        sendAwareness() {
+            if (!this.joined || this.destroyed || !this.client.isOpen()) return;
+            const update = this.lib.encodeAwarenessUpdate(this.awareness, [this.awareness.clientID]);
+            this.send({ collab: "awareness", update: moqui.coedit.toBase64(update) });
+        }
+        applyRemote(text) {
+            try {
+                this.lib.Y.applyUpdate(this.doc, moqui.coedit.fromBase64(text), this);
+            } catch (err) {
+                console.error("m-coedit: an update of " + this.docKey + " did not apply: " + err);
+            }
+        }
+        // a frame on the topic; ack, error and joined of another client id (another editor of the same user) are not ours
+        receive(message) {
+            if (!message || this.destroyed || this.failed) return;
+            const own = message.client === this.clientId;
+            if (message.type === "joined") { if (own) this.onJoined(message); }
+            else if (message.type === "update") { if (!own && message.update) this.applyRemote(message.update); }
+            else if (message.type === "ack") {
+                if (!own) return;
+                this.unacked.delete(Number(message.id));
+                this.retries = 0;
+                this.tell();
+            } else if (message.type === "awareness") {
+                if (own || !message.update) return;
+                try {
+                    this.lib.applyAwarenessUpdate(this.awareness, moqui.coedit.fromBase64(message.update), this);
+                } catch (err) {
+                    console.error("m-coedit: an awareness update of " + this.docKey + " did not apply: " + err);
+                }
+            } else if (message.type === "peer") { if (!own) this.onPeer(message); }
+            else if (message.type === "saved") { if (this.options.onSaved) this.options.onSaved(message); }
+            else if (message.type === "error") { if (own) this.onError(message); }
+        }
+        // the server's diff against our state vector, then ours against its, when it holds anything (an empty update is 2 bytes)
+        onJoined(message) {
+            clearTimeout(this.joinTimer);
+            this.joined = true;
+            this.joinedOnce = true;
+            this.canEdit = message.canEdit !== false;
+            this.dropQueue();
+            if (message.update) this.applyRemote(message.update);
+            this.peers = (message.peers || []).filter((peer) => peer && peer.client !== this.clientId).map(peerOf);
+            if (this.canEdit) {
+                const diff = this.lib.Y.encodeStateAsUpdate(this.doc, message.sv ? moqui.coedit.fromBase64(message.sv) : undefined);
+                if (diff.length > 2) this.sendUpdate(diff);
+            }
+            this.sendAwareness();
+            if (this.options.onAccess) this.options.onAccess(this.canEdit);
+            this.tell();
+        }
+        onPeer(message) {
+            const peer = peerOf(message);
+            this.peers = this.peers.filter((other) => other.client !== peer.client);
+            if (message.joined !== false) this.peers.push(peer);
+            else if (peer.awareness !== null) this.lib.removeAwarenessStates(this.awareness, [peer.awareness], this);
+            this.tell();
+        }
+        // Before the join is answered any error is the end (the host shows its own field). After it, 403 is read-only, and
+        // another code joins again (the exchange of state vectors makes the document whole), three times without an ack between.
+        onError(message) {
+            const code = Number(message.code) || 500;
+            if (!this.joined) { this.fail("server", code, message.message); return; }
+            if (code === 403) {
+                this.canEdit = false;
+                this.unacked.clear();
+                this.dropQueue();
+                if (this.options.onAccess) this.options.onAccess(false);
+                this.tell();
+                return;
+            }
+            this.retries += 1;
+            if (this.retries > 3) { this.fail("server", code, message.message); return; }
+            console.info("m-coedit: the server answered " + code + " for " + this.docKey + ", joining again: " + (message.message || ""));
+            if (this.client.isOpen()) this.join();
+        }
+        fail(reason, code, text) {
+            if (this.failed) return;
+            this.failed = reason;
+            clearTimeout(this.joinTimer);
+            this.dropQueue();
+            if (this.client.isOpen()) this.send({ collab: "leave" });
+            this.tell();
+            if (this.options.onFallback) this.options.onFallback({ reason, code: code || null, message: text || "" });
+        }
+        status() {
+            let state;
+            if (this.failed) state = "failed";
+            else if (!this.joined) state = this.wasOpen && !this.client.isOpen() ? "offline" : "connecting";
+            else if (!this.canEdit) state = "readonly";
+            else state = this.unacked.size || this.queue.length ? "saving" : "synced";
+            return { state, peers: this.peers.map((peer) => ({ client: peer.client, userId: peer.userId, name: peer.name })), pending: this.unacked.size };
+        }
+        tell() {
+            const status = this.status();
+            const key = JSON.stringify(status);
+            if (key === this.lastStatus) return;
+            this.lastStatus = key;
+            if (this.options.onStatus) this.options.onStatus(status);
+        }
+        // the last batch goes, then leave; the doc, its awareness and the editor are the owner's to destroy
+        destroy() {
+            if (this.destroyed) return;
+            if (this.queue.length) { clearTimeout(this.batchTimer); this.flush(); }
+            this.destroyed = true;
+            clearTimeout(this.joinTimer);
+            clearTimeout(this.awarenessTimer);
+            this.dropQueue();
+            if (this.client.isOpen() && !this.failed) this.send({ collab: "leave" });
+            if (this.listenerOff) this.listenerOff();
+            if (this.stateOff) this.stateOff();
+            this.doc.off("update", this.onDocUpdate);
+            this.awareness.off("update", this.onAwarenessUpdate);
+        }
+    }
+    const peerOf = (message) => ({ client: message.client, userId: message.userId || "", name: message.name || message.userId || "",
+        awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
+    moqui.coedit.Provider = CoeditProvider;
+
+    // m-rich-text on a shared document (js/README.md, Collaborative editing): doc-key names it ("WikiPage:100023"), and the
+    // server seeds and renders it, so the editor never sets content of its own. The presence line shows the others (by user)
+    // and the sync state. Emits status ({state: loading, connecting, synced, saving, offline, readonly or failed, peers:
+    // [{client, userId, name}], pending}), saved (the server's saved frame: a version was made) and fallback ({reason: library,
+    // socket, server or timeout, code, message}) when the host should show its own markdown field instead. Other attributes
+    // (id, label, autofocus) go to the editor. html() is the editor's HTML now, for a preview.
+    component("m-coedit", {
+        name: "mCoedit",
+        inheritAttrs: false,
+        props: { docKey: { type: String, required: true }, placeholder: String, rows: [String, Number], light: Boolean, readonly: Boolean,
+            userName: String, userColor: String },
+        emits: ["status", "saved", "fallback"],
+        data() { return { collab: null, status: { state: "loading", peers: [], pending: 0 }, canEdit: false, joinedOnce: false }; },
+        template:
+            '<div class="m-coedit" :data-state="status.state">' +
+                '<div class="m-coedit-presence row items-center no-wrap" role="status">' +
+                    '<m-avatar v-for="person in people" :key="person.key" class="m-coedit-peer" :name="person.name" :user-id="person.userId" size="22px" tooltip></m-avatar>' +
+                    '<q-icon :name="stateIcon" size="16px" class="m-coedit-state-icon"></q-icon>' +
+                    '<span class="m-coedit-state text-caption">{{t(stateLabel)}}</span>' +
+                '</div>' +
+                '<m-rich-text v-if="collab" ref="editor" v-bind="$attrs" :collab="collab" :light="light" :placeholder="placeholder" :rows="rows"' +
+                    ' :readonly="readonly || (joinedOnce && !canEdit)" :disable="!joinedOnce" :plain-toggle="false" @failed="editorFailed"></m-rich-text>' +
+            '</div>',
+        computed: {
+            // the others, once per user (two tabs of one person are one face), not the user here
+            people() {
+                const me = (this.$root && this.$root.userId) || "";
+                const seen = {};
+                const out = [];
+                this.status.peers.forEach((peer) => {
+                    const key = peer.userId || peer.client;
+                    if ((me && peer.userId === me) || seen[key]) return;
+                    seen[key] = true;
+                    out.push({ key, userId: peer.userId, name: peer.name });
+                });
+                return out;
+            },
+            stateLabel() {
+                return { loading: "Loading the editor", connecting: "Connecting", synced: "Up to date", saving: "Saving", offline: "Offline, the changes wait here",
+                    readonly: "Read only", failed: "Not available" }[this.status.state] || "";
+            },
+            stateIcon() {
+                return { loading: "sym_o_hourglass_empty", connecting: "sym_o_sync", synced: "sym_o_cloud_done", saving: "sym_o_cloud_upload",
+                    offline: "sym_o_cloud_off", readonly: "sym_o_visibility", failed: "sym_o_error" }[this.status.state] || "sym_o_sync";
+            }
+        },
+        watch: {
+            docKey() {
+                this.stop();
+                this.collab = null;
+                this.$nextTick(() => { this.dropDoc(); this.begin(); });
+            }
+        },
+        methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            setStatus(status) {
+                this.status = status;
+                this.$emit("status", status);
+            },
+            fallback(reason, code, message) {
+                if (this.fellBack) return;
+                this.fellBack = true;
+                this.stop();
+                this.collab = null;
+                this.setStatus({ state: "failed", peers: [], pending: 0 });
+                this.$emit("fallback", { reason, code: code || null, message: message || "" });
+            },
+            editorFailed(message) { this.fallback("library", null, message); },
+            html() {
+                const editor = this.$refs.editor && this.$refs.editor.editor;
+                return editor ? moqui.richText.value(editor.getHTML()) : "";
+            },
+            begin() {
+                const client = this.$root && this.$root.notificationClient;
+                this.fellBack = false;
+                this.canEdit = false;
+                this.joinedOnce = false;
+                this.setStatus({ state: "loading", peers: [], pending: 0 });
+                if (!client || typeof client.send !== "function") { this.fallback("socket", null, "no notification socket"); return; }
+                loadTiptap().then(() => {
+                    if (this.unmountedNow) return;
+                    const T = root.Tiptap;
+                    if (!T.Y || !T.Awareness || !T.Collaboration || !T.CollaborationCaret) { this.fallback("library", null, "the Tiptap bundle has no collaboration"); return; }
+                    try {
+                        this.open(T, client);
+                    } catch (err) {
+                        console.error("m-coedit: the shared document did not start: " + err);
+                        this.fallback("library", null, String(err));
+                    }
+                }, (err) => {
+                    if (this.unmountedNow) return;
+                    console.error("m-coedit: Tiptap did not load: " + err);
+                    this.fallback("library", null, String(err));
+                });
+            },
+            open(T, client) {
+                const rootVm = this.$root || {};
+                const doc = new T.Y.Doc();
+                const awareness = new T.Awareness(doc);
+                const name = this.userName || rootVm.userFullName || rootVm.username || rootVm.userId || "";
+                const color = /^#[0-9a-f]{6}$/i.test(this.userColor || "") ? this.userColor : moqui.coedit.userColor(rootVm.userId || name);
+                this.ydoc = markRaw(doc);
+                this.awareness = markRaw(awareness);
+                this.provider = markRaw(new moqui.coedit.Provider({ client, docKey: this.docKey, doc, awareness, lib: T,
+                    onStatus: (status) => { if (!this.fellBack) this.setStatus(status); },
+                    onAccess: (canEdit) => { this.canEdit = canEdit; this.joinedOnce = true; },
+                    onSaved: (message) => this.$emit("saved", message),
+                    onFallback: (info) => this.fallback(info.reason, info.code, info.message) }));
+                this.collab = markRaw({ doc, awareness, user: { name, color } });
+                this.provider.start();
+            },
+            // leave (the provider sends its last batch first)
+            stop() {
+                if (this.provider) { this.provider.destroy(); this.provider = null; }
+            },
+            // after the editor is gone
+            dropDoc() {
+                if (this.awareness) { this.awareness.destroy(); this.awareness = null; }
+                if (this.ydoc) { this.ydoc.destroy(); this.ydoc = null; }
+            }
+        },
+        mounted() { this.begin(); },
+        beforeUnmount() {
+            this.unmountedNow = true;
+            this.stop();
+        },
+        unmounted() { this.dropDoc(); }
     });
 
     /* ========== subscreens and the menu ========== */
@@ -3732,17 +4554,48 @@
         return made;
     };
     moqui.listViews = {
-        icons: { list: "sym_o_view_list", board: "sym_o_view_kanban", calendar: "sym_o_calendar_month" },
+        icons: { list: "sym_o_view_list", board: "sym_o_view_kanban", calendar: "sym_o_calendar_month", tree: "sym_o_account_tree" },
         modeIcons: { month: "sym_o_calendar_view_month", week: "sym_o_calendar_view_week", day: "sym_o_calendar_view_day", list: "sym_o_view_agenda" },
         palette: LV_PALETTE,
         // The views offered: the views attribute (a comma list or a list) without the ones that have no element, else list and each
         // element there is; list stays in the list wherever it is named.
-        views(views, board, calendar) {
-            const has = { list: true, board: !!board, calendar: !!calendar };
+        views(views, board, calendar, tree) {
+            const has = { list: true, board: !!board, calendar: !!calendar, tree: !!tree };
             const named = (Array.isArray(views) ? views : lvText(views).split(",")).map((name) => lvText(name).trim()).filter((name) => has[name]);
             const out = named.filter((name, index) => named.indexOf(name) === index);
             if (out.length) return out;
-            return ["list"].concat(board ? ["board"] : [], calendar ? ["calendar"] : []);
+            return ["list"].concat(board ? ["board"] : [], calendar ? ["calendar"] : [], tree ? ["tree"] : []);
+        },
+        // The board as grouped by field (view-board group-fields): the board itself for its own group-field, else the board with that
+        // field, the group's columns and flow (a status field's), and none of the default field's column-order, status type and
+        // parameter name.
+        boardFor(board, field) {
+            if (!board || !field || field === board.groupField) return board;
+            const group = (board.groups || []).find((entry) => entry.field === field);
+            if (!group) return board;
+            return Object.assign({}, board, { groupField: field, columns: group.columns || null, flow: group.flow || null, columnOrder: [], statusTypeId: null,
+                statusFlowId: null, parameterName: null });
+        },
+        // The find of the list's screen without its paging and the client's own keys, for a request of the views (range-find,
+        // all-rows, a tree's level); without the names in drop (a tree's parent field and its operators)
+        findParams(shown, drop) {
+            const out = {};
+            const paging = ["pageIndex", "pageSize", "pageNoLimit", "moquiFormName", "moquiSessionToken", "lastStandalone", "renderMode", "view", "peekId", "treeLevel"];
+            const dropped = moqui.listViews.list(drop);
+            Object.keys(shown || {}).forEach((name) => {
+                if (paging.includes(name) || shown[name] === null || shown[name] === undefined) return;
+                if (dropped.some((field) => name === field || name.indexOf(field + "_") === 0)) return;
+                out[name] = shown[name];
+            });
+            return out;
+        },
+        // the rows of a form request's answer: the list's (listName), else the first list in it, else the answer when it is a list
+        answerRows(json, listName) {
+            if (Array.isArray(json)) return json;
+            if (!json || typeof json !== "object") return [];
+            if (listName && Array.isArray(json[listName])) return json[listName];
+            const found = Object.values(json).find(Array.isArray);
+            return Array.isArray(found) ? found : [];
         },
         // a list attribute: a list, or comma text
         list(value) {
@@ -4042,29 +4895,49 @@
     // and list (agenda) of the rows by their start (and end), colors by the color field, a drag moves an event and its lower edge
     // resizes it (the transition with the new start and end, and resource), a click on empty time opens the quick create (the
     // create-transition's form, or the create-screen) with the time in it. On a phone the board scrolls sideways and the calendar
-    // offers day and list.
+    // offers day and list. A board with group-fields has a Group by choice (kept for the tab), and with all-rows it asks the screen's
+    // form request for every row of the find while it shows. The tree is m-list-tree over the same rows (a tree_{index} slot per row of
+    // the page, else the tree slot). With a peek-url and from 1280 px, the Peek toggle puts a pane at the right of the views: a click on
+    // a row, a card or a tree row (not on a control) loads its detail there with peek=true, Up and Down move to the next row, Escape
+    // closes it; the key is in the URL as peekId, and the pane's width is kept for the tab.
     let listViewsCount = 0;
     component("m-list-views", {
         name: "mListViews",
         inject: { mScreen: { default: null } },
         props: { id: String, formName: String, formLocation: String, views: [Array, String], view: String, rows: { type: Array, default: () => [] },
-            board: Object, calendar: Object, infoUrl: { type: String, default: "/listViewColumns" }, reload: Function },
+            board: Object, calendar: Object, tree: Object, peek: Object, infoUrl: { type: String, default: "/listViewColumns" }, reload: Function },
         data() {
             return { current: "list", uid: "mlv" + (++listViewsCount), moved: {}, dirty: false, info: null, infoKey: "", dragging: null, dragEnded: 0,
                 calMode: "", anchor: 0, drag: null, preview: null, selection: null, pop: { open: false, index: null, when: "" }, anchorRect: { left: 0, top: 0, width: 0, height: 0 },
-                create: { open: false, initial: {}, url: "", dateType: "date-time" }, hourPx: 44, nowAbs: 0, range: { key: "", seq: 0, rows: null } };
+                create: { open: false, initial: {}, url: "", dateType: "date-time" }, hourPx: 44, nowAbs: 0, range: { key: "", seq: 0, rows: null },
+                groupBy: "", all: { key: "", seq: 0, rows: null }, peekOn: false, peekKey: "", peekWidth: 0, treeKeys: [] };
         },
         template:
-            '<div class="m-list-views" :id="id" :class="\'m-list-views--\' + current" :data-view="current">' +
-                '<div v-if="viewOptions.length > 1" class="m-list-views-bar row items-center no-wrap">' +
+            '<div class="m-list-views" :id="id" :class="[\'m-list-views--\' + current, {\'m-list-views--peek\': peekShown}]" :data-view="current">' +
+                '<div v-if="viewOptions.length > 1 || peekAvailable" class="m-list-views-bar row items-center no-wrap">' +
+                    '<q-btn-dropdown v-if="current === \'board\' && groupOptions.length > 1" flat dense no-caps class="m-board-group" :label="labels.groupBy + \': \' + groupLabel">' +
+                        '<q-list dense><q-item v-for="option in groupOptions" :key="option.field" clickable v-close-popup :active="option.field === boardView.groupField"' +
+                                ' :data-group="option.field" @click="setGroup(option.field)"><q-item-section>{{option.label}}</q-item-section></q-item></q-list>' +
+                    '</q-btn-dropdown>' +
                     '<q-space></q-space>' +
-                    '<q-btn-toggle :model-value="current" @update:model-value="setView" dense unelevated no-caps toggle-color="primary" class="m-list-views-toggle" :options="viewOptions">' +
+                    '<q-btn v-if="peekAvailable" flat dense no-caps icon="sym_o_right_panel_open" class="m-peek-toggle q-mr-sm" :class="{\'text-primary\': peekOn}"' +
+                            ' :label="labels.peek" :aria-pressed="peekOn ? \'true\' : \'false\'" @click="setPeek(!peekOn)"><q-tooltip>{{labels.peekTip}}</q-tooltip></q-btn>' +
+                    '<q-btn-toggle v-if="viewOptions.length > 1" :model-value="current" @update:model-value="setView" dense unelevated no-caps toggle-color="primary" class="m-list-views-toggle" :options="viewOptions">' +
                         '<template v-slot:list><q-tooltip>{{labels.list}}</q-tooltip></template>' +
                         '<template v-slot:board><q-tooltip>{{labels.board}}</q-tooltip></template>' +
                         '<template v-slot:calendar><q-tooltip>{{labels.calendar}}</q-tooltip></template>' +
+                        '<template v-slot:tree><q-tooltip>{{labels.tree}}</q-tooltip></template>' +
                     '</q-btn-toggle>' +
                 '</div>' +
+                '<div ref="body" class="m-list-views-body" :class="{\'row no-wrap\': peekShown}">' +
+                '<div class="m-list-views-content" :class="{\'col\': peekShown}" @click="onPeekClick">' +
                 '<div class="m-list-views-list"><slot></slot></div>' +
+                // ---- the tree ----
+                '<m-list-tree v-if="current === \'tree\' && tree" ref="tree" :tree="tree" :items="items" :pref-key="prefKey" :find="findOf" :post="post"' +
+                        ' :peekable="peekShown" :selected="peekShown ? peekKey : \'\'" :peek-field="peek ? peek.keyField : \'\'" @select="(row) => peekSelect(peekKeyOf(row))"' +
+                        ' @moved="reloadRows" @focusrow="(row) => treeFocus(peekKeyOf(row))" @keys="(rows) => { treeKeys = rows.map(peekKeyOf); }">' +
+                    '<template v-for="name in treeSlotNames()" :key="name" v-slot:[name]="props"><slot :name="name" v-bind="props"></slot></template>' +
+                '</m-list-tree>' +
                 // ---- the board ----
                 '<div v-if="current === \'board\'" ref="board" class="m-board row no-wrap" :class="{\'m-board--dragging\': !!dragging}">' +
                     '<div v-for="column in columns" :key="column.value" class="m-board-col column no-wrap" :data-value="column.value"' +
@@ -4077,7 +4950,8 @@
                             '<span v-if="board.sumField" class="m-board-col-sum m-muted">{{sumText(column.sum)}}</span>' +
                         '</div>' +
                         '<div class="m-board-cards col" :data-value="column.value">' +
-                            '<div v-for="item in column.items" :key="item.index" class="m-board-card" :data-index="item.index" @click="openCard($event)">' +
+                            '<div v-for="item in column.items" :key="item.index" class="m-board-card" :data-index="item.index" @click="openCard($event, item)"' +
+                                    ' :class="{\'m-board-card--selected\': peekShown && !!peekKey && peekKey === peekKeyOf(item.row)}">' +
                                 '<slot :name="\'card_\' + item.index" :index="item.index" :row="item.row"><slot name="card" :index="item.index" :row="item.row">' +
                                     '<div class="m-card-title">{{cardTitle(item.row)}}</div></slot></slot>' +
                             '</div>' +
@@ -4186,6 +5060,19 @@
                         '</template>' +
                     '</m-dialog>' +
                 '</div>' +
+                '</div>' +
+                // ---- the peek pane ----
+                '<div v-if="peekShown" class="m-peek-sep" role="separator" aria-orientation="vertical" @pointerdown="onPeekResize"></div>' +
+                '<div v-if="peekShown" class="m-peek-pane" :style="{width: peekWidth ? peekWidth + \'px\' : \'55%\'}">' +
+                    '<div class="m-peek-bar row items-center no-wrap">' +
+                        '<q-space></q-space>' +
+                        '<q-btn v-if="peekKey" flat dense no-caps icon="sym_o_open_in_full" class="m-peek-full" :label="labels.openFull" @click="openFull"></q-btn>' +
+                        '<q-btn flat dense round icon="sym_o_close" class="m-peek-close" @click="peekSelect(\'\')"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
+                    '</div>' +
+                    '<m-dynamic-container v-if="peekSrc" :key="peekSrc" :id="uid + \'_peek\'" :url="peekSrc"></m-dynamic-container>' +
+                    '<div v-else class="m-peek-empty m-muted q-pa-md">{{labels.peekEmpty}}</div>' +
+                '</div>' +
+                '</div>' +
             '</div>',
         computed: {
             lv() { return moqui.listViews; },
@@ -4193,23 +5080,40 @@
                 const l = lvLocalize;
                 return { list: l("List"), board: l("Board"), calendar: l("Calendar"), today: l("Today"), previous: l("Previous"), next: l("Next"), allDay: l("All day"),
                     more: l("more"), noCards: l("No cards"), noEvents: l("Nothing to show"), newEvent: l("New"), title: l("Title"), starts: l("Starts"), ends: l("Ends"),
-                    create: l("Create"), month: l("Month"), week: l("Week"), day: l("Day"), agenda: l("List") };
+                    create: l("Create"), month: l("Month"), week: l("Week"), day: l("Day"), agenda: l("List"), tree: l("Tree"), groupBy: l("Group by"), peek: l("Peek"),
+                    peekTip: l("Open a row beside the list"), openFull: l("Open full"), close: l("Close"), peekEmpty: l("Select a row to see it here") };
             },
             phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
-            viewList() { return moqui.listViews.views(this.views, this.board, this.calendar); },
+            viewList() { return moqui.listViews.views(this.views, this.board, this.calendar, this.tree); },
+            // ---- group by (view-board group-fields) and all-rows ----
+            boardView() { return moqui.listViews.boardFor(this.board, this.groupBy); },
+            groupOptions() { return (this.board && this.board.groups) || []; },
+            groupLabel() { const found = this.groupOptions.find((option) => option.field === this.boardView.groupField); return found ? found.label : ""; },
+            allOn() { return !!(this.board && this.board.allRows && this.board.rowsUrl); },
+            boardItems() { return this.allOn && this.all.rows ? this.all.rows : this.items; },
+            // ---- peek (form-list peek-url): from 1280 px ----
+            peekAvailable() { return !!(this.peek && this.peek.url) && !!(this.$q && this.$q.screen && this.$q.screen.width >= 1280); },
+            peekShown() { return this.peekAvailable && this.peekOn; },
+            peekSrc() {
+                if (!this.peekShown || !this.peekKey) return "";
+                // the screen's own path, as the calendar's create-screen (the shell's link path is for the address bar)
+                const params = Object.assign({}, this.peek.parameters || {}, { [this.peek.keyField]: this.peekKey, peek: "true" });
+                return this.peek.url + "?" + moqui.objToSearch(params);
+            },
             viewOptions() { return this.viewList.map((name) => ({ value: name, icon: moqui.listViews.icons[name], slot: name, attrs: { "aria-label": this.labels[name], "data-view": name } })); },
             timeZone() { const config = qvt.config || moqui.config || {}; return config.timeZone || (this.$root && this.$root.timeZone) || ""; },
             locale() { const config = qvt.config || moqui.config || {}; return lvText(config.locale || (this.$root && this.$root.locale) || "").replace("_", "-") || undefined; },
             prefKey() { return "LIST_VIEW_" + (this.formLocation || this.formName || ""); },
+            peekPref() { return "LIST_PEEK_" + (this.formLocation || this.formName || ""); },
             // the rows the views show: the list's page without its total row, each with its index (the card_{index} slot)
             items() { return (this.rows || []).map((row, index) => ({ index, row: row || {} })).filter((item) => !item.row._moquiRowType); },
             // ---- board ----
             columns() {
                 if (!this.board) return [];
-                const known = this.board.columns || (this.info && this.info.columns) || [];
-                return moqui.listViews.boardColumns(this.items, this.board, known, this.moved);
+                const known = this.boardView.columns || (this.info && this.info.columns) || [];
+                return moqui.listViews.boardColumns(this.boardItems, this.boardView, known, this.moved);
             },
-            flow() { return (this.board && this.board.flow) || (this.info && this.info.transitions) || null; },
+            flow() { return (this.boardView && this.boardView.flow) || (this.info && this.info.transitions) || null; },
             canMove() { return !!(this.calendar && this.calendar.transition); },
             // the calendar's rows: those of the dates shown when it asks for them (range-find), else the list's page
             rangeOn() { return !!(this.calendar && this.calendar.rangeFind && this.calendar.rangeUrl); },
@@ -4336,7 +5240,9 @@
             anchor() { this.saveCalendar(); this.loadRange(false); },
             // other rows (another page, a reload): the moves are in them now. The server-merged rows are a literal of the screen's template,
             // a new array whenever the screen draws again, so their text tells a change
-            rowsKey() { this.moved = {}; this.loadInfo(); this.loadRange(true); }
+            rowsKey() { this.moved = {}; this.loadInfo(); this.loadRange(true); this.loadAll(true); this.$nextTick(this.markPeekRow); },
+            peekKey() { this.markPeekRow(); this.peekUrlParam(); },
+            peekShown() { this.$nextTick(this.markPeekRow); }
         },
         created() {
             const lv = moqui.listViews;
@@ -4358,17 +5264,34 @@
                 const month = lv.monthStart(today);
                 this.anchor = !days.length || days.some((day) => lv.monthStart(day) === month) ? today : days[0];
             }
+            // the board's grouping, kept for the tab; the peek pane as the user left it (LIST_PEEK_), its width for the tab, the URL's row
+            let group = null;
+            try { group = root.sessionStorage.getItem("moqui." + this.prefKey + "_group"); } catch (err) { group = null; }
+            if (group && this.groupOptions.some((option) => option.field === group)) this.groupBy = group;
+            if (this.peek) {
+                let peekOn = null;
+                let width = null;
+                try { peekOn = root.sessionStorage.getItem("moqui." + this.peekPref); width = root.sessionStorage.getItem("moqui." + this.peekPref + "_width"); } catch (err) { peekOn = null; }
+                if (peekOn === null) peekOn = ((qvt.config || moqui.config || {}).preferences || {})[this.peekPref] || null;
+                this.peekOn = peekOn === "true";
+                if (Number(width) > 0) this.peekWidth = Number(width);
+                if (params.peekId) { this.peekKey = String(params.peekId); this.peekOn = true; }
+            }
             this.loadInfo();
         },
         mounted() {
             this.nowTimer = setInterval(() => { this.nowAbs = Date.now(); }, 60000);
             this.afterViewChange();
+            this.onPeekKeyBound = (event) => this.onPeekKey(event);
+            if (this.peek && root.document) root.document.addEventListener("keydown", this.onPeekKeyBound);
+            this.$nextTick(this.markPeekRow);
         },
         updated() { if (this.current === "board") this.bindSortables(); },
         beforeUnmount() {
             clearInterval(this.nowTimer);
             this.unbindSortables();
             this.endPointer();
+            if (this.onPeekKeyBound && root.document) root.document.removeEventListener("keydown", this.onPeekKeyBound);
         },
         methods: {
             setView(name) {
@@ -4387,6 +5310,18 @@
                 if (this.current === "board") this.$nextTick(this.bindSortables);
                 else this.unbindSortables();
                 if (this.current === "calendar") { this.$nextTick(this.scrollToMorning); this.loadRange(false); }
+                if (this.current === "board") this.loadAll(false);
+                this.$nextTick(this.markPeekRow);
+            },
+            // the list's find: the screen's parameters without the paging (moqui.listViews.findParams), less the names in drop
+            findOf(drop) {
+                const shown = (this.mScreen && this.mScreen.parameters) || (this.$root && this.$root.currentParameters) || {};
+                return moqui.listViews.findParams(shown, drop);
+            },
+            // a GET of a path of the app (a form request, a transition) answering rows: the list's (listName), else the first list in it
+            askRows(path, params, listName) {
+                const prefix = this.$root && this.$root.appRootPath ? this.$root.appRootPath : "";
+                return moqui.request(prefix + path, { params }).then((result) => moqui.listViews.answerRows(result.json, listName));
             },
             // range-find: the rows of the dates shown, asked of the screen's form request (the list's find with the start and end field range
             // added, no paging, with the list's other parameters) when other dates show or the list changed; the last answer asked for wins,
@@ -4395,25 +5330,36 @@
                 if (!this.rangeOn || this.current !== "calendar") return;
                 const lv = moqui.listViews;
                 const cal = this.calendar;
-                const shown = (this.mScreen && this.mScreen.parameters) || (this.$root && this.$root.currentParameters) || {};
-                const base = {};
-                const paging = ["pageIndex", "pageSize", "pageNoLimit", "moquiFormName", "moquiSessionToken", "lastStandalone", "renderMode", "view"];
-                Object.keys(shown).forEach((name) => { if (!paging.includes(name) && shown[name] !== null && shown[name] !== undefined) base[name] = shown[name]; });
+                const base = this.findOf();
                 const finds = lv.rangeFinds(cal, lv.visibleDays(this.calMode, this.anchor, this.firstDay), this.timeZone).map((find) => Object.assign({}, base, find));
                 const key = JSON.stringify([cal.rangeUrl, finds]);
                 if (!force && key === this.range.key) return;
                 const seq = this.range.seq + 1;
                 this.range = Object.assign({}, this.range, { key, seq });
-                const prefix = this.$root && this.$root.appRootPath ? this.$root.appRootPath : "";
-                const ask = (params) => moqui.request(prefix + cal.rangeUrl, { params }).then((result) => {
-                    const json = result.json && moqui.isPlainObject(result.json) ? result.json : {};
-                    const list = cal.listName && Array.isArray(json[cal.listName]) ? json[cal.listName] : Object.values(json).find(Array.isArray);
-                    return Array.isArray(list) ? list : [];
-                });
-                Promise.all(finds.map(ask)).then((lists) => {
+                Promise.all(finds.map((params) => this.askRows(cal.rangeUrl, params, cal.listName))).then((lists) => {
                     if (seq === this.range.seq) this.range = Object.assign({}, this.range, { rows: lv.rangeItems(this.items, lists, cal.keyFields) });
                 }, (err) => {
                     if (seq === this.range.seq) this.range = Object.assign({}, this.range, { key: "" });
+                    moqui.handleAjaxError(err);
+                });
+            },
+            // all-rows: every row of the list's find for the board, asked of the screen's form request with no paging (a pageSize would
+            // be kept as the user's page size), the first max-rows shown, when the board shows or the list changed; the last answer asked
+            // for wins, and until one comes the list's page shows
+            loadAll(force) {
+                if (!this.allOn || this.current !== "board") return;
+                const board = this.board;
+                const params = Object.assign(this.findOf(), { pageNoLimit: "true" });
+                const key = JSON.stringify([board.rowsUrl, params]);
+                if (!force && key === this.all.key) return;
+                const seq = this.all.seq + 1;
+                this.all = Object.assign({}, this.all, { key, seq });
+                this.askRows(board.rowsUrl, params, board.listName).then((list) => {
+                    if (seq !== this.all.seq) return;
+                    this.all = Object.assign({}, this.all, { rows: moqui.listViews.rangeItems(this.items, [list.slice(0, board.maxRows || 500)], board.keyFields) });
+                    this.loadInfo();
+                }, (err) => {
+                    if (seq === this.all.seq) this.all = Object.assign({}, this.all, { key: "" });
                     moqui.handleAjaxError(err);
                 });
             },
@@ -4425,17 +5371,19 @@
                 else if (this.$root && this.$root.reloadSubscreens) this.$root.reloadSubscreens();
             },
             // the columns of a status board and the colors of a status calendar (or the labels of column-order values), asked once for the
-            // values the rows have when the server did not write them in (a server-static screen)
+            // values the rows have when the server did not write them in (a server-static screen, a status field chosen to group by)
             loadInfo() {
-                const board = this.board;
+                const board = this.board ? this.boardView : null;
                 const cal = this.calendar;
                 const lv = moqui.listViews;
                 const wantBoard = board && !board.columns && (board.statusTypeId || lv.isStatusField(board.groupField) || lv.list(board.columnOrder).length);
                 const wantColors = cal && cal.colorField && !cal.colors && lv.isStatusField(cal.colorField);
                 if (!wantBoard && !wantColors) return;
                 const values = new Set(lv.list(board && board.columnOrder));
-                this.items.forEach((item) => {
+                (board ? this.boardItems : this.items).forEach((item) => {
                     if (wantBoard) values.add(lvText(item.row[board.groupField]));
+                });
+                this.items.forEach((item) => {
                     if (wantColors) values.add(lvText(item.row[cal.colorField]));
                 });
                 values.delete("");
@@ -4468,15 +5416,26 @@
             dragAllowed(value) {
                 if (!this.dragging) return false;
                 const flow = this.flow;
-                if (!flow || !moqui.listViews.isStatusField(this.board.groupField)) return true;
+                if (!flow || !moqui.listViews.isStatusField(this.boardView.groupField)) return true;
                 return (flow[this.dragging.from] || []).includes(value);
             },
+            // the board grouped by another of its group-fields: its columns asked for when it is a status field the server gave none of
+            setGroup(field) {
+                if (!field || field === this.boardView.groupField) return;
+                this.groupBy = field === this.board.groupField ? "" : field;
+                this.moved = {};
+                this.info = null;
+                this.infoKey = "";
+                try { root.sessionStorage.setItem("moqui." + this.prefKey + "_group", field); } catch (err) { /* no storage */ }
+                this.loadInfo();
+            },
             // a click on a card opens it: the link of its title (the first link of the card), unless the click was on a control of the
-            // card (a link, a button, a field, an in-place edit: moqui.listViews.onControl) or ended a drag
-            openCard(event) {
+            // card (a link, a button, a field, an in-place edit: moqui.listViews.onControl) or ended a drag; in the peek pane while it shows
+            openCard(event, item) {
                 if (Date.now() - this.dragEnded < 350) return;
                 const target = event.target;
                 if (moqui.listViews.onControl(target, event.currentTarget)) return;
+                if (this.peekShown && item) { this.peekSelect(this.peekKeyOf(item.row)); return; }
                 const card = event.currentTarget;
                 const link = card && card.querySelector ? card.querySelector(".m-card-title a[href], a[href]") : null;
                 if (link) link.click();
@@ -4517,18 +5476,107 @@
                 this.sortables = [];
             },
             moveCard(index, to) {
-                const item = this.items.find((entry) => entry.index === index);
+                const item = this.boardItems.find((entry) => entry.index === index);
                 if (!item || !this.board.transition) return;
                 const before = this.moved[index];
                 this.moved = Object.assign({}, this.moved, { [index]: Object.assign({}, before, { group: to }) });
                 const params = Object.assign({}, this.board.parameters || {}, moqui.listViews.keyParams(item.row, this.board.keyFields));
-                params[this.board.parameterName || this.board.groupField] = to;
+                // the new value under the field's name (parameter-name for group-field) and, with group-fields, the field as groupField
+                const view = this.boardView;
+                params[view.parameterName || view.groupField] = to;
+                if (this.groupOptions.length) params.groupField = view.groupField;
                 this.post(this.board.transition, params).then((ok) => {
                     if (ok) return;
                     const moved = Object.assign({}, this.moved);
                     if (before) moved[index] = before; else delete moved[index];
                     this.moved = moved;
                 });
+            },
+            // ---- tree: the slots m-list-tree draws a row with, passed on ----
+            treeSlotNames() { return Object.keys(this.$slots || {}).filter((name) => name === "tree" || name.indexOf("tree_") === 0); },
+            // ---- peek ----
+            peekKeyOf(row) { return row && this.peek ? lvText(row[this.peek.keyField]) : ""; },
+            setPeek(on) {
+                const value = on ? "true" : "false";
+                this.peekOn = !!on;
+                if (!on) this.peekSelect("");
+                try { root.sessionStorage.setItem("moqui." + this.peekPref, value); } catch (err) { /* no storage */ }
+                const config = qvt.config || moqui.config;
+                if (config) config.preferences = Object.assign({}, config.preferences, { [this.peekPref]: value });
+                if (this.$root && this.$root.setPreference && this.$root.userId) this.$root.setPreference(this.peekPref, value);
+            },
+            peekSelect(key) { this.peekKey = key ? String(key) : ""; },
+            // the selected key in the URL as peekId, so a peeked row is a link; not for a list in a container, whose URL is its own
+            peekUrlParam() {
+                const rootVm = this.$root;
+                if ((this.mScreen && this.mScreen.containerId) || !rootVm || !rootVm.currentParameters || !root.history || !root.history.replaceState) return;
+                const params = Object.assign({}, rootVm.currentParameters);
+                if (this.peekKey) params.peekId = this.peekKey; else delete params.peekId;
+                if (String(params.peekId || "") === String(rootVm.currentParameters.peekId || "")) return;
+                rootVm.currentParameters = params;
+                root.history.replaceState(root.history.state, "", rootVm.currentLinkUrl);
+            },
+            // a click on a list row, not on a control of it, opens the row in the peek pane
+            onPeekClick(event) {
+                if (!this.peekShown || this.current !== "list") return;
+                const target = event.target;
+                const rowEl = target && target.closest ? target.closest("[data-row]") : null;
+                if (!rowEl || rowEl.closest(".m-list-views") !== this.$el || moqui.listViews.onControl(target, rowEl)) return;
+                const row = this.rows[Number(rowEl.getAttribute("data-row"))];
+                if (row && !row._moquiRowType) this.peekSelect(this.peekKeyOf(row));
+            },
+            // the list's row of the peeked key marked selected (the list's own rows are the server's, so by their class)
+            markPeekRow() {
+                const el = this.$el;
+                if (!el || !el.querySelectorAll) return;
+                el.querySelectorAll(".m-list-views-list [data-row]").forEach((rowEl) => {
+                    if (rowEl.closest(".m-list-views") !== el) return;
+                    const row = this.rows[Number(rowEl.getAttribute("data-row"))];
+                    rowEl.classList.toggle("selected", this.peekShown && !!this.peekKey && !!row && this.peekKeyOf(row) === this.peekKey);
+                });
+            },
+            // the keys of the rows in the order the view shows them, for Up and Down
+            peekOrder() {
+                if (this.current === "tree") return this.treeKeys;
+                if (this.current === "board") return [].concat(...this.columns.map((column) => column.items.map((item) => this.peekKeyOf(item.row))));
+                return this.items.map((item) => this.peekKeyOf(item.row));
+            },
+            // Up and Down move the peek pane through the rows, Escape closes it; not while typing, in a menu or dialog, or with a modifier
+            onPeekKey(event) {
+                if (!this.peekShown || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                const target = event.target;
+                if (target && target.closest && target.closest("input, textarea, select, [contenteditable='true'], [contenteditable=''], .q-menu, .q-dialog, .m-list-tree")) return;
+                if (event.key === "Escape" && this.peekKey) { event.preventDefault(); this.peekSelect(""); return; }
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                const keys = this.peekOrder().filter((key) => key);
+                if (!keys.length) return;
+                const at = keys.indexOf(this.peekKey);
+                const next = at < 0 ? (event.key === "ArrowDown" ? 0 : keys.length - 1) : at + (event.key === "ArrowDown" ? 1 : -1);
+                if (next < 0 || next >= keys.length) return;
+                event.preventDefault();
+                this.peekSelect(keys[next]);
+            },
+            // the tree's focused row follows into the pane once a row is peeked
+            treeFocus(key) { if (this.peekShown && this.peekKey && key) this.peekSelect(key); },
+            openFull() {
+                const params = Object.assign({}, this.peek.parameters || {}, { [this.peek.keyField]: this.peekKey });
+                const url = this.peek.url + "?" + moqui.objToSearch(params);
+                if (this.$root && this.$root.setUrl) this.$root.setUrl(this.$root.getLinkPath ? this.$root.getLinkPath(url) : url);
+            },
+            // the separator dragged: the pane's width, kept for the tab, between 320 px and what leaves the list 480 px
+            onPeekResize(event) {
+                const body = this.$refs.body;
+                if (!body || !body.getBoundingClientRect) return;
+                event.preventDefault();
+                const rect = body.getBoundingClientRect();
+                const move = (moved) => { this.peekWidth = Math.round(Math.max(320, Math.min(rect.right - moved.clientX, rect.width - 480))); };
+                const up = () => {
+                    root.removeEventListener("pointermove", move);
+                    root.removeEventListener("pointerup", up);
+                    try { root.sessionStorage.setItem("moqui." + this.peekPref + "_width", String(this.peekWidth)); } catch (err) { /* no storage */ }
+                };
+                root.addEventListener("pointermove", move);
+                root.addEventListener("pointerup", up);
             },
             // ---- calendar ----
             setMode(mode) { if (mode) { this.calMode = mode; this.pop.open = false; } },
@@ -4721,6 +5769,575 @@
         }
     });
 
+    /* ========== list views: a form-list as a tree ========== */
+
+    // The tree of a form-list (view-tree; style-guide §3.15): the rows known (the list's page, the levels fetched as rows open, the
+    // ancestors the find left out) as {key: {key, row, index, parent, muted, order}}, index the row's place on the page (its tree_{index}
+    // slot) or null. The helpers are pure, for the node tests (WebrootVue.qvt.views.test.js); m-list-tree draws them.
+    moqui.listTree = {
+        // the key of a row: its first key field's value as text
+        keyOf(row, keyFields) {
+            const name = moqui.listViews.list(keyFields)[0];
+            return name && row ? lvText(row[name]) : "";
+        },
+        // the parent of a known row as the tree places it: its parent when that is known, else the top ("")
+        placed(known, key) {
+            const parent = known[key] ? lvText(known[key].parent) : "";
+            return parent && known[parent] && parent !== key ? parent : "";
+        },
+        // the keys under each parent ("" the top) in order
+        childrenOf(known) {
+            const out = {};
+            Object.keys(known).forEach((key) => {
+                const parent = moqui.listTree.placed(known, key);
+                (out[parent] = out[parent] || []).push(key);
+            });
+            Object.keys(out).forEach((parent) => out[parent].sort((a, b) => known[a].order - known[b].order));
+            return out;
+        },
+        // The rows shown, depth first from the top: a row's children when it is open, each with its level (1 at the top), its place among
+        // its siblings and their count; after an open row's children what extra(key) gives (a loading, error or more row) at their level.
+        visible(known, children, isOpen, extra) {
+            const out = [];
+            const seen = new Set();
+            const walk = (parent, level) => {
+                const keys = children[parent] || [];
+                keys.forEach((key, index) => {
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    out.push({ kind: "row", key, level, posinset: index + 1, setsize: keys.length });
+                    if (!isOpen(key)) return;
+                    walk(key, level + 1);
+                    (extra ? extra(key) : []).forEach((kind) => out.push({ kind, key, level: level + 1 }));
+                });
+            };
+            walk("", 1);
+            return out;
+        },
+        // the parents the known rows name that are not known (what ancestor-transition is asked for)
+        missing(known) {
+            const out = [];
+            Object.keys(known).forEach((key) => {
+                const parent = lvText(known[key].parent);
+                if (parent && !known[parent] && out.indexOf(parent) < 0) out.push(parent);
+            });
+            return out;
+        },
+        // whether key is under (or is) top, by the known parents
+        within(known, key, top) {
+            const seen = new Set();
+            let at = key;
+            while (at && !seen.has(at)) {
+                if (at === top) return true;
+                seen.add(at);
+                at = known[at] ? lvText(known[at].parent) : "";
+            }
+            return false;
+        },
+        // Where a row goes for a key (indent under the sibling above as its last child, outdent to after its parent, up and down among its
+        // siblings), as the parent and the previous sibling a move posts (empty for the top and the first); null when it cannot move so.
+        move(known, children, key, how) {
+            const node = known[key];
+            if (!node) return null;
+            const parent = moqui.listTree.placed(known, key);
+            const siblings = children[parent] || [];
+            const at = siblings.indexOf(key);
+            const own = lvText(node.parent);
+            if (how === "indent") {
+                if (at < 1) return null;
+                const under = siblings[at - 1];
+                const kids = (children[under] || []).filter((other) => other !== key);
+                return { parent: under, previous: kids.length ? kids[kids.length - 1] : "" };
+            }
+            if (how === "outdent") return own && known[own] ? { parent: lvText(known[own].parent), previous: own } : null;
+            if (how === "up") return at >= 1 ? { parent: own, previous: at >= 2 ? siblings[at - 2] : "" } : null;
+            if (how === "down") return at >= 0 && at < siblings.length - 1 ? { parent: own, previous: siblings[at + 1] } : null;
+            return null;
+        },
+        // A drop of key on the row target: before or after it (zone), or into it as its last child; after an open row with children is its
+        // first child. null onto itself or into its own branch.
+        drop(known, children, key, target, zone, targetOpen) {
+            if (!known[key] || !known[target] || moqui.listTree.within(known, target, key)) return null;
+            const kidsOf = (parent) => (children[parent] || []).filter((other) => other !== key);
+            if (zone === "into") { const kids = kidsOf(target); return { parent: target, previous: kids.length ? kids[kids.length - 1] : "" }; }
+            if (zone === "after" && targetOpen && kidsOf(target).length) return { parent: target, previous: "" };
+            const parent = lvText(known[target].parent);
+            if (zone === "after") return { parent, previous: target };
+            const siblings = kidsOf(moqui.listTree.placed(known, target));
+            const at = siblings.indexOf(target);
+            return { parent, previous: at >= 1 ? siblings[at - 1] : "" };
+        },
+        // the parent and the previous sibling a row has now, to tell a move that changes nothing
+        place(known, children, key) {
+            const siblings = children[moqui.listTree.placed(known, key)] || [];
+            const at = siblings.indexOf(key);
+            return { parent: known[key] ? lvText(known[key].parent) : "", previous: at >= 1 ? siblings[at - 1] : "" };
+        },
+        // the indent of a level: 20 px a level to the sixth (12 px to the fourth on a phone), then its number shown
+        indent(level, phone) {
+            const cap = phone ? 4 : 6;
+            return { px: (Math.min(level, cap) - 1) * (phone ? 12 : 20), deep: level > cap };
+        },
+        // The rows open at a level (Expand to level n: the rows above level n that have children; all for "all") over the known rows;
+        // hasChildren(key) tells a row that may have children
+        openTo(children, level, hasChildren) {
+            const max = level === "all" ? Infinity : Number(level) || 1;
+            const out = {};
+            const walk = (parent, depth) => (children[parent] || []).forEach((key) => {
+                if (depth >= max || !hasChildren(key) || out[key]) return;
+                out[key] = true;
+                walk(key, depth + 1);
+            });
+            walk("", 1);
+            return out;
+        }
+    };
+
+    // The tree view of m-list-views (view-tree, style-guide §3.15), in the list's look: a div table with the list's columns (each row of
+    // the page its tree_{index} slot, the list's cells; else the tree slot, else the text of its fields) and the roll-up columns at the
+    // right, a totals row of the top-level rows. A row opens to its children (asked of children-transition with the list's find; 200 shown
+    // and a Show more row for the next 200), under it with a skeleton row while they come and an error row with Retry if they fail. The
+    // rows open are the branches that hold a row of the page until the user opens or closes one, then those kept for the tab; Expand to
+    // level n opens the rows above
+    // it (the level in the URL as treeLevel). The page's rows whose parents are not known are placed under their ancestors, asked of
+    // ancestor-transition and shown muted. With a transition a row is dragged (from anywhere but a control of it) before, after or into
+    // another, or moved by Tab, Shift+Tab, Alt+Up and Alt+Down; each posts the key fields, the parent field and previousSiblingId and asks
+    // the list to load again. The keys are the treegrid's.
+    component("m-list-tree", {
+        name: "mListTree",
+        inject: { mScreen: { default: null } },
+        props: { tree: { type: Object, required: true }, items: { type: Array, default: () => [] }, prefKey: String, find: Function, post: Function,
+            peekable: Boolean, selected: String, peekField: String },
+        emits: ["select", "moved", "focusrow", "keys"],
+        data() {
+            return { known: {}, loaded: {}, loading: {}, failed: {}, more: {}, order: 0, openState: null, level: "", focusKey: "", armed: "", dragKey: "",
+                dropAt: null, hover: { key: "", since: 0 }, capped: false };
+        },
+        template:
+            '<div class="m-list-tree" :class="{\'m-list-tree--dragging\': !!dragKey}">' +
+                '<div class="m-tree-bar row items-center no-wrap">' +
+                    '<q-btn-dropdown flat dense no-caps icon="sym_o_unfold_more" class="m-tree-expand" :label="labels.expand">' +
+                        '<q-list dense><q-item v-for="option in levelOptions" :key="option.value" clickable v-close-popup :active="level === option.value"' +
+                                ' :data-level="option.value" @click="expandTo(option.value)"><q-item-section>{{option.label}}</q-item-section></q-item></q-list>' +
+                    '</q-btn-dropdown>' +
+                '</div>' +
+                '<div class="q-my-sm q-table__container q-table__card q-table--horizontal-separator q-table--dense q-table--flat"' +
+                        ' :class="{\'q-table--dark\': $q.dark.isActive, \'q-table__card--dark\': $q.dark.isActive, \'q-dark\': $q.dark.isActive}">' +
+                    '<div class="table q-table m-tree-table" role="treegrid" :aria-label="labels.tree">' +
+                        '<div class="thead"><div class="tr" role="row">' +
+                            '<div v-for="(column, c) in tree.columns" :key="\'h\' + c" class="th" role="columnheader" :class="column.align === \'right\' ? \'text-right\' : \'text-left\'">{{column.label}}</div>' +
+                            '<div v-for="rollup in rollups" :key="\'r\' + rollup.name" class="th text-right m-tree-rollup" role="columnheader">{{rollup.label}}</div>' +
+                        '</div></div>' +
+                        '<div ref="body" class="tbody" @keydown="onKey">' +
+                            '<template v-for="entry in rows" :key="entry.id">' +
+                                '<div v-if="entry.kind === \'row\'" class="tr m-tree-row" role="row" :data-tree-key="entry.key" :tabindex="entry.key === focusShown ? 0 : -1"' +
+                                        ' :aria-level="entry.level" :aria-setsize="entry.setsize" :aria-posinset="entry.posinset" :aria-expanded="entry.parent ? String(entry.open) : null"' +
+                                        ' :aria-selected="entry.selected ? \'true\' : null" :class="entry.classes" :draggable="canMove && !entry.muted && armed === entry.key ? \'true\' : null"' +
+                                        ' @click="onRowClick($event, entry)" @focus="focusKey = entry.key" @pointerdown="arm($event, entry)"' +
+                                        ' @dragstart="onDragStart($event, entry)" @dragover="onDragOver($event, entry)" @drop="onDrop($event, entry)" @dragend="onDragEnd">' +
+                                    '<slot :name="\'tree_\' + entry.index" :t="entry.t" :row="entry.row"><slot name="tree" :t="entry.t" :row="entry.row">' +
+                                        '<div v-for="(column, c) in tree.columns" :key="c" class="td" :class="column.align === \'right\' ? \'text-right\' : null">' +
+                                            '<div v-if="c === 0" class="m-tree-cell row no-wrap items-center"><m-tree-lead :t="entry.t"></m-tree-lead><div class="m-tree-label">{{cellText(entry.row, column)}}</div></div>' +
+                                            '<template v-else>{{cellText(entry.row, column)}}</template>' +
+                                        '</div>' +
+                                    '</slot></slot>' +
+                                    '<div v-for="rollup in rollups" :key="rollup.name" class="td text-right m-tree-rollup" :class="{\'m-muted\': !entry.parent}">{{rollupText(entry.row, rollup.name)}}</div>' +
+                                '</div>' +
+                                '<div v-else class="tr m-tree-extra" :data-extra="entry.kind">' +
+                                    '<div class="td"><div class="m-tree-cell row no-wrap items-center" :style="{paddingLeft: (indentOf(entry.level).px + 24) + \'px\'}">' +
+                                        '<q-skeleton v-if="entry.kind === \'loading\'" type="text" width="160px" height="20px"></q-skeleton>' +
+                                        '<template v-else-if="entry.kind === \'error\'"><span class="text-negative">{{labels.failed}}</span>' +
+                                            '<q-btn flat dense no-caps color="primary" class="q-ml-sm m-tree-retry" :label="labels.retry" @click="fetchLevel(entry.key)"></q-btn></template>' +
+                                        '<q-btn v-else flat dense no-caps color="primary" class="m-tree-more" :label="labels.more" @click="more[entry.key] = shownOf(entry.key) + 200"></q-btn>' +
+                                    '</div></div>' +
+                                    '<div v-for="n in fillers" :key="n" class="td"></div>' +
+                                '</div>' +
+                            '</template>' +
+                            '<div v-if="!rows.length" class="tr"><div class="td m-muted">{{labels.empty}}</div><div v-for="n in fillers" :key="n" class="td"></div></div>' +
+                            '<div v-if="rollups.length && rows.length" class="tr m-tree-total text-weight-bold">' +
+                                '<div class="td">{{totalLabel}}</div>' +
+                                '<div v-for="n in tree.columns.length - 1" :key="\'f\' + n" class="td"></div>' +
+                                '<div v-for="rollup in rollups" :key="rollup.name" class="td text-right m-tree-rollup">{{totalText(rollup.name)}}</div>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>',
+        computed: {
+            labels() {
+                const l = lvLocalize;
+                return { expand: l("Expand"), tree: l("Tree"), failed: l("Could not load these rows"), retry: l("Retry"), more: l("Show 200 more"),
+                    empty: l("Nothing to show"), open: l("Open"), close: l("Close"), all: l("All"), level: l("Level"), total: l("Total") };
+            },
+            lt() { return moqui.listTree; },
+            phone() { return !!(this.$q && this.$q.screen && this.$q.screen.lt.sm); },
+            keyField() { return moqui.listViews.list(this.tree.keyFields)[0] || ""; },
+            canMove() { return !!this.tree.transition; },
+            rollups() { return this.tree.rollups || []; },
+            fillers() { return Math.max(0, (this.tree.columns || []).length + this.rollups.length - 1); },
+            levelOptions() {
+                return ["1", "2", "3"].map((value) => ({ value, label: this.labels.level + " " + value })).concat([{ value: "all", label: this.labels.all }]);
+            },
+            children() { return moqui.listTree.childrenOf(this.known); },
+            // the rows of the page by key, for a fetched row that is on the page (its slot)
+            pageIndex() {
+                const out = {};
+                this.items.forEach((item) => { const key = moqui.listTree.keyOf(item.row, this.tree.keyFields); if (key) out[key] = item.index; });
+                return out;
+            },
+            itemsKey() { try { return JSON.stringify(this.items.map((item) => item.row)); } catch (err) { return String(Math.random()); } },
+            rows() {
+                const lt = moqui.listTree;
+                // a level shows 200 rows, and 200 more for each Show more (the top level is the list's page)
+                const shown = {};
+                Object.keys(this.children).forEach((key) => { shown[key] = key ? this.children[key].slice(0, this.shownOf(key)) : this.children[key]; });
+                const extra = (key) => (this.loading[key] ? ["loading"] : this.failed[key] ? ["error"] : (this.children[key] || []).length > this.shownOf(key) ? ["more"] : []);
+                return lt.visible(this.known, shown, (key) => this.isOpen(key), extra).map((entry, at) => {
+                    if (entry.kind !== "row") return Object.assign(entry, { id: entry.kind + ":" + entry.key + ":" + at });
+                    const node = this.known[entry.key];
+                    const parent = this.hasChildren(entry.key);
+                    const open = parent && this.isOpen(entry.key);
+                    const selected = !!this.selected && !!this.peekField && lvText(node.row[this.peekField]) === this.selected;
+                    const indent = lt.indent(entry.level, this.phone);
+                    const drop = this.dropAt && this.dropAt.key === entry.key ? this.dropAt.zone : "";
+                    return Object.assign(entry, { id: "row:" + entry.key, row: node.row, index: node.index, muted: node.muted, parent, open, selected,
+                        classes: { "m-tree-row--parent": parent, "m-tree-row--muted": node.muted, selected, "m-tree-row--focus": entry.key === this.focusKey,
+                            "m-tree-row--dragged": entry.key === this.dragKey, ["m-tree-drop-" + drop]: !!drop },
+                        t: { key: entry.key, level: entry.level, parent, open, loading: !!this.loading[entry.key], indent: indent.px, deep: indent.deep,
+                            openLabel: this.labels.open, closeLabel: this.labels.close, toggle: () => this.toggle(entry.key) } });
+                });
+            },
+            focusShown() {
+                const shown = this.rows.filter((entry) => entry.kind === "row");
+                return shown.some((entry) => entry.key === this.focusKey) ? this.focusKey : (shown[0] ? shown[0].key : "");
+            },
+            topKeys() { return this.children[""] || []; },
+            totalLabel() { return this.labels.total + " (" + this.topKeys.length + ")"; }
+        },
+        watch: {
+            itemsKey() { this.rebuild(); },
+            rows: { handler(rows) { this.$emit("keys", rows.filter((entry) => entry.kind === "row").map((entry) => entry.row)); }, immediate: true }
+        },
+        created() {
+            const params = (this.mScreen && this.mScreen.parameters) || (this.$root && this.$root.currentParameters) || {};
+            let stored = null;
+            try { stored = JSON.parse(root.sessionStorage.getItem("moqui." + this.prefKey + "_tree") || "null"); } catch (err) { stored = null; }
+            if (Array.isArray(stored)) { this.openState = {}; stored.forEach((key) => { this.openState[String(key)] = true; }); }
+            if (params.treeLevel && this.levelOptions.some((option) => option.value === String(params.treeLevel))) this.level = String(params.treeLevel);
+            this.rebuild();
+        },
+        methods: {
+            indentOf(level) { return moqui.listTree.indent(level, this.phone); },
+            shownOf(key) { return this.more[key] || 200; },
+            // ---- the rows known ----
+            add(row, muted, reorder) {
+                const key = moqui.listTree.keyOf(row, this.tree.keyFields);
+                if (!key) return false;
+                const had = this.known[key];
+                const index = this.pageIndex[key] === undefined ? null : this.pageIndex[key];
+                // a row of the page or of a level keeps its place and is not muted; an ancestor does not take the place of either
+                if (had && muted) return false;
+                this.known[key] = { key, row: had && had.index !== null && index !== null ? had.row : row, index, parent: lvText(row[this.tree.parentField]), muted: !!muted,
+                    order: had && !reorder ? had.order : ++this.order };
+                return !had;
+            },
+            rebuild() {
+                this.known = {};
+                this.loaded = {};
+                this.loading = {};
+                this.failed = {};
+                this.more = {};
+                this.items.forEach((item) => this.add(item.row, false, true));
+                this.loadAncestors(0);
+                this.fetchOpen();
+                if (this.level) this.applyLevel();
+            },
+            // the parents of the known rows that are not known, from ancestor-transition (ids), again for the ones its answer names
+            loadAncestors(round) {
+                const missing = moqui.listTree.missing(this.known);
+                if (!this.tree.ancestorUrl || !missing.length || round > 8) return;
+                this.ask(this.tree.ancestorUrl, Object.assign({}, this.tree.childrenParameters, { ids: missing.join(",") })).then((list) => {
+                    let added = 0;
+                    list.forEach((row) => { if (row && typeof row === "object" && this.add(row, true, true)) added++; });
+                    if (added) this.loadAncestors(round + 1);
+                }, (err) => console.warn("The ancestors of the tree did not load", err));
+            },
+            ask(path, params) {
+                const prefix = this.$root && this.$root.appRootPath ? this.$root.appRootPath : "";
+                return moqui.request(prefix + path, { params }).then((result) => moqui.listViews.answerRows(result.json, this.tree.listName));
+            },
+            // One level: the children of key, with the list's find without the parent field's own find, no paging (a pageSize would be kept
+            // as the user's page size); the rows of the answer in its order.
+            fetchLevel(key) {
+                if (!this.tree.childrenUrl || this.loading[key]) return Promise.resolve();
+                const tree = this.tree;
+                const params = Object.assign(this.find ? this.find([tree.parentField]) : {}, tree.childrenParameters || {},
+                    { [tree.parentField]: key, pageNoLimit: "true" });
+                this.loading[key] = true;
+                this.failed[key] = false;
+                return this.ask(tree.childrenUrl, params).then((list) => {
+                    list.forEach((row) => { if (row && typeof row === "object" && !row._moquiRowType) this.add(row, false, true); });
+                    this.loaded[key] = true;
+                    this.loading[key] = false;
+                    // the rows under it that a level chosen opens, else the ones kept open
+                    if (this.level) this.applyLevel(); else this.fetchOpen();
+                }, (err) => {
+                    this.loading[key] = false;
+                    this.failed[key] = true;
+                    console.warn("The rows under " + key + " did not load", err);
+                });
+            },
+            // the children of the open rows that are not shown yet: each open row with no children known (or fewer than its child count)
+            fetchOpen() {
+                if (!this.openState) return;
+                const count = this.tree.childCountField;
+                Object.keys(this.openState).forEach((key) => {
+                    const node = this.known[key];
+                    if (!this.openState[key] || !node || this.loaded[key] || this.loading[key] || this.failed[key]) return;
+                    const knownKids = (this.children[key] || []).length;
+                    if (count ? moqui.listViews.number(node.row[count]) > knownKids : knownKids === 0) this.fetchLevel(key);
+                });
+            },
+            // ---- open and closed ----
+            hasChildren(key) {
+                const node = this.known[key];
+                if (!node) return false;
+                if ((this.children[key] || []).length) return true;
+                const count = this.tree.childCountField;
+                if (count) return moqui.listViews.number(node.row[count]) > 0;
+                return !this.loaded[key];
+            },
+            // open: as the user left it, else the branches that hold a known row
+            isOpen(key) { return this.openState ? !!this.openState[key] : (this.children[key] || []).length > 0; },
+            saveOpen() {
+                const keys = Object.keys(this.openState || {}).filter((key) => this.openState[key]);
+                try { root.sessionStorage.setItem("moqui." + this.prefKey + "_tree", JSON.stringify(keys)); } catch (err) { /* no storage */ }
+            },
+            // a row opened or closed by hand (or by a move): the level chosen no longer says what is open
+            setOpen(key, open) {
+                this.level = "";
+                if (!this.openState) {
+                    const now = {};
+                    Object.keys(this.known).forEach((other) => { if (this.isOpen(other)) now[other] = true; });
+                    this.openState = now;
+                }
+                this.openState[key] = !!open;
+                this.saveOpen();
+                if (open && !this.loaded[key] && this.hasChildren(key)) this.fetchLevel(key);
+            },
+            toggle(key) { this.setOpen(key, !this.isOpen(key)); },
+            // Expand to level n: the rows above it open, their levels asked for as they come (Expand all stops past 500 rows)
+            expandTo(value) {
+                this.level = value;
+                this.capped = false;
+                this.applyLevel();
+                this.levelParam();
+            },
+            applyLevel() {
+                const level = this.level;
+                if (!level) return;
+                this.openState = moqui.listTree.openTo(this.children, level, (key) => this.hasChildren(key));
+                this.saveOpen();
+                const big = Object.keys(this.known).length > 500;
+                if (big && level === "all" && !this.capped) {
+                    this.capped = true;
+                    moqui.notifyMessages(lvLocalize("Expand all stopped at 500 rows"));
+                }
+                Object.keys(this.openState).forEach((key) => {
+                    if (!big && !this.loaded[key] && !this.loading[key] && !this.failed[key]) this.fetchLevel(key);
+                });
+            },
+            // the level chosen in the URL as treeLevel; not for a list in a container
+            levelParam() {
+                const rootVm = this.$root;
+                if ((this.mScreen && this.mScreen.containerId) || !rootVm || !rootVm.currentParameters || !root.history || !root.history.replaceState) return;
+                rootVm.currentParameters = Object.assign({}, rootVm.currentParameters, { treeLevel: this.level });
+                root.history.replaceState(root.history.state, "", rootVm.currentLinkUrl);
+            },
+            // ---- cells ----
+            cellText(row, column) { return (column.fields || []).map((field) => moqui.listViews.text(row, field)).filter((text) => text).join(" "); },
+            rollupText(row, name) {
+                const shown = row ? row[name + "_display"] : null;
+                if (shown !== undefined && shown !== null && shown !== "") return lvText(shown);
+                const value = row ? row[name] : null;
+                if (value === null || value === undefined || value === "") return "";
+                // a number formatted, other text (done of total, 6/8) as it is
+                return typeof value === "number" || /^-?\d+(\.\d+)?$/.test(String(value)) ? this.number(Number(value)) : lvText(value);
+            },
+            number(value) {
+                try { return moqui.l10n && moqui.l10n.format ? moqui.l10n.format(value, "#,##0.##") : String(value); } catch (err) { return String(value); }
+            },
+            // the totals row: the top-level rows' roll-ups, so nothing counts twice; none for a roll-up that is not a number (done of total)
+            totalText(name) {
+                const values = this.topKeys.map((key) => this.known[key].row[name]).filter((value) => value !== null && value !== undefined && value !== "");
+                if (values.some((value) => typeof value !== "number" && !/^-?\d+(\.\d+)?$/.test(String(value)))) return "";
+                return this.number(values.reduce((sum, value) => sum + Number(value), 0));
+            },
+            // ---- rows: click, keys ----
+            onRowClick(event, entry) {
+                if (moqui.listViews.onControl(event.target, event.currentTarget)) return;
+                this.focusKey = entry.key;
+                if (this.peekable) this.$emit("select", entry.row);
+            },
+            rowEl(key) {
+                const body = this.$refs.body;
+                if (!body) return null;
+                return Array.from(body.querySelectorAll("[data-tree-key]")).find((el) => el.getAttribute("data-tree-key") === key) || null;
+            },
+            focusRow(key) {
+                if (!key) return;
+                this.focusKey = key;
+                const entry = this.rows.find((other) => other.kind === "row" && other.key === key);
+                if (entry) this.$emit("focusrow", entry.row);
+                this.$nextTick(() => { const el = this.rowEl(key); if (el) el.focus(); });
+            },
+            // the treegrid's keys on the focused row (not in a control of it): Up, Down, Home, End, Right, Left, Enter, and the moves
+            onKey(event) {
+                const rowEl = event.target && event.target.closest ? event.target.closest("[data-tree-key]") : null;
+                if (!rowEl || rowEl !== event.target) return;
+                const key = rowEl.getAttribute("data-tree-key");
+                const shown = this.rows.filter((entry) => entry.kind === "row");
+                const at = shown.findIndex((entry) => entry.key === key);
+                const entry = shown[at];
+                if (!entry) return;
+                const go = (other) => { event.preventDefault(); if (other) this.focusRow(other.key); };
+                if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); this.moveBy(entry, event.key === "ArrowUp" ? "up" : "down"); return; }
+                if (event.altKey || event.ctrlKey || event.metaKey) return;
+                if (event.key === "ArrowDown") go(shown[at + 1]);
+                else if (event.key === "ArrowUp") go(shown[at - 1]);
+                else if (event.key === "Home") go(shown[0]);
+                else if (event.key === "End") go(shown[shown.length - 1]);
+                else if (event.key === "ArrowRight") {
+                    event.preventDefault();
+                    if (entry.parent && !entry.open) this.setOpen(key, true);
+                    else if (entry.open && shown[at + 1] && shown[at + 1].level > entry.level) this.focusRow(shown[at + 1].key);
+                } else if (event.key === "ArrowLeft") {
+                    event.preventDefault();
+                    if (entry.open) this.setOpen(key, false);
+                    else { const up = moqui.listTree.placed(this.known, key); if (up) this.focusRow(up); }
+                } else if (event.key === "Enter") {
+                    const link = rowEl.querySelector("a[href]");
+                    event.preventDefault();
+                    if (link) link.click();
+                    else if (this.peekable) this.$emit("select", entry.row);
+                } else if (event.key === "Tab" && this.canMove && !entry.muted) {
+                    event.preventDefault();
+                    this.moveBy(entry, event.shiftKey ? "outdent" : "indent");
+                }
+            },
+            // ---- moves ----
+            // a row's level known (its children fetched when it may have some), for a move that makes the row its last child
+            levelKnown(key) { return this.loaded[key] || !this.hasChildren(key) ? Promise.resolve() : this.fetchLevel(key); },
+            moveBy(entry, how) {
+                if (!this.canMove || entry.muted) return;
+                const lt = moqui.listTree;
+                const siblings = this.children[lt.placed(this.known, entry.key)] || [];
+                const under = how === "indent" ? siblings[siblings.indexOf(entry.key) - 1] : null;
+                (under ? this.levelKnown(under) : Promise.resolve()).then(() => this.postMove(entry.key, lt.move(this.known, this.children, entry.key, how)));
+            },
+            postMove(key, target) {
+                if (!target) return;
+                const lt = moqui.listTree;
+                const now = lt.place(this.known, this.children, key);
+                if (now.parent === target.parent && now.previous === target.previous) return;
+                const tree = this.tree;
+                const params = Object.assign({}, tree.parameters || {}, moqui.listViews.keyParams(this.known[key].row, tree.keyFields),
+                    { [tree.parentField]: target.parent || "", previousSiblingId: target.previous || "" });
+                // the new parent open when the list loads again
+                if (target.parent) this.setOpen(target.parent, true);
+                this.post(tree.transition, params).then((ok) => { if (ok) this.$emit("moved"); });
+            },
+            // a drag starts from a row's own area, not from a control of it (a field keeps its text selection)
+            arm(event, entry) { this.armed = this.canMove && !entry.muted && !moqui.listViews.onControl(event.target, event.currentTarget) ? entry.key : ""; },
+            onDragStart(event, entry) {
+                if (this.armed !== entry.key) { event.preventDefault(); return; }
+                this.dragKey = entry.key;
+                if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; try { event.dataTransfer.setData("text/plain", entry.key); } catch (err) { /* IE */ } }
+            },
+            // the zone of a row under the pointer: its upper quarter before it, its lower quarter after it, the middle into it
+            zoneOf(event) {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const y = event.clientY - rect.top;
+                return y < rect.height * 0.25 ? "before" : y > rect.height * 0.75 ? "after" : "into";
+            },
+            onDragOver(event, entry) {
+                if (!this.dragKey) return;
+                const zone = this.zoneOf(event);
+                if (!moqui.listTree.drop(this.known, this.children, this.dragKey, entry.key, zone, entry.open)) { this.dropAt = null; return; }
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+                if (!this.dropAt || this.dropAt.key !== entry.key || this.dropAt.zone !== zone) this.dropAt = { key: entry.key, zone };
+                // a closed row held over for 600 ms opens
+                if (zone === "into" && entry.parent && !entry.open) {
+                    if (this.hover.key !== entry.key) this.hover = { key: entry.key, since: Date.now() };
+                    else if (Date.now() - this.hover.since > 600) { this.hover = { key: "", since: 0 }; this.setOpen(entry.key, true); }
+                }
+            },
+            onDrop(event, entry) {
+                const key = this.dragKey;
+                const zone = this.zoneOf(event);
+                const open = entry.open;
+                event.preventDefault();
+                this.onDragEnd();
+                if (!key) return;
+                (zone === "into" ? this.levelKnown(entry.key) : Promise.resolve())
+                    .then(() => this.postMove(key, moqui.listTree.drop(this.known, this.children, key, entry.key, zone, open)));
+            },
+            onDragEnd() { this.dragKey = ""; this.dropAt = null; this.armed = ""; this.hover = { key: "", since: 0 }; }
+        }
+    });
+
+    // The indent, number past the deepest level and chevron of a tree row (m-list-tree), first in its first cell; t is the row's tree
+    // props: level, parent (it has or may have children), open, loading, indent (px), deep, toggle. The guide lines of the open branches
+    // above it are the indent's background, a line at the middle of each level's chevron.
+    component("m-tree-lead", {
+        name: "mTreeLead",
+        props: { t: Object },
+        template:
+            '<span v-if="t" class="m-tree-lead row no-wrap items-center">' +
+                '<span class="m-tree-indent" :style="{width: t.indent + \'px\'}"></span>' +
+                '<span v-if="t.deep" class="m-tree-depth m-muted text-caption">{{t.level}}</span>' +
+                '<q-btn v-if="t.parent" flat dense round size="sm" tabindex="-1" icon="sym_o_chevron_right" class="m-tree-chevron" :class="{\'m-tree-chevron--open\': t.open}"' +
+                    ' :loading="t.loading" :aria-label="t.open ? t.closeLabel : t.openLabel" @click.stop="t.toggle()"></q-btn>' +
+                '<span v-else class="m-tree-gutter"></span>' +
+            '</span>'
+    });
+
+    /* ========== elapsed time ========== */
+
+    // The time since a moment as h:mm (the hours past 24 as they are), 0:00 for a moment to come; empty for none. from is epoch millis
+    // (a number or its text) or a date and time text. Pure, for the node tests.
+    moqui.elapsedText = (from, now) => {
+        if (from === null || from === undefined || from === "") return "";
+        const text = String(from).trim();
+        const start = from instanceof Date ? from.getTime() : /^-?\d+$/.test(text) ? Number(text) : Date.parse(text.replace(/^(\d{4}-\d\d-\d\d) /, "$1T"));
+        if (!isFinite(start)) return "";
+        const minutes = Math.max(0, Math.floor(((now === undefined ? Date.now() : now) - start) / 60000));
+        return Math.floor(minutes / 60) + ":" + String(minutes % 60).padStart(2, "0");
+    };
+
+    // m-elapsed (design-projects §15): <m-elapsed :from="…"> the time since from as h:mm, ticking as each minute passes, for a running
+    // timer; in an XML screen through render-mode.
+    component("m-elapsed", {
+        name: "mElapsed",
+        props: { from: [Number, String, Date] },
+        data() { return { now: Date.now() }; },
+        template: '<span class="m-elapsed">{{text}}</span>',
+        computed: { text() { return moqui.elapsedText(this.from, this.now); } },
+        watch: { from() { this.now = Date.now(); this.schedule(); } },
+        mounted() { this.schedule(); },
+        beforeUnmount() { clearTimeout(this.timer); },
+        methods: {
+            // the next tick when the next minute since from passes
+            schedule() {
+                clearTimeout(this.timer);
+                const start = Number(this.from);
+                const since = isFinite(start) && start > 0 ? (Date.now() - start) % 60000 : 0;
+                this.timer = setTimeout(() => { this.now = Date.now(); this.schedule(); }, Math.max(1000, 60000 - since));
+            }
+        }
+    });
+
     /* ========== markdown ========== */
 
     // Markdown text as HTML (m-markdown, the markdown-view element): GitHub flavored markdown by Marked (libs/marked), cleaned by DOMPurify
@@ -4838,6 +6455,10 @@
                     image(token) {
                         const link = md.resolve(token.href, opts, { image: true });
                         return '<img src="' + mdAttr(link.href) + '" alt="' + mdAttr(token.text) + '"' + (token.title ? ' title="' + mdAttr(token.title) + '"' : "") + ">";
+                    },
+                    // escapeHtml (a text that never needs raw HTML, such as an agent's answer): raw HTML is shown as text
+                    html(token) {
+                        return opts.escapeHtml ? mdAttr(token.text !== undefined ? token.text : token.raw) : false;
                     }
                 }
             });
@@ -4910,6 +6531,107 @@
                 if (link.prevented) return;
                 if (this.$root && this.$root.setUrl) this.$root.setUrl(href);
                 else root.location.href = href;
+            }
+        }
+    });
+
+    /* ========== code ========== */
+
+    // Source code with line numbers (m-code, the code-view element): highlight.js (libs/highlightjs: its core and the languages of
+    // refresh.mjs's HLJS_LANGS) loaded on first use. The language is the one given, else the file name's extension, else plain text:
+    // never guessed, so a large file costs no detection. The code shows at once as plain lines and is highlighted when the library
+    // has loaded; a file over 512 KB stays plain. Lines in highlightLines ("3,5-7") are marked and the first is scrolled to. The line
+    // numbers are drawn by CSS (data-line), so a copy takes only the code. The helpers are pure (node tests in WebrootVue.qvt.code.test.js).
+    const codeEscape = (text) => String(text === null || text === undefined ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    moqui.code = {
+        // file extensions (and whole names) to highlight.js languages
+        extensions: {
+            java: "java", groovy: "groovy", gradle: "groovy", gvy: "groovy", kt: "kotlin", kts: "kotlin",
+            xml: "xml", xsd: "xml", xsl: "xml", xslt: "xml", html: "xml", htm: "xml", xhtml: "xml", svg: "xml", ftl: "xml", qvt: "xml", qvue: "xml", vue: "xml",
+            js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript", ts: "typescript", mts: "typescript", tsx: "typescript",
+            rs: "rust", py: "python", sql: "sql", yml: "yaml", yaml: "yaml", json: "json", md: "markdown", markdown: "markdown",
+            css: "css", scss: "css", sh: "bash", bash: "bash", zsh: "bash", diff: "diff", patch: "diff", txt: "plaintext"
+        },
+        // the highlight.js language of a file name or path; plaintext when the extension is not known
+        languageOf(fileName) {
+            const name = String(fileName || "").split("/").pop().toLowerCase();
+            if (!name) return "plaintext";
+            if (name === "dockerfile" || name === "makefile") return "bash";
+            const dot = name.lastIndexOf(".");
+            return (dot >= 0 && moqui.code.extensions[name.slice(dot + 1)]) || "plaintext";
+        },
+        // "3,5-7" as the set of those line numbers
+        parseLines(text) {
+            const lines = new Set();
+            String(text || "").split(",").forEach((part) => {
+                const match = /^\s*(\d+)\s*(?:-\s*(\d+)\s*)?$/.exec(part);
+                if (!match) return;
+                const from = Number(match[1]), to = match[2] ? Number(match[2]) : from;
+                for (let line = Math.min(from, to); line <= Math.max(from, to) && line - Math.min(from, to) < 100000; line++) lines.add(line);
+            });
+            return lines;
+        },
+        // highlighted HTML split into lines, each with its own spans: a span open at a line's end is closed there and opened again on the
+        // next line, so a comment or string over several lines keeps its color on each
+        splitLines(html) {
+            const lines = [];
+            const open = [];
+            let current = "";
+            const re = /(<span[^>]*>)|(<\/span>)|(\n)|([^<\n]+|<)/g;
+            let match;
+            while ((match = re.exec(String(html || ""))) !== null) {
+                if (match[1]) { open.push(match[1]); current += match[1]; }
+                else if (match[2]) { open.pop(); current += match[2]; }
+                else if (match[3]) { lines.push(current + "</span>".repeat(open.length)); current = open.join(""); }
+                else current += match[4];
+            }
+            lines.push(current + "</span>".repeat(open.length));
+            return lines;
+        },
+        // plain lines, escaped
+        plainLines(text) { return codeEscape(text).split("\n"); },
+        // text without the trailing newline a file ends with
+        trimEnd(text) { return String(text === null || text === undefined ? "" : text).replace(/\r\n?/g, "\n").replace(/\n+$/, ""); }
+    };
+    let highlightLoad = null;
+    const loadHighlight = () => highlightLoad || (highlightLoad = moqui.loadScript("/libs/highlightjs/highlight.min.js", null, () => !!root.hljs)
+        .catch((err) => { highlightLoad = null; throw err; }));
+    component("m-code", {
+        name: "mCode",
+        props: { id: String, text: String, language: String, fileName: String, lineNumbers: { type: Boolean, default: true }, highlightLines: String },
+        data() { return { highlighted: null }; },
+        template:
+            '<div class="m-code" :id="id" :class="{\'m-code-numbered\': lineNumbers}">' +
+                '<table class="m-code-table"><tbody>' +
+                    '<tr v-for="(line, index) in lines" :key="index" :class="{\'m-code-marked\': marked.has(index + 1)}" :data-line-row="index + 1">' +
+                        '<td v-if="lineNumbers" class="m-code-number" :data-line="index + 1"></td>' +
+                        '<td class="m-code-line"><code class="hljs" v-html="line || \' \'"></code></td>' +
+                    '</tr>' +
+                '</tbody></table>' +
+            '</div>',
+        computed: {
+            code() { return moqui.code.trimEnd(this.text); },
+            lang() { return this.language || moqui.code.languageOf(this.fileName); },
+            lines() { return this.highlighted || moqui.code.plainLines(this.code); },
+            marked() { return moqui.code.parseLines(this.highlightLines); }
+        },
+        watch: { code() { this.render(); }, lang() { this.render(); }, highlightLines() { this.$nextTick(() => this.scrollToMark()); } },
+        mounted() { this.render(); this.$nextTick(() => this.scrollToMark()); },
+        methods: {
+            render() {
+                this.highlighted = null;
+                const code = this.code, lang = this.lang;
+                if (lang === "plaintext" || !code || code.length > 512 * 1024) return;
+                loadHighlight().then(() => {
+                    if (code !== this.code || lang !== this.lang || !root.hljs.getLanguage(lang)) return;
+                    try { this.highlighted = moqui.code.splitLines(root.hljs.highlight(code, { language: lang, ignoreIllegals: true }).value); }
+                    catch (err) { console.warn("m-code: " + lang + " did not highlight", err); }
+                }, (err) => console.warn("m-code: highlight.js did not load", err));
+            },
+            scrollToMark() {
+                const first = Array.from(this.marked).sort((a, b) => a - b)[0];
+                const row = first && this.$el && this.$el.querySelector ? this.$el.querySelector('[data-line-row="' + first + '"]') : null;
+                if (row && row.scrollIntoView) row.scrollIntoView({ block: "center" });
             }
         }
     });
@@ -5073,6 +6795,14 @@
             let hash = 0;
             for (const ch of String(name || "")) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
             return colors[hash % colors.length];
+        },
+        // the face image of a user id, from the theme's STRT_AVATAR_URL (qvt.config.avatarUrl). The template must contain
+        // ${userId}. Empty without a template or a user id, so the initials show. A 404 still falls back to initials.
+        imageUrl(userId, template) {
+            const id = String(userId || "").trim();
+            const text = String(template || "");
+            if (!id || text.indexOf("${userId}") < 0) return "";
+            return text.split("${userId}").join(encodeURIComponent(id));
         }
     };
     component("m-avatar", {
@@ -5082,7 +6812,13 @@
         data() { return { failedImage: "" }; },
         computed: {
             shownPresence() { return this.presence || (this.userId && moqui.chat ? moqui.chat.presenceOf(this.userId) : ""); },
-            showImage() { return !!this.image && this.failedImage !== this.image; },
+            // an image given on the component, else the theme's face-image URL for user-id (none: the initials)
+            resolvedImage() {
+                if (this.image) return this.image;
+                const config = (typeof qvt !== "undefined" && qvt && qvt.config) || moqui.config || {};
+                return moqui.avatar.imageUrl(this.userId, config.avatarUrl);
+            },
+            showImage() { return !!this.resolvedImage && this.failedImage !== this.resolvedImage; },
             initials() { return moqui.avatar.initials(this.name); },
             background() { return this.showImage ? undefined : this.color || moqui.avatar.color(this.name); }
         },
@@ -5091,7 +6827,7 @@
         template:
             '<q-avatar class="m-avatar" :size="size" :color="background" :text-color="showImage ? undefined : textColor" :square="square" :rounded="rounded"' +
                     ' :aria-label="name || undefined">' +
-                '<img v-if="showImage" :src="image" :alt="name || \'\'" @error="failedImage = image">' +
+                '<img v-if="showImage" :src="resolvedImage" :alt="name || \'\'" @error="failedImage = resolvedImage">' +
                 '<span v-else-if="initials" class="m-avatar-initials">{{initials}}</span>' +
                 '<q-icon v-else name="sym_o_person"></q-icon>' +
                 '<span v-if="shownPresence" class="m-avatar-presence" :class="\'m-presence-\' + shownPresence" :title="shownPresence"></span>' +
@@ -5658,6 +7394,8 @@
             const head = raw.charAt(0);
             if (head === ">") return { text: raw.slice(1).trim(), mode: "actions", prefix: ">", groups: [] };
             if (head === ":") return { text: raw.slice(1).trim(), mode: "screens", prefix: ":", groups: [] };
+            // ? asks Assist the rest of the text (the Ask row alone)
+            if (head === "?") return { text: raw.slice(1).trim(), mode: "ask", prefix: "?", groups: [] };
             let prefix = "";
             (sources || []).forEach((source) => {
                 const own = source && source.prefix ? String(source.prefix) : "";
@@ -5739,6 +7477,8 @@
                 add("screens", screensLabel, "sym_o_web", palette.rank(given.screens, text), palette.RECENT_LIMIT);
             } else if (query.mode === "actions") {
                 add("actions", actionsLabel, "sym_o_bolt", palette.rank(given.actions, text), 50);
+            } else if (query.mode === "ask") {
+                // nothing else: the Ask row comes last, below
             } else {
                 if (query.mode === "all") {
                     add("screens", screensLabel, "sym_o_web", palette.rank(given.screens, text), palette.LIMIT);
@@ -5747,10 +7487,17 @@
                 }
                 (given.remote || []).forEach((group) => {
                     if (!group || (query.mode === "sources" && query.groups.indexOf(group.group) < 0)) return;
-                    const rows = (group.rows || []).filter((row) => row && row.url).map((row) => ({ title: row.title || row.url, subtitle: row.subtitle || "",
-                        icon: row.icon || group.icon || null, url: row.url }));
+                    // a row of a record keeps its entity and id (recordEntity, recordId), so Assist's @ inserts the record
+                    const rows = (group.rows || []).filter((row) => row && row.url).map((row) => Object.assign({ title: row.title || row.url, subtitle: row.subtitle || "",
+                        icon: row.icon || group.icon || null, url: row.url }, row.recordEntity && row.recordId ? { recordEntity: String(row.recordEntity), recordId: String(row.recordId) } : {}));
                     add("source:" + group.group, group.label || group.group, group.icon, rows, palette.LIMIT, group.moreUrl);
                 });
+            }
+            // the last group: Ask Assist the text (given.ask: Assist is there for this user), alone after ?
+            if (given.ask && text && (query.mode === "all" || query.mode === "ask")) {
+                const asked = text.length > 80 ? text.slice(0, 79) + "…" : text;
+                out.push({ key: "ask", label: labels.assist || "Assist", icon: "sym_o_auto_awesome",
+                    rows: [{ ask: true, text, title: (labels.askAssist || "Ask Assist") + " ‘" + asked + "’", icon: "sym_o_auto_awesome" }] });
             }
             let index = 0;
             out.forEach((group) => group.rows.forEach((row) => { row.index = index; index += 1; }));
@@ -5966,7 +7713,7 @@
             groups() {
                 const root_ = this.$root;
                 return palette.groups(this.query, { recent: root_.paletteRecent, screens: root_.paletteScreens, savedFinds: root_.paletteSavedFinds,
-                    actions: root_.paletteActions, remote: this.remote, labels: root_.labels });
+                    actions: root_.paletteActions, remote: this.remote, labels: root_.labels, ask: !!root_.assistOn });
             },
             rows() { return palette.rows(this.groups); },
             // the keys and the prefixes, under the results
@@ -6039,12 +7786,21 @@
                         const el = this.$refs.results && this.$refs.results.querySelector('[data-index="' + this.selected + '"]');
                         if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
                     });
+                } else if (key === "Enter" && event.shiftKey && this.$root.assistOn) {
+                    // Shift+Enter asks Assist the text
+                    event.preventDefault();
+                    this.open(this.rows.find((row) => row.ask), event);
                 } else if (key === "Enter") {
                     event.preventDefault();
                     this.open(this.rows.find((row) => row.index === this.selected) || this.rows[0], event);
                 }
             },
             open(row, event) {
+                if (row && row.ask) {
+                    this.$root.paletteOpen = false;
+                    if (moqui.assist) moqui.assist.ask(row.text);
+                    return;
+                }
                 if (!row || !row.url) return;
                 const newTab = !!(event && (event.ctrlKey || event.metaKey));
                 this.$root.paletteOpen = false;
@@ -6185,9 +7941,23 @@
         "                <q-btn flat no-caps dense icon=\"sym_o_apps\" :label=\"labels.allApplications\" v-close-popup @click=\"setUrl(linkBasePath + '/AppList')\"></q-btn>\n" +
         "            </div></q-menu>\n" +
         "        </q-btn>\n" +
-        // the current app's title; the theme's title outside an app (the AppList)
+        // the current app's title; the theme's title outside an app (the AppList). In an app the title opens the menu of the
+        // app root's subscreens (the top-level screens): the menu the app-root breadcrumb had before the trail started below it.
         // (below 600 px the launcher stands for it: the title is hidden, style-guide §2.2 and §7)
-        "        <q-toolbar-title v-if=\"headerTitle\" shrink class=\"gt-xs text-subtitle1 text-weight-medium q-pr-sm\">{{headerTitle}}</q-toolbar-title>\n" +
+        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"gt-xs m-app-screens text-subtitle1 text-weight-medium\">\n" +
+        "            {{headerTitle}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
+        "            <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
+        "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\">\n" +
+        "                    <q-item-section avatar>\n" +
+        "                        <m-menu-icon v-if=\"subscreen.image && subscreen.imageType === 'icon'\" :name=\"subscreen.image\" size=\"xs\"></m-menu-icon>\n" +
+        "                        <img v-else-if=\"subscreen.image\" :src=\"subscreen.image\" :alt=\"subscreen.title\" width=\"18\" class=\"invertible\">\n" +
+        "                        <q-icon v-else name=\"chevron_right\" size=\"xs\"></q-icon>\n" +
+        "                    </q-item-section>\n" +
+        "                    <q-item-section>{{subscreen.title}}</q-item-section>\n" +
+        "                </q-item>\n" +
+        "            </q-list></q-menu>\n" +
+        "        </q-btn>\n" +
+        "        <q-toolbar-title v-else-if=\"headerTitle\" shrink class=\"gt-xs text-subtitle1 text-weight-medium q-pr-sm\">{{headerTitle}}</q-toolbar-title>\n" +
         // the screen path from the app root: not the apps root, nor the app root whose title the header shows (style-guide §2.2)
         "        <q-breadcrumbs id=\"m-breadcrumbs\" class=\"gt-xs\" gutter=\"xs\" separator-color=\"grey-5\" active-color=\"grey-8\">\n" +
         "            <template v-for=\"(navMenuItem, menuIndex) in navMenuList\" :key=\"navMenuItem.path || menuIndex\"><template v-if=\"menuIndex >= breadcrumbStart\">\n" +
@@ -6279,6 +8049,11 @@
         "                </q-item>\n" +
         "                <q-separator v-if=\"accountMenuItems.length\"></q-separator>\n" +
         "                <q-item v-for=\"(accountPlugin, accountIndex) in accountPlugins\" :key=\"accountIndex\"><q-item-section><component :is=\"accountPlugin\"></component></q-item-section></q-item>\n" +
+        // the browser terminal (apps/Terminal.xml), when the server serves /termws
+        "                <q-item v-if=\"terminalUrl\" id=\"m-account-terminal\" clickable v-close-popup @click=\"setUrl(terminalUrl)\">\n" +
+        "                    <q-item-section avatar><q-icon name=\"terminal\"></q-icon></q-item-section>\n" +
+        "                    <q-item-section>{{labels.terminal}}</q-item-section>\n" +
+        "                </q-item>\n" +
         "                <q-item tag=\"label\" clickable>\n" +
         "                    <q-item-section avatar><q-icon name=\"dark_mode\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.switchDarkLight}}</q-item-section>\n" +
@@ -6295,16 +8070,20 @@
         "                </q-item>\n" +
         "            </q-list></q-menu>\n" +
         "        </q-btn>\n" +
-        // The Assist toggle and its right q-drawer (view LpR) come with the Assist port (mr-moqui Phase 13): the slot is kept free,
-        // the screen context and assistReach are its inputs (IronStone impl-drawers-commons R1).
+        // the Assist toggle, rightmost (WebrootAssist.js, for a user who may use it); its right q-drawer (view LpR) below, the
+        // screen context and assistReach its inputs (IronStone impl-drawers-commons R1)
+        "        <m-assist-button v-if=\"assistOn\"></m-assist-button>\n" +
         "    </q-toolbar></q-header>\n" +
         "\n" +
         "    <q-drawer v-model=\"leftOpen\" side=\"left\" bordered :width=\"260\" :breakpoint=\"1023\">\n" +
         "        <q-scroll-area class=\"fit\"><q-list dense padding><m-menu-nav-item :menu-index=\"0\"></m-menu-nav-item></q-list></q-scroll-area>\n" +
         "    </q-drawer>\n" +
+        "    <m-shell-assist v-if=\"assistOn\"></m-shell-assist>\n" +
         "\n" +
         "    <q-page-container id=\"m-canvas\">\n" +
-        "        <q-page class=\"q-pa-sm\"><m-subscreens-active></m-subscreens-active></q-page>\n" +
+        // an Assist canvas takes the page while the drawer stays docked; the page stays mounted under it (WebrootAssist.js)
+        "        <q-page v-show=\"!assistCanvasShown\" class=\"q-pa-sm\"><m-subscreens-active></m-subscreens-active></q-page>\n" +
+        "        <m-assist-canvas v-if=\"assistOn\"></m-assist-canvas>\n" +
         "        <m-shell-tray v-if=\"trayTabs.length\"></m-shell-tray>\n" +
         "    </q-page-container>\n" +
         "\n" +
@@ -6343,12 +8122,12 @@
     });
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
-    qvt.shellLabels = { applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
+    qvt.shellLabels = { terminal: "Terminal UI", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
         quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", close: "Close",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
-        paletteKeys: "↑ ↓ to move, Enter to open, Ctrl+Enter in a new tab" };
+        paletteKeys: "↑ ↓ to move, Enter to open, Ctrl+Enter in a new tab", assist: "Assist", askAssist: "Ask Assist" };
 
     const rootOptions = (config) => ({
         data() {
@@ -6358,6 +8137,7 @@
                 lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, activeContainers: {}, urlListeners: [],
                 moquiSessionToken: config.sessionToken || "", appHost: config.appHost || "", appRootPath: config.appRootPath || "", userId: config.userId || "",
                 username: config.username || "", locale: config.locale || "en", userFullName: config.userFullName || "",
+                terminalUrl: config.terminalUrl || "",
                 reLoginShow: false, reLoginPassword: null, reLoginMfaData: null, reLoginOtp: null,
                 notificationClient: null, sessionTokenBc: null, qzVue: null, leftOpen: !!config.leftOpen,
                 // the m-screen-context registrations, oldest first; formsVersion changes as the forms of the screens come and go
@@ -6839,6 +8619,15 @@
             // the first menu entry the breadcrumbs show: past the apps root, and past the current app's root, whose title is in the
             // header (outside an app, as on the AppList, the trail starts below the apps root)
             breadcrumbStart() { return this.basePathSize + (this.currentApp ? 1 : 0); },
+            // the app root's menu entry, the one breadcrumbStart skips: its subscreens are the app's top-level screens, and the
+            // header title opens that menu. Null outside an app, while the menu data is still loading, and when the app root is
+            // its own tab, wizard or stack menu (hasTabMenu) or has no subscreens.
+            appScreenMenu() {
+                if (!this.currentApp) return null;
+                const item = this.navMenuList[this.basePathSize];
+                if (!item || item.hasTabMenu || !(item.subscreens && item.subscreens.length)) return null;
+                return item;
+            },
             ScreenTitle() { return this.navMenuList.length > 0 ? this.navMenuList[this.navMenuList.length - 1].title : ""; },
             // The record of the latest m-screen-context (a record needs an entity and an id), apart from the rest of the screen
             // context so the + menu does not follow every field of every form.
@@ -6948,6 +8737,10 @@
             paletteKeyHint() { return keymap.isMac ? "⌘K" : "Ctrl K"; },
             // the chat store (WebrootChat.js), for a signed in user: the status in the account menu and the user's own dot
             chatStatus() { return !!(moqui.chat && this.userId); },
+            // Assist (WebrootAssist.js): for a signed in user whose bootstrap answered with an agent to use
+            assistOn() { return !!(moqui.assist && this.userId && moqui.assist.state.available); },
+            // an Assist canvas covers the page (the page under it stays mounted)
+            assistCanvasShown() { return !!(this.assistOn && moqui.assist.canvasShown && moqui.assist.canvasShown()); },
             myPresence() { return moqui.chat && this.userId ? moqui.chat.myPresence() : ""; },
             paletteSources() {
                 const out = [];
@@ -7024,6 +8817,8 @@
             }
             // the chat store: presence, status, heartbeat, the chat pushes (WebrootChat.js)
             if (moqui.chat) moqui.chat.start(this);
+            // Assist: its bootstrap, the keys, follow and the run signals (WebrootAssist.js)
+            if (moqui.assist) moqui.assist.start(this);
             // the suite shell: its data once, its keys, and the counts every 5 minutes while the socket is down
             this.loadShellData();
             this.shellKeysOff = keymap.registerScope("global", this.shellKeyBindings());
@@ -7103,6 +8898,20 @@
             delete comp.template;
         });
     };
+    // A component of a script that loads after this one (a client part loaded on first use, such as the Assist canvas): its
+    // precompiled render function is applied as applyRenders does (moqui.qvtRenders, while the hash matches), so a page of the
+    // build without the compiler (webapp_qvt_static_only) runs it too, and it is registered on the running application, or kept
+    // for start when the application is not running yet. Returns the definition.
+    qvt.registerLate = (name, def) => {
+        component(name, def);
+        const made = (moqui.qvtRenders || {})[name];
+        if (made && root.Vue && typeof def.template === "string" && made.hash === qvt.templateHash(def.template)) {
+            def.render = made.make(root.Vue);
+            delete def.template;
+        }
+        if (qvt.app) qvt.app.component(name, def);
+        return def;
+    };
 
     qvt.start = () => {
         qvt.applyRenders();
@@ -7142,7 +8951,10 @@
         if (root.Quasar.IconSet && root.Quasar.IconSet.materialSymbolsOutlined) quasarOptions.iconSet = root.Quasar.IconSet.materialSymbolsOutlined;
         app.use(root.Quasar, quasarOptions);
         Object.keys(qvt.components).forEach((name) => app.component(name, qvt.components[name]));
+        qvt.app = app;
         app.config.globalProperties.moqui = moqui;
+        // Field rules call $mq. The browser compiler reads this, not the page global.
+        app.config.globalProperties.$mq = moqui;
         app.config.globalProperties.window = root;
         app.config.globalProperties.$router = qvt.makeRouter();
         Object.defineProperty(app.config.globalProperties, "$route", { get: () => (moqui.webrootVue ? moqui.webrootVue.getRoute() : { matched: [], params: {} }) });

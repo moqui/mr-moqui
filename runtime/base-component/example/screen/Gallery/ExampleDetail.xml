@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Gallery: one example record, the detail the Views list's peek pane loads (form-list peek-url, style-guide §3.8) with peek=true,
+    where it renders compact: the title, the facts and the time since its start (m-elapsed, through render-mode), without the
+    description box and the link back to the views. Opened on its own (Open full) it has both. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Example" default-menu-include="false">
+
+    <parameter name="exampleId" required="true"/>
+    <parameter name="peek"/>
+
+    <actions>
+        <entity-find-one entity-name="moqui.example.Example" value-field="example"/>
+        <set field="compact" from="peek == 'true'"/>
+    </actions>
+    <widgets>
+        <section name="ExampleSection" condition="example"><widgets>
+            <section name="ExampleBack" condition="!compact"><widgets>
+                <link url="../Views" text="Back to the views" icon="sym_o_arrow_back" link-type="anchor"/>
+            </widgets></section>
+            <label type="h6" text="${example.exampleName}" style="q-mt-none q-mb-sm"/>
+            <form-single name="ExampleFacts" map="example" transition=".">
+                <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem"/></default-field></field>
+                <field name="exampleTypeEnumId"><default-field title="Type"><display-entity entity-name="moqui.basic.Enumeration"/></default-field></field>
+                <field name="exampleSize"><default-field title="Size"><display/></default-field></field>
+                <field name="exampleDate"><default-field title="Starts"><display format="EEE MMM d, HH:mm"/></default-field></field>
+                <field name="exampleEndDate"><default-field title="Ends"><display format="EEE MMM d, HH:mm"/></default-field></field>
+                <field-layout><field-row><field-ref name="statusId"/><field-ref name="exampleTypeEnumId"/><field-ref name="exampleSize"/></field-row>
+                    <field-row><field-ref name="exampleDate"/><field-ref name="exampleEndDate"/></field-row></field-layout>
+            </form-single>
+            <!-- m-elapsed: the time since the start as h:mm, ticking each minute (0:00 before it) -->
+            <container style="row items-center q-gutter-sm q-mt-sm">
+                <label text="Since the start" style="m-muted"/>
+                <render-mode><text type="qvt"><![CDATA[<m-elapsed from="${WebUtilities.encodeHtml(example.exampleDate == null ? '' : String(example.exampleDate))}" class="text-weight-medium"></m-elapsed>]]></text>
+                    <text type="tui"><![CDATA[{"t": "text", "id": "ExampleSince", "text": ${JSON.stringify(example.exampleDate == null ? '' : String(ec.l10n.format(example.exampleDate, 'yyyy-MM-dd HH:mm') || ''))}}]]></text></render-mode>
+            </container>
+            <section name="ExampleDescription" condition="!compact"><widgets>
+                <container-box><box-header title="Description"/><box-body>
+                    <label type="p" text="${example.description || 'No description'}"/>
+                </box-body></container-box>
+            </widgets></section>
+        </widgets><fail-widgets>
+            <label type="p" text="No example ${exampleId}" style="m-muted"/>
+        </fail-widgets></section>
+    </widgets>
+</screen>

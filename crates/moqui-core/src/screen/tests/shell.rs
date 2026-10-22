@@ -77,6 +77,15 @@ const SERVICES: &str = r#"<services>
         <out-parameters><parameter name="counts" type="Map"/></out-parameters>
         <actions><script>counts = {zone: ec.user.timeZone, locale: ec.user.locale, user: userId}</script></actions>
     </service>
+    <service verb="get" noun="IdiomCounts" authenticate="false">
+        <description>the Java idiom of Mantle's get#ShellCounts: off for the reads, on again after only if it was on</description>
+        <in-parameters><parameter name="userId"/></in-parameters>
+        <out-parameters><parameter name="counts" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try { counts = {idiom: true, wasDisabled: wasDisabled} } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
     <service verb="get" noun="BadCounts" authenticate="false">
         <in-parameters><parameter name="userId"/></in-parameters>
         <out-parameters><parameter name="counts" type="Map"/></out-parameters>
@@ -253,20 +262,7 @@ fn root_of(dir: &std::path::Path) -> String {
 
 /// Allow `group` to view the screen at `location`, in an artifact group of its own.
 fn allow(world: &World, id: &str, group: &str, location: &str) {
-    let mut member = world.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();
-    member.set("artifactGroupId", Value::string(id));
-    member.set("artifactName", Value::string(location));
-    member.set("artifactTypeEnumId", Value::string("AT_XML_SCREEN"));
-    member.set("nameIsPattern", Value::string("N"));
-    member.set("inheritAuthz", Value::string("Y"));
-    member.create(&world.facade).unwrap();
-    let mut authz = world.facade.make_value("moqui.security.ArtifactAuthz").unwrap();
-    authz.set("artifactAuthzId", Value::string(id));
-    authz.set("userGroupId", Value::string(group));
-    authz.set("artifactGroupId", Value::string(id));
-    authz.set("authzTypeEnumId", Value::string("AUTHZT_ALWAYS"));
-    authz.set("authzActionEnumId", Value::string("AUTHZA_VIEW"));
-    authz.create(&world.facade).unwrap();
+    world.grant_screen(id, group, location, "AUTHZT_ALWAYS");
 }
 
 fn row(world: &World, entity: &str, fields: &[(&str, Value)]) {
@@ -328,6 +324,20 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
     theme_value(&world, "DEFAULT_QUASAR", 2, "STRT_TRAY_CHAT", "secret");
     theme_value(&world, "DEFAULT_QUASAR", 3, "STRT_QUICK_CREATE", "open/QuickCreate");
     theme_value(&world, "DEFAULT_QUASAR", 4, "STRT_CHATTER_SCREEN", "Chatter");
+    theme_value(&world, "DEFAULT_QUASAR", 6, "STRT_TUI_BREAKPOINTS", "md = 110");
+    theme_value(&world, "DEFAULT_QUASAR", 7, "STRT_TUI_BREAKPOINTS", "lg = wide");
+    theme_value(&world, "DEFAULT_QUASAR", 8, "STRT_TUI_COLORS", "primary = #1976d2");
+    theme_value(&world, "DEFAULT_QUASAR", 9, "STRT_TUI_KEYS", "back = f3 | alt+left");
+    theme_value(&world, "DEFAULT_QUASAR", 10, "STRT_TUI_KEYS", "refresh = f5");
+    theme_value(&world, "DEFAULT_QUASAR", 11, "STRT_TUI_KEYS", "no equals sign");
+    // The browser's brand colors are the terminal's too, under its own colors.
+    theme_value(
+        &world,
+        "DEFAULT_QUASAR",
+        12,
+        "STRT_QUASAR_CONFIG",
+        r##"{"brand":{"primary":"#1565c0","negative":"#c10015","dark":"#1d1d1d"},"notify":{}}"##,
+    );
     theme_value(
         &world,
         "DEFAULT_QUASAR",
@@ -530,7 +540,18 @@ fn shell_data_lists_the_apps_the_user_may_open_with_their_menus_providers_theme_
             "mailScreen": null, "messagesScreen": null, "chatterScreen": "Chatter", "recordFilesScreen": null})
     );
     assert_eq!(data["counts"], json!({"today": 3, "chat": 1, "user": "plain"}));
+    // the tui values: every key row, and the rows that do not read are left out and logged
+    assert_eq!(
+        data["tui"],
+        json!({"breakpoints": {"md": 110}, "colors": {"primary": "#1976d2", "negative": "#c10015"},
+            "keys": {"back": "f3 | alt+left", "refresh": "f5"}, "drawerOpen": null, "mouse": null})
+    );
     let text = logged(&lines);
+    assert!(
+        text.contains("TUI breakpoint lg = wide is not a column count"),
+        "{text}"
+    );
+    assert!(text.contains("[no equals sign] is not name = value"), "{text}");
     let broken = dir.join("Apps/Broken.xml").to_string_lossy().into_owned();
     assert!(
         text.contains(&format!("Leaving app broken [{broken}] out of the shell")),
@@ -1199,5 +1220,147 @@ fn publish_sends_the_counts_on_the_shell_counts_topic_once_per_window_and_after_
         sent_counts(&seen, &zoned)[0]["message"],
         json!({"zone": "America/Chicago", "locale": "de", "user": zoned})
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The terminal keeps F9's drawer choice as the `TUI_DRAWER_OPEN` preference through webroot's `/apps/setPreference`
+/// (asked for as JSON, it answers 200 with an empty body and the `X-Moqui-Preferences` header), and the shell data gives
+/// it back as `tui.drawerOpen`: null until it is set. Alt+P's mouse choice, `TUI_MOUSE`, is `tui.mouse` the same way.
+#[test]
+fn the_drawer_choice_is_a_preference_the_shell_data_gives_back() {
+    let world = World::open("");
+    world.user("plain", None);
+    let root = super::webroot().to_string_lossy().into_owned();
+    let (status, data) = get(&world, &root, Some("plain"), "/shellData", &[]);
+    assert_eq!(status, 200, "{data}");
+    assert_eq!(data["tui"]["drawerOpen"], serde_json::Value::Null, "{data}");
+    assert_eq!(data["tui"]["mouse"], serde_json::Value::Null, "{data}");
+    let set_key = |key: &str, value: &str| {
+        let mut post = request("POST", "/apps/setPreference");
+        post.set_header("authorization", basic("plain"));
+        post.set_header("accept", "application/json");
+        post.set_header("content-type", "application/x-www-form-urlencoded");
+        post.body = format!("preferenceKey={key}&preferenceValue={value}").into_bytes();
+        serve_at(&world.factory, post, &root)
+    };
+    assert_eq!(set_key("TUI_MOUSE", "false").status, 200);
+    let (_, data) = get(&world, &root, Some("plain"), "/shellData", &[]);
+    assert_eq!(data["tui"]["mouse"], json!(false), "{data}");
+    let set = |user: Option<&str>, value: &str| {
+        let mut post = request("POST", "/apps/setPreference");
+        if let Some(user) = user {
+            post.set_header("authorization", basic(user));
+        }
+        post.set_header("accept", "application/json");
+        post.set_header("content-type", "application/x-www-form-urlencoded");
+        post.body = format!("preferenceKey=TUI_DRAWER_OPEN&preferenceValue={value}").into_bytes();
+        serve_at(&world.factory, post, &root)
+    };
+    for (value, expected) in [("true", json!(true)), ("false", json!(false))] {
+        let response = set(Some("plain"), value);
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        assert_eq!(response.body_text(), "", "type none answers no body");
+        assert!(
+            response
+                .headers
+                .iter()
+                .any(|(name, header)| name == "X-Moqui-Preferences" && header.contains("TUI_DRAWER_OPEN")),
+            "{:?}",
+            response.headers
+        );
+        let (status, data) = get(&world, &root, Some("plain"), "/shellData", &[]);
+        assert_eq!(status, 200, "{data}");
+        assert_eq!(data["tui"]["drawerOpen"], expected, "{data}");
+    }
+    // no user: setPreference refuses with a 401, as Java's AuthenticationRequiredException gave.
+    let response = set(None, "true");
+    assert_eq!(response.status, 401, "{}", response.body_text());
+    assert!(
+        response.body_text().contains("Authentication required"),
+        "{}",
+        response.body_text()
+    );
+}
+
+/// One execution context renders several screens, as a spec, a TUI session or an agent's renders do: the shell data
+/// (whose counts service runs with authorization disabled by the framework and takes the Java idiom
+/// `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()`), a screen and a transition under an app whose
+/// inheritable authorization is ALWAYS, a service called from that transition. None of them leaves authorization
+/// disabled after it: the user is still refused the screen of an app they may not open.
+#[test]
+fn renders_under_always_and_the_shell_counts_leave_authorization_as_it_was() {
+    let dir = tree("authz-scope");
+    std::fs::write(
+        dir.join("Apps/Open/List.xml"),
+        r#"<screen require-authentication="true" default-menu-title="List">
+            <transition name="touch"><actions><script><![CDATA[
+                const shellData = sri.getShellData()
+                const out = ec.service.sync().name('test.Shell.get#IdiomCounts').parameters({userId: ec.user.userId}).call()
+                ec.web.sendJsonResponse({counts: shellData.counts, direct: out.counts, disabled: ec.artifactExecution.authzDisabled()})
+            ]]></script></actions><default-response type="none"/></transition>
+            <actions><script>const shellData = sri.getShellData()</script></actions>
+            <widgets><label text="List"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let world = world(&dir);
+    world.user("idiom", None);
+    theme_value(
+        &world,
+        "IDIOM_QUASAR",
+        1,
+        "STRT_SHELL_COUNTS_SERVICE",
+        "test.Shell.get#IdiomCounts",
+    );
+    row(
+        &world,
+        "moqui.security.UserScreenTheme",
+        &[
+            ("userId", Value::string("idiom")),
+            ("screenThemeTypeEnumId", Value::string("STT_INTERNAL_QUASAR")),
+            ("screenThemeId", Value::string("IDIOM_QUASAR")),
+        ],
+    );
+    let root = root_of(&dir);
+    let secret = dir.join("Apps/Secret.xml").to_string_lossy().into_owned();
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("idiom").unwrap();
+    let test = crate::screen::ScreenTest::new(&world.factory).root_screen(root.clone());
+    let still_refused = |step: &str| {
+        assert!(!ctx.authz_disabled(), "authorization is disabled after {step}");
+        let err = crate::user::authorize("AT_XML_SCREEN", &secret, "view").unwrap_err();
+        assert!(err.to_string().contains("not authorized"), "after {step}: {err}");
+    };
+    still_refused("login");
+
+    // the shell data: its counts service ran with authorization disabled, by the framework
+    let data = test.render("shellData", BTreeMap::new()).unwrap();
+    assert_eq!(data.status(), 200, "{}", data.text());
+    let data = data.json().unwrap();
+    assert_eq!(data["counts"], json!({"idiom": true, "wasDisabled": true}), "{data}");
+    still_refused("the shell data");
+
+    // a screen under ALWAYS whose actions get the shell data
+    let list = test.render("apps/open/List", BTreeMap::new()).unwrap();
+    assert_eq!(list.status(), 200, "{}", list.text());
+    assert!(list.text().contains("List"), "{}", list.text());
+    still_refused("a screen under ALWAYS");
+
+    // a transition under ALWAYS: the shell data, and the service called directly with authorization on
+    let touch = test.render("apps/open/List/touch", BTreeMap::new()).unwrap();
+    assert_eq!(touch.status(), 200, "{}", touch.text());
+    let touch = touch.json().unwrap();
+    assert_eq!(touch["direct"], json!({"idiom": true, "wasDisabled": false}), "{touch}");
+    assert_eq!(touch["disabled"], json!(false), "{touch}");
+    still_refused("a transition under ALWAYS");
+
+    // the screen the user may not open is still refused by a render
+    let refused = test.render("apps/secret", BTreeMap::new());
+    assert!(
+        refused.as_ref().map_or(true, |out| !out.text().contains("secret")),
+        "{:?}",
+        refused.map(|out| out.text())
+    );
+    still_refused("a refused render");
     let _ = std::fs::remove_dir_all(&dir);
 }

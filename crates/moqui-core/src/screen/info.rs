@@ -208,7 +208,7 @@ fn walk(
         with_actions: count(
             def.transitions
                 .iter()
-                .filter(|transition| transition.actions.is_some())
+                .filter(|transition| transition.service_actions.is_some() || transition.actions.is_some())
                 .count(),
         ),
     };

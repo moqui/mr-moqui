@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One agent trigger: its settings (store#AgentTrigger keeps its cron job and its document's feed link), Fire Now,
+    Reset Breaker, its waiting events and its runs. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Trigger" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="triggerId"/>
+
+    <transition name="storeTrigger"><service-call name="org.moqui.agent.AgentTriggerServices.store#AgentTrigger"/>
+        <default-response url="." parameter-map="{triggerId:triggerId}"/></transition>
+    <transition name="fireTrigger"><service-call name="org.moqui.agent.AgentTriggerServices.fire#AgentTrigger"
+            in-map="{triggerId: triggerId, cause: 'manual'}"/>
+        <default-response url="." parameter-map="{triggerId:triggerId}"/></transition>
+    <transition name="resetBreaker"><service-call name="org.moqui.agent.AgentTriggerServices.reset#AgentTriggerBreaker"/>
+        <default-response url="." parameter-map="{triggerId:triggerId}"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentTrigger" value-field="trigger"/>
+        <entity-find entity-name="moqui.agent.AgentDefinition" list="agentList"><order-by field-name="agentName"/></entity-find>
+        <entity-find entity-name="moqui.agent.AgentTriggerEvent" list="eventList" limit="50">
+            <econdition field-name="triggerId"/><order-by field-name="-receivedDate"/></entity-find>
+        <entity-find entity-name="moqui.agent.AgentRun" list="runList" limit="50">
+            <econdition field-name="triggerId"/><order-by field-name="-submittedDate"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Trigger ${triggerId}"/><box-toolbar>
+            <link url="fireTrigger" text="Fire Now" confirmation="Start a run of this trigger now?"/>
+            <link url="resetBreaker" text="Reset Breaker" condition="trigger?.breakerState == 'open'"
+                    confirmation="Close the breaker, so the trigger fires again?"/>
+        </box-toolbar><box-body>
+            <form-single name="EditTrigger" map="trigger" transition="storeTrigger">
+                <field name="triggerId"><default-field><display/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><drop-down><list-options list="agentList" key="${agentId}"
+                        text="${agentName ?? agentId}"/></drop-down></default-field></field>
+                <field name="triggerTypeEnumId"><default-field title="Kind"><drop-down><entity-options key="${enumId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentTriggerType"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                <field name="description"><default-field><text-line size="60"/></default-field></field>
+                <field name="cronExpression"><default-field title="Schedule" tooltip="A cron expression, for a schedule trigger"><text-line size="30"/></default-field></field>
+                <field name="dataDocumentId"><default-field title="Document" tooltip="The DataDocument whose record changes fire a record-change trigger">
+                    <drop-down allow-empty="true"><entity-options key="${dataDocumentId}" text="${documentName ?? dataDocumentId}">
+                        <entity-find entity-name="moqui.entity.document.DataDocument"><order-by field-name="dataDocumentId"/></entity-find>
+                    </entity-options></drop-down></default-field></field>
+                <field name="instructions"><default-field><text-area rows="6" cols="80"/></default-field></field>
+                <field name="runAsUserId"><default-field title="Runs As" tooltip="Else the agent's run-as user"><text-line size="20"/></default-field></field>
+                <field name="batchSeconds"><default-field title="Batch Window" tooltip="Seconds the events of a record-change trigger gather into one run; 0 runs at once"><text-line size="6"/></default-field></field>
+                <field name="maxBatchEvents"><default-field title="Events per Run" tooltip="50 when empty"><text-line size="6"/></default-field></field>
+                <field name="maxRunsPerHour"><default-field title="Runs per Hour"><text-line size="6"/></default-field></field>
+                <field name="maxRunsPerDay"><default-field title="Runs per Day"><text-line size="6"/></default-field></field>
+                <field name="maxConcurrent"><default-field title="Runs at Once"><text-line size="6"/></default-field></field>
+                <field name="approvalHold"><default-field title="Hold Approvals" tooltip="Y: a write its policy does not approve waits in the run-as user's inbox; else it is an error the agent reads">
+                    <drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="failureLimit"><default-field title="Failure Limit" tooltip="Failures in a row that open the breaker (3)"><text-line size="6"/></default-field></field>
+                <field name="paused"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="breakerState"><default-field title="Breaker"><display/></default-field></field>
+                <field name="failureCount"><default-field title="Failures in a Row"><display/></default-field></field>
+                <field name="lastFailureText"><default-field title="Last Failure"><display/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Waiting and Recent Events"/><box-body>
+            <form-list name="EventList" list="eventList" skip-form="true">
+                <field name="triggerEventId"><header-field title="Event"/><default-field><display/></default-field></field>
+                <field name="documentId"><header-field title="Record"/><default-field><display/></default-field></field>
+                <field name="receivedDate"><header-field title="Received"/><default-field><display/></default-field></field>
+                <field name="runId"><header-field title="Run"/><default-field><display text="${runId ?? 'waiting'}"/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Runs"/><box-body>
+            <form-list name="RunList" list="runList" skip-form="true">
+                <field name="runId"><header-field title="Run"/><default-field><link url="runDetail" text="${runId}" link-type="anchor"/></default-field></field>
+                <field name="triggerRef"><header-field title="Cause"/><default-field><display/></default-field></field>
+                <field name="statusId"><header-field title="Status"/><default-field>
+                    <display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="submittedDate"><header-field title="Submitted"/><default-field><display/></default-field></field>
+                <field name="errorText"><header-field title="Error"/><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

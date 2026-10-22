@@ -18,6 +18,7 @@ pub mod cache;
 pub mod crypto;
 pub mod datasource;
 pub mod document;
+pub mod fence;
 pub mod field_rw;
 pub mod load_feed;
 pub mod query_rest;
@@ -39,9 +40,11 @@ mod search_form;
 mod sequence;
 mod share;
 mod sim_view;
+mod sql_cache;
 mod value;
 
 pub(crate) use cache::screen_config_generation;
+pub(crate) use derived::{generation as definition_generation, ByDefinition};
 pub use data_writer::{DataFileType, EntityDataWriter};
 pub use dbresource::{DbResourceChild, DbResourceInfo, DbResourceStat, DbResourceVersion};
 pub use etl::EtlLoader;
@@ -56,15 +59,16 @@ pub use search_form::SearchFormResult;
 pub use sequence::{fill_bank, stagger_step, take_id, SequenceBank};
 pub(crate) use sequence::{sequenced_id_primary, uuid_v4};
 pub(crate) use value::is_rust_only_sub_type;
-pub use value::{EntityList, EntityValue, RustOnlyEntityHits};
+pub use value::{field_map, string_map, EntityList, EntityValue, FieldMap, IntoFieldName, RustOnlyEntityHits};
 
 /// Forget what the entity layer keeps on this thread once a unit of work is over. With `sim`, ends every sim
 /// session still open and clears the sim flag, so a missed `exit_sim` does not send the thread's later writes to a
-/// throwaway schema. With no transaction frame left on the thread, also drops the per-frame held rows, written
+/// throwaway schema, and drops a read fence left on the thread ([`fence`]). With no transaction frame left on the thread, also drops the per-frame held rows, written
 /// entities and data-feed touches. The request and service pools call this after rolling back what the work left.
 pub(crate) fn clear_thread_state(facade: &EntityFacade, sim: bool) {
     if sim {
         cache::clear_sim(facade);
+        fence::clear();
     }
     if !crate::transaction::thread_in_transaction() {
         cache::clear_frame_state();

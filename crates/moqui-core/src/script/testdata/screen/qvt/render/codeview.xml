@@ -1,0 +1,12 @@
+<screen require-authentication="false">
+    <actions>
+        <set field="source" value="fn main() {&#10;    let t = &quot;{{x}} &lt;b&gt;&quot;;&#10;}&#10;"/>
+        <set field="path" value="src/main.rs"/>
+    </actions>
+    <widgets>
+        <code-view id="Source" text="${source}" file-name="${path}" highlight-lines="2" style="q-mt-sm"/>
+        <code-view text="${source}" language="rust" line-numbers="false"/>
+        <code-view text="${source}" condition="false"/>
+        <label text="the code is in its view"/>
+    </widgets>
+</screen>

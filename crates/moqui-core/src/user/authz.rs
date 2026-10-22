@@ -185,9 +185,41 @@ pub fn authorize(artifact_type: &str, name: &str, action: &str) -> Result<(), Er
             requires_authz: true,
             authz_disabled: disabled,
             count_tarpit: false,
+            is_access: true,
             parameters: None,
         },
         last.as_ref(),
+        ancestor_deny,
+    )?;
+    if permitted {
+        Ok(())
+    } else {
+        Err(denied(artifact_type, name, action, &info))
+    }
+}
+
+/// Authorize `action` on an artifact by its own authorization records only: an inheritable authorization of the frames
+/// below (the screen or service asking) is not taken, as it is by [`authorize`]. For the artifacts whose rights are their
+/// own whatever asks, git repositories (`AT_GIT_REPOSITORY`): the git server has no frames below, so the code screens
+/// and services must not grant more than a clone does. A deny of an ancestor frame still keeps an allow from applying.
+pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<(), Error> {
+    if !context_entered() {
+        return Ok(());
+    }
+    let (_, ancestor_deny, disabled) =
+        ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or((None, false, true));
+    let (permitted, info) = is_permitted(
+        artifact_type,
+        name,
+        action,
+        &Permit {
+            requires_authz: true,
+            authz_disabled: disabled,
+            count_tarpit: false,
+            is_access: true,
+            parameters: None,
+        },
+        None,
         ancestor_deny,
     )?;
     if permitted {
@@ -202,6 +234,8 @@ pub(crate) struct Permit<'a> {
     pub(crate) requires_authz: bool,
     pub(crate) authz_disabled: bool,
     pub(crate) count_tarpit: bool,
+    /// A use of the artifact, not a check of whether the user may: only a use records an `ArtifactAuthzFailure`.
+    pub(crate) is_access: bool,
     pub(crate) parameters: Option<&'a BTreeMap<String, Value>>,
 }
 
@@ -337,7 +371,9 @@ pub(crate) fn is_permitted(
             if !permit.requires_authz || permit.authz_disabled {
                 return Ok((true, info));
             }
-            record_failure(&facade, artifact_type, name, &action_id, &user_id, true);
+            if permit.is_access {
+                record_failure(&facade, artifact_type, name, &action_id, &user_id, true);
+            }
             return Ok((false, info));
         }
         if let Some(check) = allow {
@@ -358,7 +394,9 @@ pub(crate) fn is_permitted(
             }
             return Ok((true, info));
         }
-        record_failure(&facade, artifact_type, name, &action_id, &user_id, false);
+        if permit.is_access {
+            record_failure(&facade, artifact_type, name, &action_id, &user_id, false);
+        }
     }
     info.granted = Some(false);
     Ok((false, info))
@@ -520,7 +558,8 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
                     format!(
                         "User {user_id} has accessed {artifact_type} {name} too many times; retry after {seconds} seconds"
                     ),
-                ));
+                )
+                .with_retry_after(u64::try_from(seconds).unwrap_or(0)));
             }
         }
     }
@@ -649,8 +688,70 @@ fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error
 /// One `ArtifactAuthzCheckView` read per group, as Java's `getArtifactAuthzCheckList`.
 fn load_user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
     let groups = user_groups(facade)?;
-    let mut ordered: Vec<&String> = groups.iter().collect();
+    let ordered: Vec<&String> = groups.iter().collect();
+    load_group_checks(facade, ordered)
+}
+
+/// Whether the authorization rows of `groups` permit `action` on an artifact, read the way a user's checks are
+/// ([`load_user_checks`]) but for the groups alone, with the precedence a user's own check has ([`is_permitted`]): an
+/// always-allow permits, overriding a deny; else a deny refuses; else an allow permits; else nothing does. An agent's
+/// role group bounds what its tools may do this way (plans/LLM-A2A-Assist.md 4.3); the tool then runs as the user, so
+/// the user's own checks apply as well. A record with an authorization service counts as its own type, since the
+/// service decides for a user and there is none here. A record with a `filterMap` is not supported for a role group,
+/// which has no request parameters to match: it refuses as a deny does, whatever its type (logged), so such a row
+/// never widens what an agent may do.
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be read.
+pub fn group_permits(groups: &[String], artifact_type: &str, name: &str, action: &str) -> Result<bool, Error> {
+    let _guard = disable_authz_guard()?;
+    let facade = entity_facade()?;
+    let checks = load_group_checks(&facade, groups.iter().collect())?;
+    let action_id = action_enum(action);
+    let mut deny = false;
+    let mut allow = false;
+    for check in checks.iter() {
+        if check.artifact_type != artifact_type
+            || !(check.authz_action == AUTHZA_ALL || check.authz_action == action_id)
+            || !(check.name_is_pattern || check.artifact_name == name)
+        {
+            continue;
+        }
+        if check.name_is_pattern {
+            match pattern_matches(&check.artifact_name, name) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(err) => {
+                    // as for a user: a record that does not evaluate denies when it is a deny, and allows nothing
+                    tracing::error!(artifact_authz_id = %check.artifact_authz_id, error = %err, "authz record did not evaluate");
+                    deny |= check.authz_type == AUTHZT_DENY;
+                    continue;
+                }
+            }
+        }
+        if !check.filter_map.is_empty() {
+            tracing::warn!(
+                artifact_authz_id = %check.artifact_authz_id,
+                "an authz record with a filterMap is not supported for an agent role group, so it refuses"
+            );
+            deny = true;
+            continue;
+        }
+        match check.authz_type.as_str() {
+            AUTHZT_ALWAYS => return Ok(true),
+            AUTHZT_DENY => deny = true,
+            AUTHZT_ALLOW => allow = true,
+            _ => {}
+        }
+    }
+    Ok(!deny && allow)
+}
+
+/// The `ArtifactAuthzCheckView` rows of `groups`, one read per group in name order.
+fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
     ordered.sort();
+    ordered.dedup();
     let mut checks = Vec::new();
     for group in ordered {
         let rows = facade
@@ -1316,6 +1417,8 @@ mod tests {
             .push_checked("AT_SERVICE", "test.Busy#Row", "all", true, true, None)
             .expect_err("locked");
         assert_eq!(err.kind(), crate::context::ErrorKind::Tarpit, "{err}");
+        // The seconds go to the response as Retry-After, as Java's ArtifactTarpitException carries them.
+        assert!(err.retry_after().is_some_and(|seconds| seconds > 0), "{err}");
     }
 
     #[test]

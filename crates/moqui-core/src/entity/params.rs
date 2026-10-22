@@ -14,11 +14,12 @@
 
 //! Columns a find reads and their Java types. `moqui_db` binds the condition values itself.
 
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use moqui_db::model::{EntityDefinition, EntityModel, FieldDefinition};
-use moqui_lib::object::{basic_convert, Value};
+use moqui_lib::object::{basic_convert, is_java_type, Value};
 
+use super::value::FieldMap;
 use crate::driver::DbRow;
 
 /// Java type name for a dictionary field, when the dictionary has that type.
@@ -28,16 +29,16 @@ pub(crate) fn java_of(model: &EntityModel, field: &FieldDefinition) -> Option<St
         .map(|entry| entry.java_type.clone())
 }
 
-pub(crate) fn entity_columns(entity: &EntityDefinition, model: &EntityModel) -> Vec<(String, String)> {
+pub(crate) fn entity_columns(entity: &EntityDefinition, model: &EntityModel) -> Vec<(Arc<str>, String)> {
     entity
         .fields
         .iter()
-        .map(|field| (field.name.clone(), java_of(model, field).unwrap_or_default()))
+        .map(|field| (Arc::from(field.name.as_str()), java_of(model, field).unwrap_or_default()))
         .collect()
 }
 
 /// Output column name to Java type for a view. Function aliases stay unconverted.
-pub(crate) fn view_columns(view: &EntityDefinition) -> Vec<(String, String)> {
+pub(crate) fn view_columns(view: &EntityDefinition) -> Vec<(Arc<str>, String)> {
     view.aliases
         .iter()
         .map(|alias| {
@@ -46,30 +47,37 @@ pub(crate) fn view_columns(view: &EntityDefinition) -> Vec<(String, String)> {
             } else {
                 alias.java_type.clone()
             };
-            (alias.name.clone(), java)
+            (Arc::from(alias.name.as_str()), java)
         })
         .collect()
 }
 
-pub(crate) fn map_row(columns: &[(String, String)], row: &DbRow) -> BTreeMap<String, Value> {
-    let mut values = BTreeMap::new();
+/// The row's values by field name, each converted to its column's Java type. A column the row has that `columns`
+/// does not name is kept as read. The values move into the map, so a value is not copied, and the names are the
+/// columns' own, shared with every row read with them.
+pub(crate) fn map_row(columns: &[(Arc<str>, String)], row: DbRow) -> FieldMap {
+    let mut cells = row.columns;
     if columns.is_empty() {
-        for (name, value) in &row.columns {
-            values.insert(name.clone(), value.clone());
-        }
-        return values;
+        return cells.into_iter().collect();
     }
-    for (name, java) in columns {
-        let raw = row.get(name).cloned().unwrap_or(Value::Null);
-        let value = if java.is_empty() {
+    let mut values = FieldMap::new();
+    for (index, (name, java)) in columns.iter().enumerate() {
+        // A row usually has the columns in the select's order.
+        let found = match cells.get(index) {
+            Some((cell, _)) if cell == name => Some(index),
+            _ => cells.iter().position(|(cell, _)| cell == name),
+        };
+        let raw = found.map_or(Value::Null, |at| std::mem::replace(&mut cells[at].1, Value::Null));
+        let value = if is_java_type(&raw, java) {
             raw
         } else {
             basic_convert(&raw, java).value
         };
-        values.insert(name.clone(), value);
+        values.insert(Arc::clone(name), value);
     }
-    for (name, value) in &row.columns {
-        values.entry(name.clone()).or_insert_with(|| value.clone());
+    // A cell taken above is under a name the map has.
+    for (name, value) in cells {
+        values.entry(name).or_insert(value);
     }
     values
 }

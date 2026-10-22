@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="rootVersionName" type="text-short"/>
         <field name="fileData" type="binary-very-long"/>
         <field name="blobId" type="id-long"><description>The content blob of content over
-            dbresource_blob_threshold bytes, in place of fileData</description></field>
+            resource-facade dbresource-blob-threshold bytes, in place of fileData</description></field>
         <field name="fileSize" type="number-integer"><description>The bytes of the content (fileData, or the content
             blob), written with each write so a folder list need not read the files; a row written before this field is
             sized from its data until its next write (or migrate#DbResourceBlobs).</description></field>
@@ -94,7 +94,20 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="gcLeaseOwner" type="text-short"><description>The run of gc#GitRepositories that holds this
             repository (the only one that rewrites its objects) until gcLeaseUntil</description></field>
         <field name="gcLeaseUntil" type="date-time"/>
+        <field name="archivedDate" type="date-time"><description>When the repository was archived (archive#GitRepository):
+            read only, pushes, ref writes, merges and writes refused, left out of find#GitRepositories unless asked</description></field>
+        <field name="defaultMergeMethodEnumId" type="id"><description>How a merge request merges by default: GmmMerge
+            (a merge commit, the default when empty) or GmmSquash</description></field>
         <relationship type="many" related="moqui.resource.GitRef" short-alias="refs"><key-map field-name="repositoryId"/></relationship>
+        <relationship type="one-nofk" title="DefaultMergeMethod" related="moqui.basic.Enumeration" short-alias="defaultMergeMethod">
+            <key-map field-name="defaultMergeMethodEnumId" related="enumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Git Merge Method" enumTypeId="GitMergeMethod"/>
+            <moqui.basic.Enumeration enumId="GmmMerge" enumTypeId="GitMergeMethod" enumCode="merge" sequenceNum="1" description="Merge commit"/>
+            <moqui.basic.Enumeration enumId="GmmSquash" enumTypeId="GitMergeMethod" enumCode="squash" sequenceNum="2" description="Squash"/>
+            <moqui.basic.Enumeration enumId="GmmFastForward" enumTypeId="GitMergeMethod" enumCode="fast-forward" sequenceNum="3" description="Fast-forward"/>
+            <moqui.basic.Enumeration enumId="GmmRebase" enumTypeId="GitMergeMethod" enumCode="rebase" sequenceNum="4" description="Rebase"/>
+        </seed-data>
     </entity>
     <entity entity-name="GitObject" package="moqui.resource" use="nontransactional" cache="never">
         <description>A git object of a db kind repository, keyed by its SHA-1 hex id, stored as storage says.
@@ -107,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="storage" type="text-short"><description>What objectData holds: zlib (the zlib stream of the
             content, as in a pack), delta (the zlib stream of git delta instructions that make the content from the
             object deltaBaseId), or empty (the content itself, as rows written before these were); or blob, for an
-            object over git_db_large_object bytes: the content is the ContentBlob blobId</description></field>
+            object over git-server db-large-object bytes: the content is the ContentBlob blobId</description></field>
         <field name="deltaBaseId" type="text-short"/>
         <field name="deltaDepth" type="number-integer"><description>Deltas from the object to a whole one</description></field>
         <field name="deltaSize" type="number-integer"><description>The size of the delta instructions</description></field>
@@ -162,6 +175,155 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="changeType" type="text-short"><description>create, update (a fast-forward), force or delete</description></field>
         <field name="result" type="text-medium"><description>ok, pending while it is made, or why it was refused</description></field>
         <relationship type="one" related="moqui.resource.GitUpdate"/>
+    </entity>
+
+    <!-- Hosting and code review (docs/Git-Hosting.md: Commit statuses, Webhooks, Branch rules, Merge requests). No Java
+        counterpart. Entity filters do not apply to moqui.* entities: these rows are read through the services of
+        org.moqui.impl.GitServices and GitReviewServices, which check the repository's rights. -->
+    <entity entity-name="GitCommitStatus" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A check of a commit posted by outside CI (create#GitCommitStatus, or POST
+            /rest/s1/moqui/git/{repositoryId}/commits/{commitId}/statuses in GitHub's status shape): the latest of a
+            context is its state.</description>
+        <field name="commitStatusId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="commitId" type="text-short"/>
+        <field name="context" type="text-medium"><description>What checked it (ci/build); default when empty</description></field>
+        <field name="state" type="text-short"><description>pending, success, failure or error</description></field>
+        <field name="targetUrl" type="text-medium"><description>The run, on the CI server</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" title="CreatedBy" related="moqui.security.UserAccount">
+            <key-map field-name="createdByUserId" related="userId"/></relationship>
+        <index name="GIT_STATUS_COMMIT"><index-field name="repositoryId"/><index-field name="commitId"/></index>
+    </entity>
+    <entity entity-name="GitWebhook" package="moqui.resource" use="nontransactional" cache="never">
+        <description>An outside URL called on a repository's events (push, tag, merge_request) with a JSON body signed
+            by HMAC-SHA256 of the secret (X-Hub-Signature-256): each delivery a SystemMessage of type GitWebhook,
+            retried by retry#GitWebhookDeliveries, its attempts the delivery log.</description>
+        <field name="webhookId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="url" type="text-medium"><description>http or https; an internal address is refused</description></field>
+        <field name="secret" type="text-medium" encrypt="true"/>
+        <field name="events" type="text-medium"><description>Comma separated: push, tag, merge_request; all when empty</description></field>
+        <field name="active" type="text-indicator"/>
+        <field name="description" type="text-medium"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastDeliveryDate" type="date-time"/>
+        <field name="lastDeliveryStatus" type="text-short"><description>The HTTP status of the last attempt, or error</description></field>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <index name="GIT_HOOK_REPO"><index-field name="repositoryId"/></index>
+        <seed-data>
+            <moqui.service.message.SystemMessageType systemMessageTypeId="GitWebhook" description="Git Webhook Delivery"
+                    sendServiceName="org.moqui.impl.GitServices.send#GitWebhookDelivery" contentType="application/json"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="GitBranchRule" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A protected branch (or tag) of a repository, enforced by the git server before a pushed ref moves and
+            by the ref and merge services: a pattern that starts with refs/ is matched against the full ref name, any
+            other against a branch's name, * any run of characters. Writes through git:// by users with the update
+            right pass and are logged.</description>
+        <field name="branchRuleId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="refPattern" type="text-medium"/>
+        <field name="allowForcePush" type="text-indicator"/>
+        <field name="allowDelete" type="text-indicator"/>
+        <field name="requireMergeRequest" type="text-indicator"><description>Changes only through a merge request,
+            except for members of pushUserGroupId</description></field>
+        <field name="requiredApprovals" type="number-integer"/>
+        <field name="dismissStaleApprovals" type="text-indicator"><description>A new head of the source sets its
+            approvals back to requested</description></field>
+        <field name="requiredStatusContexts" type="text-medium"><description>Comma separated commit status contexts that
+            must be success on the head before a merge</description></field>
+        <field name="allowedMergeMethods" type="text-medium"><description>Comma separated GitMergeMethod enumIds; any
+            when empty</description></field>
+        <field name="pushUserGroupId" type="id"><description>Only members of this group may push directly</description></field>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <relationship type="one-nofk" title="Push" related="moqui.security.UserGroup">
+            <key-map field-name="pushUserGroupId" related="userGroupId"/></relationship>
+        <index name="GIT_RULE_REPO"><index-field name="repositoryId"/></index>
+    </entity>
+    <entity entity-name="GitMergeRequest" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A request to merge a source branch into a target branch of one repository, reviewed by the users of
+            GitMergeRequestReviewer (org.moqui.impl.GitReviewServices). headCommitId and mergeability are kept by
+            refresh#MergeRequests on every ref update.</description>
+        <field name="mergeRequestId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="mergeRequestNum" type="number-integer"><description>Per repository from 1: !num</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-very-long"/>
+        <field name="sourceRef" type="text-medium"><description>The source branch name</description></field>
+        <field name="targetRef" type="text-medium"><description>The target branch name</description></field>
+        <field name="statusId" type="id" enable-audit-log="true"/>
+        <field name="authorUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUpdatedDate" type="date-time"/>
+        <field name="headCommitId" type="text-short"><description>The source's head when last refreshed</description></field>
+        <field name="baseCommitId" type="text-short"><description>The merge base of the source and the target</description></field>
+        <field name="mergeableEnumId" type="id"/>
+        <field name="conflictPaths" type="text-very-long"><description>One path per line</description></field>
+        <field name="mergeMethodEnumId" type="id"><description>The method it merges by: the repository's default when empty</description></field>
+        <field name="deleteSourceBranch" type="text-indicator"/>
+        <field name="mergedDate" type="date-time"/>
+        <field name="mergedByUserId" type="id"/>
+        <field name="mergeCommitId" type="text-short"/>
+        <field name="closedDate" type="date-time"/>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <relationship type="one" title="GitMergeRequest" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" title="Mergeable" related="moqui.basic.Enumeration" short-alias="mergeable">
+            <key-map field-name="mergeableEnumId" related="enumId"/></relationship>
+        <relationship type="one-nofk" title="MergeMethod" related="moqui.basic.Enumeration" short-alias="mergeMethod">
+            <key-map field-name="mergeMethodEnumId" related="enumId"/></relationship>
+        <relationship type="one-nofk" title="Author" related="moqui.security.UserAccount" short-alias="author">
+            <key-map field-name="authorUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.resource.GitMergeRequestReviewer" short-alias="reviewers">
+            <key-map field-name="mergeRequestId"/></relationship>
+        <index name="GIT_MR_NUM" unique="true"><index-field name="repositoryId"/><index-field name="mergeRequestNum"/></index>
+        <index name="GIT_MR_SOURCE"><index-field name="repositoryId"/><index-field name="sourceRef"/></index>
+        <index name="GIT_MR_AUTHOR"><index-field name="authorUserId"/><index-field name="statusId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType statusTypeId="GitMergeRequest" description="Git Merge Request"/>
+            <moqui.basic.StatusItem statusId="GmrDraft" statusTypeId="GitMergeRequest" statusCode="draft" sequenceNum="1" description="Draft"/>
+            <moqui.basic.StatusItem statusId="GmrOpen" statusTypeId="GitMergeRequest" statusCode="open" sequenceNum="2" description="Open"/>
+            <moqui.basic.StatusItem statusId="GmrMerged" statusTypeId="GitMergeRequest" statusCode="merged" sequenceNum="3" description="Merged"/>
+            <moqui.basic.StatusItem statusId="GmrClosed" statusTypeId="GitMergeRequest" statusCode="closed" sequenceNum="4" description="Closed"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrDraft" toStatusId="GmrOpen" transitionName="Mark Ready"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrOpen" toStatusId="GmrDraft" transitionName="Mark Draft"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrOpen" toStatusId="GmrMerged" transitionName="Merge"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrDraft" toStatusId="GmrMerged" transitionName="Merged"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrOpen" toStatusId="GmrClosed" transitionName="Close"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrDraft" toStatusId="GmrClosed" transitionName="Close"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="GmrClosed" toStatusId="GmrOpen" transitionName="Reopen"/>
+
+            <moqui.basic.EnumerationType description="Git Mergeability" enumTypeId="GitMergeability"/>
+            <moqui.basic.Enumeration enumId="GmaUnchecked" enumTypeId="GitMergeability" enumCode="unchecked" sequenceNum="1" description="Checking"/>
+            <moqui.basic.Enumeration enumId="GmaMergeable" enumTypeId="GitMergeability" enumCode="mergeable" sequenceNum="2" description="Able to merge"/>
+            <moqui.basic.Enumeration enumId="GmaConflict" enumTypeId="GitMergeability" enumCode="conflict" sequenceNum="3" description="Conflicts"/>
+            <moqui.basic.Enumeration enumId="GmaMerged" enumTypeId="GitMergeability" enumCode="merged" sequenceNum="4" description="Already in the target"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="GitMergeRequestReviewer" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A reviewer of a merge request and their latest review, at the head it was given on.</description>
+        <field name="mergeRequestId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="statusId" type="id"/>
+        <field name="requestedDate" type="date-time"/>
+        <field name="reviewedCommitId" type="text-short"/>
+        <field name="reviewedDate" type="date-time"/>
+        <field name="reviewNote" type="text-long"><description>The summary of the latest review</description></field>
+        <relationship type="one" related="moqui.resource.GitMergeRequest"/>
+        <relationship type="one" title="GitMergeRequestReviewer" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="GIT_MRR_USER"><index-field name="userId"/><index-field name="statusId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType statusTypeId="GitMergeRequestReviewer" description="Git Merge Request Reviewer"/>
+            <moqui.basic.StatusItem statusId="GmrrRequested" statusTypeId="GitMergeRequestReviewer" statusCode="requested" sequenceNum="1" description="Requested"/>
+            <moqui.basic.StatusItem statusId="GmrrApproved" statusTypeId="GitMergeRequestReviewer" statusCode="approved" sequenceNum="2" description="Approved"/>
+            <moqui.basic.StatusItem statusId="GmrrChangesRequested" statusTypeId="GitMergeRequestReviewer" statusCode="changes" sequenceNum="3" description="Changes Requested"/>
+            <moqui.basic.StatusItem statusId="GmrrCommented" statusTypeId="GitMergeRequestReviewer" statusCode="commented" sequenceNum="4" description="Commented"/>
+        </seed-data>
     </entity>
 
     <!-- Git LFS (crates/moqui-core/src/resource/git/server/lfs.rs, docs/Git-Hosting.md). No Java counterpart. -->
@@ -277,7 +439,9 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- The search document of drive files: no row feeds it, FileServices indexes each write, move, rename and
                 trash with documents it builds (ec.search.indexDocuments), and the mirror fetch indexes the paths that
-                changed. Queries filter by the drives the user may open. extractedText is for later. -->
+                changed. Queries filter by the drives the user may open. extractedText is the text of a PDF (through the
+                PDF engine), spreadsheet or text file from the text cache under runtime://tmp/file-text; a file not in it
+                yet is extracted by extract#DriveFileText, asynchronously, and indexed again. -->
             <moqui.entity.document.DataDocument dataDocumentId="MoquiDriveFile" indexName="moqui_drive" documentName="Drive File"
                     primaryEntityName="moqui.resource.ResourceDrive" documentTitle="${name}"/>
             <moqui.entity.document.DataDocumentField dataDocumentId="MoquiDriveFile" fieldSeqId="01" fieldPath="driveId"/>
@@ -507,6 +671,25 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="toWikiPageId" related="wikiPageId"/></relationship>
         <index name="WIKILINK_TO"><index-field name="toWikiPageId"/></index>
         <index name="WIKILINK_TOPATH"><index-field name="toWikiSpaceId"/><index-field name="toPagePath"/></index>
+    </entity>
+    <entity entity-name="CollabDocument" package="moqui.resource" use="transactional" cache="never">
+        <description>A document several people edit at once (m-coedit, org.moqui.impl.CollabServices; docs/Revision-Management.md,
+            Co-editing): the Yjs state of its editors (stateData, the full update in Yjs v1 encoding, kept current a second
+            or two after an edit and merged when several servers write it), the markdown it renders to (snapshotText), and
+            what it was last saved as. documentKey names the record, such as WikiPage:100023. The record's own text (the
+            wiki page) is written only as a version: when the user saves, after a while without edits on database files,
+            and when the last editor closes it. editorUserIds are the users whose changes are not in a version yet.</description>
+        <field name="documentKey" type="id-long" is-pk="true"/>
+        <field name="stateData" type="binary-very-long"/>
+        <field name="snapshotText" type="text-very-long"/>
+        <field name="baseTextHash" type="text-medium"><description>The SHA-256 of the record's text the state was made from
+            or last saved as; a text that no longer has it was changed outside co-editing</description></field>
+        <field name="baseVersionName" type="text-medium"/>
+        <field name="editorUserIds" type="text-medium"/>
+        <field name="lastChangeDate" type="date-time"/>
+        <field name="lastChangeUserId" type="id"/>
+        <field name="lastSaveDate" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
     </entity>
     <entity entity-name="WikiPageReview" package="moqui.resource.wiki" use="nontransactional" cache="never">
         <description>A request that a user review a version of a page before it is published, and the decision: requested,

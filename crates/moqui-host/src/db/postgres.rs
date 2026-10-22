@@ -12,30 +12,41 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Sync Postgres client behind [`moqui_core::driver::DbDriver`].
+//! Postgres behind [`moqui_core::driver::DbDriver`], on the protocol client of [`super::pgwire`].
 //!
-//! `postgres::Client` owns the `current_thread` runtime and `block_on`s connect, query, and drop.
+//! A call is a round trip on a blocking socket: one write, one read. A `BEGIN`, a `SET LOCAL statement_timeout`, a
+//! deferred write ([`DbConnection::execute_deferred`]), a stream's `DECLARE` and its `CLOSE` are not waited for: they
+//! share the round trip of the next call that waits, which reads their replies first and reports the first failure
+//! among them.
 
 #[cfg(feature = "postgres")]
 mod driver {
     use std::collections::VecDeque;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
+    use bytes::BytesMut;
     use moqui_core::driver::{DbCancel, DbConnection, DbDriver, DbRow};
     use moqui_lib::codec::hex_encode;
     use moqui_lib::error::Error;
     use moqui_lib::object::{basic_convert, Value};
-    use postgres::config::SslMode;
-    use postgres::types::private::BytesMut;
-    use postgres::types::{Format, FromSql, IsNull, ToSql, Type};
-    use postgres::{Client, Config, NoTls, Statement};
-    use tokio_postgres_rustls::MakeRustlsConnect;
+    use postgres_types::Type;
 
+    use crate::db::pgwire::{self, Column, Endpoint, Wire};
     use crate::db::statement_lru::StatementLru;
 
-    const CACHE_CAP: usize = 100;
+    /// Statements kept prepared on a connection, as pgjdbc's `preparedStatementCacheQueries` default. A data load of
+    /// many entities prepares several statements of each (see [`BATCH_SIZES`]); at 100 they pushed each other out.
+    const CACHE_CAP: usize = 256;
     const FETCH_BATCH: usize = 50;
+    /// Rows a statement of [`RowBatch`] takes at most, and the smaller sizes the end of a run of rows goes out in: up
+    /// to five statements of an entity's columns prepared on a connection, which [`CACHE_CAP`] leaves room for.
+    const BATCH_SIZES: [usize; 5] = [100, 30, 10, 3, 1];
+    /// Parameters a [`RowBatch`] statement takes at most, well under the protocol's 65,535.
+    const BATCH_PARAMS: usize = 30_000;
     const STREAM_CURSOR: &str = "moqui_stream_cursor";
+    /// Every parameter in text: the server parses each as its column's type.
+    const ALL_TEXT: [i16; 1] = [0];
     /// Seconds from the Unix epoch to 2000-01-01 00:00:00 UTC.
     const PG_EPOCH_SECS: i64 = 946_684_800;
     const PG_EPOCH_USEC: i64 = PG_EPOCH_SECS * 1_000_000;
@@ -57,43 +68,142 @@ mod driver {
     enum Target {
         #[cfg(unix)]
         Unix { socket_dir: PathBuf, port: u16 },
-        /// Loopback TCP with [`NoTls`]. Embedded Postgres on Windows uses this.
+        /// Loopback TCP with no TLS. Embedded Postgres on Windows uses this.
         TcpNoTls { host: String, port: u16 },
         Tcp {
             host: String,
             port: u16,
-            tls: MakeRustlsConnect,
+            tls: Arc<rustls::ClientConfig>,
         },
     }
 
-    #[derive(Clone)]
-    enum TlsMode {
-        None,
-        Rustls(MakeRustlsConnect),
+    impl Target {
+        fn endpoint(&self) -> Endpoint {
+            match self {
+                #[cfg(unix)]
+                Target::Unix { socket_dir, port } => Endpoint::Unix(socket_dir.join(format!(".s.PGSQL.{port}"))),
+                Target::TcpNoTls { host, port } => Endpoint::Tcp {
+                    host: host.clone(),
+                    port: *port,
+                    tls: None,
+                },
+                Target::Tcp { host, port, tls } => Endpoint::Tcp {
+                    host: host.clone(),
+                    port: *port,
+                    tls: Some(Arc::clone(tls)),
+                },
+            }
+        }
     }
 
-    /// One `postgres::Client`. Statement LRU is keyed by the original SQL text.
+    /// One connection. Statement LRU is keyed by the original SQL text.
     pub struct PostgresConn {
-        client: Client,
-        cache: StatementLru<Statement>,
+        wire: Wire,
+        endpoint: Endpoint,
+        cache: StatementLru<Arc<Prepared>>,
+        /// The number of the next statement prepared, which names it.
+        next_statement: u64,
         in_transaction: bool,
         streaming: bool,
         stream_exhausted: bool,
         stream_buf: VecDeque<DbRow>,
-        tls: TlsMode,
+        /// Rows [`DbConnection::execute_deferred_row`] holds. Every other call sends them first, and a rollback drops
+        /// them.
+        batch: Option<RowBatch>,
+    }
+
+    /// Rows of one `INSERT ... VALUES (?, ...)` statement, gathered to go out as statements of many rows.
+    struct RowBatch {
+        sql: String,
+        /// Where the `VALUES` row of `sql` starts and ends: what is before it, and what follows it (an
+        /// `ON CONFLICT` clause), are the same in a statement of many rows.
+        row: std::ops::Range<usize>,
+        /// Parameters a row takes.
+        width: usize,
+        /// The most rows a statement takes.
+        most: usize,
+        params: Vec<Value>,
+        keys: std::collections::HashSet<u64>,
+    }
+
+    impl RowBatch {
+        /// A batch for `sql` when it is an `INSERT` of one row of `width` placeholders, the `VALUES` row only
+        /// placeholders.
+        fn new(sql: &str, width: usize) -> Option<Self> {
+            if width == 0 || !sql.starts_with("INSERT INTO ") {
+                return None;
+            }
+            let start = sql.find(" VALUES (")? + " VALUES ".len();
+            let end = start + sql[start..].find(')')? + 1;
+            let inner = &sql[start + 1..end - 1];
+            if inner.bytes().any(|byte| !matches!(byte, b'?' | b',' | b' '))
+                || inner.bytes().filter(|byte| *byte == b'?').count() != width
+            {
+                return None;
+            }
+            Some(Self {
+                sql: sql.to_string(),
+                row: start..end,
+                width,
+                most: BATCH_SIZES[0].min(BATCH_PARAMS / width).max(1),
+                params: Vec::new(),
+                keys: std::collections::HashSet::new(),
+            })
+        }
+
+        fn rows(&self) -> usize {
+            self.params.len() / self.width
+        }
+
+        /// The statement of `rows` rows.
+        fn statement(&self, rows: usize) -> String {
+            if rows == 1 {
+                return self.sql.clone();
+            }
+            let row = &self.sql[self.row.clone()];
+            let mut sql = String::with_capacity(self.sql.len() + (row.len() + 2) * (rows - 1));
+            sql.push_str(&self.sql[..self.row.start]);
+            for index in 0..rows {
+                if index > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push_str(row);
+            }
+            sql.push_str(&self.sql[self.row.end..]);
+            sql
+        }
+    }
+
+    /// A statement prepared on the connection: its name there, its parameter types and its result columns.
+    struct Prepared {
+        name: String,
+        params: Vec<Type>,
+        columns: Arc<[Column]>,
+    }
+
+    impl Prepared {
+        /// Each parameter in text, except bytes for a `bytea`, sent as they are rather than as hex text twice their size
+        /// (which also overflows the 1 GB field limit at half of it). One code for all when every one is text.
+        fn formats(&self, params: &[Value]) -> Vec<i16> {
+            if !params.iter().zip(&self.params).any(|(value, ty)| is_binary(value, Some(ty))) {
+                return ALL_TEXT.to_vec();
+            }
+            params
+                .iter()
+                .enumerate()
+                .map(|(index, value)| i16::from(is_binary(value, self.params.get(index))))
+                .collect()
+        }
     }
 
     struct PgCancel {
-        token: postgres::CancelToken,
-        tls: TlsMode,
+        endpoint: Endpoint,
+        process_id: i32,
+        secret_key: i32,
     }
 
-    struct Param<'a>(&'a Value);
-
-    struct PgValue(Value);
-
     impl PostgresDriver {
-        /// Unix socket directory and [`NoTls`]. The port is the server default, 5432.
+        /// Unix socket directory and no TLS. The port is the server default, 5432.
         #[cfg(unix)]
         pub fn unix_socket(
             user: impl Into<String>,
@@ -123,7 +233,7 @@ mod driver {
             self
         }
 
-        /// TCP host and [`NoTls`]. Embedded Windows uses `127.0.0.1` and the ephemeral port.
+        /// TCP host and no TLS. Embedded Windows uses `127.0.0.1` and the ephemeral port.
         /// External servers stay on [`Self::external`].
         #[must_use]
         pub fn tcp_no_tls(
@@ -144,19 +254,33 @@ mod driver {
             }
         }
 
-        /// TCP host and rustls. `MakeRustlsConnect` implements `MakeTlsConnect` for the sync client.
+        /// TCP host and TLS (rustls, with the `webpki-roots` certificate authorities), which the server must accept.
         ///
         /// # Errors
         ///
-        /// Returns an error when the rustls provider cannot be installed.
+        /// Returns an error when the TLS configuration cannot be built.
         pub fn external(
             user: impl Into<String>,
             database: impl Into<String>,
             host: impl Into<String>,
             port: u16,
         ) -> Result<Self, Error> {
-            let tls = std::panic::catch_unwind(MakeRustlsConnect::with_webpki_roots)
-                .map_err(|_| Error::new("external TLS is not available on the sync client"))?;
+            Self::external_with(user, database, host, port, &crate::db::pg_tls::TlsOptions::default())
+        }
+
+        /// TCP host and TLS as `tls` says: the authorities trusted and what of the certificate is checked.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the root certificate file cannot be read or the TLS configuration cannot be built.
+        pub fn external_with(
+            user: impl Into<String>,
+            database: impl Into<String>,
+            host: impl Into<String>,
+            port: u16,
+            tls: &crate::db::pg_tls::TlsOptions,
+        ) -> Result<Self, Error> {
+            let tls = crate::db::pg_tls::client_config(tls)?;
             Ok(Self {
                 user: user.into(),
                 database: database.into(),
@@ -191,50 +315,27 @@ mod driver {
         ///
         /// Returns an error when the server rejects the connection or `SET TIME ZONE`.
         pub fn connect_postgres(&self) -> Result<PostgresConn, Error> {
-            let mut config = Config::new();
-            config.user(&self.user).dbname(&self.database);
-            if let Some(password) = &self.password {
-                config.password(password);
-            }
-            if let Some(options) = &self.options {
-                config.options(options);
-            }
-            let (mut client, tls) = match &self.target {
-                #[cfg(unix)]
-                Target::Unix { socket_dir, port } => {
-                    config.host_path(socket_dir);
-                    config.port(*port);
-                    config.ssl_mode(SslMode::Disable);
-                    let client = config.connect(NoTls).map_err(|err| pg("connect", err))?;
-                    (client, TlsMode::None)
-                }
-                Target::TcpNoTls { host, port } => {
-                    config.host(host);
-                    config.port(*port);
-                    config.ssl_mode(SslMode::Disable);
-                    let client = config.connect(NoTls).map_err(|err| pg("connect", err))?;
-                    (client, TlsMode::None)
-                }
-                Target::Tcp { host, port, tls } => {
-                    config.host(host);
-                    config.port(*port);
-                    config.ssl_mode(SslMode::Require);
-                    let client = config.connect(tls.clone()).map_err(|err| pg("connect", err))?;
-                    (client, TlsMode::Rustls(tls.clone()))
-                }
-            };
-            client
-                .batch_execute("SET TIME ZONE 'UTC'")
-                .map_err(|err| pg("set time zone", err))?;
-            Ok(PostgresConn {
-                client,
+            let endpoint = self.target.endpoint();
+            let wire = Wire::connect(
+                &endpoint,
+                &self.user,
+                &self.database,
+                self.password.as_deref(),
+                self.options.as_deref(),
+            )?;
+            let mut conn = PostgresConn {
+                wire,
+                endpoint,
                 cache: StatementLru::new(CACHE_CAP),
+                next_statement: 0,
                 in_transaction: false,
                 streaming: false,
                 stream_exhausted: false,
                 stream_buf: VecDeque::new(),
-                tls,
-            })
+                batch: None,
+            };
+            conn.wire.simple("SET TIME ZONE 'UTC'", "set time zone")?;
+            Ok(conn)
         }
     }
 
@@ -260,9 +361,7 @@ mod driver {
             if channel.is_empty() || !channel.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
                 return Err(Error::new(format!("{channel:?} is not a channel name")));
             }
-            self.client
-                .batch_execute(&format!("LISTEN {channel}"))
-                .map_err(|err| pg("listen", err))
+            self.wire.simple(&format!("LISTEN {channel}"), "listen")
         }
 
         /// The payloads of the notifications that arrive within `timeout` of the call, and any already
@@ -272,61 +371,131 @@ mod driver {
         ///
         /// Returns an error when the connection is lost.
         pub fn notifications(&mut self, timeout: std::time::Duration) -> Result<Vec<String>, Error> {
-            use postgres::fallible_iterator::FallibleIterator;
-
-            let mut notifications = self.client.notifications();
-            let mut payloads = Vec::new();
-            let first = notifications
-                .timeout_iter(timeout)
-                .next()
-                .map_err(|err| pg("notification", err))?;
-            if let Some(first) = first {
-                payloads.push(first.payload().to_string());
-                let mut waiting = notifications.iter();
-                while let Some(next) = waiting.next().map_err(|err| pg("notification", err))? {
-                    payloads.push(next.payload().to_string());
-                }
-            }
-            Ok(payloads)
+            self.wire.notifications(timeout)
         }
 
         /// True when the server has closed this connection.
         #[must_use]
         pub fn is_closed(&self) -> bool {
-            self.client.is_closed()
+            self.wire.is_dead()
         }
 
-        fn prepared(&mut self, sql: &str) -> Result<Statement, Error> {
-            if let Some(statement) = self.cache.get(sql) {
-                return Ok(statement.clone());
+        fn prepared(&mut self, sql: &str) -> Result<Arc<Prepared>, Error> {
+            if let Some(prepared) = self.cache.get(sql) {
+                return Ok(Arc::clone(prepared));
             }
-            let rewritten = rewrite_placeholders(sql);
-            let statement = self.client.prepare(&rewritten).map_err(|err| pg("prepare", err))?;
-            self.cache.insert(sql, statement.clone());
-            Ok(statement)
+            let name = self.statement_name();
+            let described = self.wire.prepare(&name, &rewrite_placeholders(sql))?;
+            self.remember(sql, name, described)
         }
 
-        /// `COMMIT` closes an open stream's cursor first. `ROLLBACK` does not, since it closes the cursor itself and a
-        /// `CLOSE` in an aborted transaction would fail before the rollback is sent. Either way the stream is gone.
+        /// The cached statement for `sql`; `None` when there is none and it can be prepared in its first run
+        /// ([`Self::first_run`]), which sends every parameter in text: none of them is bytes.
+        fn cached(&mut self, sql: &str, params: &[Value]) -> Result<Option<Arc<Prepared>>, Error> {
+            if let Some(prepared) = self.cache.get(sql) {
+                return Ok(Some(Arc::clone(prepared)));
+            }
+            if params.iter().any(|value| matches!(value, Value::Bytes(_))) {
+                return self.prepared(sql).map(Some);
+            }
+            Ok(None)
+        }
+
+        /// Prepare `sql` and run it in one round trip, and keep the statement. Its rows and the rows it changed.
+        fn first_run(&mut self, sql: &str, params: &[Value], context: &str) -> Result<(Vec<DbRow>, u64), Error> {
+            let name = self.statement_name();
+            let (described, rows, changed) = self.wire.prepare_run(
+                &name,
+                &rewrite_placeholders(sql),
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], None, buf),
+                &decode_cell,
+                context,
+            )?;
+            self.remember(sql, name, described)?;
+            Ok((rows, changed))
+        }
+
+        /// Send the rows [`DbConnection::execute_deferred_row`] holds, unanswered: as statements of the largest
+        /// [`BATCH_SIZES`] that fit, in order.
+        fn flush_batch(&mut self) -> Result<(), Error> {
+            let Some(batch) = self.batch.take() else {
+                return Ok(());
+            };
+            let rows = batch.rows();
+            let mut done = 0;
+            while done < rows {
+                let left = rows - done;
+                // The largest a statement takes, then the smaller sizes.
+                let size = std::iter::once(batch.most)
+                    .chain(BATCH_SIZES.iter().copied().filter(|size| *size < batch.most))
+                    .find(|size| *size <= left)
+                    .unwrap_or(1);
+                let chunk = &batch.params[done * batch.width..(done + size) * batch.width];
+                done += size;
+                let prepared = self.prepared(&batch.statement(size))?;
+                let formats = prepared.formats(chunk);
+                self.wire.send_execute(
+                    &prepared.name,
+                    &formats,
+                    chunk.len(),
+                    &mut |index, buf| encode_param(&chunk[index], prepared.params.get(index), buf),
+                    None,
+                )?;
+            }
+            Ok(())
+        }
+
+        fn statement_name(&mut self) -> String {
+            let name = format!("s{}", self.next_statement);
+            self.next_statement += 1;
+            name
+        }
+
+        /// Keep statement `name` for `sql`, and close the one the cache lets go for it.
+        fn remember(&mut self, sql: &str, name: String, described: pgwire::Described) -> Result<Arc<Prepared>, Error> {
+            let prepared = Arc::new(Prepared {
+                name,
+                params: described.params,
+                columns: described.columns,
+            });
+            if let Some(evicted) = self.cache.insert(sql, Arc::clone(&prepared)) {
+                self.wire.close_statement(&evicted.name)?;
+            }
+            Ok(prepared)
+        }
+
+        /// `COMMIT` waits for the deferred requests first and fails with the first of them that failed: the transaction
+        /// is then aborted, and a `COMMIT` would roll it back without an error. `ROLLBACK` drops their failures. `COMMIT`
+        /// closes an open stream's cursor first. `ROLLBACK` does not, since it closes the cursor itself and a `CLOSE` in
+        /// an aborted transaction would fail before the rollback is sent. Either way the stream is gone.
         fn finish_transaction(&mut self, sql: &str) -> Result<(), Error> {
-            let close = self.streaming && sql == "COMMIT";
+            let commit = sql == "COMMIT";
+            if commit {
+                self.flush_batch()?;
+                self.wire.finish()?;
+            } else {
+                self.batch = None;
+                self.wire.abandon();
+            }
+            let close = self.streaming && commit;
             let closed = if close { self.close_stream() } else { Ok(()) };
             self.clear_stream();
             closed?;
-            self.client.batch_execute(sql).map_err(|err| pg(sql, err))?;
+            self.wire.simple(sql, sql)?;
             self.in_transaction = false;
             Ok(())
         }
 
         fn fetch_stream(&mut self) -> Result<(), Error> {
             let sql = format!("FETCH {FETCH_BATCH} FROM {STREAM_CURSOR}");
-            let rows = self.client.query(&sql, &[]).map_err(|err| pg("fetch cursor", err))?;
+            let (rows, _) = self
+                .wire
+                .query_unnamed(&sql, 0, &mut |_, _| Ok(false), &decode_cell, "fetch cursor")?;
             if rows.len() < FETCH_BATCH {
                 self.stream_exhausted = true;
             }
-            for row in &rows {
-                self.stream_buf.push_back(map_row(row)?);
-            }
+            self.stream_buf.extend(rows);
             Ok(())
         }
 
@@ -335,62 +504,167 @@ mod driver {
             self.stream_exhausted = false;
             self.stream_buf.clear();
         }
+
+        /// `sql`, with `?` placeholders, as the unnamed statement, parameters in text.
+        fn run_unnamed(&mut self, sql: &str, params: &[Value], context: &str) -> Result<(Vec<DbRow>, u64), Error> {
+            check_scalar(params)?;
+            let rewritten = rewrite_placeholders(sql);
+            self.wire.query_unnamed(
+                &rewritten,
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], None, buf),
+                &decode_cell,
+                context,
+            )
+        }
     }
 
     impl DbConnection for PostgresConn {
+        /// Also true for an idle connection the server has since closed (a restart), so the pool does not hand it out.
+        fn is_closed(&self) -> bool {
+            self.wire.closed_while_idle()
+        }
+
         fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let statement = self.prepared(sql)?;
-            self.client.execute(&statement, &refs).map_err(|err| pg("execute", err))
+            self.flush_batch()?;
+            check_scalar(params)?;
+            let Some(prepared) = self.cached(sql, params)? else {
+                return Ok(self.first_run(sql, params, "execute")?.1);
+            };
+            let formats = prepared.formats(params);
+            self.wire.execute(
+                &prepared.name,
+                &formats,
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], prepared.params.get(index), buf),
+            )
+        }
+
+        /// In a transaction the statement is sent and its reply left for the next call that waits, or the commit. Out
+        /// of one it runs as [`Self::execute`]: the connection goes back to the pool after it.
+        fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+            self.flush_batch()?;
+            if !self.in_transaction {
+                let count = self.execute(sql, &params)?;
+                return match zero_rows {
+                    Some(message) if count == 0 => Err(Error::new(message)),
+                    _ => Ok(()),
+                };
+            }
+            check_scalar(&params)?;
+            let prepared = self.prepared(sql)?;
+            let formats = prepared.formats(&params);
+            self.wire.send_execute(
+                &prepared.name,
+                &formats,
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], prepared.params.get(index), buf),
+                zero_rows,
+            )
+        }
+
+        /// In a transaction the row is held with the rows before it of the same statement, and they go out as one
+        /// statement when the next row is of another, or names a key among them, or fills the statement, or another
+        /// call is made. Out of one, or for a statement that is not an `INSERT` of one row, it goes out alone.
+        fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, key: u64) -> Result<(), Error> {
+            if !self.in_transaction {
+                return self.execute_deferred(sql, params, None);
+            }
+            check_scalar(&params)?;
+            if self
+                .batch
+                .as_ref()
+                .is_some_and(|batch| batch.sql != sql || batch.width != params.len() || batch.keys.contains(&key))
+            {
+                self.flush_batch()?;
+            }
+            if self.batch.is_none() {
+                match RowBatch::new(sql, params.len()) {
+                    Some(batch) => self.batch = Some(batch),
+                    None => return self.execute_deferred(sql, params, None),
+                }
+            }
+            let Some(batch) = self.batch.as_mut() else {
+                return Ok(());
+            };
+            batch.params.extend(params);
+            batch.keys.insert(key);
+            // A full statement goes out now, so the server works on it while the next rows are read.
+            if batch.rows() >= batch.most {
+                self.flush_batch()?;
+            }
+            Ok(())
+        }
+
+        fn finish_deferred(&mut self) -> Result<(), Error> {
+            self.flush_batch()?;
+            self.wire.finish()
         }
 
         fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let statement = self.prepared(sql)?;
-            let rows = self.client.query(&statement, &refs).map_err(|err| pg("query", err))?;
-            rows.iter().map(map_row).collect()
+            self.flush_batch()?;
+            check_scalar(params)?;
+            let Some(prepared) = self.cached(sql, params)? else {
+                return Ok(self.first_run(sql, params, "query")?.0);
+            };
+            let formats = prepared.formats(params);
+            self.wire.query(
+                &prepared.name,
+                &prepared.columns,
+                &formats,
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], prepared.params.get(index), buf),
+                &decode_cell,
+            )
         }
 
         fn returns_rows(&mut self, sql: &str) -> Result<Option<bool>, Error> {
+            self.flush_batch()?;
+            // A deferred failure is reported, not taken for this statement's.
+            self.wire.finish()?;
             // Not kept in the statement cache: a statement typed in the SQL runner runs once. One that does not prepare
             // is left to run, so its own error is the one reported.
-            match self.client.prepare(&rewrite_placeholders(sql)) {
-                Ok(statement) => Ok(Some(!statement.columns().is_empty())),
+            match self.wire.prepare("", &rewrite_placeholders(sql)) {
+                Ok(described) => Ok(Some(!described.columns.is_empty())),
                 Err(_) => Ok(None),
             }
         }
 
         fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let rewritten = rewrite_placeholders(sql);
-            let rows = self.client.query(&rewritten, &refs).map_err(|err| pg("query", err))?;
-            rows.iter().map(map_row).collect()
+            self.flush_batch()?;
+            Ok(self.run_unnamed(sql, params, "query")?.0)
         }
 
         fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
+            self.flush_batch()?;
             if !self.in_transaction {
                 return Err(Error::new("a transaction is required"));
             }
             if self.streaming {
                 return Err(Error::new("a stream is already open"));
             }
-            let bound = bind(params)?;
-            let refs = param_refs(&bound);
-            let rewritten = rewrite_placeholders(sql);
-            let declare = format!("DECLARE {STREAM_CURSOR} NO SCROLL CURSOR FOR {rewritten}");
-            self.client
-                .execute(&declare, &refs)
-                .map_err(|err| pg("declare cursor", err))?;
+            check_scalar(params)?;
+            let declare = rewrite_placeholders(&format!("DECLARE {STREAM_CURSOR} NO SCROLL CURSOR FOR {sql}"));
+            self.wire.queue_unnamed(
+                &declare,
+                params.len(),
+                &mut |index, buf| encode_param(&params[index], None, buf),
+                "declare cursor",
+            )?;
             self.streaming = true;
             self.stream_exhausted = false;
             self.stream_buf.clear();
+            // The first batch in the same write as the `DECLARE`: one round trip, and a query the server refuses fails
+            // here with the `DECLARE`'s error.
+            if let Err(err) = self.fetch_stream() {
+                self.clear_stream();
+                return Err(err);
+            }
             Ok(())
         }
 
         fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
+            self.flush_batch()?;
             if !self.streaming {
                 return Ok(None);
             }
@@ -404,12 +678,13 @@ mod driver {
         }
 
         fn close_stream(&mut self) -> Result<(), Error> {
+            self.flush_batch()?;
             if !self.streaming {
                 return Ok(());
             }
-            self.client
-                .batch_execute(&format!("CLOSE {STREAM_CURSOR}"))
-                .map_err(|err| pg("close cursor", err))?;
+            // Not waited for: it goes out with the next request, which reports its failure.
+            self.wire
+                .queue_simple(&format!("CLOSE {STREAM_CURSOR}"), "close cursor")?;
             self.clear_stream();
             Ok(())
         }
@@ -418,8 +693,9 @@ mod driver {
             self.streaming
         }
 
+        /// Not waited for: it goes out with the transaction's first statement, in the same write.
         fn begin(&mut self) -> Result<(), Error> {
-            self.client.batch_execute("BEGIN").map_err(|err| pg("begin", err))?;
+            self.wire.queue_simple("BEGIN", "begin")?;
             self.in_transaction = true;
             Ok(())
         }
@@ -433,123 +709,112 @@ mod driver {
         }
 
         fn savepoint(&mut self, name: &str) -> Result<(), Error> {
-            let sql = format!("SAVEPOINT {}", quote_ident(name));
-            self.client.batch_execute(&sql).map_err(|err| pg("savepoint", err))
+            self.flush_batch()?;
+            self.wire.simple(&format!("SAVEPOINT {}", quote_ident(name)), "savepoint")
         }
 
         fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
-            let sql = format!("ROLLBACK TO SAVEPOINT {}", quote_ident(name));
-            self.client
-                .batch_execute(&sql)
-                .map_err(|err| pg("rollback to savepoint", err))
+            self.flush_batch()?;
+            self.wire.simple(
+                &format!("ROLLBACK TO SAVEPOINT {}", quote_ident(name)),
+                "rollback to savepoint",
+            )
         }
 
         fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
-            let sql = format!("RELEASE SAVEPOINT {}", quote_ident(name));
-            self.client
-                .batch_execute(&sql)
-                .map_err(|err| pg("release savepoint", err))
+            self.flush_batch()?;
+            self.wire
+                .simple(&format!("RELEASE SAVEPOINT {}", quote_ident(name)), "release savepoint")
         }
 
-        /// `SET LOCAL` lasts until the transaction ends, so clearing is a no-op.
+        /// `SET LOCAL` lasts until the transaction ends, so clearing is a no-op. Not waited for, as `BEGIN` is not.
         fn set_statement_timeout(&mut self, remaining: Option<std::time::Duration>) -> Result<(), Error> {
+            self.flush_batch()?;
             let Some(remaining) = remaining else {
                 return Ok(());
             };
             let ms = crate::db::timeout_millis(remaining)?;
-            self.client
-                .batch_execute(&format!("SET LOCAL statement_timeout = {ms}"))
-                .map_err(|err| pg("statement_timeout", err))?;
-            Ok(())
+            self.wire
+                .queue_simple(&format!("SET LOCAL statement_timeout = {ms}"), "statement_timeout")
         }
 
         fn canceller(&self) -> Box<dyn DbCancel> {
+            let (process_id, secret_key) = self.wire.cancel_key();
             Box::new(PgCancel {
-                token: self.client.cancel_token(),
-                tls: self.tls.clone(),
+                endpoint: self.endpoint.clone(),
+                process_id,
+                secret_key,
             })
         }
     }
 
     impl DbCancel for PgCancel {
+        /// On the calling thread, the deadline thread, on a connection of its own.
         fn cancel(&self) -> Result<(), Error> {
-            let result = match &self.tls {
-                TlsMode::None => self.token.cancel_query(NoTls),
-                TlsMode::Rustls(tls) => self.token.cancel_query(tls.clone()),
-            };
-            result.map_err(|err| pg("cancel", err))
+            pgwire::cancel(&self.endpoint, self.process_id, self.secret_key)
         }
     }
 
-    impl std::fmt::Debug for Param<'_> {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Debug::fmt(self.0, formatter)
-        }
+    /// Whether `value` goes in binary: bytes for a `bytea` parameter.
+    fn is_binary(value: &Value, ty: Option<&Type>) -> bool {
+        matches!(value, Value::Bytes(_)) && ty == Some(&Type::BYTEA)
     }
 
-    impl ToSql for Param<'_> {
-        fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-            if let (Value::Bytes(bytes), true) = (self.0, ty == &Type::BYTEA) {
-                out.extend_from_slice(bytes);
-                return Ok(IsNull::No);
+    /// One parameter into the `Bind` message, in the format [`Prepared::formats`] names for it: the text the server
+    /// parses as its column's type, or a `bytea`'s bytes. `false` for a NULL.
+    fn encode_param(value: &Value, ty: Option<&Type>, out: &mut BytesMut) -> Result<bool, Error> {
+        if let (Value::Bytes(bytes), true) = (value, is_binary(value, ty)) {
+            out.extend_from_slice(bytes);
+            return Ok(true);
+        }
+        // The common kinds go straight into the buffer, as `value_text` writes them.
+        use std::fmt::Write as _;
+        let written = match value {
+            Value::Null => return Ok(false),
+            Value::String(text) => {
+                out.extend_from_slice(text.as_bytes());
+                Ok(())
             }
-            match value_text(self.0)? {
-                Some(text) => {
-                    out.extend_from_slice(text.as_bytes());
-                    Ok(IsNull::No)
-                }
-                None => Ok(IsNull::Yes),
+            Value::Bool(flag) => {
+                out.extend_from_slice(if *flag { b"true" } else { b"false" });
+                Ok(())
             }
-        }
-
-        fn accepts(_ty: &Type) -> bool {
-            true
-        }
-
-        /// Text, so the server parses each value as its column's type, except bytes for a `bytea`: sent as they are
-        /// rather than as hex text twice their size (which also overflows the 1 GB field limit at half of it).
-        fn encode_format(&self, ty: &Type) -> Format {
-            if ty == &Type::BYTEA && matches!(self.0, Value::Bytes(_)) {
-                Format::Binary
-            } else {
-                Format::Text
+            Value::I32(number) => write!(out, "{number}"),
+            Value::I64(number) => write!(out, "{number}"),
+            Value::Decimal(number) => write!(out, "{number}"),
+            Value::Timestamp(timestamp) => write!(out, "{timestamp}"),
+            Value::Date(date) => write!(out, "{date}"),
+            Value::Time(time) => write!(out, "{time}"),
+            _ => {
+                return match value_text(value).map_err(|err| Error::new(err.to_string()))? {
+                    Some(text) => {
+                        out.extend_from_slice(text.as_bytes());
+                        Ok(true)
+                    }
+                    None => Ok(false),
+                };
             }
-        }
-
-        postgres::types::to_sql_checked!();
-    }
-
-    impl<'a> FromSql<'a> for PgValue {
-        fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-            Ok(PgValue(decode_value(ty, raw)?))
-        }
-
-        fn accepts(_ty: &Type) -> bool {
-            true
-        }
-    }
-
-    fn pg(context: &str, err: postgres::Error) -> Error {
-        // `Display` for a server error is the text "db error". The server message is the useful part.
-        let detail = match err.as_db_error() {
-            Some(db) => db.message().to_string(),
-            None => err.to_string(),
         };
-        Error::new(format!("postgres {context}: {detail}")).with_source(err)
+        written.map_err(|_| Error::new("could not write a postgres parameter"))?;
+        Ok(true)
     }
 
-    fn bind(params: &[Value]) -> Result<Vec<Param<'_>>, Error> {
+    /// A result cell, in binary, as its type's value; a NULL is [`Value::Null`].
+    fn decode_cell(ty: &Type, raw: Option<&[u8]>) -> Result<Value, Error> {
+        match raw {
+            None => Ok(Value::Null),
+            Some(raw) => decode_value(ty, raw).map_err(|err| Error::new(err.to_string())),
+        }
+    }
+
+    fn check_scalar(params: &[Value]) -> Result<(), Error> {
         if params
             .iter()
             .any(|value| matches!(value, Value::List(_) | Value::Map(_)))
         {
             return Err(Error::new("postgres parameters must be scalar values"));
         }
-        Ok(params.iter().map(Param).collect())
-    }
-
-    fn param_refs<'a>(params: &'a [Param<'a>]) -> Vec<&'a (dyn ToSql + Sync)> {
-        params.iter().map(|param| param as &(dyn ToSql + Sync)).collect()
+        Ok(())
     }
 
     /// JDBC `?` placeholders as `$1`, `$2`, ... A `?` inside a string (`'..'`, `E'..'`, `$tag$..$tag$`), a quoted
@@ -722,20 +987,6 @@ mod driver {
         text
     }
 
-    fn map_row(row: &postgres::Row) -> Result<DbRow, Error> {
-        let mut columns = Vec::with_capacity(row.len());
-        for (index, column) in row.columns().iter().enumerate() {
-            let value = row
-                .try_get::<_, Option<PgValue>>(index)
-                .map_err(|err| Error::new(format!("postgres column {index}")).with_source(err))?;
-            columns.push((
-                column.name().to_string(),
-                value.map(|cell| cell.0).unwrap_or(Value::Null),
-            ));
-        }
-        Ok(DbRow { columns })
-    }
-
     fn decode_value(ty: &Type, raw: &[u8]) -> Result<Value, Box<dyn std::error::Error + Sync + Send>> {
         if ty == &Type::BOOL {
             decode_bool(raw)
@@ -760,7 +1011,7 @@ mod driver {
         } else if ty == &Type::BYTEA {
             Ok(Value::Bytes(raw.to_vec()))
         } else if ty == &Type::NUMERIC {
-            expect_value(&numeric_to_text(raw)?, "BigDecimal")
+            expect_value(numeric_to_text(raw)?, "BigDecimal")
         } else if ty == &Type::TIMESTAMPTZ || ty == &Type::TIMESTAMP {
             decode_timestamp(raw)
         } else if ty == &Type::DATE {
@@ -810,7 +1061,15 @@ mod driver {
         if micros == i64::MIN {
             return Ok(Value::string("-infinity"));
         }
-        expect_value(&format_pg_timestamp(micros)?, "Timestamp")
+        // The moment the text below names (UTC, no offset), without writing and parsing that text. Outside jiff's range
+        // the text decides.
+        if let Some(stamp) = micros
+            .checked_add(PG_EPOCH_USEC)
+            .and_then(|unix_us| jiff::Timestamp::from_microsecond(unix_us).ok())
+        {
+            return Ok(Value::Timestamp(stamp));
+        }
+        expect_value(format_pg_timestamp(micros)?, "Timestamp")
     }
 
     fn decode_date(raw: &[u8]) -> Result<Value, Box<dyn std::error::Error + Sync + Send>> {
@@ -823,7 +1082,7 @@ mod driver {
         }
         let unix_days = i64::from(days) + PG_EPOCH_DAYS;
         let (year, month, day) = civil_from_unix_days(unix_days).ok_or_else(|| bad("date"))?;
-        expect_value(&format!("{year:04}-{month:02}-{day:02}"), "Date")
+        expect_value(format!("{year:04}-{month:02}-{day:02}"), "Date")
     }
 
     fn decode_time(raw: &[u8]) -> Result<Value, Box<dyn std::error::Error + Sync + Send>> {
@@ -839,7 +1098,7 @@ mod driver {
         let hour = secs / 3_600;
         let minute = (secs % 3_600) / 60;
         let second = secs % 60;
-        expect_value(&format!("{hour:02}:{minute:02}:{second:02}.{frac:06}"), "Time")
+        expect_value(format!("{hour:02}:{minute:02}:{second:02}.{frac:06}"), "Time")
     }
 
     fn format_pg_timestamp(micros: i64) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
@@ -859,12 +1118,13 @@ mod driver {
         ))
     }
 
-    fn expect_value(text: &str, kind: &str) -> Result<Value, Box<dyn std::error::Error + Sync + Send>> {
-        let converted = basic_convert(&Value::string(text), kind);
+    fn expect_value(text: String, kind: &str) -> Result<Value, Box<dyn std::error::Error + Sync + Send>> {
+        let text = Value::String(text);
+        let converted = basic_convert(&text, kind);
         if kind_matches(&converted.value, kind) {
             Ok(converted.value)
         } else {
-            Err(bad(&format!("could not decode {kind} from {text}")))
+            Err(bad(&format!("could not decode {kind} from {}", text.as_str().unwrap_or_default())))
         }
     }
 
@@ -912,60 +1172,60 @@ mod driver {
         if raw.len() < 8 + ndigits * 2 {
             return Err(bad("short numeric"));
         }
-        let mut digits = Vec::with_capacity(ndigits);
-        for index in 0..ndigits {
+        let digit_at = |index: usize| {
             let offset = 8 + index * 2;
-            let digit = u16::from_be_bytes([raw[offset], raw[offset + 1]]);
-            if digit >= 10_000 {
-                return Err(bad("numeric digit"));
-            }
-            digits.push(digit);
+            u16::from_be_bytes([raw[offset], raw[offset + 1]])
+        };
+        if (0..ndigits).any(|index| digit_at(index) >= 10_000) {
+            return Err(bad("numeric digit"));
         }
-        let mut integer = String::new();
-        let mut fraction = String::new();
-        if weight >= 0 {
-            let groups = usize::try_from(weight + 1).map_err(|_| bad("numeric weight"))?;
-            for index in 0..groups {
-                let digit = digits.get(index).copied().unwrap_or(0);
-                if index == 0 {
-                    integer.push_str(&digit.to_string());
-                } else {
-                    integer.push_str(&format!("{digit:04}"));
-                }
-            }
-            for digit in digits.iter().skip(groups) {
-                fraction.push_str(&format!("{digit:04}"));
-            }
+        let leading = if weight >= 0 {
+            0
         } else {
-            integer.push('0');
             let leading = usize::try_from(-weight - 1).map_err(|_| bad("numeric weight"))?;
             if leading > 2_000 {
                 return Err(bad("numeric too large"));
             }
-            for _ in 0..leading {
-                fraction.push_str("0000");
-            }
-            for digit in &digits {
-                fraction.push_str(&format!("{digit:04}"));
-            }
-        }
-        if fraction.len() < dscale {
-            fraction.push_str(&"0".repeat(dscale - fraction.len()));
-        } else {
-            fraction.truncate(dscale);
-        }
-        let mut text = String::new();
+            leading
+        };
+        // Written into one string: base-10000 digit groups, the first without leading zeros, then the fraction to
+        // `dscale` digits.
+        use std::fmt::Write as _;
+        let mut text = String::with_capacity(ndigits * 4 + leading * 4 + dscale + 8);
         if sign == 0x4000 {
             text.push('-');
         }
-        if integer.is_empty() {
-            text.push('0');
+        let groups = if weight >= 0 {
+            let groups = usize::try_from(weight + 1).map_err(|_| bad("numeric weight"))?;
+            for index in 0..groups {
+                let digit = if index < ndigits { digit_at(index) } else { 0 };
+                let _ = if index == 0 {
+                    write!(text, "{digit}")
+                } else {
+                    write!(text, "{digit:04}")
+                };
+            }
+            groups
         } else {
-            text.push_str(&integer);
-        }
+            text.push('0');
+            0
+        };
         if dscale > 0 {
             text.push('.');
-            text.push_str(&fraction);
+            let fraction_start = text.len();
+            for _ in 0..leading {
+                text.push_str("0000");
+            }
+            for index in groups.min(ndigits)..ndigits {
+                let _ = write!(text, "{:04}", digit_at(index));
+            }
+            let fraction_end = fraction_start + dscale;
+            if text.len() < fraction_end {
+                let pad = fraction_end - text.len();
+                text.extend(std::iter::repeat_n('0', pad));
+            } else {
+                text.truncate(fraction_end);
+            }
         }
         Ok(text)
     }
@@ -994,6 +1254,45 @@ mod driver {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn a_parameter_writes_the_text_value_text_gives() {
+            let values = [
+                Value::Null,
+                Value::string("it's"),
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::I32(-5),
+                Value::I64(1 << 40),
+                basic_convert(&Value::string("12.340"), "BigDecimal").value,
+                Value::Timestamp(jiff::Timestamp::from_microsecond(1_700_000_000_123_456).unwrap()),
+                Value::Date(jiff::civil::date(2024, 2, 29)),
+                Value::Time(jiff::civil::time(13, 4, 5, 123_000_000)),
+                Value::F64(1.5),
+                Value::F64(f64::NEG_INFINITY),
+            ];
+            for value in &values {
+                let mut out = BytesMut::new();
+                let written = encode_param(value, Some(&Type::TEXT), &mut out).unwrap();
+                match value_text(value).unwrap() {
+                    Some(text) => {
+                        assert!(written, "{value:?}");
+                        assert_eq!(&out[..], text.as_bytes(), "{value:?}");
+                    }
+                    None => assert!(!written, "{value:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn a_binary_timestamp_decodes_to_the_moment_its_text_names() {
+            for micros in [0_i64, 1, -1, 999_999, 813_456_789_012_345, -946_684_800_000_000, 2_000_000_000_000_000] {
+                let raw = micros.to_be_bytes();
+                let direct = decode_timestamp(&raw).unwrap();
+                let text = expect_value(format_pg_timestamp(micros).unwrap(), "Timestamp").unwrap();
+                assert_eq!(direct, text, "{micros}");
+            }
+        }
 
         #[test]
         fn placeholders_skip_quoted_question_marks() {

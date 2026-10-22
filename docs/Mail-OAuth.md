@@ -105,12 +105,17 @@ its first POP sign-in at Microsoft (no POP scope granted) and waits for a new si
    promise's `cancel()` stops it). `complete#OAuthSignIn` takes the state once from the user's
    session, exchanges the code with the PKCE verifier, checks the granted mail scopes and the ID token (audience, issuer, expiry,
    nonce; its signature is not checked, as it comes straight from the token endpoint over TLS), compares the signed-in address with
-   the account's, stores the refresh token encrypted (the access token stays in memory), and makes the account (or makes it active
-   again). The page tells the opener (this server's own origin only) and closes.
+   the account's, stores the refresh token encrypted (the first access token stays in memory), and makes the account (or makes it
+   active again). The page tells the opener (this server's own origin only) and closes.
 3. Before each IMAP or SMTP sign-in an access token is refreshed when it ends within a minute, one refresh at a time per account.
+   The access token is kept in memory and, encrypted, on `EmailServerAccessToken` (not cached, not on the exported
+   `EmailServer`), so the other servers of a cluster use it with no refresh of their own. A refresh locks the `EmailServer` row for
+   update, so one server of the cluster refreshes at a time; it reads the stored token again under the lock (another server may
+   have refreshed meanwhile), and stores the token and a new refresh token from a provider that rotates them (Microsoft) in the
+   same transaction, so none is lost. A stored token that will not decrypt, or that a mail server refused, is refreshed.
    A refresh token the provider refuses marks the account EasAuthFailed ("sign in again"), logged once; the other accounts go on.
 4. `delete#EmailAccount`, `revoke#OAuthSignIn` (sign out) and switching the account back to a password revoke the token at the
-   provider (Google) after the commit, best effort, and delete it here. A sign-in of the same address on another account here is
+   provider (Google) after the commit, best effort, and delete it and the stored access token here. A sign-in of the same address on another account here is
    not revoked, because the provider revokes the whole grant.
 
 ## Security

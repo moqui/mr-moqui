@@ -70,7 +70,7 @@ pub struct ECondition {
 impl EntityConditionDef {
     pub(crate) fn parse(node: &MNode) -> Result<Self, Error> {
         Ok(Self {
-            distinct: node.attribute("distinct").as_deref() == Some("true"),
+            distinct: node.attribute_is("distinct", "true"),
             conditions: ConditionGroup::parse(node)?,
             having: node
                 .first_named("having-econditions")
@@ -104,15 +104,15 @@ impl ConditionGroup {
                 to_entity_alias: optional_attr(&econdition, "to-entity-alias"),
                 to_field_name: optional_attr(&econdition, "to-field-name"),
                 value: optional_attr(&econdition, "value"),
-                ignore_case: econdition.attribute("ignore-case").as_deref() == Some("true"),
-                or_null: econdition.attribute("or-null").as_deref() == Some("true"),
+                ignore_case: econdition.attribute_is("ignore-case", "true"),
+                or_null: econdition.attribute_is("or-null", "true"),
             }));
         }
         for group in node.children_named("econditions") {
             items.push(ConditionItem::Group(Self::parse(&group)?));
         }
         Ok(Self {
-            or: node.attribute("combine").as_deref() == Some("or"),
+            or: node.attribute_is("combine", "or"),
             items,
         })
     }

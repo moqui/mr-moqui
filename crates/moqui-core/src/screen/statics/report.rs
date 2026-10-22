@@ -33,13 +33,14 @@ use moqui_lib::object::Value;
 
 use super::{descendants_named, StaticTemplate, PAGE_SUFFIXES};
 use crate::context::{Error, ExecutionContextFactory};
-use crate::screen::definition::{ScreenDef, SectionKind};
+use crate::screen::definition::{Condition, ScreenDef, SectionKind};
 use crate::screen::{make_render, with_current_render, ScreenUrlInfo};
 
 /// Something in a screen that a static template does not do, or does differently.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Violation {
-    /// `ec`, `sri`, `decimal`, `utilities`, `context`, `server-global`, `side-effect`, `form-list-key`, `stale-cache`, `wrapped-ec`, ...
+    /// `ec`, `sri`, `decimal`, `utilities`, `context`, `server-global`, `side-effect`, `form-list-key`, `form-list-iterate`,
+    /// `stale-cache`, `wrapped-ec`, ...
     pub kind: String,
     /// The location of the screen file.
     pub screen: String,
@@ -69,9 +70,10 @@ pub struct StaticReport {
 }
 
 impl StaticReport {
-    /// No violation, and the screen can be a template.
+    /// No violation, the screen can be a template, and the full check (the html render with the wrapped `ec`) ran.
+    /// Eligible with no violations and `full_check` false is the static half, not clean.
     pub fn is_clean(&self) -> bool {
-        self.eligible && self.violations.is_empty()
+        self.eligible && self.violations.is_empty() && self.full_check
     }
 
     /// The kinds of the violations, sorted and without repeats.
@@ -89,6 +91,8 @@ impl StaticReport {
         let _ = writeln!(out, "  mode {}", self.mode);
         let verdict = if self.is_clean() {
             "clean"
+        } else if self.eligible && self.violations.is_empty() {
+            "static half only"
         } else if self.eligible {
             "violations"
         } else {
@@ -380,7 +384,18 @@ const SIDE_EFFECT_CALLS: [&str; 7] = [
     "ec.service.",
 ];
 
-/// `always-actions` and `pre-actions` that write, send or add a message. The form request runs them again.
+/// The verbs of a service that only reads: a call to one in `always-actions` or `pre-actions` is not a side effect.
+const READ_ONLY_VERBS: [&str; 3] = ["get", "find", "setup"];
+
+/// A service call that only reads: its verb is get, find or setup, or its definition says `read-only="true"`.
+fn read_only_call(name: &str) -> bool {
+    let tail = name.rsplit('.').next().unwrap_or(name);
+    let verb = tail.split('#').next().unwrap_or(tail);
+    READ_ONLY_VERBS.contains(&verb) || crate::service::define::find(name).is_some_and(|def| def.read_only)
+}
+
+/// `always-actions` and `pre-actions` that write, send or add a message. The form request runs them again. A service
+/// call of a read-only service ([`read_only_call`]) is not one.
 fn scan_actions(def: &ScreenDef, which: &str, xml: &str) {
     let Ok(root) = MNode::parse_text(&def.location, xml) else {
         return;
@@ -392,6 +407,9 @@ fn scan_actions(def: &ScreenDef, which: &str, xml: &str) {
             .attribute("name")
             .or_else(|| element.attribute("entity-name"))
             .unwrap_or_default();
+        if element.name() == "service-call" && read_only_call(&name) {
+            continue;
+        }
         push(
             "side-effect",
             &def.location,
@@ -462,10 +480,56 @@ fn scan_definition(
             }
         }
     }
+    // A form-list inside a section-iterate: its form request (`/actions/<form>`) runs the screen's actions once, with no
+    // iteration entry, so a list such as `entry.rows` is not there and each iteration would get the same rows.
+    for (section_name, section) in &def.sections {
+        let (SectionKind::Iterate { .. }, Some(widgets)) = (&section.kind, &section.widgets) else {
+            continue;
+        };
+        let Ok(node) = MNode::parse_text(&def.location, widgets.text()) else {
+            continue;
+        };
+        let mut iterated = Vec::new();
+        descendants_named(&node, &["form-list"], &mut iterated);
+        for form in iterated {
+            let name = form.attribute("name").unwrap_or_default();
+            let list = form.attribute("list").unwrap_or_default();
+            push(
+                "form-list-iterate",
+                &def.location,
+                &format!("form-list@{name}"),
+                &format!("a form-list in section-iterate {section_name} (list {list}) is one form request, outside the iteration"),
+            );
+        }
+    }
     // A label outside the lists that reads the page keys.
     let Ok(source) = def.screen_node() else {
         return;
     };
+    // A condition outside the forms that reads a form-list's list (`spaceList.length`): the list is in the form's package
+    // only, so the browser reads it as undefined.
+    let mut conditions: Vec<(String, String)> = Vec::new();
+    collect_conditions(&source, &mut conditions);
+    for (section_name, section) in &def.sections {
+        if let Some(Condition::Expression(expression)) = &section.condition {
+            conditions.push((format!("section@{section_name}"), expression.clone()));
+        }
+        for fragment in [&section.widgets, &section.fail_widgets].into_iter().flatten() {
+            if let Ok(node) = MNode::parse_text(&def.location, fragment.text()) {
+                collect_conditions(&node, &mut conditions);
+            }
+        }
+    }
+    for (element, expression) in conditions {
+        if let Some(list) = lists.iter().find(|list| names_identifier(&expression, list)) {
+            push(
+                "form-list-key",
+                &def.location,
+                &format!("{element}@condition"),
+                &format!("reads {list} outside its form-list; the list is in the form package only"),
+            );
+        }
+    }
     let keys: Vec<String> = lists.iter().flat_map(|list| page_keys(list)).collect();
     if keys.is_empty() {
         return;
@@ -487,6 +551,29 @@ fn scan_definition(
             );
         }
     }
+}
+
+/// The `condition` attributes of the elements outside the forms, with the element's name.
+fn collect_conditions(node: &MNode, out: &mut Vec<(String, String)>) {
+    for child in node.children() {
+        if matches!(child.name().as_str(), "form-list" | "form-single") {
+            continue;
+        }
+        if let Some(condition) = child.attribute("condition").filter(|text| !text.is_empty()) {
+            out.push((child.name().to_string(), condition));
+        }
+        collect_conditions(&child, out);
+    }
+}
+
+/// Whether `expression` names `name` as a whole identifier (`spaceList.length`, not `mySpaceList`).
+fn names_identifier(expression: &str, name: &str) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$';
+    expression.match_indices(name).any(|(at, _)| {
+        let before = expression[..at].chars().next_back();
+        let after = expression[at + name.len()..].chars().next();
+        !before.is_some_and(|ch| ident(ch) || ch == '.') && !after.is_some_and(ident)
+    })
 }
 
 fn collect_outside_lists(node: &MNode, out: &mut Vec<MNode>) {

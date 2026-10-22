@@ -17,7 +17,7 @@
 //! One `ScreenFacade` lives on each factory as an extension. Definitions sit in a `moqui_lib`
 //! `MCache` keyed by location. A cached definition is used while every file it was read from
 //! still has the modified time it had at load. The files are checked at most once per check
-//! interval (`screen_check_interval_ms`, default 2 s), and never when `instance_purpose` is
+//! interval (`screen-facade` `check-interval-ms`, default 2 s), and never when `instance_purpose` is
 //! `production`, as Java's `screen.location` cache returns a hit without looking at the file.
 //!
 //! Resolved paths (`ScreenUrlInfo`) are kept in a second cache, as Java's `screen.url`, while the
@@ -90,6 +90,45 @@ pub(super) fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// How a render mode writes a failed section, and whether the finished level is a JSON document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputKind {
+    /// Escaped text written where the section was.
+    Text,
+    /// Same failure text as [`OutputKind::Text`]. A mode with an HTML mime type.
+    Html,
+    /// A Vue template. What the failed section wrote is dropped, and a brace in the message is a character reference.
+    Vue,
+    /// One JSON array. A failed section is an `error` node, and the level is wrapped in an envelope.
+    Json,
+}
+
+impl OutputKind {
+    /// The `output-kind` attribute of a `screen-text-output`: `text`, `html`, `vue` or `json`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "text" => Some(Self::Text),
+            "html" => Some(Self::Html),
+            "vue" => Some(Self::Vue),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+
+    /// A mode whose conf entry has no `output-kind`. `application/json` is [`OutputKind::Json`], `text/html` is
+    /// [`OutputKind::Html`].
+    pub fn from_mime(mime: &str) -> Self {
+        let mime = mime.split(';').next().unwrap_or(mime).trim();
+        if mime.eq_ignore_ascii_case("application/json") {
+            Self::Json
+        } else if mime.eq_ignore_ascii_case("text/html") {
+            Self::Html
+        } else {
+            Self::Text
+        }
+    }
+}
+
 /// `screen-text-output`: how one render mode is sent and which macro module writes it.
 #[derive(Clone, Debug)]
 pub struct TextOutput {
@@ -98,6 +137,7 @@ pub struct TextOutput {
     pub always_standalone: bool,
     /// A `screen-output` mode: the macro module fills a document the render sends as bytes, such as `xlsx`.
     pub binary: bool,
+    pub kind: OutputKind,
 }
 
 /// One `subscreens-item` from a conf `screen-facade/screen` element.
@@ -132,25 +172,6 @@ pub struct ScreenConf {
     pub default_autocomplete_rows: i64,
 }
 
-/// The `screen-output` (binary) modes: type, mime type, macro module. Java named a `widget-render-class` for each; here
-/// the module fills a document that the render sends as bytes.
-const BUILT_IN_BINARY_MODES: [(&str, &str, &str); 1] = [(
-    "xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "ScreenXlsx.js",
-)];
-
-const BUILT_IN_MODES: [(&str, &str, &str, bool); 8] = [
-    ("html", "text/html", "ScreenHtml.js", false),
-    ("text", "text/plain", "ScreenText.js", false),
-    ("csv", "text/csv", "ScreenCsv.js", true),
-    ("xml", "text/xml", "ScreenXml.js", false),
-    ("html-print", "text/html", "ScreenHtmlPrint.js", true),
-    ("qvt", "text/html", "ScreenQvt.js", true),
-    ("qjs", "application/javascript", "ScreenPlain.js", true),
-    ("qvue", "text/html", "ScreenPlain.js", true),
-];
-
 /// The render mode name the macros see: `xsl-fo` is `html-print`.
 pub fn canonical_render_mode(mode: &str) -> &str {
     if mode == "xsl-fo" {
@@ -161,36 +182,13 @@ pub fn canonical_render_mode(mode: &str) -> &str {
 }
 
 impl ScreenConf {
-    /// Built-in modes first, so a factory with no `screen-facade` still renders. Conf entries
-    /// replace them by type.
+    /// The modes are the `screen-text-output` and `screen-output` entries of the merged conf; there are no others.
     pub(super) fn parse(conf_text: &str) -> Self {
         let mut conf = Self {
             default_paginate_rows: 20,
             default_autocomplete_rows: 20,
             ..Self::default()
         };
-        for (mode, mime, module, standalone) in BUILT_IN_MODES {
-            conf.text_output.insert(
-                mode.to_string(),
-                TextOutput {
-                    mime_type: mime.to_string(),
-                    macro_template_location: format!("framework/template/screen/{module}"),
-                    always_standalone: standalone,
-                    binary: false,
-                },
-            );
-        }
-        for (mode, mime, module) in BUILT_IN_BINARY_MODES {
-            conf.text_output.insert(
-                mode.to_string(),
-                TextOutput {
-                    mime_type: mime.to_string(),
-                    macro_template_location: format!("framework/template/screen/{module}"),
-                    always_standalone: true,
-                    binary: true,
-                },
-            );
-        }
         let Ok(root) = MNode::parse_text("moqui-conf", conf_text) else {
             return conf;
         };
@@ -225,14 +223,29 @@ impl ScreenConf {
             // `xsl-fo` is the print mode, so its entry configures `html-print`.
             let kind = canonical_render_mode(&kind).to_string();
             let existing = conf.text_output.get(&kind).cloned();
+            let mime_type = output
+                .attribute("mime-type")
+                .filter(|text| !text.is_empty())
+                .or_else(|| existing.as_ref().map(|found| found.mime_type.clone()))
+                .unwrap_or_else(|| "text/html".to_string());
+            // `output-kind`, else the kind of an earlier entry of the type (`html-print` for `xsl-fo`), else the mime type.
+            let named_kind = output
+                .attribute("output-kind")
+                .filter(|text| !text.is_empty())
+                .and_then(|name| {
+                    let found = OutputKind::from_name(&name);
+                    if found.is_none() {
+                        tracing::warn!("Render mode {kind} has unknown output-kind {name}, using its mime type");
+                    }
+                    found
+                });
+            let output_kind = named_kind
+                .or_else(|| existing.as_ref().map(|found| found.kind))
+                .unwrap_or_else(|| OutputKind::from_mime(&mime_type));
             conf.text_output.insert(
                 kind,
                 TextOutput {
-                    mime_type: output
-                        .attribute("mime-type")
-                        .filter(|text| !text.is_empty())
-                        .or_else(|| existing.as_ref().map(|found| found.mime_type.clone()))
-                        .unwrap_or_else(|| "text/html".to_string()),
+                    mime_type,
                     macro_template_location: output
                         .attribute("macro-template-location")
                         .filter(|text| !text.is_empty())
@@ -241,6 +254,7 @@ impl ScreenConf {
                     always_standalone: output.attribute("always-standalone").as_deref() == Some("true"),
                     // `widget-render-class` names a Java class; the type picks the module here.
                     binary,
+                    kind: output_kind,
                 },
             );
         }
@@ -317,7 +331,7 @@ impl ScreenFacade {
                     .max_entries(MAX_URL_ENTRIES)
                     .expire_creation_ms(ICON_EXPIRE_MS),
             ),
-            check_interval_ms: AtomicI64::new(configured_check_interval()),
+            check_interval_ms: AtomicI64::new(configured_check_interval(factory)),
             loading: Mutex::new(HashMap::new()),
             shell_providers: Mutex::new(HashMap::new()),
         }
@@ -408,6 +422,12 @@ impl ScreenFacade {
 
     pub fn is_always_standalone(&self, mode: &str) -> bool {
         self.text_output(mode).is_some_and(|output| output.always_standalone)
+    }
+
+    pub fn output_kind(&self, mode: &str) -> OutputKind {
+        self.text_output(mode)
+            .map(|output| output.kind)
+            .unwrap_or(OutputKind::Text)
     }
 
     /// The definition at `location`, from the cache when no source file has changed.
@@ -609,10 +629,12 @@ impl ScreenFacade {
     }
 }
 
-/// `screen_check_interval_ms` when set, else never in production and two seconds otherwise.
-fn configured_check_interval() -> i64 {
-    let configured = moqui_lib::env::get_prop_or_env("screen_check_interval_ms");
-    if let Ok(millis) = configured.trim().parse::<i64>() {
+/// The conf's `screen-facade` `check-interval-ms` when set, else never in production and two seconds otherwise.
+fn configured_check_interval(factory: &ExecutionContextFactory) -> i64 {
+    if let Ok(millis) = factory
+        .conf_setting("screen-facade", "check-interval-ms")
+        .parse::<i64>()
+    {
         return millis;
     }
     if crate::web::is_production() {

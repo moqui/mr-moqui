@@ -1,0 +1,736 @@
+{
+  "$defs": {
+    "Stack": {
+      "description": "Vertical or horizontal layout. Root is Stack. direction: column (default) or row. gap: s, m, or l. wrap: true to wrap a row of cards/charts.",
+      "properties": {
+        "children": {
+          "type": "array"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "gap": {
+          "type": "string"
+        },
+        "wrap": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "Card": {
+      "description": "Card container for a section of the canvas.",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "Separator": {
+      "description": "Horizontal rule between sections.",
+      "properties": {
+        "inset": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Accordion": {
+      "description": "Expandable sections. Accordion([AccordionItem(value, title, content), ...]).",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "AccordionItem": {
+      "description": "Accordion panel. AccordionItem(value, title, content).",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {}
+      },
+      "required": [
+        "value",
+        "title",
+        "content"
+      ]
+    },
+    "Steps": {
+      "description": "Linear stepper. Steps([StepsItem(value, title, content), ...]).",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "StepsItem": {
+      "description": "Stepper panel. StepsItem(value, title, content).",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {}
+      },
+      "required": [
+        "value",
+        "title",
+        "content"
+      ]
+    },
+    "Modal": {
+      "description": "Dialog bound to $name (boolean). Modal(name, title, [children]). Open with @Set($name, true); X/Escape sets $name false.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "children"
+      ]
+    },
+    "Tabs": {
+      "description": "Tabs. Tabs([TabItem(value, trigger, content), ...]).",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "TabItem": {
+      "description": "Tab panel. TabItem(value, triggerLabel, content).",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "content": {}
+      },
+      "required": [
+        "value",
+        "trigger",
+        "content"
+      ]
+    },
+    "CardHeader": {
+      "description": "Section title and optional subtitle.",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "TextContent": {
+      "description": "Plain text. Do not emit HTML. size: body (default), small, or large.",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "Callout": {
+      "description": "Banner. type: info, warning, positive, or negative.",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "Stat": {
+      "description": "KPI card. Stat(label, value, caption?).",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {},
+        "caption": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "Tag": {
+      "description": "Chip. Tag(label, color?, size?). color: primary, positive, negative, warning, info, grey. size: sm or md.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "ListBlock": {
+      "description": "List. ListBlock([ListItem(title, caption?, side?), ...]).",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "ListItem": {
+      "description": "List row. ListItem(title, caption?, side?). side is often a Link or Tag.",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "side": {}
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "Image": {
+      "description": "An image of this site. Image(src, alt?). src is a path starting with / (not a host URL).",
+      "properties": {
+        "src": {
+          "type": "string"
+        },
+        "alt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "src"
+      ]
+    },
+    "MarkDownRenderer": {
+      "description": "Sanitized markdown (GFM, code highlight, mermaid fences). MarkDownRenderer(textMarkdown, variant?). variant: clear or card. Do not emit HTML.",
+      "properties": {
+        "textMarkdown": {
+          "type": "string"
+        },
+        "variant": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "textMarkdown"
+      ]
+    },
+    "Mermaid": {
+      "description": "Mermaid diagram. Mermaid(text, height?). Use for status/flow diagrams.",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "height": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "CodeBlock": {
+      "description": "Code. CodeBlock(code, language?).",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "Table": {
+      "description": "Data table. Table([Col(label, query.rows.field), ...]). Col values may be Link/Tag via @Each.",
+      "properties": {
+        "columns": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns"
+      ]
+    },
+    "Col": {
+      "description": "Table column. Col(label, valuesArray): a plucked query column or @Each of components.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "Series": {
+      "description": "Chart series. Series(category, valuesArray).",
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "category",
+        "values"
+      ]
+    },
+    "BarChart": {
+      "description": "Vertical bars. BarChart(labels, [Series(name, values)], variant?, xLabel?, yLabel?). variant: grouped or stacked.",
+      "properties": {
+        "labels": {
+          "type": "array"
+        },
+        "series": {
+          "type": "array"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "xLabel": {
+          "type": "string"
+        },
+        "yLabel": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "labels",
+        "series"
+      ]
+    },
+    "LineChart": {
+      "description": "Lines over categories. LineChart(labels, [Series(name, values)], variant?, xLabel?, yLabel?). variant: linear, natural, or step.",
+      "properties": {
+        "labels": {
+          "type": "array"
+        },
+        "series": {
+          "type": "array"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "xLabel": {
+          "type": "string"
+        },
+        "yLabel": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "labels",
+        "series"
+      ]
+    },
+    "AreaChart": {
+      "description": "Filled lines. AreaChart(labels, [Series(name, values)], variant?, xLabel?, yLabel?).",
+      "properties": {
+        "labels": {
+          "type": "array"
+        },
+        "series": {
+          "type": "array"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "xLabel": {
+          "type": "string"
+        },
+        "yLabel": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "labels",
+        "series"
+      ]
+    },
+    "PieChart": {
+      "description": "Pie or donut. PieChart(labels, values, variant?). variant: pie or donut. Values are numbers (@Count, @Sum).",
+      "properties": {
+        "labels": {
+          "type": "array"
+        },
+        "values": {
+          "type": "array"
+        },
+        "variant": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "labels",
+        "values"
+      ]
+    },
+    "Form": {
+      "description": "Form wrapper. Form(name, submitButton, [controls]).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "submit": {},
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "children"
+      ]
+    },
+    "FormControl": {
+      "description": "Labeled control. FormControl(label, input).",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "control": {}
+      },
+      "required": [
+        "label",
+        "control"
+      ]
+    },
+    "Input": {
+      "description": "Single-line text. Input(name, $name, placeholder?, label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "placeholder": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "TextArea": {
+      "description": "Multi-line text. TextArea(name, $name, placeholder?, label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "placeholder": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Select": {
+      "description": "Static dropdown. Select(name, $name, [SelectItem(value, label), ...], label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "items": {
+          "type": "array"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "items"
+      ]
+    },
+    "SelectItem": {
+      "description": "Select option. SelectItem(value, label).",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ]
+    },
+    "CheckBox": {
+      "description": "Checkbox. CheckBox(name, $name, label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "RadioGroup": {
+      "description": "Radio set. RadioGroup(name, $name, [RadioItem(value, label), ...], label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "items": {
+          "type": "array"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "items"
+      ]
+    },
+    "RadioItem": {
+      "description": "Radio option. RadioItem(value, label).",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ]
+    },
+    "Switch": {
+      "description": "Boolean toggle. Switch(name, $name, label?).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Slider": {
+      "description": "Numeric slider. Slider(name, $name, min?, max?, label?). min default 0, max default 100.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "DateTime": {
+      "description": "Date/time. DateTime(name, $name, type?, label?). type: date, time, or date-time; the value is YYYY-MM-DD HH:mm, YYYY-MM-DD, HH:mm or now.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "type": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "DatePeriod": {
+      "description": "Find period. DatePeriod(name, label?, type?). Sets $name_period, $name_poffset, $name_pdate, $name_from and $name_thru for Query arguments.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Lookup": {
+      "description": "Server-search dropdown. Lookup(name, $name, optionsUrl, valueField?, labelField?, dependsOn?, label?). optionsUrl is an /apps transition that answers options.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "optionsUrl": {
+          "type": "string"
+        },
+        "valueField": {
+          "type": "string"
+        },
+        "labelField": {
+          "type": "string"
+        },
+        "dependsOn": {},
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "optionsUrl"
+      ]
+    },
+    "Display": {
+      "description": "Read-only value. Display(text) or Display(text, valueUrl, label?).",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "valueUrl": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "Button": {
+      "description": "Button. Button(label, Action([@Run(mutation), @Run(query), @Reset($a)]), color?). color: primary (default), secondary, or negative.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "action": {},
+        "color": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "Buttons": {
+      "description": "Row of buttons.",
+      "properties": {
+        "children": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ]
+    },
+    "Link": {
+      "description": "A link to a screen of the apps. Link(label, path, params?, hash?). path is an /apps or /qapps screen path.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "params": {},
+        "hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "path"
+      ]
+    }
+  }
+}

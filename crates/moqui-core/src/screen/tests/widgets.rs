@@ -454,9 +454,10 @@ fn sri_methods_called_from_actions() {
     );
     assert_eq!(text_of("clone"), "/Forms?a=b+x&c=1");
     assert_eq!(text_of("withParam"), "/Forms");
+    // A plain URL is the url as written. Its path is empty: Java's getPath is the screen path, and a plain URL has none.
     assert_eq!(
         (text_of("made"), text_of("madePath")),
-        ("/go?x=1".into(), "/go?x=1".into())
+        ("/go?x=1".into(), String::new())
     );
     assert_eq!(text_of("trans"), "/Sri/go?p=1&q=two&who=w");
     assert_eq!(

@@ -73,7 +73,6 @@ pub struct LoadOptions {
     pub data_types: Vec<String>,
     pub components: Vec<String>,
     pub only_create: bool,
-    pub use_try_insert: bool,
     pub dummy_fks: bool,
     pub disable_fk_create: bool,
     /// Transaction timeout for each record. `None` uses the transaction manager default.
@@ -133,6 +132,10 @@ struct LoadSlot {
 
 fn with_load_slot<R>(facade: &EntityFacade, body: impl FnOnce(&mut LoadSlot) -> R) -> R {
     facade.with_slot(LoadSlot::default, body)
+}
+
+fn with_load_slot_read<R>(facade: &EntityFacade, body: impl FnOnce(&LoadSlot) -> R) -> R {
+    facade.with_slot_read(LoadSlot::default, body)
 }
 
 /// Service elements the loader has read, in order. They were called as they were read.

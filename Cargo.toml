@@ -6,7 +6,8 @@
 # postgresql_embedded 0.21 / sqlx 0.9 require Rust 1.94. mysql_common 0.37
 # pulls uuid 1.28, which requires Rust 1.89. This file does not set
 # rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
-# `cargo check -p moqui` needs Rust 1.94.
+# `cargo check -p moqui` needs Rust 1.94. A full workspace check also builds
+# `moqui-tui`, and Revue 3.x requires Rust 1.95.
 
 [workspace]
 resolver = "2"
@@ -17,6 +18,7 @@ members = [
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
+    "crates/moqui-tui",
     # Component crates kept with the framework. The default binary links them; see crates/moqui/src/main.rs.
     "runtime/base-component/example",
 ]
@@ -52,9 +54,15 @@ moqui-core = { path = "crates/moqui-core", default-features = false }
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # Component crates kept in runtime/base-component, linked by crates/moqui.
 example = { path = "runtime/base-component/example" }
+# default-features off so a model-only user (moqui-core tests) does not compile Revue.
+moqui-tui = { path = "crates/moqui-tui", default-features = false }
+# Exact pin. default-features off so `async` (tokio) and `config` stay out.
+# moqui-tui turns on `markdown` only. Rust 1.95. Not a dependency of `moqui`.
+revue = { version = "=3.10.1", default-features = false }
 
 # --- moqui-lib ---
 jiff = "0.2"
+regex = "1"
 # serde is already in the crate's default set. Named so it stays if defaults change.
 rust_decimal = { version = "1", features = ["serde"] }
 indexmap = "2"
@@ -144,6 +152,8 @@ rquickjs = "=0.14.0"
 # raise the MSRV of lib or core. 0.139.0 declares rust-version 1.94.0.
 # 0.140 and later declare 1.95 or higher.
 oxc_parser = "0.139"
+# The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
+oxc_allocator = "0.139"
 # The ESTree JSON of a parsed expression, for the server-static compatibility walk. Already in the tree under oxc_parser.
 oxc_ast = { version = "0.139", features = ["serialize"] }
 # Spans of parsed nodes, for the test harness power-assert rewrite. Already in the tree under oxc_parser.
@@ -151,6 +161,8 @@ oxc_span = "0.139"
 # HTML cleaning for allow-html="safe" service parameters. MIT OR Apache-2.0. Builder::default() is the
 # conservative maintained allow-list; there is no custom list in this repo.
 ammonia = "4"
+# HTML to terminal text for the tui render mode. The version ammonia already locks.
+html5ever = "0.40"
 # The xlsx render mode (the moqui-poi port). Defaults are empty; dates are written as Excel serial numbers, so the
 # chrono and jiff features stay off. Its zip dependency is `deflate` (zopfli and flate2 on zlib-rs).
 rust_xlsxwriter = { version = "0.99", default-features = false }
@@ -167,6 +179,8 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 # Line diffs for DbResource version history (stored reverse deltas) and the version compare view. Apache-2.0, no
 # required dependencies; `inline` is the word-level highlight of a changed line.
 similar = { version = "3.2", default-features = false, features = ["text", "inline"] }
+# The Yjs CRDT, wire-compatible with the Yjs of the browser editor (m-coedit): co-edited documents (moqui-core collab).
+yrs = { version = "0.28", default-features = false }
 # Git resource locations (git://, crates/moqui-core/src/resource/git). gitoxide is pure Rust; libgit2 (git2) fails the
 # license gate and links OpenSSL. Defaults stay off; HTTPS fetch goes through the workspace reqwest 0.13 on rustls
 # (aws-lc). No push upstream yet, SSH remotes run the system ssh binary.
@@ -175,6 +189,7 @@ gix = { version = "0.89", default-features = false, features = [
     "parallel",
     "blocking-network-client",
     "blocking-http-transport-reqwest-rust-tls",
+    "merge",
 ] }
 # The pack writer (data::output, the `generate` feature) and a delta-base cache for the git server
 # (crates/moqui-core/src/resource/git/server): gix reaches gix-pack without either. The version moves with gix's.
@@ -184,7 +199,7 @@ gix-pack = { version = "0.76", default-features = false, features = ["generate",
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 # --- moqui-host ---
-# rt-multi-thread is for axum. postgres::Client builds its own current_thread runtime.
+# rt-multi-thread is for axum. Each Postgres connection builds its own current_thread runtime.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util"] }
 # Defaults are tls-native-tls and theseus. No feature downloads or bundles the archive: crates/moqui-host/build.rs
 # stages it and db/embedded.rs unpacks it, so the crate's build script links no TLS stack.
@@ -192,12 +207,11 @@ postgresql_embedded = { version = "0.21", default-features = false, features = [
 # Unpacking the staged Postgres archive (crates/moqui-host/build.rs, db/embedded.rs). Already in the graph under
 # postgresql_embedded. xattr stays off.
 tar = { version = "0.4", default-features = false }
-postgres = { version = "0.19", default-features = false, features = ["with-jiff-0_2"] }
-# Defaults are empty. ring stays off.
-tokio-postgres-rustls = { version = "0.14", default-features = false, features = [
-    "aws-lc-rs",
-    "webpki-roots",
-] }
+# The Postgres wire protocol (message encoding and parsing, SCRAM) and its type oids, for moqui-host's blocking client.
+# Values are encoded and decoded by moqui-host, so no type features.
+postgres-protocol = "0.6"
+postgres-types = { version = "0.2", default-features = false }
+fallible-iterator = "0.2"
 # minimal (not minimal-rust) links system zlib. On this crate rustls-tls means aws-lc.
 # time and chrono stay off. rustls-tls still pulls webpki 0.22, which pulls ring.
 mysql = { version = "28", default-features = false, features = [

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- The DAV server (crates/moqui-core/src/dav, docs/Sync.md) without a socket -->
+    <service verb="serve" noun="DavRequest" type="rust" location="moqui_core::service::dav::serve_request" allow-remote="false">
+        <description>One request to the DAV server at /dav, as a device would send it, for a spec or a script that checks a
+            DAV adapter: the request runs in an execution context of its own, as on a request worker (authorization on), and
+            logs in by its own Authorization header (Basic, with an app password) as over HTTPS; the caller's user and
+            context are untouched.</description>
+        <in-parameters>
+            <parameter name="method" required="true"/>
+            <parameter name="path" required="true"><description>From /, such as /dav/calendars/john.doe/</description></parameter>
+            <parameter name="headers" type="Map"><description>Name to value, such as Authorization and Depth</description></parameter>
+            <parameter name="body" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="Integer"/>
+            <parameter name="headers" type="Map"/>
+            <parameter name="body"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="SyncAddresses" type="rust" location="moqui_core::service::dav::get_sync_addresses">
+        <description>Where the current user's devices sync (a Sync settings screen): the DAV server's address (dav-server
+            public-url, else the webapp host and port) and the user's homes on it, whether CalDAV and CardDAV are served (an
+            application names their adapters), and the SFTP address of the drives when the SSH server takes them; with
+            driveId, that drive's WebDAV folder and SFTP path, named as those servers name it.</description>
+        <in-parameters><parameter name="driveId"/></in-parameters>
+        <out-parameters>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="username"/>
+            <parameter name="serverHost"><description>Host and port, the server name a phone's account form asks for</description></parameter>
+            <parameter name="davUrl"/>
+            <parameter name="principalUrl"/>
+            <parameter name="filesUrl"><description>WebDAV: one folder per drive</description></parameter>
+            <parameter name="calendarsUrl"><description>Empty when no CalDAV adapter is named</description></parameter>
+            <parameter name="addressBooksUrl"><description>Empty when no CardDAV adapter is named</description></parameter>
+            <parameter name="sftpUrl"><description>Empty when the SSH server is off or dav-server sftp-drives is false</description></parameter>
+            <parameter name="driveUrl"><description>With driveId: the drive's WebDAV folder; empty when the user may not open it</description></parameter>
+            <parameter name="driveSftpPath"><description>With driveId: the drive's folder over SFTP</description></parameter>
+        </out-parameters>
+    </service>
+</services>

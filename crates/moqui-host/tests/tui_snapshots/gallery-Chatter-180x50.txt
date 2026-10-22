@@ -1,0 +1,50 @@
+ gallery ▸ Chatter                                                                                                                                              john.doe  Tue 14:32
+─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾ Gallery               │ ┌─ Chatter ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   ▶ Chatter             │ │ On null null · opens on log. The gallery's stand-in for BOSS's Shared/Chatter, loaded by the chatter element.                                        │
+     Landing             │ │ No record                                                                                                                                            │
+     List                │ │ Log note  : │                                                                                                                                        │
+     Detail              │ │ < Log >                                                                                                                                              │
+     360                 │ │ ● Today 09:12  John Doe logged a note                                                                                                                │
+     Task                │ │ │   Description reviewed with @John Doe and the Products team.                                                                                       │
+     Board               │ │ ● Yesterday 16:40  Ada Lovelace logged a call                                                                                                        │
+     Calendar            │ │ ● Last week  spec-sheet.pdf was attached                                                                                                             │
+     Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Settings            │
+     Wizard              │
+     Dialog              │
+     Report              │
+     Panel               │
+     Widgets             │
+     Editor              │
+     Message             │
+     Views               │
+ ▾ Home                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Log
+ F1=Help  F3=Back  F5=Refresh  F9=Menu  Esc=Cancel  #=Number links  Ctrl+Q=Quit  Ctrl+K=Go to  F6=Create  Alt+P=Mouse

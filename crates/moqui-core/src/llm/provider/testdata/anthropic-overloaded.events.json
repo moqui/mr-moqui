@@ -1,0 +1,56 @@
+{
+  "events": [
+    {
+      "id": "msg_01Ov3rL0ad",
+      "model": "claude-sonnet-5",
+      "type": "started"
+    },
+    {
+      "delta": "Here is",
+      "index": 0,
+      "type": "text"
+    },
+    {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 512,
+      "output": 1,
+      "reasoning": 0,
+      "type": "usage"
+    },
+    {
+      "class": "overloaded",
+      "code": "overloaded_error",
+      "finish": "error",
+      "message": "Overloaded",
+      "status": null,
+      "type": "finish"
+    }
+  ],
+  "reply": {
+    "bad_tool_calls": [],
+    "cut_tool_calls": 0,
+    "finish": {
+      "class": "overloaded",
+      "code": "overloaded_error",
+      "finish": "error",
+      "message": "Overloaded",
+      "status": null,
+      "type": "finish"
+    },
+    "model": "claude-sonnet-5",
+    "reasoning": "",
+    "replay": null,
+    "response_id": "msg_01Ov3rL0ad",
+    "text": "Here is",
+    "text_deltas": 1,
+    "tool_calls": [],
+    "usage": {
+      "cache_write": 0,
+      "cached_input": 0,
+      "input": 512,
+      "output": 1,
+      "reasoning": 0
+    }
+  }
+}

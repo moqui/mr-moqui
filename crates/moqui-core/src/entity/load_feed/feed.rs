@@ -16,7 +16,7 @@
 //! definitions it needs are read once and kept on the facade until one of them is written.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use moqui_db::sql::{
@@ -25,8 +25,9 @@ use moqui_db::sql::{
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
+use crate::entity::FieldMap;
 use super::loader::canonical_name;
-use super::{error_chain, with_load_slot, FeedServiceNames};
+use super::{error_chain, with_load_slot, with_load_slot_read, FeedServiceNames};
 use crate::driver::{DbConnection, DbRow};
 use crate::entity::facade::EntityFacade;
 use crate::transaction::TransactionManager;
@@ -47,11 +48,20 @@ pub(super) struct Touch {
     entity_name: String,
     operation: String,
     /// The written values. The feed reads keys from them, and a related delete walks back to the
-    /// primary entity from them. `None` falls back to the Postgres `xmin` probe.
-    fields: Option<BTreeMap<String, Value>>,
+    /// primary entity from them. `None` falls back to the Postgres `xmin` probe. Shared with the write's other hooks.
+    fields: Option<Arc<FieldMap>>,
     /// For an update of a feed entity, the row as it was before, so an update that changes no document field is
     /// not fed (Java's `oldValues`). `None` feeds the update.
-    old: Option<BTreeMap<String, Value>>,
+    old: Option<FieldMap>,
+    /// The agent whose run made the write (the execution context's agent origin), for the agent triggers' loop guard.
+    origin_agent: Option<String>,
+}
+
+impl Touch {
+    #[cfg(test)]
+    pub(super) fn keeps_fields(&self) -> bool {
+        self.fields.is_some()
+    }
 }
 
 struct Agg {
@@ -83,8 +93,8 @@ pub(crate) fn note_touch(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
-    fields: Option<&BTreeMap<String, Value>>,
-    old: Option<BTreeMap<String, Value>>,
+    fields: Option<&Arc<FieldMap>>,
+    old: Option<FieldMap>,
 ) {
     let Some(tx) = facade.transactions_for(entity_name).ok() else {
         return;
@@ -98,15 +108,33 @@ pub(crate) fn note_touch(
     {
         return;
     }
-    let keep_fields =
-        !facade.flags().disable_data_feed && entity_name != SKIP_FEED_ENTITY && entity_name != PENDING_ENTITY;
+    let keep_fields = !facade.flags().disable_data_feed
+        && entity_name != SKIP_FEED_ENTITY
+        && entity_name != PENDING_ENTITY
+        && feed_may_target(facade, entity_name);
     let touch = Touch {
         entity_name: entity_name.to_string(),
         operation: operation.to_string(),
         fields: fields.filter(|_| keep_fields).cloned(),
         old: old.filter(|_| keep_fields),
+        origin_agent: keep_fields
+            .then(|| crate::context::ExecutionContext::with_current(|ec| ec.agent_origin()).flatten())
+            .flatten()
+            .map(|origin| origin.agent_id),
     };
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
+}
+
+/// False when the feed configuration, as last read and not older than the feed definitions, has no document on
+/// `entity_name` (compared as [`insert_pending`] compares a touch's name): the commit then reads no values of the
+/// write. True before the configuration is first read, or after a definition was written since.
+fn feed_may_target(facade: &EntityFacade, entity_name: &str) -> bool {
+    let generation = crate::entity::cache::feed_definition_generation(facade);
+    with_load_slot_read(facade, |slot| {
+        slot.feed_config.as_ref().is_none_or(|config| {
+            config.generation != generation || config.targets.iter().any(|target| target.entity_name == entity_name)
+        })
+    })
 }
 
 /// Whether an update of `entity_name` should read the row first for the data feed: a known feed configuration has
@@ -118,7 +146,7 @@ pub(crate) fn feed_wants_old(facade: &EntityFacade, entity_name: &str) -> bool {
     let Ok(full_name) = canonical_name(facade, entity_name) else {
         return false;
     };
-    with_load_slot(facade, |slot| {
+    with_load_slot_read(facade, |slot| {
         slot.feed_config
             .as_ref()
             .is_some_and(|config| config.targets.iter().any(|target| target.entity_name == full_name))
@@ -128,18 +156,18 @@ pub(crate) fn feed_wants_old(facade: &EntityFacade, entity_name: &str) -> bool {
 /// Java's `dataFeedCheckAndRegister` for one document: a create or update is fed when it sets or changes one of the
 /// document's fields of this entity, and has no other value in a field a document condition names. A delete is
 /// always fed.
-fn touch_feeds(target: &DocTarget, touch: &Touch, fields: &BTreeMap<String, Value>) -> bool {
+fn touch_feeds(target: &DocTarget, touch: &Touch, fields: &FieldMap) -> bool {
     if touch.operation == "delete" {
         return true;
     }
     let text = |value: &Value| moqui_lib::object::to_plain_string(value);
     let changed = target.fields.iter().any(|name| {
-        let Some(value) = fields.get(name) else {
+        let Some(value) = fields.get(name.as_str()) else {
             return false;
         };
         match (&touch.old, touch.operation.as_str()) {
             (Some(old), "update") => old
-                .get(name)
+                .get(name.as_str())
                 .map_or(!value.is_null(), |before| text(before) != text(value)),
             _ => !value.is_null(),
         }
@@ -150,7 +178,7 @@ fn touch_feeds(target: &DocTarget, touch: &Touch, fields: &BTreeMap<String, Valu
     // A field the write does not set is left to the document query.
     target.conditions.iter().all(|(name, wanted)| {
         fields
-            .get(name)
+            .get(name.as_str())
             .filter(|value| !value.is_null())
             .is_none_or(|value| &text(value) == wanted)
     })
@@ -229,8 +257,20 @@ fn insert_pending(
     // Writes that carry their values: the document id is found from them, and the last write to
     // a document decides between index and delete.
     let mut resolved: indexmap::IndexMap<(String, String), (String, &'static str)> = indexmap::IndexMap::new();
+    // the agent that made every write of a document's record, else none (the agent triggers' loop guard)
+    let mut origins: HashMap<(String, String), Option<String>> = HashMap::new();
+    let mut note_origin = |key: &(String, String), origin: &Option<String>| {
+        origins
+            .entry(key.clone())
+            .and_modify(|known| {
+                if known != origin {
+                    *known = None;
+                }
+            })
+            .or_insert_with(|| origin.clone());
+    };
     for touch in &touches {
-        let Some(fields) = &touch.fields else {
+        let Some(fields) = touch.fields.as_deref() else {
             continue;
         };
         for hit in targets.iter().filter(|target| target.entity_name == touch.entity_name) {
@@ -243,6 +283,7 @@ fn insert_pending(
                 };
                 let operation = if touch.operation == "delete" { "delete" } else { "index" };
                 let key = (hit.data_document_id.clone(), id);
+                note_origin(&key, &touch.origin_agent);
                 resolved.shift_remove(&key);
                 resolved.insert(key, (hit.primary_entity.clone(), operation));
             } else {
@@ -254,6 +295,7 @@ fn insert_pending(
                 for path in &hit.paths {
                     for id in walk_to_primary(facade, conn, path, vec![row.clone()])? {
                         let key = (hit.data_document_id.clone(), id);
+                        note_origin(&key, &touch.origin_agent);
                         if !resolved.contains_key(&key) {
                             resolved.insert(key, (hit.primary_entity.clone(), "index"));
                         }
@@ -264,12 +306,18 @@ fn insert_pending(
     }
     for ((document_id, id), (entity_name, operation)) in &resolved {
         let row_id = crate::entity::uuid_v4()?;
+        let origin = origins
+            .get(&(document_id.clone(), id.clone()))
+            .cloned()
+            .flatten()
+            .map_or(Value::Null, Value::String);
         let params = vec![
             Value::string(&row_id),
             Value::string(document_id),
             Value::string(entity_name),
             Value::string(id),
             Value::string(*operation),
+            origin,
         ];
         probe_execute(conn, &insert_sql, &params)?;
         inserted.push(row_id);
@@ -320,6 +368,7 @@ fn insert_pending(
                     Value::string(entity_name),
                     Value::string(&key),
                     Value::string(operation),
+                    legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
                 ];
                 probe_execute(conn, &insert_sql, &params)?;
                 inserted.push(row_id);
@@ -329,8 +378,18 @@ fn insert_pending(
     Ok(inserted)
 }
 
+/// The agent that made every value-less write of `entity_name` in the frame, else `None`.
+fn legacy_origin(touches: &[Touch], entity_name: &str) -> Option<String> {
+    let mut origins = touches
+        .iter()
+        .filter(|touch| touch.entity_name == entity_name && touch.fields.is_none())
+        .map(|touch| touch.origin_agent.as_deref());
+    let first = origins.next()??;
+    origins.all(|origin| origin == Some(first)).then(|| first.to_string())
+}
+
 /// Primary key values joined with `::`, or `None` when one is missing.
-fn pk_text(facade: &EntityFacade, entity_name: &str, fields: &BTreeMap<String, Value>) -> Option<String> {
+fn pk_text(facade: &EntityFacade, entity_name: &str, fields: &FieldMap) -> Option<String> {
     let names = facade
         .with_entity(entity_name, |entity, _, _| {
             Ok(entity
@@ -342,7 +401,7 @@ fn pk_text(facade: &EntityFacade, entity_name: &str, fields: &BTreeMap<String, V
         .ok()?;
     let mut parts = Vec::with_capacity(names.len());
     for name in &names {
-        let text = scalar_text(fields.get(name)?)?;
+        let text = scalar_text(fields.get(name.as_str())?)?;
         if text.is_empty() {
             return None;
         }
@@ -356,8 +415,8 @@ fn reread(
     facade: &EntityFacade,
     conn: &mut dyn DbConnection,
     entity_name: &str,
-    fields: &BTreeMap<String, Value>,
-) -> Result<Option<BTreeMap<String, Value>>, Error> {
+    fields: &FieldMap,
+) -> Result<Option<FieldMap>, Error> {
     let (names, pk_names) = facade.with_entity(entity_name, |entity, _, _| {
         Ok((
             entity.fields.iter().map(|field| field.name.clone()).collect::<Vec<_>>(),
@@ -370,7 +429,7 @@ fn reread(
     })?;
     let mut conds = Vec::new();
     for name in &pk_names {
-        match fields.get(name) {
+        match fields.get(name.as_str()) {
             Some(value) if !value.is_null() => {
                 conds.push(Condition::equals(FieldRef::new(name.clone()), value.clone()))
             }
@@ -387,7 +446,7 @@ fn select_rows(
     entity_name: &str,
     names: &[String],
     condition: Condition,
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+) -> Result<Vec<FieldMap>, Error> {
     let columns: Vec<&str> = names.iter().map(String::as_str).collect();
     let (sql, params) = select_sql(facade, entity_name, &columns, Some(condition))?;
     let rows = probe_query(conn, &sql, &params)?;
@@ -396,7 +455,7 @@ fn select_rows(
         .map(|row| {
             names
                 .iter()
-                .map(|name| (name.clone(), cell_value(row, name).cloned().unwrap_or(Value::Null)))
+                .map(|name| (Arc::from(name.as_str()), cell_value(row, name).cloned().unwrap_or(Value::Null)))
                 .collect()
         })
         .collect())
@@ -410,7 +469,7 @@ fn walk_to_primary(
     facade: &EntityFacade,
     conn: &mut dyn DbConnection,
     path: &[(String, String)],
-    rows: Vec<BTreeMap<String, Value>>,
+    rows: Vec<FieldMap>,
 ) -> Result<Vec<String>, Error> {
     let mut rows = rows;
     for (parent, relationship) in path.iter().rev() {
@@ -424,7 +483,7 @@ fn walk_to_primary(
         for row in &rows {
             let key: Option<Vec<Value>> = pairs
                 .iter()
-                .map(|(_, related)| row.get(related).filter(|value| !value.is_null()).cloned())
+                .map(|(_, related)| row.get(related.as_str()).filter(|value| !value.is_null()).cloned())
                 .collect();
             let Some(key) = key.filter(|key| !key.is_empty()) else {
                 continue;
@@ -892,6 +951,7 @@ fn pending_insert_sql(facade: &EntityFacade) -> Result<String, Error> {
                 "entityName",
                 "primaryKey",
                 "operation",
+                "originAgentId",
             ],
         )
     })
@@ -1038,16 +1098,18 @@ fn scalar_text(value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod filter_tests {
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::HashSet;
+
+    use crate::entity::FieldMap;
 
     use moqui_lib::object::Value;
 
     use super::{touch_feeds, DocTarget, Touch};
 
-    fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, Value> {
+    fn map(pairs: &[(&str, &str)]) -> FieldMap {
         pairs
             .iter()
-            .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
+            .map(|(name, value)| ((*name).into(), Value::string(*value)))
             .collect()
     }
 
@@ -1064,11 +1126,12 @@ mod filter_tests {
             fields: HashSet::from(["name".to_string(), "kind".to_string()]),
             conditions: vec![("kind".to_string(), "Good".to_string())],
         };
-        let touch = |operation: &str, fields: BTreeMap<String, Value>, old: Option<BTreeMap<String, Value>>| Touch {
+        let touch = |operation: &str, fields: FieldMap, old: Option<FieldMap>| Touch {
             entity_name: "E".to_string(),
             operation: operation.to_string(),
-            fields: Some(fields),
+            fields: Some(std::sync::Arc::new(fields)),
             old,
+            origin_agent: None,
         };
         let feeds = |touch: &Touch| touch_feeds(&target, touch, touch.fields.as_ref().unwrap());
         assert!(feeds(&touch("create", map(&[("id", "1"), ("name", "a")]), None)));

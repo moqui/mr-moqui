@@ -145,7 +145,11 @@ along with this software (see the LICENSE.md file). If not, see
     options: {indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}},
         scales: {x: {beginAtZero: true, ticks: {color: window.getComputedStyle(window.document.body).color, precision: 0}, grid: {display: false}, border: {display: false}},
             y: {ticks: {color: window.getComputedStyle(window.document.body).color}, grid: {display: false}, border: {display: false}}}}}"></m-chart>
-                    ]]></text></render-mode>
+                    ]]></text>
+                    <!-- the same series as a table with bars -->
+                    <text type="tui"><![CDATA[{"t": "component", "id": "LandingTypeChart", "name": "chart", "props": {
+                        "labels": ${JSON.stringify(JSON.parse(chartLabelsJson))},
+                        "series": [{"name": "Enumerations", "data": ${JSON.stringify(JSON.parse(chartDataJson))}}]}}]]></text></render-mode>
                     <label type="div" style="text-caption text-grey-6 q-mt-xs" text="One series, one brand color; the table behind it is the List screen."/>
                 </box-body></container-box>
             </row-col>

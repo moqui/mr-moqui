@@ -39,6 +39,10 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Views" menu-title="Views" menu-index="17" location="component://example/screen/Gallery/Views.xml"/>
         <subscreens-item name="QuickNote" menu-include="false" location="component://example/screen/Gallery/QuickNote.xml"/>
         <subscreens-item name="QuickTask" menu-include="false" location="component://example/screen/Gallery/QuickTask.xml"/>
+        <!-- an edit form whose save is refused with validation errors: what Assist's Edit in screen hands to the user -->
+        <subscreens-item name="Contact" menu-include="false" location="component://example/screen/Gallery/Contact.xml"/>
+        <!-- the detail the Views list's peek pane loads (form-list peek-url) -->
+        <subscreens-item name="ExampleDetail" menu-include="false" location="component://example/screen/Gallery/ExampleDetail.xml"/>
         <!-- the record panels the chatter and record-files elements load under the current app root, by the names the theme
             values STRT_CHATTER_SCREEN and STRT_RECORD_FILES_SCREEN give (BOSS seeds Chatter and RecordFiles), as a BOSS app
             root mounts Shared/Chatter.xml and Shared/RecordFiles.xml -->

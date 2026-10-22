@@ -1,0 +1,806 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Agents, conversations and runs (plans/LLM-A2A-Assist.md sections 4.3 to 4.16 and 5; crates/moqui-core/src/llm). One
+    conversation, run, message and event model serves every surface: the Assist drawer, chat rooms, A2A (a context is a
+    conversation, a task is a run), MCP, jobs and the terminal. No data compatibility with the Java prototype.
+
+    The statuses and their transitions, the enumerations, the permissions and the system agent are in
+    data/AgentTypeData.xml; llm/run/state.rs enforces the run transitions and a test compares the two.
+
+    These are moqui.* entities, which entity filters never apply to: the agent services check the owner of each row. A
+    user reads only their own conversations; another user's need AgentAudit and are logged in AgentAuditLog. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <!-- ========== Agents and policy ========== -->
+
+    <entity entity-name="AgentDefinition" package="moqui.agent" use="configuration" cache="true">
+        <description>An agent: its instructions (Markdown, inline or at instructionsLocation), the model it uses (a feature
+            binding, else a tier), its default reasoning level, the role group that bounds what it may do (its
+            authority is the user's, intersected with the group's and the tool policy), the surfaces it serves (a
+            comma list of drawer, chat, a2a, mcp, job, tui; empty is drawer and tui only), the screen a headless
+            session starts on, and its budgets. runAsUserId is for jobs and triggers, which have no user of their own.
+            requireSkill names skills the agent always loads. a2aSkillsJson describes its skills on the A2A agent
+            card. canvasDialects is a comma list of the canvas dialects it may write (openui, vue-sfc); empty is openui
+            only, so Vue SFC canvases are off unless an agent names them. chatUserId is the service user that is the agent's
+            member in chat rooms (a ChatRoomMember with role CmrAgent and the agentRef handle#ChatMessage). A system
+            agent (isSystem) ships in seed data.</description>
+        <field name="agentId" type="id" is-pk="true"/>
+        <field name="agentName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="instructions" type="text-very-long"/>
+        <field name="instructionsLocation" type="text-medium"/>
+        <field name="roleGroupId" type="id"/>
+        <field name="runAsUserId" type="id"/>
+        <field name="chatUserId" type="id"/>
+        <field name="featureId" type="id"/>
+        <field name="tier" type="text-short"/>
+        <field name="reasoningLevel" type="text-short"/>
+        <field name="surfaces" type="text-medium"/>
+        <field name="startPath" type="text-medium"/>
+        <field name="maxSteps" type="number-integer"/>
+        <field name="maxToolCalls" type="number-integer"/>
+        <field name="maxTokens" type="number-integer"/>
+        <field name="maxCost" type="currency-amount"/>
+        <field name="maxRunSeconds" type="number-integer"/>
+        <field name="localOnly" type="text-indicator"><description>Use only endpoints marked local</description></field>
+        <field name="requireSkill" type="text-medium"/>
+        <field name="canvasDialects" type="text-medium"/>
+        <field name="exposeA2a" type="text-indicator"/>
+        <field name="exposeMcp" type="text-indicator"/>
+        <field name="a2aSkillsJson" type="text-long"/>
+        <field name="isSystem" type="text-indicator"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one-nofk" title="Role" related="moqui.security.UserGroup" short-alias="roleGroup">
+            <key-map field-name="roleGroupId" related="userGroupId"/></relationship>
+        <relationship type="one-nofk" title="RunAs" related="moqui.security.UserAccount" short-alias="runAsUser">
+            <key-map field-name="runAsUserId" related="userId"/></relationship>
+        <relationship type="one-nofk" title="Chat" related="moqui.security.UserAccount" short-alias="chatUser">
+            <key-map field-name="chatUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.agent.AgentToolPolicy" short-alias="toolPolicies">
+            <key-map field-name="agentId"/></relationship>
+    </entity>
+
+    <entity entity-name="AgentToolPolicy" package="moqui.agent" use="configuration" cache="true">
+        <description>Which tools an agent may call, in sequence order, the first matching pattern deciding: toolPattern is a
+            tool name or a pattern with *, the classification ceiling is the highest it may run (read, write, destructive,
+            external), the approval mode is ask (the user decides each), policy (runs without asking, background agents
+            only) or never (the tool is not offered), and callsPerRun limits the calls of one run.</description>
+        <field name="agentId" type="id" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer" is-pk="true"/>
+        <field name="toolPattern" type="text-medium"/>
+        <field name="classificationEnumId" type="id"/>
+        <field name="approvalModeEnumId" type="id"/>
+        <field name="allowDestructive" type="text-indicator"/>
+        <field name="callsPerRun" type="number-integer"/>
+        <relationship type="one" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+        <relationship type="one" title="AgentClassification" related="moqui.basic.Enumeration" short-alias="classification">
+            <key-map field-name="classificationEnumId"/></relationship>
+        <relationship type="one" title="AgentApprovalMode" related="moqui.basic.Enumeration" short-alias="approvalMode">
+            <key-map field-name="approvalModeEnumId"/></relationship>
+    </entity>
+
+    <entity entity-name="AgentToolExposure" package="moqui.agent" use="configuration" cache="true">
+        <description>A service offered as a tool: its tool name, the service, the title and description the model reads, an
+            input schema that replaces the one made from the service's parameters, its classification (else the service's
+            own), whether the assistant and the MCP server offer it, and whether its writes get a sim preview (none,
+            on-demand, always). lockVersion changes with each edit, so a run that started with another version
+            notices.</description>
+        <field name="toolName" type="text-medium" is-pk="true"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="schemaOverrideJson" type="text-very-long"/>
+        <field name="classificationEnumId" type="id"/>
+        <field name="exposeAssistant" type="text-indicator"/>
+        <field name="exposeMcp" type="text-indicator"/>
+        <field name="previewMode" type="text-short"/>
+        <field name="lockVersion" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" title="AgentClassification" related="moqui.basic.Enumeration" short-alias="classification">
+            <key-map field-name="classificationEnumId"/></relationship>
+    </entity>
+
+    <!-- ========== Conversations and runs ========== -->
+
+    <entity entity-name="AgentConversation" package="moqui.agent" use="transactional" cache="never">
+        <description>A conversation of a user with an agent on one surface; it is an A2A context (conversationId is the
+            contextId). A chat-room conversation names its room and thread root. One run at a time is active
+            (activeRunId, set with a conditional update). The frozen prefix of the prompt (systemText, toolsHash,
+            promptVariant, standard or small with +json for JSON tool mode, and skillCatalog, the names its skill catalog
+            lists) is fixed when the conversation starts, so every call shares the provider's prefix cache;
+            compaction keeps a summary of the messages through compactedThroughSeq. screenStateJson is the state of its
+            screen session, recordEntityName and recordId the record it is attached to. clientId is the follow owner (the
+            drawer tab whose page follows the agent: the one that sent the last turn or claimed follow), and
+            contextVersion the newest page version its tab reported (raised when the user navigates); the agent's
+            ui.* events carry both, so a tab applies only its own and only for the page they were made for.</description>
+        <field name="conversationId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="agentId" type="id"/>
+        <field name="surfaceEnumId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="threadRootEventSeq" type="number-integer"/>
+        <field name="title" type="text-medium"/>
+        <field name="summary" type="text-long"/>
+        <field name="searchText" type="text-fts"/>
+        <field name="statusId" type="id"/>
+        <field name="activeRunId" type="id"/>
+        <field name="lastMessageSeq" type="number-integer"/>
+        <field name="lastMessageDate" type="date-time"/>
+        <field name="systemText" type="text-very-long"/>
+        <field name="toolsHash" type="text-medium"/>
+        <field name="promptVariant" type="text-short"/>
+        <field name="skillCatalog" type="text-long"/>
+        <field name="modelId" type="id"/>
+        <field name="compactedThroughSeq" type="number-integer"/>
+        <field name="compactionSummary" type="text-very-long"/>
+        <field name="screenStateJson" type="text-very-long"/>
+        <field name="recordEntityName" type="text-medium"/>
+        <field name="recordId" type="text-medium"/>
+        <field name="clientId" type="id"/>
+        <field name="contextVersion" type="number-integer"/>
+        <field name="memoryCreate" type="text-indicator"><description>The temporary memory gate of this conversation: Y
+            or N lets or stops the agent making memories here whatever the user's ASSIST_MEMORY preference (the permanent
+            gate) says; empty follows the preference. Existing memories are used either way.</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+        <relationship type="one" title="AgentSurface" related="moqui.basic.Enumeration" short-alias="surface">
+            <key-map field-name="surfaceEnumId"/></relationship>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="chatRoom"/>
+        <relationship type="many" related="moqui.agent.AgentRun" short-alias="runs">
+            <key-map field-name="conversationId"/></relationship>
+        <index name="AGENT_CONV_USER"><index-field name="userId"/><index-field name="lastMessageDate"/></index>
+        <index name="AGENT_CONV_ROOM"><index-field name="chatRoomId"/><index-field name="threadRootEventSeq"/></index>
+        <index name="AGENT_CONV_RECORD"><index-field name="recordEntityName"/><index-field name="recordId"/></index>
+    </entity>
+
+    <entity entity-name="AgentRun" package="moqui.agent" use="transactional" cache="never">
+        <description>One user request carried to an end, across pauses; it is an A2A task (runId is the task id). Its status
+            is an A2A task state (AgentRun status type; llm/run/state.rs). A paused run (input or auth required) names what
+            it waits for: pauseKindEnumId, pauseRef and pauseExpireDate. The node running it holds a lease (leaseOwner,
+            leaseExpireDate, renewed every 15 seconds); a recovery sweep takes over a Working run whose lease expired, at
+            most maxAttempts times. cancelRequested is read at each renewal, so a cancel reaches the node running the run.
+            parentRunId is the run that delegated this one. The counts and totals are kept as the steps end;
+            resultJson is the final answer, so a repeated request is answered the same.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="agentId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="runAsUserId" type="id"/>
+        <field name="surfaceEnumId" type="id"/>
+        <field name="triggerId" type="id"/>
+        <field name="triggerRef" type="text-medium"/>
+        <field name="parentRunId" type="id"/>
+        <field name="clientRequestId" type="text-medium"><description>The caller's own id of the request (an A2A messageId),
+            so a request sent again gets this run</description></field>
+        <field name="statusId" type="id"/>
+        <field name="statusReason" type="text-long"/>
+        <field name="pauseKindEnumId" type="id"/>
+        <field name="pauseRef" type="text-medium"/>
+        <field name="pauseExpireDate" type="date-time"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpireDate" type="date-time"/>
+        <field name="attempt" type="number-integer"/>
+        <field name="cancelRequested" type="text-indicator"/>
+        <field name="lastEventSeq" type="number-integer"/>
+        <field name="stepCount" type="number-integer"/>
+        <field name="toolCallCount" type="number-integer"/>
+        <field name="inputTokens" type="number-integer"/>
+        <field name="cachedInputTokens" type="number-integer"/>
+        <field name="outputTokens" type="number-integer"/>
+        <field name="cost" type="currency-precise"/>
+        <field name="maxSteps" type="number-integer"/>
+        <field name="maxToolCalls" type="number-integer"/>
+        <field name="maxTokens" type="number-integer"/>
+        <field name="maxCost" type="currency-amount"/>
+        <field name="maxRunSeconds" type="number-integer"><description>The cap on activeSeconds; a continue at the budget
+            raises it</description></field>
+        <field name="capsText" type="text-medium"><description>The surface capabilities in effect for the run (a comma
+            list), which decide the tools offered</description></field>
+        <field name="tier" type="text-short"><description>The tier the client chose for this run (fast, balanced,
+            thorough); an agent that names its own tier keeps it</description></field>
+        <field name="deadlineDate" type="date-time"/>
+        <field name="activeSeconds" type="number-integer"><description>Wall time spent working, without pauses</description></field>
+        <field name="submittedDate" type="date-time"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="resultJson" type="text-very-long"/>
+        <field name="errorCode" type="text-short"/>
+        <field name="errorText" type="text-long"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentConversation" short-alias="conversation"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" title="AgentSurface" related="moqui.basic.Enumeration" short-alias="surface">
+            <key-map field-name="surfaceEnumId"/></relationship>
+        <relationship type="one" title="AgentPauseKind" related="moqui.basic.Enumeration" short-alias="pauseKind">
+            <key-map field-name="pauseKindEnumId"/></relationship>
+        <relationship type="one-nofk" title="Parent" related="moqui.agent.AgentRun" short-alias="parentRun">
+            <key-map field-name="parentRunId" related="runId"/></relationship>
+        <relationship type="many" related="moqui.agent.AgentRunStep" short-alias="steps">
+            <key-map field-name="runId"/></relationship>
+        <index name="AGENT_RUN_CONV"><index-field name="conversationId"/><index-field name="submittedDate"/></index>
+        <index name="AGENT_RUN_USER"><index-field name="userId"/><index-field name="submittedDate"/></index>
+        <index name="AGENT_RUN_STATUS"><index-field name="statusId"/><index-field name="leaseExpireDate"/></index>
+        <index name="AGENT_RUN_PARENT"><index-field name="parentRunId"/></index>
+        <index name="AGENT_RUN_REQUEST" unique="true"><index-field name="userId"/><index-field name="clientRequestId"/></index>
+    </entity>
+
+    <entity entity-name="AgentRunStep" package="moqui.agent" use="transactional" cache="never">
+        <description>One step of a run: one model call (callId, the last attempt) and the tool calls it asked for.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="stepSeq" type="number-integer" is-pk="true"/>
+        <field name="callId" type="id"/>
+        <field name="modelId" type="id"/>
+        <field name="finishReason" type="text-short"/>
+        <field name="inputTokens" type="number-integer"/>
+        <field name="cachedInputTokens" type="number-integer"/>
+        <field name="cacheWriteTokens" type="number-integer"/>
+        <field name="outputTokens" type="number-integer"/>
+        <field name="reasoningTokens" type="number-integer"/>
+        <field name="cost" type="currency-precise"/>
+        <field name="toolCallCount" type="number-integer"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one-nofk" related="moqui.llm.LlmCall" short-alias="call"/>
+    </entity>
+
+    <entity entity-name="AgentRunEvent" package="moqui.agent" use="transactional" cache="never">
+        <description>The stored events of a run, numbered per run (eventSeq), which a client that re-attaches reads from the
+            last one it has: run.state, message.start, text.chunk, tool.call, approval.requested and the others of the
+            plan's 4.5. The deltas are live only.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="eventSeq" type="number-integer" is-pk="true"/>
+        <field name="eventType" type="text-short"/>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="eventDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentRun" short-alias="run"/>
+        <index name="AGENT_EVENT_DATE"><index-field name="eventDate"/></index>
+    </entity>
+
+    <entity entity-name="AgentInput" package="moqui.agent" use="transactional" cache="never">
+        <description>Input for a run that arrived while it worked or paused: a message folded in at the next step (steering),
+            an answer to its question, a decision, or a remote agent's reply. consumedDate is set when the run takes it.</description>
+        <field name="inputId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="inputKindEnumId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="messageText" type="text-very-long"/>
+        <field name="dataJson" type="text-very-long"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="consumedDate" type="date-time"/>
+        <field name="clientMessageId" type="text-medium"><description>The client's own id of a message (a drawer turn
+            sent while a run was active), unique with the user as on AgentMessage, so a send tried again finds it</description></field>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one" title="AgentInputKind" related="moqui.basic.Enumeration" short-alias="inputKind">
+            <key-map field-name="inputKindEnumId"/></relationship>
+        <index name="AGENT_INPUT_RUN"><index-field name="runId"/><index-field name="consumedDate"/></index>
+        <index name="AGENT_INPUT_CLIENT" unique="true"><index-field name="userId"/><index-field name="clientMessageId"/></index>
+    </entity>
+
+    <entity entity-name="AgentMessage" package="moqui.agent" use="transactional" cache="never">
+        <description>A message of a conversation, numbered in it (messageSeq): role user, assistant, tool or system. A
+            client's own id of a message it sends (clientMessageId) is unique for the user, so a send that is tried again
+            finds the message it made. replayJson is what the provider needs back with the next request (reasoning
+            signatures, encrypted reasoning items), sent only to the same endpoint and model (replayEndpointId,
+            replayModelId). A compacted message is summarized and no longer sent. An assistant message's tokenCount is the
+            prompt tokens the provider reported for the request that made it (promptChars in its metadata is that
+            request's characters), the anchor of the window's estimate; its metadata raw is the text a model wrote in JSON
+            tool mode.</description>
+        <field name="messageId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="messageSeq" type="number-integer"/>
+        <field name="runId" type="id"/>
+        <field name="role" type="text-short"/>
+        <field name="userId" type="id"/>
+        <field name="clientMessageId" type="text-medium"/>
+        <field name="metadataJson" type="text-long"/>
+        <field name="replayJson" type="text-very-long"/>
+        <field name="replayEndpointId" type="id"/>
+        <field name="replayModelId" type="id"/>
+        <field name="tokenCount" type="number-integer"/>
+        <field name="compacted" type="text-indicator"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentConversation" short-alias="conversation"/>
+        <relationship type="many" related="moqui.agent.AgentMessagePart" short-alias="parts">
+            <key-map field-name="messageId"/></relationship>
+        <index name="AGENT_MSG_SEQ" unique="true"><index-field name="conversationId"/><index-field name="messageSeq"/></index>
+        <index name="AGENT_MSG_CLIENT" unique="true"><index-field name="userId"/><index-field name="clientMessageId"/></index>
+        <index name="AGENT_MSG_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="AgentMessagePart" package="moqui.agent" use="transactional" cache="never">
+        <description>A part of a message, A2A-shaped, one of: text (textValue), data (dataJson, with mediaType), file
+            (fileName, mediaType, fileLocation or fileUrl), tool call (toolCallId, the tool and its arguments in dataJson),
+            tool result (toolCallId, the result in textValue) or reasoning (textValue, a summary).</description>
+        <field name="messageId" type="id" is-pk="true"/>
+        <field name="partSeq" type="number-integer" is-pk="true"/>
+        <field name="partKindEnumId" type="id"/>
+        <field name="textValue" type="text-very-long"/>
+        <field name="dataJson" type="text-very-long"/>
+        <field name="mediaType" type="text-medium"/>
+        <field name="fileName" type="text-medium"/>
+        <field name="fileLocation" type="text-medium"/>
+        <field name="fileUrl" type="text-medium"/>
+        <field name="toolCallId" type="id"/>
+        <field name="metadataJson" type="text-long"/>
+        <relationship type="one" related="moqui.agent.AgentMessage" short-alias="message"/>
+        <relationship type="one" title="AgentPartKind" related="moqui.basic.Enumeration" short-alias="partKind">
+            <key-map field-name="partKindEnumId"/></relationship>
+    </entity>
+
+    <entity entity-name="AgentToolCall" package="moqui.agent" use="transactional" cache="never">
+        <description>A tool call of a run: the provider's id of it, the tool, its classification, its arguments and their
+            canonical hash. A call left running when its node stopped is UnknownOutcome: a read may run again, a write never
+            does. The result goes to the model as resultSummary; a large one is spilled to spillLocation for a later read.
+            approvalId is the approval a write waited for. surfaceEnumId and clientId say where the call came from (a
+            direct MCP tools/call has no run). catalogToolName is the lazy catalog entry a run_tool call ran, which its
+            calls-per-run limit counts.</description>
+        <field name="toolCallId" type="id" is-pk="true"/>
+        <field name="providerCallId" type="text-medium"/>
+        <field name="runId" type="id"/>
+        <field name="stepSeq" type="number-integer"/>
+        <field name="toolName" type="text-medium"/>
+        <field name="catalogToolName" type="text-medium"/>
+        <field name="classificationEnumId" type="id"/>
+        <field name="argumentsJson" type="text-very-long"/>
+        <field name="argumentsHash" type="text-medium"/>
+        <field name="statusId" type="id"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="resultSummary" type="text-very-long"/>
+        <field name="spillLocation" type="text-medium"/>
+        <field name="approvalId" type="id"/>
+        <field name="surfaceEnumId" type="id"/>
+        <field name="clientId" type="id"/>
+        <field name="userId" type="id"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" title="AgentClassification" related="moqui.basic.Enumeration" short-alias="classification">
+            <key-map field-name="classificationEnumId"/></relationship>
+        <index name="AGENT_TCALL_RUN"><index-field name="runId"/><index-field name="stepSeq"/></index>
+    </entity>
+
+    <!-- ========== Approvals, questions and hand-offs ========== -->
+
+    <entity entity-name="AgentApproval" package="moqui.agent" use="transactional" cache="never">
+        <description>A write the agent asked to make, decided only by its user (userId) in an interactive session: bound to
+            the tool and the canonical hash of its arguments, single use and expiring (expireDate). targetKind and
+            targetName are what it calls (a service, a screen transition); snapshotJson is the current values of the
+            records it changes (recordRefsJson), shown against the proposed ones, and checked again before it runs (a
+            change meanwhile is Conflict). previewJson is the result of the optional sim preview. An edited approval keeps
+            the edited arguments; HandedOff passes it to the user's own Save in the screen. policy names the policy rule
+            that let a background run decide it without asking.</description>
+        <field name="approvalId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="toolCallId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="agentId" type="id"/>
+        <field name="classificationEnumId" type="id"/>
+        <field name="targetKind" type="text-short"/>
+        <field name="targetName" type="text-medium"/>
+        <field name="argumentsJson" type="text-very-long"/>
+        <field name="argumentsHash" type="text-medium"/>
+        <field name="snapshotJson" type="text-very-long"/>
+        <field name="recordRefsJson" type="text-long"/>
+        <field name="previewJson" type="text-very-long"/>
+        <field name="statusId" type="id"/>
+        <field name="decisionUserId" type="id"/>
+        <field name="decisionDate" type="date-time"/>
+        <field name="decisionChannel" type="text-short"><description>drawer, chat, tui or link</description></field>
+        <field name="feedback" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="resultJson" type="text-very-long"/>
+        <field name="policy" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentToolCall" short-alias="toolCall"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" title="AgentClassification" related="moqui.basic.Enumeration" short-alias="classification">
+            <key-map field-name="classificationEnumId"/></relationship>
+        <index name="AGENT_APPR_RUN"><index-field name="runId"/></index>
+        <index name="AGENT_APPR_USER"><index-field name="userId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <entity entity-name="AgentQuestion" package="moqui.agent" use="transactional" cache="never">
+        <description>A question the agent asked (the ask tool): its text, a form schema when it asks for fields, the choices,
+            and the answer.</description>
+        <field name="questionId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="toolCallId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="questionText" type="text-long"/>
+        <field name="schemaJson" type="text-very-long"/>
+        <field name="choicesJson" type="text-long"/>
+        <field name="answerJson" type="text-very-long"/>
+        <field name="statusId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="answeredDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_QUEST_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="AgentHandoff" package="moqui.agent" use="transactional" cache="never">
+        <description>A hand-off watch: the agent filled a screen and the user saves it themselves; the watch waits for the
+            transition (screenPath, transitionName) and records what came of it (outcomeJson: saved with its messages, a
+            validation error, or abandoned).</description>
+        <field name="handoffId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="approvalId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="screenPath" type="text-medium"/>
+        <field name="transitionName" type="text-medium"/>
+        <field name="statusId" type="id"/>
+        <field name="outcomeJson" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_HOFF_USER"><index-field name="userId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <!-- ========== Artifacts ========== -->
+
+    <entity entity-name="AgentArtifact" package="moqui.agent" use="transactional" cache="never">
+        <description>Something a run made (an A2A artifact): a response, a canvas (dialect, source and version in its
+            parts), a file or a report. Updated in place, with its version counting the changes.</description>
+        <field name="artifactId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="artifactKind" type="text-short"><description>response, canvas, file or report</description></field>
+        <field name="artifactName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="dialect" type="text-short"/>
+        <field name="versionNum" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUpdatedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="many" related="moqui.agent.AgentArtifactPart" short-alias="parts">
+            <key-map field-name="artifactId"/></relationship>
+        <index name="AGENT_ART_CONV"><index-field name="conversationId"/></index>
+    </entity>
+
+    <entity entity-name="AgentArtifactPart" package="moqui.agent" use="transactional" cache="never">
+        <description>A part of an artifact, shaped as AgentMessagePart.</description>
+        <field name="artifactId" type="id" is-pk="true"/>
+        <field name="partSeq" type="number-integer" is-pk="true"/>
+        <field name="partKindEnumId" type="id"/>
+        <field name="textValue" type="text-very-long"/>
+        <field name="dataJson" type="text-very-long"/>
+        <field name="mediaType" type="text-medium"/>
+        <field name="fileName" type="text-medium"/>
+        <field name="fileLocation" type="text-medium"/>
+        <relationship type="one" related="moqui.agent.AgentArtifact" short-alias="artifact"/>
+        <relationship type="one" title="AgentPartKind" related="moqui.basic.Enumeration" short-alias="partKind">
+            <key-map field-name="partKindEnumId"/></relationship>
+    </entity>
+
+    <!-- ========== Skills, lessons and memory ========== -->
+
+    <entity entity-name="AgentSkill" package="moqui.agent" use="transactional" cache="never">
+        <description>A skill in the index: instructions an agent loads on demand by name. Its body is from a file
+            (sourceLocation, component://name/skill/..., with a contentHash to notice changes; synced at startup, its
+            text never edited here) or written here; frontMatterJson keeps the front matter that has no column (unlocks,
+            requires, screens, services, risk, agents, surfaces, version, overrides, section purposes); skillKind is
+            procedure, reference or guide. A personal skill has an owner and shadows a site skill of the same name
+            unless that one is locked. Only published rows are in the index (versionNum counts changes); provenance
+            says where it came from (framework, component, admin, user, learned), and only a skill a person wrote may
+            lower a risk.</description>
+        <field name="skillId" type="id" is-pk="true"/>
+        <field name="skillName" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="skillKind" type="text-short"/>
+        <field name="body" type="text-fts"/>
+        <field name="frontMatterJson" type="text-long"/>
+        <field name="aliases" type="text-medium"/>
+        <field name="sourceLocation" type="text-medium"/>
+        <field name="contentHash" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="locked" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="provenance" type="text-short"/>
+        <field name="versionNum" type="number-integer"/>
+        <field name="useCount" type="number-integer"/>
+        <field name="successCount" type="number-integer"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <field name="lastUpdatedDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_SKILL_NAME"><index-field name="skillName"/><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="AgentSkillPin" package="moqui.agent" use="configuration" cache="true">
+        <description>A skill an admin pins to an agent: always in its catalog, or always loaded (alwaysLoad).</description>
+        <field name="agentId" type="id" is-pk="true"/>
+        <field name="skillName" type="text-medium" is-pk="true"/>
+        <field name="alwaysLoad" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="one" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+    </entity>
+
+    <entity entity-name="AgentSkillUse" package="moqui.agent" use="transactional" cache="never">
+        <description>A skill loaded in a run: sectionName is empty for its head (the text before the first section and
+            the contents), * for the whole body, else the section's slug; a gated tool reads these by conversation. How
+            it went (outcome: helped, unused, failed) comes with the lessons.</description>
+        <field name="skillUseId" type="id" is-pk="true"/>
+        <field name="skillId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="sectionName" type="text-medium"/>
+        <field name="outcome" type="text-short"/>
+        <field name="usedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentSkill" short-alias="skill"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <index name="AGENT_SKUSE_SKILL"><index-field name="skillId"/></index>
+        <index name="AGENT_SKUSE_RUN"><index-field name="runId"/></index>
+        <index name="AGENT_SKUSE_CONV"><index-field name="conversationId"/></index>
+    </entity>
+
+    <entity entity-name="AgentLesson" package="moqui.agent" use="transactional" cache="never">
+        <description>A lesson learned in use, anchored to a skill, a screen path or a service: visible to its author at once,
+            to others once a reviewer approves it (AglApproved). Proposed by the agent's remember with about, by a
+            rejection with feedback, or by the user; shown only with a skill load or a screen answer on its anchor, as
+            untrusted text, never in the frozen prefix.</description>
+        <field name="lessonId" type="id" is-pk="true"/>
+        <field name="lessonText" type="text-long"/>
+        <field name="skillName" type="text-medium"/>
+        <field name="screenPath" type="text-medium"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="authorUserId" type="id"/>
+        <field name="triggerText" type="text-long"><description>What happened that taught it</description></field>
+        <field name="statusId" type="id"/>
+        <field name="reviewerUserId" type="id"/>
+        <field name="reviewedDate" type="date-time"/>
+        <field name="conversationId" type="id"/>
+        <field name="useCount" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Author" related="moqui.security.UserAccount" short-alias="author">
+            <key-map field-name="authorUserId" related="userId"/></relationship>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_LESSON_SKILL"><index-field name="skillName"/></index>
+        <index name="AGENT_LESSON_SCREEN"><index-field name="screenPath"/></index>
+    </entity>
+
+    <entity entity-name="AgentMemory" package="moqui.agent" use="transactional" cache="never">
+        <description>A fact the agent keeps about its user (for one agent when agentId is set), from the conversation that
+            made it. Used while active; a temporary memory ends at thruDate.</description>
+        <field name="memoryId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="agentId" type="id"/>
+        <field name="memoryText" type="text-long"/>
+        <field name="statusId" type="id"/>
+        <field name="sourceConversationId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_MEMORY_USER"><index-field name="userId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <entity entity-name="AgentSuggestedPrompt" package="moqui.agent" use="configuration" cache="true">
+        <description>A prompt the drawer suggests: on screens whose path matches screenPathPattern, or for records of
+            entityName; sent at once (sendMode send) or put in the composer (prefill).</description>
+        <field name="promptId" type="id" is-pk="true"/>
+        <field name="label" type="text-medium"/>
+        <field name="promptText" type="text-long"/>
+        <field name="sendMode" type="text-short"/>
+        <field name="agentId" type="id"/>
+        <field name="screenPathPattern" type="text-medium"/>
+        <field name="entityName" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- ========== Triggers ========== -->
+
+    <entity entity-name="AgentTrigger" package="moqui.agent" use="configuration" cache="true">
+        <description>An agent run started on a schedule (cronExpression, through the ServiceJob agent_trigger_[triggerId]
+            that store#AgentTrigger keeps) or by a record change (a DataDocument the AgentTriggers DataFeed delivers): its
+            instructions, the user it runs as (runAsUserId, else the agent's), a batch window that gathers events into
+            one run (batchSeconds), run limits (maxRunsPerHour, 60 when empty; maxRunsPerDay; maxConcurrent, 2 when empty), and a breaker that opens
+            after failureLimit failures in a row (breakerState closed or open; an admin resets it). approvalHold Y puts a
+            write its policy does not approve in the run-as user's inbox as an approval to decide; N (the default) makes
+            it an error the model reads. A record change the trigger's own agent made does not fire it (the loop guard).
+            conditionExpression is not evaluated: the DataDocument's own conditions choose the records.</description>
+        <field name="triggerId" type="id" is-pk="true"/>
+        <field name="agentId" type="id"/>
+        <field name="triggerTypeEnumId" type="id"/>
+        <field name="description" type="text-medium"/>
+        <field name="cronExpression" type="text-short"/>
+        <field name="dataDocumentId" type="id"/>
+        <field name="conditionExpression" type="text-long"/>
+        <field name="instructions" type="text-very-long"/>
+        <field name="runAsUserId" type="id"/>
+        <field name="batchSeconds" type="number-integer"/>
+        <field name="maxBatchEvents" type="number-integer"><description>Events one run takes at most (default 50); the
+            rest wait for the next run</description></field>
+        <field name="maxRunsPerHour" type="number-integer"/>
+        <field name="maxRunsPerDay" type="number-integer"/>
+        <field name="maxConcurrent" type="number-integer"/>
+        <field name="approvalHold" type="text-indicator"/>
+        <field name="failureLimit" type="number-integer"/>
+        <field name="failureCount" type="number-integer"/>
+        <field name="breakerState" type="text-short"/>
+        <field name="breakerOpenedDate" type="date-time"/>
+        <field name="lastFailureText" type="text-long"/>
+        <field name="lastRunId" type="id"/>
+        <field name="lastRunDate" type="date-time"/>
+        <field name="paused" type="text-indicator"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+        <relationship type="one" title="AgentTriggerType" related="moqui.basic.Enumeration" short-alias="triggerType">
+            <key-map field-name="triggerTypeEnumId"/></relationship>
+        <relationship type="one-nofk" title="RunAs" related="moqui.security.UserAccount" short-alias="runAsUser">
+            <key-map field-name="runAsUserId" related="userId"/></relationship>
+    </entity>
+
+    <entity entity-name="AgentTriggerEvent" package="moqui.agent" use="transactional" cache="never">
+        <description>The outbox of a document trigger: each event (the delivered document, or a deleted one's ids) waits
+            until the batch window closes, then one run takes the batch (runId, set with a conditional update so one node
+            takes it). A cron firing has no events.</description>
+        <field name="triggerEventId" type="id" is-pk="true"/>
+        <field name="triggerId" type="id"/>
+        <field name="dataDocumentId" type="id"/>
+        <field name="documentId" type="text-medium"/>
+        <field name="eventJson" type="text-very-long"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="runId" type="id"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentTrigger" short-alias="trigger"/>
+        <index name="AGENT_TREV_TRIGGER"><index-field name="triggerId"/><index-field name="runId"/></index>
+    </entity>
+
+    <!-- ========== A2A and MCP ========== -->
+
+    <entity entity-name="AgentPushConfig" package="moqui.agent" use="transactional" cache="never">
+        <description>An A2A push notification config of a task: where to post its updates, with a token and credentials that
+            are stored encrypted and never returned.</description>
+        <field name="pushConfigId" type="id" is-pk="true"/>
+        <field name="runId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="url" type="text-medium"/>
+        <field name="token" type="text-medium" encrypt="true"/>
+        <field name="authenticationJson" type="text-long" encrypt="true"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <index name="AGENT_PUSH_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="AgentPushDelivery" package="moqui.agent" use="transactional" cache="never">
+        <description>The push outbox: an update to deliver, its attempts and the next try.</description>
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="pushConfigId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="lastStatus" type="number-integer"/>
+        <field name="lastError" type="text-long"/>
+        <field name="deliveredDate" type="date-time"/>
+        <field name="failedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentPushConfig" short-alias="pushConfig"/>
+        <index name="AGENT_PUSHD_NEXT"><index-field name="deliveredDate"/><index-field name="nextAttemptDate"/></index>
+    </entity>
+
+    <entity entity-name="AgentRemoteA2a" package="moqui.agent" use="configuration" cache="true">
+        <description>A remote A2A agent an agent may delegate to (the tool a2a__remoteId, docs/A2A.md): its card URL
+            (admin configuration only), its authentication (encrypted, never shown: {"bearer": key}, {"basic": {username,
+            password}} or {"header": {name, value}}), the card as last read, the local agents that may delegate to it
+            (allowedAgents, comma separated, * for all; empty for none), whether its address may be a private one
+            (allowPrivateNetwork: loopback, LAN), and the seconds a delegation may wait (timeoutSeconds, else the conf's
+            a2a client-timeout).</description>
+        <field name="remoteId" type="id" is-pk="true"/>
+        <field name="remoteName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="cardUrl" type="text-medium"/>
+        <field name="authJson" type="text-long" encrypt="true"/>
+        <field name="cardJson" type="text-very-long"/>
+        <field name="cardReadDate" type="date-time"/>
+        <field name="allowedAgents" type="text-medium"/>
+        <field name="allowPrivateNetwork" type="text-indicator"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentRemoteTask" package="moqui.agent" use="transactional" cache="never">
+        <description>A task of a remote A2A agent that a run of ours started, or a call of a remote MCP server's tool
+            that waits for input (mcpServerId, its requestState), and its last known state: the tool call resumes from it
+            when the user answers the remote's question or comes back from its link.</description>
+        <field name="remoteTaskId" type="id" is-pk="true"/>
+        <field name="remoteId" type="id"/>
+        <field name="mcpServerId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="toolCallId" type="id"/>
+        <field name="approvalId" type="id"/>
+        <field name="remoteContextId" type="text-medium"/>
+        <field name="remoteTaskRef" type="text-medium"/>
+        <field name="remoteState" type="text-short"/>
+        <field name="requestState" type="text-very-long"/>
+        <field name="lastUpdatedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRemoteA2a" short-alias="remote"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <index name="AGENT_RTASK_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="AgentMcpServer" package="moqui.agent" use="configuration" cache="true">
+        <description>A remote MCP server whose tools agents may call (the tools mcp__server__tool, docs/MCP.md): its
+            URL (admin configuration only), its authentication (encrypted, never shown, as AgentRemoteA2a's), whether
+            each user calls with a token of their own (AgentMcpUserToken), the local agents that may call it
+            (allowedAgents, comma separated, * for all; empty for none), whether its address may be a private one
+            (allowPrivateNetwork), and the seconds a call may take (timeoutSeconds, else the conf's mcp
+            call-timeout).</description>
+        <field name="mcpServerId" type="id" is-pk="true"/>
+        <field name="serverName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="url" type="text-medium"/>
+        <field name="authJson" type="text-long" encrypt="true"/>
+        <field name="perUserAuth" type="text-indicator"/>
+        <field name="allowedAgents" type="text-medium"/>
+        <field name="allowPrivateNetwork" type="text-indicator"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentMcpServerTool" package="moqui.agent" use="configuration" cache="true">
+        <description>A tool of a remote MCP server that agents may call (only the tools these rows allow are offered),
+            with its classification: none is EXTERNAL, which asks for the user's approval as a write does; an admin may
+            mark a tool READ (it then runs at once, under the read fence with only its server let through). The
+            description, when set, replaces the server's own.</description>
+        <field name="mcpServerId" type="id" is-pk="true"/>
+        <field name="toolName" type="text-medium" is-pk="true"/>
+        <field name="classificationEnumId" type="id"/>
+        <field name="description" type="text-long"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" related="moqui.agent.AgentMcpServer" short-alias="server"/>
+        <relationship type="one" title="AgentClassification" related="moqui.basic.Enumeration" short-alias="classification">
+            <key-map field-name="classificationEnumId"/></relationship>
+    </entity>
+
+    <entity entity-name="AgentMcpUserToken" package="moqui.agent" use="transactional" cache="never">
+        <description>A user's own token for a remote MCP server (encrypted).</description>
+        <field name="mcpServerId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="tokenJson" type="text-long" encrypt="true"/>
+        <field name="expireDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentMcpServer" short-alias="server"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <!-- ========== Audit ========== -->
+
+    <entity entity-name="AgentAuditLog" package="moqui.agent" use="transactional" cache="never">
+        <description>Each read of another user's conversation, run or LLM call content by a user with AgentAudit: who,
+            what, when and why.</description>
+        <field name="auditLogId" type="id" is-pk="true"/>
+        <field name="auditorUserId" type="id"/>
+        <field name="targetUserId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="callId" type="id"><description>An LlmCall whose request and response were read</description></field>
+        <field name="reason" type="text-long"/>
+        <field name="auditDate" type="date-time"/>
+        <relationship type="one-nofk" title="Auditor" related="moqui.security.UserAccount" short-alias="auditor">
+            <key-map field-name="auditorUserId" related="userId"/></relationship>
+        <index name="AGENT_AUDIT_DATE"><index-field name="auditDate"/></index>
+    </entity>
+</entities>

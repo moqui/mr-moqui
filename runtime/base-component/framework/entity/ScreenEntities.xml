@@ -163,12 +163,22 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Shell Chatter Screen (subscreen name under the current app root)" enumId="STRT_CHATTER_SCREEN" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Record Files Screen (subscreen name under the current app root)" enumId="STRT_RECORD_FILES_SCREEN" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Counts Service (service name, called with userId, answers counts)" enumId="STRT_SHELL_COUNTS_SERVICE" enumTypeId="ScreenThemeResourceType"/>
+            <!-- The terminal client of the tui render mode (plans/archive/Screen-TUI-Impl.md 1.3 to 1.5) reads these from the shell data's
+                tui values. Each value is "name = value": a width class (sm, md, lg, xl) or drawer/tray as a column count; a color
+                role (primary, positive, negative, warning, info, muted, field, focus, changed, selection) as a color; an action
+                as Revue chords such as "f3 | alt+left". A value that does not read is logged and the built-in default stays. -->
+            <moqui.basic.Enumeration description="TUI Width Breakpoint (name = columns)" enumId="STRT_TUI_BREAKPOINTS" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="TUI Color Role (role = color)" enumId="STRT_TUI_COLORS" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="TUI Key Binding (action = chords)" enumId="STRT_TUI_KEYS" enumTypeId="ScreenThemeResourceType"/>
             <!-- Chat (org.moqui.impl.ChatServices): whether the current user may see the record a record room is bound to, so a
                 user who is not a member may read and join it; without one only members reach such a room -->
             <moqui.basic.Enumeration description="Record Visible Service (service name, called with recordEntityName, recordId and checkOnly, answers recordVisible)" enumId="STRT_RECORD_VISIBLE_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- Mail (org.moqui.impl.EmailClientServices.filter#ContactAddresses): which senders are a user's contacts, for an
                 automatic reply to contacts only; the email_contact_service property wins over it -->
             <moqui.basic.Enumeration description="Email Contact Service (service name, called with userId and emailAddressList, answers contactAddressList)" enumId="STRT_EMAIL_CONTACT_SERVICE" enumTypeId="ScreenThemeResourceType"/>
+            <!-- m-avatar with a user id and no image: a URL whose text contains ${userId} (replaced in the browser, not
+                expanded on the server). Empty means initials. The image answer 404 also leaves the initials. -->
+            <moqui.basic.Enumeration description="Avatar URL template (${userId} replaced in the browser)" enumId="STRT_AVATAR_URL" enumTypeId="ScreenThemeResourceType"/>
         </seed-data>
     </entity>
     <entity entity-name="ScreenThemeIcon" package="moqui.screen" use="configuration" cache="true">

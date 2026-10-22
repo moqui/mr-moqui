@@ -318,6 +318,20 @@ impl SftpClient {
     ///
     /// Java's messages for a missing host, username, or credential; else the connector's error.
     pub fn connect(&mut self) -> Result<&mut Self, Error> {
+        // nothing goes out under the read fence or in a sim preview, nor in sim mode, as remote messages do
+        crate::entity::fence::check_effect(
+            crate::entity::fence::Effect::RemoteCall,
+            &format!("SFTP {}", self.config.target()),
+        )?;
+        let sim = ExecutionContext::with_current(|ec| ec.factory().entity())
+            .flatten()
+            .is_some_and(|facade| facade.sim_active());
+        if sim {
+            return Err(Error::new(format!(
+                "SFTP to {} denied because sim mode is active",
+                self.config.target()
+            )));
+        }
         if self.config.host.is_empty() || self.config.username.is_empty() {
             return Err(Error::new(format!(
                 "Host or username not specified, cannot connect to {}",
@@ -1032,6 +1046,36 @@ pub(crate) mod tests {
             client.ls_files("/in").unwrap_err().message(),
             "SFTP Client not connected"
         );
+    }
+
+    /// An SFTP connection is a remote call: refused under the read fence and in a sim preview before anything opens,
+    /// and denied in sim mode.
+    #[test]
+    fn a_connection_is_refused_under_the_fence_and_in_sim_mode() {
+        let context = ExecutionContextFactory::test_context();
+        let _entered = context.enter();
+        let connector = memory(context.factory());
+        for sim in [false, true] {
+            let fence = if sim {
+                crate::entity::fence::enter_sim("a preview")
+            } else {
+                crate::entity::fence::enter("tool a_read")
+            };
+            let mut client = SftpClient::new("example.com", "joe", None).unwrap();
+            let refused = client.password("pw").connect().err().unwrap();
+            assert!(crate::entity::fence::is_fence_error(&refused), "{refused}");
+            assert!(refused.message().contains("SFTP joe@example.com:22"), "{refused}");
+            assert_eq!(fence.violations().len(), 1);
+        }
+        let facade = crate::testing::open();
+        context.factory().set_entity(facade.clone());
+        facade.set_sim_active(true);
+        let mut client = SftpClient::new("example.com", "joe", None).unwrap();
+        let denied = client.password("pw").connect().err().unwrap();
+        facade.set_sim_active(false);
+        assert!(denied.message().contains("sim mode is active"), "{denied}");
+        assert!(connector.disk.lock().unwrap().closed_on.is_empty(), "no session was opened");
+        client.password("pw").connect().unwrap();
     }
 
     #[test]

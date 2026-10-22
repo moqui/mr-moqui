@@ -1,0 +1,50 @@
+ ≡ apps ▸ tasks ▸ Tasks                                                                                                                                                   Tue 14:32
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────
+ Open tasks                                                                                                                         │ Assist · Close Ship it
+ Ship it                                                                                                                            │ ─────────────────────────────────────────────
+                                                                                                                                    │ > Close Ship it
+                                                                                                                                    │ · screen Save …
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                          ┌─ Assist asks to ────────────────────────────┐                                           │
+                                          │ Update task Ship it                         │                                           │
+                                          │ Status: Open → Closed                       │                                           │
+                                          │ Note: (empty) → Done in review              │                                           │
+                                          │                                             │                                           │
+                                          │ [ Approve ]  [ Edit in screen ]  [ Reject ] │                                           │
+                                          └─────────────────────────────────────────────┘                                           │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │
+                                                                                                                                    │ ! Approval · write
+                                                                                                                                    │ Update task Ship it
+                                                                                                                                    │ Status: Open → Closed
+                                                                                                                                    │ Note: (empty) → Done in review
+                                                                                                                                    │ [ Approve ]  [ Edit in screen ]  [ Reject ]
+                                                                                                                                    │ Waiting for your approval
+                                                                                                                                    │ ▸ Ask Assist (F2)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────
+
+ Enter=Review  Up/Down=Card  Tab=Next  o=Canvas  F10=Assist  Esc=Screen

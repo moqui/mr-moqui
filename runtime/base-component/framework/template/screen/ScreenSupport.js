@@ -39,7 +39,8 @@
         "panel-right", "panel-footer", "container-dialog", "dynamic-container", "dynamic-dialog", "button-menu",
         "tree", "tree-node", "tree-sub-node", "label", "link", "image", "parameter", "dialog",
         "render-dynamic-form", "dynamic-form", "form-list-user-columns", "context", "dashboard", "number-card",
-        "chatter", "record-files", "container-split", "split-side", "split-main", "html-view", "status-bar", "markdown-view"
+        "chatter", "record-files", "container-split", "split-side", "split-main", "html-view", "status-bar", "markdown-view",
+        "code-view"
     ];
     const formElements = [
         "form-single", "form-list", "row-actions", "field", "header-field", "first-row-field", "second-row-field",
@@ -50,7 +51,7 @@
         "field-row", "field-row-big", "field-col-row", "field-col", "field-ref", "fields-not-referenced",
         "form-list-column", "columns", "column", "auto-fields-entity", "auto-fields-service", "auto-widget-entity",
         "auto-widget-service", "exclude", "entity-find", "set", "hidden-parameters", "row-selection",
-        "visible-when", "editable-load", "action", "first-row", "second-row", "last-row", "entity-find-one", "view-board", "view-calendar"
+        "visible-when", "editable-load", "action", "first-row", "second-row", "last-row", "entity-find-one", "view-board", "view-calendar", "view-tree"
     ];
     const allElements = widgetElements.concat(formElements);
 
@@ -239,7 +240,19 @@
             "subscreens-panel": stmt(() => "sri.renderSubscreen();"),
             "section": stmt((node) => `sri.renderSection(${jsString(attr(node, "name"))});`),
             "section-iterate": stmt((node) => `sri.renderSection(${jsString(attr(node, "name"))});`),
+            // An element no macro names, Java's @element: the walker logs it and renders this instead of failing, and the
+            // element's children are not rendered. html and qvt show Java's placeholder, xml writes it as a comment, and the
+            // other modes write nothing.
+            "@element": stmt((node) => unknownElementCode(mode, node.name)),
         };
+    };
+
+    // The placeholder of an element no macro names, as the Java macros' @element writes it.
+    const unknownElementCode = (mode, name) => {
+        const text = "Doing nothing for element " + name + ", not yet implemented.";
+        if (mode === "html" || mode === "qvt") return `sri.write(${jsString("<p>=== " + text + " ===</p>")});`;
+        if (mode === "xml") return `sri.write(${jsString("<!-- " + text + " -->")});`;
+        return "";
     };
 
     // The text of a display widget: the expanded text, or the field value, with currency when asked.
@@ -317,11 +330,15 @@
     // The sub-node that gives a list field its header: header-field, else default-field, else the first conditional-field.
     const headerSub = (field) => child(field, "header-field") || child(field, "default-field") || childrenNamed(field, "conditional-field")[0];
 
+    // The code of a condition that turns a part of a form-list off for a render (row-selection condition, a view's move-condition):
+    // true when it holds. A condition that fails to evaluate is logged naming the part and does not hold, so the part is left out.
+    const heldCode = (expr, what) => `(() => {\ntry {\nreturn !!(${raw(expr)});\n} catch ($err) {\nec.logger.error(${jsString(`Leaving the ${what} out, its condition failed: `)} + $err);\nreturn false;\n}\n})()`;
+
     const noops = (names) => T.noops(names);
 
     return {
-        allElements, opaqueElements, expandExpr, expandNoL10nExpr, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
+        allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, anyMacros,
-        displayValueExpr, linkTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, noops
+        displayValueExpr, linkTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, heldCode, noops
     };
 })

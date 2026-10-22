@@ -139,8 +139,8 @@ impl EntityFind {
                 return Ok(view_columns(entity)
                     .into_iter()
                     .map(|(name, java_type)| SearchField {
-                        aggregate: aggregates.contains(name.as_str()),
-                        name,
+                        aggregate: aggregates.contains(&*name),
+                        name: name.to_string(),
                         java_type,
                     })
                     .collect());
@@ -148,7 +148,7 @@ impl EntityFind {
             Ok(entity_columns(entity, model)
                 .into_iter()
                 .map(|(name, java_type)| SearchField {
-                    name,
+                    name: name.to_string(),
                     java_type,
                     aggregate: false,
                 })

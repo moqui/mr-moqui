@@ -48,6 +48,9 @@ const BUILDER: &str = r#"(function (ec) {
             // a request header of every render; clientModes("qvue,qjs") is X-Moqui-Client-Modes, as moqui.loadComponent sends it
             header: (name, value) => { o.headers = Object.assign({}, o.headers, { [String(name)]: String(value) }); return t; },
             clientModes: (modes) => t.header("X-Moqui-Client-Modes", Array.isArray(modes) ? modes.join(",") : modes),
+            // a qvt render of a server-static screen answers its data-free template: with this, the output also gets the text
+            // of the screen's data (its /actions package and each form-list's /actions/<form>), so a spec can look for both
+            withStaticData: () => { o.withStaticData = true; return t; },
             renderCount: 0, errorCount: 0, renderTotalChars: 0, startTime: Date.now(),
             render: (screenPath, parameters, requestMethod) => {
                 const r = ec.screen.testRender(Object.assign({}, o,
@@ -56,6 +59,29 @@ const BUILDER: &str = r#"(function (ec) {
                 t.errorCount += r.errorMessages.length;
                 t.renderTotalChars += r.output ? r.output.length : 0;
                 const headers = r.headers || {};
+                const qvtHeader = Object.keys(headers).find((k) => k.toLowerCase() === "x-moqui-qvt");
+                if (o.withStaticData && r.status == 200 && qvtHeader && headers[qvtHeader] === "static-template"
+                        && !/\/actions(\/|$)/.test(String(screenPath).split("?")[0])) {
+                    const texts = [];
+                    const collect = (value) => {
+                        if (value == null) return;
+                        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") texts.push(String(value));
+                        else if (Array.isArray(value)) value.forEach(collect);
+                        else if (typeof value === "object") Object.values(value).forEach(collect);
+                    };
+                    const base = String(screenPath).split("?")[0].replace(/\/$/, "");
+                    // the form-lists of the template (an m-static-form-list vnode with the form's name), which the client asks
+                    // /actions/<name> for
+                    const forms = [];
+                    const formRe = /_component_m_static_form_list,\s*\{[^}]{0,200}?\bname:\s*"([A-Za-z0-9_]+)"/g;
+                    for (let m = formRe.exec(String(r.output || "")); m; m = formRe.exec(String(r.output || ""))) if (!forms.includes(m[1])) forms.push(m[1]);
+                    for (const part of ["actions"].concat(forms.map((form) => "actions/" + form))) {
+                        const d = ec.screen.testRender(Object.assign({}, o, { screenPath: base + "/" + part, parameters: parameters || {}, method: "" }));
+                        r.errorMessages = r.errorMessages.concat(d.errorMessages);
+                        try { collect(JSON.parse(d.output)); } catch (e) { texts.push(String(d.output || "")); }
+                    }
+                    r.output = String(r.output || "") + "\n" + texts.join("\n");
+                }
                 const str = {
                     screenPath: String(screenPath), output: r.output, errorMessages: r.errorMessages,
                     renderTime: r.renderTime, status: r.status, headers: headers,
@@ -287,6 +313,75 @@ fn screen_test_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Re
     })
 }
 
+/// `ec.screen.staticReport({rootScreen, screenPath, parameters})`: the server-static qvt report of the screen with the
+/// full check ([`crate::screen::statics::static_report`] with `full`): the static half, then an html render with the real
+/// actions and the wrapped `ec`, as the current user. `{location, path, verdict, marked, eligible, fullCheck, reasons,
+/// violations: [{kind, element, detail}]}`, where verdict is `clean`, `static half only`, `violations` or
+/// `stays a server merge`, as `moqui lint --screens --qvt-static` writes it.
+fn screen_static_report<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let Value::Map(options) = js_to_host(&ctx, &options)? else {
+            return Err(Exception::throw_message(
+                &ctx,
+                "ec.screen.staticReport needs an options map",
+            ));
+        };
+        let text = |name: &str| {
+            options
+                .get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        let root = text("rootScreen");
+        if root.is_empty() {
+            return Err(Exception::throw_message(
+                &ctx,
+                "ec.screen.staticReport needs a rootScreen",
+            ));
+        }
+        let parameters: std::collections::BTreeMap<String, Value> = match options.get("parameters") {
+            Some(Value::Map(map)) => map.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+            _ => std::collections::BTreeMap::new(),
+        };
+        let factory = with_ec(&ctx, |ec| Arc::clone(ec.factory()))?;
+        let report = crate::screen::statics::static_report(&factory, &root, &text("screenPath"), &parameters, true)
+            .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+        let verdict = if report.is_clean() {
+            "clean"
+        } else if report.eligible && report.violations.is_empty() {
+            "static half only"
+        } else if report.eligible {
+            "violations"
+        } else {
+            "stays a server merge"
+        };
+        let mut out = indexmap::IndexMap::new();
+        out.insert("location".to_string(), Value::string(&report.location));
+        out.insert("path".to_string(), Value::string(&report.path));
+        out.insert("verdict".to_string(), Value::string(verdict));
+        out.insert("marked".to_string(), Value::Bool(report.marked));
+        out.insert("eligible".to_string(), Value::Bool(report.eligible));
+        out.insert("fullCheck".to_string(), Value::Bool(report.full_check));
+        out.insert(
+            "reasons".to_string(),
+            Value::List(report.reasons.iter().map(Value::string).collect()),
+        );
+        let violations = report
+            .violations
+            .iter()
+            .map(|violation| {
+                let mut row = indexmap::IndexMap::new();
+                row.insert("kind".to_string(), Value::string(&violation.kind));
+                row.insert("element".to_string(), Value::string(&violation.element));
+                row.insert("detail".to_string(), Value::string(&violation.detail));
+                Value::Map(row)
+            })
+            .collect();
+        out.insert("violations".to_string(), Value::List(violations));
+        host_to_js(&ctx, Value::Map(out))
+    })
+}
+
 /// `ec.screen.testNoRequiredParameterPaths({rootScreen, baseScreenPath, skip})`, the paths of
 /// [`crate::screen::ScreenTest::no_required_parameter_paths`].
 fn screen_test_no_required_parameter_paths<'js>(
@@ -337,6 +432,12 @@ pub(super) fn install<'js>(ctx: &Ctx<'js>, screen: &Object<'js>) -> Result<(), E
         "screen.testNoRequiredParameterPaths",
         screen.set("testNoRequiredParameterPaths", no_required),
     )?;
+    let static_report = caught(
+        ctx,
+        "screen.staticReport",
+        Function::new(ctx.clone(), screen_static_report),
+    )?;
+    caught(ctx, "screen.staticReport", screen.set("staticReport", static_report))?;
     let mime = caught(
         ctx,
         "screen.getMimeTypeByMode",

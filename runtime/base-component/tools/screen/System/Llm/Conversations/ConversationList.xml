@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Every user's agent conversations: who, which agent and surface, the status, the active run and the dates. No content:
+    a conversation's messages are shown in ConversationDetail, to its own user or with AgentAudit (logged). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Conversations" default-menu-index="1">
+
+    <transition name="conversationDetail"><default-response url="../ConversationDetail"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+    <transition name="userAccountDetail"><default-response url="../../../Security/UserAccount/UserAccountDetail"/></transition>
+
+    <widgets>
+        <form-list name="ConversationList" list="conversationList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.agent.AgentConversation" list="conversationList" use-clone="true">
+                <search-form-inputs default-order-by="-lastMessageDate"/>
+                <select-field field-name="conversationId,userId,agentId,surfaceEnumId,statusId,activeRunId,lastMessageSeq,lastMessageDate,recordEntityName,recordId,createdDate"/>
+            </entity-find>
+            <field name="conversationId"><header-field title="Conversation" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="conversationDetail" text="${conversationId}" link-type="anchor"/></default-field></field>
+            <field name="userId"><header-field title="User"><text-find size="10" hide-options="true"/></header-field><default-field>
+                <display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/>
+                <link url="userAccountDetail" text="${userId}" link-type="anchor" condition="userId"/>
+            </default-field></field>
+            <field name="agentId"><header-field title="Agent" show-order-by="true"><text-find size="8" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="surfaceEnumId"><header-field title="Surface"><drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                    <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentSurface"/>
+                        <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></header-field>
+                <default-field><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="statusId"><header-field title="Status"/><default-field>
+                <display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="activeRunId"><header-field title="Active Run"/><default-field>
+                <link url="runDetail" text="${activeRunId}" link-type="anchor" condition="activeRunId" parameter-map="{runId:activeRunId}"/></default-field></field>
+            <field name="lastMessageSeq"><header-field title="Messages"/><default-field><display/></default-field></field>
+            <field name="lastMessageDate"><header-field title="Last Message" show-order-by="true"><date-period allow-empty="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="recordEntityName"><header-field title="Record Entity"><text-find size="15" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="recordId"><header-field title="Record"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><display/></default-field></field>
+            <field name="createdDate"><header-field title="Created" show-order-by="true"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

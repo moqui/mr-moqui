@@ -44,6 +44,8 @@ const HELP: &str = "Commands:
   entity <name> [json]          find up to 100 rows, with a JSON object of field conditions
   cache clear [name]            clear one cache, or all of them
   js <code>                     run JavaScript with ec; 'js' alone reads lines until a line with '.'
+  apps                          the applications in the terminal; quit them to come back here
+  (exec) agent-apps ...         the applications for a program, a command at a time: agent-apps help
   exit                          end the session";
 
 /// What a command printed, and the exit status for `exec`.
@@ -187,7 +189,14 @@ fn execute(factory: &ExecutionContextFactory, username: &str, command: &str, res
             let list = rows
                 .values()
                 .iter()
-                .map(|row| Value::Map(row.fields().clone().into_iter().collect()))
+                .map(|row| {
+                    Value::Map(
+                        row.fields()
+                            .iter()
+                            .map(|(name, value)| (name.to_string(), value.clone()))
+                            .collect(),
+                    )
+                })
                 .collect();
             Ok(Outcome::ok(to_json(&Value::List(list))))
         }

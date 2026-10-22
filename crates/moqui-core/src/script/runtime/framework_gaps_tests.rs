@@ -767,6 +767,38 @@ fn script_disable_and_enable_authz() {
     assert!(context.authz_disabled(), "a guard Rust code holds stays in force");
 }
 
+/// The Java idiom `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()` run while Rust code holds a guard
+/// (a service called with `disableAuthz()`, a framework read) must leave nothing behind: once that guard drops, the
+/// context is checked again. The script's `disableAuthz()` found it disabled, so it holds nothing of its own.
+#[test]
+fn a_script_disable_under_a_rust_guard_does_not_outlive_it() {
+    let context = database();
+    let _entered = context.enter();
+    {
+        let _held = context.disable_authz();
+        holds(
+            r#"(function () {
+                const wasDisabled = ec.artifactExecution.disableAuthz();
+                try { return wasDisabled === true } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            })()"#,
+        );
+        assert!(context.authz_disabled());
+    }
+    assert!(
+        !context.authz_disabled(),
+        "authorization is on again once the Rust guard drops"
+    );
+    // A script that disabled it first still holds it until its own enableAuthz, as before.
+    holds("ec.artifactExecution.disableAuthz() === false");
+    {
+        let _held = context.disable_authz();
+        holds("ec.artifactExecution.disableAuthz() === true");
+    }
+    assert!(context.authz_disabled(), "the script's own disable is still in force");
+    run_script("ec.artifactExecution.enableAuthz()").unwrap();
+    assert!(!context.authz_disabled());
+}
+
 #[test]
 fn wait_worker_pool_empty_with_no_work() {
     let context = database();

@@ -25,17 +25,18 @@ use std::time::Duration;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
-/// One result row. Column order is the select list order.
+/// One result row. Column order is the select list order. A driver shares each column name among the rows of one
+/// result (and of one prepared statement), so a row allocates for its values only.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DbRow {
-    pub columns: Vec<(String, Value)>,
+    pub columns: Vec<(Arc<str>, Value)>,
 }
 
 impl DbRow {
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.columns
             .iter()
-            .find(|(column, _)| column == name)
+            .find(|(column, _)| &**column == name)
             .map(|(_, value)| value)
     }
 }
@@ -53,6 +54,31 @@ pub trait DbDriver: Send + Sync {
 pub trait DbConnection: Send {
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error>;
 
+    /// [`Self::execute`] without waiting for the result, where the driver can: in a transaction the statement is sent
+    /// and the next call that waits (or [`Self::finish_deferred`], or the commit) reports its failure, and
+    /// `zero_rows` as the error when it changed no row. Statements run in the order sent. The default runs it now.
+    fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+        let count = self.execute(sql, &params)?;
+        match zero_rows {
+            Some(message) if count == 0 => Err(Error::new(message)),
+            _ => Ok(()),
+        }
+    }
+
+    /// [`Self::execute_deferred`] of a one-row `INSERT` (an upsert among them) that the driver may hold and send with
+    /// the rows of the same statement that follow it, as one `INSERT` of many rows. `key` names the row's primary key:
+    /// a row whose key is among those held goes after them, as one upsert cannot change a row twice. A row changing no
+    /// row is not an error. The default sends it alone.
+    fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, key: u64) -> Result<(), Error> {
+        let _ = key;
+        self.execute_deferred(sql, params, None)
+    }
+
+    /// Wait for the statements [`Self::execute_deferred`] sent, and report the first that failed.
+    fn finish_deferred(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error>;
 
     fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error>;
@@ -64,6 +90,12 @@ pub trait DbConnection: Send {
     fn close_stream(&mut self) -> Result<(), Error>;
 
     fn stream_open(&self) -> bool;
+
+    /// The server has closed this client, or a previous call lost the connection. A local check: it does not
+    /// ask the database. The default is false.
+    fn is_closed(&self) -> bool {
+        false
+    }
 
     fn begin(&mut self) -> Result<(), Error>;
 
@@ -196,7 +228,7 @@ mod tests {
 
         fn query_once(&mut self, _sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
             Ok(vec![DbRow {
-                columns: vec![("n".to_string(), params.first().cloned().unwrap_or(Value::Null))],
+                columns: vec![("n".into(), params.first().cloned().unwrap_or(Value::Null))],
             }])
         }
 
@@ -212,7 +244,7 @@ mod tests {
             }
             self.rows_left -= 1;
             Ok(Some(DbRow {
-                columns: vec![("n".to_string(), Value::I64(self.rows_left))],
+                columns: vec![("n".into(), Value::I64(self.rows_left))],
             }))
         }
 

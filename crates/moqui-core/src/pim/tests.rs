@@ -461,3 +461,49 @@ fn durations_read() {
     assert_eq!(ics::parse_duration("PT"), None);
     assert_eq!(ics::parse_duration("15M"), None);
 }
+
+#[test]
+fn to_dos_read_and_write_and_a_calendar_object_has_no_method() {
+    let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:todo-1\r\nSUMMARY:File the report\r\n\
+        DUE;VALUE=DATE:20261030\r\nSTATUS:IN-PROCESS\r\nPERCENT-COMPLETE:40\r\nPRIORITY:1\r\nEND:VTODO\r\n\
+        BEGIN:VTODO\r\nUID:todo-2\r\nSUMMARY:Call back\r\nDUE:20261021T150000Z\r\nSTATUS:COMPLETED\r\n\
+        COMPLETED:20261021T140000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+    let parsed = ics::parse(source, 2026);
+    let Some(Value::List(todos)) = parsed.get("todos") else {
+        panic!("{parsed:?}")
+    };
+    assert_eq!(todos.len(), 2);
+    let (Value::Map(first), Value::Map(second)) = (&todos[0], &todos[1]) else {
+        panic!()
+    };
+    assert_eq!(text(first, "dueDate"), "2026-10-30");
+    assert_eq!(text(first, "status"), "IN-PROCESS");
+    assert_eq!(text(first, "percentComplete"), "40");
+    assert_eq!(text(second, "due"), "1792594800000");
+    assert_eq!(text(second, "completed"), "1792591200000");
+    let mut calendar = IndexMap::new();
+    calendar.insert("calendarObject".to_string(), Value::Bool(true));
+    calendar.insert("todos".to_string(), Value::List(todos.clone()));
+    let written = ics::write(&calendar, Timestamp::from_millisecond(1_792_000_000_000).unwrap()).unwrap();
+    assert!(!written.contains("METHOD:"), "{written}");
+    assert!(
+        written.contains("DUE;VALUE=DATE:20261030") && written.contains("PERCENT-COMPLETE:40"),
+        "{written}"
+    );
+    assert!(
+        written.contains("COMPLETED:20261021T140000Z") && written.contains("STATUS:COMPLETED"),
+        "{written}"
+    );
+    let again = ics::parse(&written, 2026);
+    let Some(Value::List(back)) = again.get("todos") else {
+        panic!()
+    };
+    assert_eq!(back, todos, "a to-do reads back as it was written");
+}
+
+#[test]
+fn a_vcard_keeps_its_uid() {
+    let cards =
+        vcard::parse("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:card-77\r\nFN:Una Uid\r\nN:Uid;Una;;;\r\nEND:VCARD\r\n");
+    assert_eq!(text(&cards[0], "uid"), "card-77");
+}

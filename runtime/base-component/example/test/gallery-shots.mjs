@@ -1,12 +1,13 @@
 // Screenshots and text dumps of /qapps screens through Chrome DevTools, for checking the gallery (and any qvt
 // screen) in the real shell. No npm dependencies (after runtime/component/MrSimpleScreens/test/browser-smoke.mjs).
 //
-//   node runtime/base-component/example/test/gallery-shots.mjs <outDir> [--dark|--light] [--width 1280] [--settle ms] <path>...
+//   node runtime/base-component/example/test/gallery-shots.mjs <outDir> [--dark|--light] [--width 1280] [--settle ms] [--assist] <path>...
 //   node runtime/base-component/example/test/gallery-shots.mjs /tmp/shots --light /qapps/gallery/List /qapps/gallery/Detail
 //
 // Env: BASE_URL (default http://127.0.0.1:8080), USERNAME (john.doe), PASSWORD (moqui), CHROME (/usr/bin/google-chrome).
 // Without --dark or --light the page keeps the signed-in user's dark-mode preference. A dialog opens on load with
-// ?_openDialog=<dialog id> in the path. Writes <outDir>/<name>.png (full page), <name>.txt (body innerText) and
+// ?_openDialog=<dialog id> in the path. With --assist the Assist drawer is opened first (a path with ?assist=<conversationId>
+// opens that conversation in it; the gate's smokes take the same shots with MOQUI_SHELL_SHOTS). Writes <outDir>/<name>.png (full page), <name>.txt (body innerText) and
 // results.json (browser exceptions and console errors per page). The demo user and password are the dev seed; use a
 // disposable database.
 import { spawn } from 'node:child_process';
@@ -16,13 +17,14 @@ import path from 'node:path';
 
 const args = process.argv.slice(2);
 const outDir = args.shift();
-let dark = null, width = 1280, settle = 0;
+let dark = null, width = 1280, settle = 0, assistOpen = false;
 const urls = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--dark') dark = true;
   else if (args[i] === '--light') dark = false;
   else if (args[i] === '--width') width = Number(args[++i]);
   else if (args[i] === '--settle') settle = Number(args[++i]);
+  else if (args[i] === '--assist') assistOpen = true;
   else urls.push(args[i]);
 }
 if (!outDir || !urls.length) { console.error('usage: node shot.mjs <outDir> [--dark|--light] [--width N] <path>...'); process.exit(2); }
@@ -87,9 +89,10 @@ try {
       const isDark = await evaluate(`document.body.classList.contains('body--dark')`);
       if (isDark !== dark) { await evaluate(`(()=>{const q=document.querySelector('#apps-root').__vue_app__;q.config.globalProperties.$q.dark.set(${dark});return true})()`); await sleep(400); }
     }
+    if (assistOpen) { await evaluate(`(()=>{if(window.moqui&&moqui.assist&&moqui.assist.state.available)moqui.assist.openDrawer();return true})()`); await sleep(800); }
     if (settle > 0) await sleep(settle); // a page that loads a library lazily (charts, diagrams)
     const isDarkNow = await evaluate(`document.body.classList.contains('body--dark')`);
-    const name = url.replace(/^\/qapps\//, '').replace(/[^A-Za-z0-9]+/g, '_') + (isDarkNow ? '_dark' : '_light') + (width < 1024 ? '_' + width : '');
+    const name = url.replace(/^\/qapps\//, '').replace(/[^A-Za-z0-9]+/g, '_') + (isDarkNow ? '_dark' : '_light') + (width < 1024 ? '_' + width : '') + (assistOpen ? '_assist' : '');
     const text = await evaluate('document.body.innerText');
     await writeFile(path.join(outDir, name + '.txt'), text);
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });

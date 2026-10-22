@@ -76,21 +76,7 @@ fn tree(name: &str) -> (PathBuf, String) {
 
 /// Allow `group` to view the screen at `location`, in an artifact group of its own.
 fn allow(world: &World, id: &str, group: &str, location: &str) {
-    use moqui_lib::object::Value;
-    let mut member = world.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();
-    member.set("artifactGroupId", Value::string(id));
-    member.set("artifactName", Value::string(location));
-    member.set("artifactTypeEnumId", Value::string("AT_XML_SCREEN"));
-    member.set("nameIsPattern", Value::string("N"));
-    member.set("inheritAuthz", Value::string("Y"));
-    member.create(&world.facade).unwrap();
-    let mut authz = world.facade.make_value("moqui.security.ArtifactAuthz").unwrap();
-    authz.set("artifactAuthzId", Value::string(id));
-    authz.set("userGroupId", Value::string(group));
-    authz.set("artifactGroupId", Value::string(id));
-    authz.set("authzTypeEnumId", Value::string("AUTHZT_ALWAYS"));
-    authz.set("authzActionEnumId", Value::string("AUTHZA_VIEW"));
-    authz.create(&world.facade).unwrap();
+    world.grant_screen(id, group, location, "AUTHZT_ALWAYS");
 }
 
 fn get_menu(world: &World, root: &str, user: Option<&str>, path: &str) -> (u16, serde_json::Value) {
@@ -313,5 +299,90 @@ fn the_app_list_draws_a_quasar_icon_name_and_keeps_fa_classes() {
         "{html}"
     );
     assert!(html.contains(r#"<i class="fa fa-home"></i> Fa"#), "{html}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The app list (`apps/AppList.xml`) lists only the apps the user may view, and a link drawn in a screen is disabled
+/// when the user may not open its target. The webroot's seed data grants AppList to all users with an inheritable
+/// record; a check made while it renders is decided on a fresh stack, as Java's `ScreenUrlInfo.isPermitted`, so that
+/// grant does not reach the sibling apps: `Open` has a grant of its own and shows, `Secret` has none and stays out.
+#[test]
+fn a_menu_or_link_check_does_not_inherit_from_the_screen_rendering_it() {
+    let app_list = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/base-component/webroot/screen/webroot/apps/AppList.xml")
+        .to_string_lossy()
+        .into_owned();
+    let dir = std::env::temp_dir().join(format!("moqui-menu-app-view-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/apps")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| {
+        std::fs::write(
+            dir.join(path),
+            text.replace("{dir}", &base).replace("{appList}", &app_list),
+        )
+        .unwrap()
+    };
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><subscreens default-item="apps">
+            <subscreens-item name="apps" location="{dir}/Root/apps.xml"/></subscreens><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/apps.xml",
+        r#"<screen require-authentication="false"><subscreens default-item="AppList">
+            <subscreens-item name="AppList" location="{appList}" menu-include="false"/>
+            <subscreens-item name="Links" location="{dir}/Root/apps/Links.xml" menu-include="false"/>
+            <subscreens-item name="Open" menu-title="Open" location="{dir}/Root/apps/Open.xml"/>
+            <subscreens-item name="Secret" menu-title="Secret" location="{dir}/Root/apps/Secret.xml"/>
+        </subscreens><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/apps/Links.xml",
+        r#"<screen require-authentication="true"><widgets><render-mode><text type="html"><![CDATA[
+            open=${sri.buildUrl("/apps/Open").getDisableLink()} secret=${sri.buildUrl("/apps/Secret").getDisableLink()}
+        ]]></text></render-mode></widgets></screen>"#,
+    );
+    for name in ["Open", "Secret"] {
+        write(
+            &format!("Root/apps/{name}.xml"),
+            r#"<screen require-authentication="true"><widgets><label text="app"/></widgets></screen>"#,
+        );
+    }
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open(screen_authz_conf());
+    world.user("plain", Some("VIEWERS"));
+    // AppList and Links as the seed data grants AppList; the Open app as an app grants itself; nothing for Secret.
+    world.grant_screen("APPLIST_VIEW", "VIEWERS", &app_list, "AUTHZT_ALLOW");
+    let location = |name: &str| dir.join(format!("Root/apps/{name}.xml")).to_string_lossy().into_owned();
+    world.grant_screen("LINKS_VIEW", "VIEWERS", &location("Links"), "AUTHZT_ALLOW");
+    world.grant_screen("OPEN_VIEW", "VIEWERS", &location("Open"), "AUTHZT_ALWAYS");
+    let body = |path: &str| {
+        let mut get = request("GET", path);
+        get.set_header("authorization", basic("plain"));
+        let response = serve_at(&world.factory, get, &root);
+        assert_eq!(response.status, 200, "{path}: {}", response.body_text());
+        response.body_text()
+    };
+    let list = body("/apps/AppList");
+    assert!(list.contains("/apps/Open") && list.contains("> Open</a>"), "{list}");
+    assert!(!list.contains("Secret"), "{list}");
+    let links = body("/apps/Links");
+    assert!(links.contains("open=false secret=true"), "{links}");
+    // A check is not a use, Java's isAccess: only opening the Secret app records a failure.
+    let failures = || {
+        world
+            .facade
+            .find("moqui.security.ArtifactAuthzFailure")
+            .unwrap()
+            .list()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(failures(), 0);
+    let mut get = request("GET", "/apps/Secret");
+    get.set_header("authorization", basic("plain"));
+    assert_eq!(serve_at(&world.factory, get, &root).status, 403);
+    assert_eq!(failures(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }

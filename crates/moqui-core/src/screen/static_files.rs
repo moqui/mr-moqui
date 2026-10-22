@@ -38,8 +38,8 @@ const BLOCKED_EXTENSIONS: [&str; 9] = [
     "sql",
 ];
 
+/// A versioned or minified file: its name changes with its content, so it is kept a year (not in Java).
 const LONG_CACHE: &str = "public, max-age=31536000, immutable";
-const REVALIDATE_CACHE: &str = "public, max-age=3600, must-revalidate";
 
 /// Whether every name of a path under a screen is a plain file or directory name: not empty, not a
 /// dot name or hidden file, and without a separator or control character, also when percent-decoded.
@@ -230,16 +230,22 @@ pub fn respond(
         web::add_header("Allow", "GET, HEAD");
         return Ok(());
     }
-    let cache = if versioned || name.contains(".min.") {
-        LONG_CACHE
-    } else {
-        REVALIDATE_CACHE
-    };
-    let headers = vec![
-        ("Content-Type".to_string(), media_type(name).to_string()),
-        ("Cache-Control".to_string(), cache.to_string()),
+    let media = media_type(name);
+    let mut headers = vec![
+        ("Content-Type".to_string(), media.to_string()),
         ("Vary".to_string(), "Accept-Encoding".to_string()),
     ];
+    // The conf's headers of a text or a binary file under a screen, as `ScreenRenderImpl` sends them.
+    let kind = if moqui_lib::resource::is_text_content_type(media) {
+        "screen-resource-text"
+    } else {
+        "screen-resource-binary"
+    };
+    web::apply_conf_headers(Some(factory), kind, &mut headers, false);
+    if versioned || name.contains(".min.") {
+        headers.retain(|(key, _)| !key.eq_ignore_ascii_case("Cache-Control"));
+        headers.push(("Cache-Control".to_string(), LONG_CACHE.to_string()));
+    }
     respond_opened(&Conditional::of(request), headers, &opened)
 }
 

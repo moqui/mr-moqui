@@ -20,3 +20,10 @@ pub mod blob;
 pub mod git;
 pub mod source;
 pub mod textdiff;
+
+/// An attribute of the conf's `resource-facade` in the current context's factory, `${}` expanded and trimmed; empty
+/// when there is no current context or the conf leaves it out.
+pub(crate) fn setting(name: &str) -> String {
+    crate::context::ExecutionContext::with_current(|ec| ec.factory().conf_setting("resource-facade", name))
+        .unwrap_or_default()
+}

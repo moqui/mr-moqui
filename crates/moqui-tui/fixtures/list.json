@@ -1,0 +1,261 @@
+{
+  "v": 1,
+  "screen": {
+    "path": "/Gallery/List",
+    "title": "Enumerations"
+  },
+  "c": [
+    {
+      "t": "form",
+      "id": "EnumFind",
+      "name": "EnumFind",
+      "kind": "single",
+      "c": [
+        {
+          "t": "field",
+          "id": "enumTypeId",
+          "name": "enumTypeId",
+          "title": "Type",
+          "w": {
+            "kind": "dropDown",
+            "value": "",
+            "options": [
+              {
+                "value": "",
+                "label": ""
+              },
+              {
+                "value": "ScreenThemeType",
+                "label": "Screen Theme Type"
+              },
+              {
+                "value": "StatusItem",
+                "label": "Status"
+              }
+            ]
+          }
+        },
+        {
+          "t": "field",
+          "id": "description",
+          "name": "description",
+          "title": "Description",
+          "w": {
+            "kind": "textLine",
+            "value": ""
+          }
+        },
+        {
+          "t": "field",
+          "id": "find",
+          "name": "find",
+          "title": "Find",
+          "w": {
+            "kind": "submit",
+            "text": "Find"
+          }
+        }
+      ]
+    },
+    {
+      "t": "formList",
+      "id": "EnumList",
+      "name": "EnumList",
+      "columns": [
+        {
+          "title": "Identifier",
+          "orderBy": "enumId"
+        },
+        {
+          "title": "Description",
+          "orderBy": "description"
+        },
+        {
+          "title": "Code",
+          "orderBy": "enumCode"
+        },
+        {
+          "title": "Note"
+        }
+      ],
+      "rows": [
+        {
+          "cells": [
+            {
+              "t": "link",
+              "id": "row0",
+              "text": "ENUM_00",
+              "url": "/Gallery/Detail"
+            },
+            "Enumeration 00",
+            "ScreenThemeType",
+            "東京"
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_01",
+            "Enumeration 01",
+            "CODE",
+            "🎉"
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_02",
+            "Enumeration 02",
+            "CODE",
+            "👨‍👩‍👧"
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_03",
+            "Description text that should be capped 012345",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_04",
+            "Enumeration 04",
+            "CODE",
+            "family-note"
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_05",
+            "Enumeration 05",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_06",
+            "Enumeration 06",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_07",
+            "Enumeration 07",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_08",
+            "Enumeration 08",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_09",
+            "Enumeration 09",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_10",
+            "Enumeration 10",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_11",
+            "Enumeration 11",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_12",
+            "Enumeration 12",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_13",
+            "Enumeration 13",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_14",
+            "Enumeration 14",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_15",
+            "Enumeration 15",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_16",
+            "Enumeration 16",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_17",
+            "Enumeration 17",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_18",
+            "Enumeration 18",
+            "CODE",
+            ""
+          ]
+        },
+        {
+          "cells": [
+            "ENUM_19",
+            "Enumeration 19",
+            "CODE",
+            ""
+          ]
+        }
+      ],
+      "paging": {
+        "index": 0,
+        "size": 10,
+        "count": 20
+      }
+    },
+    {
+      "t": "link",
+      "id": "openDetail",
+      "text": "Open detail",
+      "url": "/Gallery/Detail"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+[package]
+name = "moqui-tui"
+description = "Terminal screen client. The model and layout do not depend on Revue."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["ui"]
+# The model, link, navigation, state, layout, keys, theme and the input decoder. No Revue.
+model = []
+# Revue interpreter, local event loop, and the in-memory session draw.
+ui = ["model", "dep:revue"]
+
+[dependencies]
+inventory = { workspace = true }
+jiff = { workspace = true }
+pulldown-cmark = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+revue = { workspace = true, optional = true, default-features = false, features = ["markdown"] }
+
+[dev-dependencies]
+unicode-width = "0.2"
+
+[lints]
+workspace = true
+
+[[example]]
+name = "gallery"
+required-features = ["ui"]
+
+[[test]]
+name = "screens"
+required-features = ["ui"]
+
+[[test]]
+name = "markdown_roundtrip"
+required-features = ["ui"]
+
+[[test]]
+name = "agent"
+required-features = ["ui"]
+
+[[test]]
+name = "session_loop"
+required-features = ["ui"]
+
+[[test]]
+name = "mouse"
+required-features = ["ui"]
+
+[[test]]
+name = "assist"
+required-features = ["ui"]

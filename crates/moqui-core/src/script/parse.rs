@@ -14,6 +14,9 @@
 
 //! JavaScript parse through `oxc_parser`. Groovy leftovers are rejected by the service loader.
 
+use std::cell::RefCell;
+
+use oxc_allocator::Allocator;
 use oxc_ast::ast::{SourceType, Statement};
 use oxc_parser::{ParseOptions, Parser};
 
@@ -38,51 +41,76 @@ pub fn parse_js(expr: &str) -> Result<(), Error> {
     }))
 }
 
+/// An arena past this after a parse is let go rather than kept for the next.
+const ARENA_KEEP: usize = 4 << 20;
+
+thread_local! {
+    /// The parser's arena for this thread, reset after each parse: a new one for each would allocate its first chunks
+    /// every time, and the service loader checks every expression of every service.
+    static ARENA: RefCell<Allocator> = RefCell::new(Allocator::default());
+}
+
+/// `body` with the thread's arena, empty. A parse inside another parse's body gets an arena of its own.
+fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
+    ARENA.with(|arena| match arena.try_borrow_mut() {
+        Ok(mut arena) => {
+            let out = body(&arena);
+            if arena.capacity() > ARENA_KEEP {
+                *arena = Allocator::default();
+            } else {
+                arena.reset();
+            }
+            out
+        }
+        Err(_) => body(&Allocator::default()),
+    })
+}
+
 /// Parse a whole generated script. The error names the first problem the parser reports.
 pub(crate) fn check_program(source: &str) -> Result<(), Error> {
-    let allocator = std::default::Default::default();
-    let source_type = std::default::Default::default();
-    let parsed = Parser::new(&allocator, source, source_type).parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
-        let detail = parsed
-            .diagnostics
-            .errors()
-            .next()
-            .map_or_else(|| "syntax error".to_string(), |diagnostic| diagnostic.to_string());
-        return Err(Error::new(format!("generated script is not JavaScript: {detail}")));
-    }
-    Ok(())
+    with_arena(|allocator| {
+        let parsed = Parser::new(allocator, source, SourceType::default()).parse();
+        if parsed.panicked || parsed.diagnostics.has_errors() {
+            let detail = parsed
+                .diagnostics
+                .errors()
+                .next()
+                .map_or_else(|| "syntax error".to_string(), |diagnostic| diagnostic.to_string());
+            return Err(Error::new(format!("generated script is not JavaScript: {detail}")));
+        }
+        Ok(())
+    })
 }
 
 /// `Parser::parse_expression` stops after the first expression and ignores what follows, so
 /// `a b` and `def x = 1` would pass. A parenthesized program must consume every token.
 fn parse_expression(source: &str) -> Result<(), Error> {
     let wrapped = format!("({source}\n)");
-    let allocator = std::default::Default::default();
-    let source_type = std::default::Default::default();
-    let parsed = Parser::new(&allocator, &wrapped, source_type).parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
-        return Err(Error::new("not a JavaScript expression"));
-    }
-    Ok(())
+    with_arena(|allocator| {
+        let parsed = Parser::new(allocator, &wrapped, SourceType::default()).parse();
+        if parsed.panicked || parsed.diagnostics.has_errors() {
+            return Err(Error::new("not a JavaScript expression"));
+        }
+        Ok(())
+    })
 }
 
 /// A `<script>` body runs inside the function the action macros emit, so a top-level `return`
 /// ends the script, as it ended a Groovy script.
 fn parse_program(source: &str) -> Result<(), Error> {
-    let allocator = std::default::Default::default();
-    let source_type = std::default::Default::default();
     let options = ParseOptions {
         allow_return_outside_function: true,
         ..ParseOptions::default()
     };
-    let parsed = Parser::new(&allocator, source, source_type)
-        .with_options(options)
-        .parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
-        return Err(Error::new("not JavaScript"));
-    }
-    Ok(())
+    with_arena(|allocator| {
+        let parsed = Parser::new(allocator, source, SourceType::default())
+            .with_options(options)
+            .parse();
+        if parsed.panicked || parsed.diagnostics.has_errors() {
+            return Err(Error::new("not JavaScript"));
+        }
+        Ok(())
+    })
 }
 
 /// A script file as the body of a function called at once, the way the action macros run a `<script>` body.
@@ -93,25 +121,25 @@ fn parse_program(source: &str) -> Result<(), Error> {
 /// script with its value, and a last expression statement is returned, as Groovy returns the last expression. The
 /// wrapper opens on the file's first line, so a line number in an error is the file's.
 pub(crate) fn file_function(source: &str) -> String {
-    let allocator = std::default::Default::default();
-    // Not a module: the file runs as sloppy script code.
-    let source_type = SourceType::script();
     let options = ParseOptions {
         allow_return_outside_function: true,
         ..ParseOptions::default()
     };
-    let parsed = Parser::new(&allocator, source, source_type)
-        .with_options(options)
-        .parse();
-    // A file that does not parse is wrapped as it is, and QuickJS reports the error at its line.
-    let last = if parsed.panicked || parsed.diagnostics.has_errors() {
-        None
-    } else {
-        match parsed.program.body.last() {
-            Some(Statement::ExpressionStatement(statement)) => usize::try_from(statement.span.start).ok(),
-            _ => None,
+    let last = with_arena(|allocator| {
+        // Not a module: the file runs as sloppy script code.
+        let parsed = Parser::new(allocator, source, SourceType::script())
+            .with_options(options)
+            .parse();
+        // A file that does not parse is wrapped as it is, and QuickJS reports the error at its line.
+        if parsed.panicked || parsed.diagnostics.has_errors() {
+            None
+        } else {
+            match parsed.program.body.last() {
+                Some(Statement::ExpressionStatement(statement)) => usize::try_from(statement.span.start).ok(),
+                _ => None,
+            }
         }
-    };
+    });
     let mut out = String::with_capacity(source.len() + 32);
     out.push_str("(function(){");
     match last.filter(|at| source.is_char_boundary(*at)) {

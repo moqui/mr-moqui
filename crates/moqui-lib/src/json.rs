@@ -13,7 +13,8 @@
  */
 
 //! [`Value`] to and from JSON. Whole numbers stay integers and other numbers stay decimals, as
-//! Groovy's `JsonSlurper` reads them, so a price does not pick up binary rounding.
+//! Groovy's `JsonSlurper` reads them, so a price does not pick up binary rounding. [`canonical`] is RFC 8785 JSON, for
+//! hashes over JSON values.
 
 use std::str::FromStr;
 
@@ -72,9 +73,123 @@ pub fn from_json(json: &serde_json::Value) -> Value {
     }
 }
 
+/// RFC 8785 (JCS) canonical JSON: object members sorted by the UTF-16 code units of their names, no white space,
+/// strings with only the escapes JSON requires, numbers as ECMAScript writes them. Two values that are equal as JSON
+/// give the same text, whatever order their maps kept, so a hash over it is stable (the approval and held-write hashes,
+/// plans/LLM-A2A-Assist.md 4.7 and 4.8).
+pub fn canonical(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    write_canonical(value, &mut out);
+    out
+}
+
+/// SHA-256 of [`canonical`], as lowercase hex.
+pub fn canonical_sha256(value: &serde_json::Value) -> String {
+    use sha2::Digest as _;
+    crate::codec::hex_encode(&sha2::Sha256::digest(canonical(value).as_bytes()))
+}
+
+fn write_canonical(value: &serde_json::Value, out: &mut String) {
+    match value {
+        serde_json::Value::Null => out.push_str("null"),
+        serde_json::Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        serde_json::Value::Number(number) => out.push_str(&canonical_number(number)),
+        serde_json::Value::String(text) => write_string(text, out),
+        serde_json::Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical(item, out);
+            }
+            out.push(']');
+        }
+        serde_json::Value::Object(entries) => {
+            let mut members: Vec<(&String, &serde_json::Value)> = entries.iter().collect();
+            members.sort_by(|(left, _), (right, _)| left.encode_utf16().cmp(right.encode_utf16()));
+            out.push('{');
+            for (index, (name, item)) in members.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_string(name, out);
+                out.push(':');
+                write_canonical(item, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn write_string(text: &str, out: &mut String) {
+    use std::fmt::Write as _;
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if u32::from(ch) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", u32::from(ch));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+/// A number as ECMAScript's `Number.prototype.toString` writes it: whole numbers below 1e21 without an exponent, the
+/// shortest digits that read back the same, an exponent (`1e-7`, `1e+21`) outside 1e-6 to 1e21.
+fn canonical_number(number: &serde_json::Number) -> String {
+    if let Some(whole) = number.as_i64() {
+        return whole.to_string();
+    }
+    if let Some(whole) = number.as_u64() {
+        return whole.to_string();
+    }
+    let Some(float) = number.as_f64().filter(|float| float.is_finite()) else {
+        return number.to_string();
+    };
+    if float == 0.0 {
+        return "0".to_string();
+    }
+    let size = float.abs();
+    if (1e-6..1e21).contains(&size) {
+        if float.fract() == 0.0 {
+            return format!("{float:.0}");
+        }
+        return format!("{float}");
+    }
+    let shown = format!("{float:e}");
+    match shown.split_once('e') {
+        Some((digits, exponent)) if !exponent.starts_with('-') => format!("{digits}e+{exponent}"),
+        _ => shown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_json_sorts_members_and_writes_numbers_and_strings_as_rfc_8785() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"b":[1,2.5,1e21,1e-7,-0.0,10.0],"a":{"z":null,"\u20ac":"\u00e9\n\"\\\u0001/","\ud83d\ude00":true,"\ufb33":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            canonical(&json),
+            "{\"a\":{\"z\":null,\"\u{20ac}\":\"\u{e9}\\n\\\"\\\\\\u0001/\",\"\u{1f600}\":true,\"\u{fb33}\":1},\"b\":[1,2.5,1e+21,1e-7,0,10]}"
+        );
+        let same: serde_json::Value = serde_json::from_str(r#"{"a":{"\ufb33":1,"\ud83d\ude00":true,"\u20ac":"\u00e9\n\"\\\u0001/","z":null},"b":[1,2.5,1e21,1e-7,0,10]}"#).unwrap();
+        assert_eq!(canonical_sha256(&json), canonical_sha256(&same));
+        assert_eq!(canonical_sha256(&json).len(), 64);
+    }
 
     #[test]
     fn numbers_keep_their_kind_and_non_ascii_text_survives() {

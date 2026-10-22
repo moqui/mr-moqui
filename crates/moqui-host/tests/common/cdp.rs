@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A small Chrome DevTools Protocol client for the Gate 3 browser smoke: one headless Chromium with a temporary profile, one
-//! page attached with a flat session, `Runtime.evaluate`, and the console errors, uncaught exceptions and log entries the page reports.
+//! A small Chrome DevTools Protocol client for the Gate 3 browser smoke: one headless Chromium with a temporary profile, a
+//! page attached with a flat session (more in windows of their own, [`Browser::open_tab`], one of them the current at a time),
+//! `Runtime.evaluate`, and the console errors, uncaught exceptions and log entries the pages report.
 //! It is not `PdfRenderer` and does not use `chromiumoxide`.
 
 use std::net::TcpStream;
@@ -22,11 +23,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{connect, Message, WebSocket};
+use tungstenite::{Message, WebSocket, connect};
 
-use super::{temp_dir, DirGuard};
+use super::{DirGuard, temp_dir};
 
 /// The browser of the smoke: `pdf-chromium-path` when it is set, else the Chromium of `./moq chromium-download` in
 /// `runtime/chromium`, else `chromium`, `chromium-browser` or `google-chrome` on the `PATH`. A missing binary fails
@@ -69,6 +70,8 @@ pub struct Browser {
     child: Child,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
     session: String,
+    /// The first page's session once another was opened.
+    first: String,
     next_id: u64,
     events: Vec<Value>,
     problems: Vec<Problem>,
@@ -113,20 +116,56 @@ impl Browser {
             child: browser_child.0.take().unwrap(),
             ws,
             session: String::new(),
+            first: String::new(),
             next_id: 0,
             events: Vec::new(),
             problems: Vec::new(),
             _profile: profile_guard,
         };
         browser.set_timeout(Duration::from_millis(200));
-        let target = browser.call_browser("Target.createTarget", json!({"url": "about:blank"}));
-        let target_id = target["targetId"].as_str().unwrap().to_string();
-        let attached = browser.call_browser("Target.attachToTarget", json!({"targetId": target_id, "flatten": true}));
-        browser.session = attached["sessionId"].as_str().unwrap().to_string();
-        for domain in ["Runtime.enable", "Log.enable", "Page.enable"] {
-            browser.call(domain, json!({}));
-        }
+        browser.session = browser.attach_page(false);
         browser
+    }
+
+    /// A new page attached with its own session: in a window of its own when `window`, so each is visible (a page in a
+    /// background tab is hidden).
+    fn attach_page(&mut self, window: bool) -> String {
+        let target = self.call_browser(
+            "Target.createTarget",
+            json!({"url": "about:blank", "newWindow": window}),
+        );
+        let target_id = target["targetId"].as_str().unwrap().to_string();
+        let attached = self.call_browser("Target.attachToTarget", json!({"targetId": target_id, "flatten": true}));
+        let session = attached["sessionId"].as_str().unwrap().to_string();
+        for domain in ["Runtime.enable", "Log.enable", "Page.enable"] {
+            self.send(domain, json!({}), Some(&session));
+        }
+        session
+    }
+
+    /// Open another page (a second tab of the same profile, so the same sign-in, in a window of its own) and make it the
+    /// current one. The answer names it for [`Browser::use_tab`]; the first page is [`Browser::first_tab`].
+    pub fn open_tab(&mut self) -> String {
+        let first = self.session.clone();
+        if self.first.is_empty() {
+            self.first = first;
+        }
+        self.session = self.attach_page(true);
+        self.session.clone()
+    }
+
+    /// The page [`Browser::launch`] opened.
+    pub fn first_tab(&self) -> String {
+        if self.first.is_empty() {
+            self.session.clone()
+        } else {
+            self.first.clone()
+        }
+    }
+
+    /// Make `tab` the page that the commands, the waits and the clicks go to.
+    pub fn use_tab(&mut self, tab: &str) {
+        self.session = tab.to_string();
     }
 
     fn set_timeout(&mut self, timeout: Duration) {
@@ -265,11 +304,24 @@ impl Browser {
         self.wait_event("Page.loadEventFired", Duration::from_secs(60));
     }
 
-    /// Wait for an event named `method` that came after the last [`Browser::navigate`] or [`Browser::clear_events`].
+    /// Load the current page again and wait for its load event.
+    pub fn reload(&mut self) {
+        self.events.clear();
+        self.call("Page.reload", json!({}));
+        self.wait_event("Page.loadEventFired", Duration::from_secs(60));
+    }
+
+    /// Wait for an event of the current page named `method` that came after the last [`Browser::navigate`] or
+    /// [`Browser::clear_events`].
     pub fn wait_event(&mut self, method: &str, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
-            if self.events.iter().any(|event| event["method"] == method) {
+            if self.events.iter().any(|event| {
+                event["method"] == method
+                    && event["sessionId"]
+                        .as_str()
+                        .is_none_or(|session| session == self.session)
+            }) {
                 return;
             }
             assert!(Instant::now() < deadline, "no {method} within {timeout:?}");

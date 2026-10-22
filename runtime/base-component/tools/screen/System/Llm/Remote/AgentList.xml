@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The remote A2A agents: each is the tool a2a__remoteId for the agents allowedAgents names. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Remote Agents" default-menu-index="1">
+
+    <transition name="agentDetail"><default-response url="../AgentDetail"/></transition>
+    <transition name="createAgent"><service-call name="org.moqui.agent.RemoteAgentServices.store#AgentRemoteA2a"/>
+        <default-response url="../AgentDetail" parameter-map="{remoteId:remoteId}"/>
+        <error-response url="."/></transition>
+
+    <widgets>
+        <container-dialog id="CreateAgentDialog" button-text="New Remote Agent">
+            <form-single name="CreateAgent" transition="createAgent">
+                <field name="remoteId"><default-field title="Remote ID" tooltip="The tool is a2a__ and this id"><text-line size="20"/></default-field></field>
+                <field name="remoteName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="cardUrl"><default-field title="Card URL" tooltip="Its /.well-known/agent-card.json, https"><text-line size="60"/></default-field></field>
+                <field name="allowedAgents"><default-field title="Allowed Agents" tooltip="Comma separated agent ids, * for all"><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+        <form-list name="AgentList" list="remoteList" skip-form="true" header-dialog="true">
+            <entity-find entity-name="moqui.agent.AgentRemoteA2a" list="remoteList">
+                <search-form-inputs default-order-by="remoteId"/>
+                <select-field field-name="remoteId,remoteName,cardUrl,allowedAgents,allowPrivateNetwork,cardReadDate,disabled"/></entity-find>
+            <field name="remoteId"><header-field title="Remote" show-order-by="true"><text-find size="10" hide-options="true"/></header-field>
+                <default-field><link url="agentDetail" text="${remoteId}" link-type="anchor"/></default-field></field>
+            <field name="remoteName"><header-field title="Name"/><default-field><display/></default-field></field>
+            <field name="cardUrl"><header-field title="Card URL"/><default-field><display/></default-field></field>
+            <field name="allowedAgents"><header-field title="Agents"/><default-field><display/></default-field></field>
+            <field name="allowPrivateNetwork"><header-field title="Private"/><default-field><display/></default-field></field>
+            <field name="cardReadDate"><header-field title="Card Read"/><default-field><display/></default-field></field>
+            <field name="disabled"><header-field title="Disabled"/><default-field><display/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

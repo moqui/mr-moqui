@@ -735,6 +735,57 @@ mod tests {
         drop(cluster);
     }
 
+    /// A data file's writes go without waiting for their results. A failed one fails its file as before: the file
+    /// rolls back and the error is the failed statement's, wherever in the file it was.
+    #[test]
+    fn a_pipelined_data_file_commits_whole_or_fails_with_the_write_that_failed() {
+        use moqui_core::entity::load_feed::{load_entity_xml_text, LoadOptions};
+
+        let dir = temp_cluster_dir();
+        let _guard = DirGuard(dir.clone());
+        let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+        let driver: Arc<dyn DbDriver> = Arc::new(driver);
+        let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+        let facade = open_entity_facade(&framework, driver, PoolConfig::default()).unwrap();
+        facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
+        let file = |prefix: &str, count: usize, bad: Option<usize>| {
+            let mut text = String::from("<entity-facade-xml>\n");
+            for index in 0..count {
+                // `testIndicator` is CHAR(1): the database refuses the longer text.
+                let indicator = if Some(index) == bad { "YYY" } else { "Y" };
+                text.push_str(&format!(
+                    "<moqui.test.TestEntity testId=\"{prefix}{index}\" testMedium=\"{prefix}\" testIndicator=\"{indicator}\"/>\n"
+                ));
+            }
+            text.push_str("</entity-facade-xml>\n");
+            text
+        };
+        let count = |prefix: &str| {
+            facade
+                .find("moqui.test.TestEntity")
+                .unwrap()
+                .eq("testMedium", Value::string(prefix))
+                .count()
+                .unwrap()
+        };
+        let options = LoadOptions::default();
+
+        let loaded = load_entity_xml_text(&facade, "good", &file("G", 600, None), &options).unwrap();
+        assert_eq!(loaded.records, 600);
+        assert_eq!(count("G"), 600);
+        // Again: each row is there, so each store is an update.
+        let reloaded = load_entity_xml_text(&facade, "good again", &file("G", 600, None), &options).unwrap();
+        assert_eq!(reloaded.records, 600);
+
+        for (prefix, bad) in [("M", 5), ("L", 9)] {
+            let err = load_entity_xml_text(&facade, "bad", &file(prefix, 10, Some(bad)), &options).unwrap_err();
+            let text = moqui_core::entity::load_feed::error_chain(&err);
+            assert!(text.contains("value too long"), "{prefix}: {text}");
+            assert_eq!(count(prefix), 0, "{prefix}: the file rolled back");
+        }
+        assert_eq!(count("G"), 600);
+    }
+
     fn stream_ids(facade: &moqui_core::entity::EntityFacade) -> Vec<String> {
         let mut iter = facade
             .find("moqui.test.TestEntity")

@@ -103,10 +103,12 @@ along with this software (see the LICENSE.md file). If not, see
 
             // the compare: a server-side diff, an HTML table with every text escaped
             diffHtml = null
+            diffText = null
             if (versionNameLhs && pageReference?.exists) {
                 try {
                     const diff = pageReference.getVersionDiff(versionNameLhs, versionNameRhs || '')
                     diffHtml = diff.html
+                    diffText = diff.unifiedDiff
                     diffTitle = 'Compare ' + short(diff.fromName) + ' with ' + short(diff.toName) + ': ' + diff.stats.insertions +
                             ' added, ' + diff.stats.deletions + ' removed'
                 } catch (err) {
@@ -202,14 +204,19 @@ along with this software (see the LICENSE.md file). If not, see
                     <container-box><box-header title="${diffTitle}"/><box-toolbar>
                         <link url="." text="Close" link-type="anchor" parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"/>
                     </box-toolbar><box-body>
-                        <render-mode><text type="html,qvt"><![CDATA[<div class="scroll">${diffHtml}</div>]]></text></render-mode>
+                        <render-mode><text type="html,qvt"><![CDATA[<div class="scroll">${diffHtml}</div>]]></text>
+                            <!-- the same compare as a unified diff -->
+                            <text type="tui"><![CDATA[{"t": "text", "id": "EditorDiff", "style": "pre", "text": ${JSON.stringify(String(diffText || ''))}}]]></text></render-mode>
                     </box-body></container-box>
                 </widgets></section>
 
                 <section name="PageBody" condition="pageReference?.exists"><widgets>
                     <container-box><box-body>
                         <render-mode><text type="html,qvt" template="true"
-                                location="${pageInfo.pageLocation}${viewVersion ? '#' + viewVersion : ''}"/></render-mode>
+                                location="${pageInfo.pageLocation}${viewVersion ? '#' + viewVersion : ''}"/>
+                            <!-- the same page rendered, as text blocks with numbered links -->
+                            <text type="tui"><![CDATA[${JSON.stringify(Object.assign({t: 'html', id: 'EditorPageBody'},
+                                JSON.parse(sri.htmlText(String(sri.renderTextValue(pageInfo.pageLocation + (viewVersion ? '#' + viewVersion : ''), 'true') || '')))))}]]></text></render-mode>
                     </box-body></container-box>
                 </widgets><fail-widgets>
                     <label type="p" text="There is no page ${pagePath} in ${wikiSpaceId}."/>

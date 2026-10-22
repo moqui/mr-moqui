@@ -14,7 +14,8 @@
 
 //! A user's own credentials for git and SSH, in `org.moqui.impl.UserServices`: SSH public keys (`UserSshKey`, which
 //! the SSH server matches by SHA-256 fingerprint) and access tokens (a `UserLoginKey` with a description, shown once
-//! when it is made, taken as the password of git over HTTPS or as an `api_key`). No Java counterpart. Each service
+//! when it is made, taken as the password of git over HTTPS or as an `api_key`), and app passwords (`UserAppPassword`, one
+//! per device, taken by the DAV servers, SFTP to drives and git, not by the web login). No Java counterpart. Each service
 //! works on the current user's rows only, so it reads and writes them with authorization off.
 
 use std::collections::BTreeMap;
@@ -29,6 +30,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const USER_SSH_KEY: &str = "moqui.security.UserSshKey";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
+const USER_APP_PASSWORD: &str = "moqui.security.UserAppPassword";
 
 /// The key types the SSH server takes.
 const KEY_TYPES: [&str; 7] = [
@@ -51,6 +53,9 @@ pub(in crate::service) fn register(
     rust_service!(map, delete_ssh_key)?;
     rust_service!(map, create_access_token)?;
     rust_service!(map, revoke_access_token)?;
+    rust_service!(map, create_app_password)?;
+    rust_service!(map, revoke_app_password)?;
+    rust_service!(map, get_app_passwords)?;
     Ok(())
 }
 
@@ -254,6 +259,93 @@ fn revoke_access_token(
         add_error("you have no such access token");
     }
     Ok(BTreeMap::new())
+}
+
+/// `create#UserAppPassword`: a new app password for the current user. Out: `appPasswordId`, `password` (shown only now).
+fn create_app_password(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(name) = text(parameters, "name") else {
+        add_error("name is required: the device or app the password is for");
+        return Ok(BTreeMap::new());
+    };
+    let password = crate::user::new_app_password()?;
+    let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut row = EntityValue::make(facade, USER_APP_PASSWORD)?;
+    row.set_sequenced_id_primary(facade)?;
+    let id = row.get("appPasswordId").map(to_plain_string).unwrap_or_default();
+    row.set("userId", Value::string(&user_id));
+    row.set("name", Value::string(name.chars().take(255).collect::<String>()));
+    row.set("passwordHash", Value::string(hashed));
+    row.set("createdDate", crate::user::now_value());
+    row.create(facade)?;
+    Ok(out([
+        ("appPasswordId", Value::string(id)),
+        ("password", Value::string(password)),
+    ]))
+}
+
+/// `revoke#UserAppPassword`: revoke one of the current user's app passwords (its `revokedDate` is now).
+fn revoke_app_password(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(id) = text(parameters, "appPasswordId") else {
+        add_error("appPasswordId is required");
+        return Ok(BTreeMap::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let updated = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("appPasswordId", Value::string(&id))
+        .eq("userId", Value::string(&user_id))
+        .condition(moqui_db::sql::Condition::is_null("revokedDate"))
+        .update_all([("revokedDate".to_string(), crate::user::now_value())])?;
+    if updated == 0 {
+        add_error("you have no such app password, or it is revoked already");
+    }
+    Ok(BTreeMap::new())
+}
+
+/// `get#UserAppPasswords`: the current user's app passwords, newest first, without their hashes.
+fn get_app_passwords(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(out([("appPasswordList", Value::List(Vec::new()))]));
+    };
+    let include_revoked = parameters
+        .get("includeRevoked")
+        .is_some_and(|value| to_plain_string(value) == "true");
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut find = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("userId", Value::string(&user_id))
+        .order_by("createdDate", true);
+    if !include_revoked {
+        find = find.condition(moqui_db::sql::Condition::is_null("revokedDate"));
+    }
+    let list = find
+        .list()?
+        .iter()
+        .map(|row| {
+            let mut map = indexmap::IndexMap::new();
+            for field in ["appPasswordId", "name", "createdDate", "lastUsedDate", "revokedDate"] {
+                map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
+            }
+            Value::Map(map)
+        })
+        .collect();
+    Ok(out([("appPasswordList", Value::List(list))]))
 }
 
 #[cfg(test)]

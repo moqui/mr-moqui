@@ -13,6 +13,7 @@ publish.workspace = true
 # lettre SMTP is blocking (tokio1 off). imap is blocking (native-tls off).
 
 [dependencies]
+bytes = { workspace = true }
 inventory = { workspace = true }
 moqui-lib = { workspace = true }
 moqui-db = { workspace = true }
@@ -33,9 +34,11 @@ base64 = { workspace = true }
 argon2 = { workspace = true }
 sha1 = { workspace = true }
 oxc_parser = { workspace = true }
+oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_span = { workspace = true }
 ammonia = { workspace = true }
+html5ever = { workspace = true }
 croner = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
@@ -53,9 +56,12 @@ calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
 similar = { workspace = true }
+yrs = { workspace = true }
+pulldown-cmark = { workspace = true }
 gix = { workspace = true, optional = true }
 gix-pack = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 
 # No prebuilt QuickJS bindings ship for this target. bindgen needs libclang and the emsdk sysroot;
 # scripts/wasm-env.sh sets both.
@@ -66,11 +72,11 @@ rquickjs = { workspace = true, features = ["bindgen"] }
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Packaging.md) pick them through moqui-host.
 # A service of a feature left out is still registered and reports that the feature is not built into this host.
 [features]
-default = ["mail", "http", "cluster-tls", "git", "image", "xlsx"]
+default = ["mail", "http", "cluster-tls", "git", "image", "xlsx", "llm"]
 # Both halves of the email services.
 mail = ["smtp", "imap"]
 # Outbound SMTP: send#EmailMessage and send#EmailTemplate (password reset, notifications), test#EmailServer's SMTP step.
-# rustls reads the extra CA file (email_tls_ca_file); lettre links it already.
+# rustls reads the extra CA file (email-client tls-ca-file); lettre links it already.
 smtp = ["dep:lettre", "dep:rustls"]
 # Inbound: IMAP and POP3 poll, the mail client's sync, IDLE and import, inbound MIME, the OAuth sign-in of mail accounts
 # and the delivery of mail the host's SMTP listener received. Replies and the client's sends go out through SMTP, so
@@ -87,6 +93,13 @@ git = ["dep:gix", "dep:gix-pack", "dep:flate2", "http"]
 image = ["dep:image"]
 # The xlsx render mode and org.moqui.impl.SpreadsheetServices.
 xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
+# The agent runtime and the model providers (moqui_core::llm, plans/LLM-A2A-Assist.md): provider calls over the blocking
+# HTTP client; rust_decimal for costs.
+llm = ["http", "dep:rust_decimal"]
+
+[dev-dependencies]
+# Model types only. Revue stays behind moqui-tui's ui feature, which this does not turn on.
+moqui-tui = { workspace = true, default-features = false, features = ["model"] }
 
 [lints]
 workspace = true

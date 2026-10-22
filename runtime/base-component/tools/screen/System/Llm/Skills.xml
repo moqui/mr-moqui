@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The skills of the agents (plans/LLM-A2A-Assist.md 4.9, 7.5): the index (the framework's and the components' files,
+    synced into AgentSkill rows, the site's and the personal skills), one skill with its text, lock and uses, and
+    RetrievalTest, what retrieval makes of a query. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Skills" default-menu-index="10">
+    <subscreens default-item="SkillList"/>
+    <widgets>
+        <subscreens-panel id="LlmSkillsPanel" type="popup"/>
+    </widgets>
+</screen>

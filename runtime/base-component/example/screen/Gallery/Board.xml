@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     file; this screen serves it in the qvue render mode and answers the component's data and action requests with
     the transitions below. Nothing is written: moveCard answers with a message. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Board" default-menu-index="6" render-modes="vue,qvue" server-static="vue,qvue">
+        default-menu-title="Board" default-menu-index="6" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <!-- the stages and cards of the pipeline, an inline list: the gallery has no business entities -->
     <transition name="boardRows" method="get" read-only="true">
@@ -50,6 +50,8 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <render-mode>
             <text type="qvue" location="component://example/screen/Gallery/Board.qvue" template="false"/>
+            <!-- the terminal twin (style-guide 4.8): the board component, its data from the same transitions -->
+            <text type="tui" location="component://example/screen/Gallery/Board.tui.json" template="false"/>
             <text type="html,qvt"><![CDATA[<p><strong>The Board is a .qvue screen: open it under /qapps (the qvt render mode).</strong></p>]]></text>
         </render-mode>
     </widgets>

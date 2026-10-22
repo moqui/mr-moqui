@@ -30,6 +30,7 @@ use moqui_db::sql::{
     FieldRef, LimitOffset,
 };
 use moqui_lib::codec::hex_encode;
+use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use serde_json::Value as Json;
@@ -79,8 +80,8 @@ const SCREEN_HISTORY: &str = "moqui.screen.history";
 const LAST_PATH: &str = "moqui.screen.last.path";
 const LAST_PARAMETERS: &str = "moqui.screen.last.parameters";
 const MAX_FLUSH_ATTEMPTS: usize = 5;
-/// Live sessions a factory keeps when `webapp_session_max` is unset.
-const DEFAULT_MAX_LIVE: usize = 10_000;
+/// Live sessions a factory keeps when `session-config` `max` is unset.
+pub(crate) const DEFAULT_MAX_LIVE: usize = 10_000;
 const VISITOR_MAX_AGE: u64 = 31_536_000;
 /// `sessionId` is dictionary type `id` (`VARCHAR(40)`). Hex encoding uses two characters per byte.
 const SESSION_ID_BYTES: usize = 20;
@@ -108,7 +109,7 @@ pub(crate) enum FlushMode {
     Guarantee,
 }
 
-/// Factory-owned sessions and the flush mode from `webapp_session_flush`.
+/// Factory-owned sessions and the flush mode from the `webroot` webapp's `session-config` `flush`.
 ///
 /// The lock is held only over memory. A flush copies what it writes, claims the id in `flushing`
 /// and does its SQL without the lock.
@@ -117,35 +118,59 @@ pub struct SessionTable {
     sessions: BTreeMap<String, LiveSession>,
     /// Millis of the last sweep of expired `HttpSession` rows.
     last_purge: i64,
-    /// Most live sessions kept, from `webapp_session_max`. `None` keeps every session.
+    /// Most live sessions kept, from `session-config` `max`. `None` keeps every session.
     max_live: Option<usize>,
     /// Ids a flush or a row delete is working on. One at a time per id.
     flushing: BTreeSet<String>,
     /// Signalled when an id leaves `flushing`.
     flushed: Arc<Condvar>,
+    /// Sessions that expired since the listeners last heard, for their `sessionDestroyed` ([`take_expired`]).
+    expired: Vec<String>,
 }
 
 impl SessionTable {
-    pub(crate) fn new(mode: FlushMode) -> Self {
+    pub(crate) fn new(mode: FlushMode, max_live: Option<usize>) -> Self {
         Self {
             mode,
             sessions: BTreeMap::new(),
             last_purge: 0,
-            max_live: max_live_from_property(),
+            max_live,
             flushing: BTreeSet::new(),
             flushed: Arc::new(Condvar::new()),
+            expired: Vec::new(),
         }
     }
 }
 
-/// `webapp_session_max`, 10000 when unset. 0 or a negative value keeps every session.
-fn max_live_from_property() -> Option<usize> {
-    let raw = moqui_lib::env::get_prop_or_env("webapp_session_max");
-    match raw.trim().parse::<i64>() {
+/// An attribute of the `webroot` webapp's `session-config` in the merged conf, `${}` expanded and trimmed.
+fn session_config_attr(conf: &MNode, name: &str) -> String {
+    conf.first_named("webapp-list")
+        .and_then(|list| list.first_named_attrs("webapp", &[("name", "webroot")]))
+        .and_then(|webapp| webapp.first_named("session-config"))
+        .and_then(|config| config.attribute(name))
+        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The flush mode (`session-config` `flush`) and the most live sessions (`max`, 10000 when unset; 0 or a negative
+/// value keeps every session) from the merged conf.
+pub(crate) fn settings_from_conf(conf: &MNode) -> Result<(FlushMode, Option<usize>), Error> {
+    let mode = match session_config_attr(conf, "flush").as_str() {
+        "" | "eventual" => FlushMode::Eventual,
+        "guarantee" => FlushMode::Guarantee,
+        other => {
+            return Err(Error::new(format!(
+                "session-config flush must be eventual or guarantee, not {other}"
+            )))
+        }
+    };
+    let max_live = match session_config_attr(conf, "max").parse::<i64>() {
         Ok(max) if max > 0 => Some(usize::try_from(max).unwrap_or(usize::MAX)),
         Ok(_) => None,
         Err(_) => Some(DEFAULT_MAX_LIVE),
-    }
+    };
+    Ok((mode, max_live))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -317,6 +342,12 @@ pub fn bind(
     let (id, created) = resolve_id(factory, presented.as_deref())?;
     touch_session(factory, &id);
     install_thread(factory, &id)?;
+    if created {
+        let scripts = factory.webapp_scripts();
+        if scripts.has_listeners() {
+            scripts.fire("sessionCreated", session_event(&id));
+        }
+    }
     // A request with no moqui cookie may come from a client that keeps none, such as a crawler, which
     // would leave a Visitor and a Visit behind on every request. Its visit starts when the session
     // cookie comes back or a user logs in.
@@ -337,6 +368,13 @@ pub fn bind(
     }
     evict_over_cap(factory, &id);
     Ok(SessionGuard { https })
+}
+
+/// The event of a session listener: `{sessionId}`.
+pub(crate) fn session_event(id: &str) -> Value {
+    let mut map = indexmap::IndexMap::new();
+    map.insert("sessionId".to_string(), Value::string(id));
+    Value::Map(map)
 }
 
 /// Start the visit a bound web session put off, for a login on it.
@@ -413,16 +451,6 @@ pub fn invalidate(id: &str) {
     live.snapshot = None;
     live.invalidated = true;
     live.revision = next_revision();
-}
-
-pub(crate) fn flush_mode_from_property() -> Result<FlushMode, Error> {
-    match moqui_lib::env::get_prop_or_env("webapp_session_flush").as_str() {
-        "" | "eventual" => Ok(FlushMode::Eventual),
-        "guarantee" => Ok(FlushMode::Guarantee),
-        other => Err(Error::new(format!(
-            "property webapp_session_flush must be eventual or guarantee, not {other}"
-        ))),
-    }
 }
 
 /// Write every dirty live session on this factory. The bound thread is synced first.
@@ -751,6 +779,38 @@ pub fn visit_id() -> Result<Option<String>, Error> {
 
 pub fn visitor_id() -> Result<Option<String>, Error> {
     Ok(with_session(|session| session.visitor_id.clone()))
+}
+
+/// User id and visitor id of the entered context, for `moqui_logs`. `None` when no context is entered.
+pub fn current_log_actor() -> Option<(Option<String>, Option<String>)> {
+    ExecutionContext::with_current(|ec| {
+        let session = ec.session();
+        (session.user_id.clone(), session.visitor_id.clone())
+    })
+}
+
+/// Session id, visitor id, and username of the bound session, for `moqui_http_log`. All three are
+/// absent when no context is entered or no session is bound. The username is absent when nobody is logged in.
+pub fn http_log_identity() -> (Option<String>, Option<String>, Option<String>) {
+    ExecutionContext::with_current(|ec| {
+        let session = ec.session();
+        if session.bound_id.is_none() {
+            return (None, None, None);
+        }
+        (
+            session.bound_id.clone(),
+            session.visitor_id.clone(),
+            session.username.clone(),
+        )
+    })
+    .unwrap_or((None, None, None))
+}
+
+/// The user and visitor [`current_log_actor`] reads. The username stored with the user id is the same text.
+#[doc(hidden)]
+pub fn set_current_log_actor(user_id: &str, visitor_id: &str) {
+    set_user(user_id, user_id);
+    set_visit("log-visit", visitor_id);
 }
 
 pub fn locale() -> Result<Option<String>, Error> {
@@ -1127,7 +1187,7 @@ fn resolve_id(factory: &Arc<ExecutionContextFactory>, presented: Option<&str>) -
 }
 
 fn adopt_presented(factory: &ExecutionContextFactory, id: &str) -> Result<bool, Error> {
-    let timeout = session_timeout_millis();
+    let timeout = session_timeout_millis(factory);
     let now = now_millis();
     let mut expired = false;
     let retired = {
@@ -1166,10 +1226,9 @@ fn adopt_presented(factory: &ExecutionContextFactory, id: &str) -> Result<bool, 
     Ok(true)
 }
 
-/// `webapp_session_timeout` in minutes, 60 when unset. 0 or a negative value never expires.
-fn session_timeout_millis() -> Option<i64> {
-    let raw = moqui_lib::env::get_prop_or_env("webapp_session_timeout");
-    let minutes = raw.trim().parse::<i64>().unwrap_or(60);
+/// The `webroot` webapp's `session-config` `timeout` in minutes, 60 when unset. 0 or a negative value never expires.
+fn session_timeout_millis(factory: &ExecutionContextFactory) -> Option<i64> {
+    let minutes = factory.webapp_child_setting("webroot", "session-config", "timeout").parse::<i64>().unwrap_or(60);
     (minutes > 0).then(|| minutes.saturating_mul(60_000))
 }
 
@@ -1179,7 +1238,7 @@ fn is_idle(last_access: i64, now: i64, timeout: Option<i64>) -> bool {
 
 /// Record a request on a bound session. `lastUpdatedStamp` is rewritten at most every quarter timeout.
 fn touch_session(factory: &ExecutionContextFactory, id: &str) {
-    let timeout = session_timeout_millis();
+    let timeout = session_timeout_millis(factory);
     let now = now_millis();
     let mut table = lock_sessions(factory);
     let Some(live) = table.sessions.get_mut(id) else {
@@ -1196,7 +1255,7 @@ fn touch_session(factory: &ExecutionContextFactory, id: &str) {
     }
 }
 
-/// Keep the table within `webapp_session_max`: drop the sessions used longest ago, down to nine
+/// Keep the table within `session-config` `max`: drop the sessions used longest ago, down to nine
 /// tenths of the cap. A dropped session reloads from its row, so a dirty one is written first and
 /// dropped on the next pass. A failed write leaves the table over the cap until a later request.
 fn evict_over_cap(factory: &ExecutionContextFactory, keep: &str) {
@@ -1246,15 +1305,22 @@ fn evict_over_cap(factory: &ExecutionContextFactory, keep: &str) {
 
 /// Drop idle sessions from memory and, at most once a minute, delete idle `HttpSession` rows.
 fn expire_idle(factory: &ExecutionContextFactory) -> Result<(), Error> {
-    let Some(timeout) = session_timeout_millis() else {
+    let Some(timeout) = session_timeout_millis(factory) else {
         return Ok(());
     };
     let now = now_millis();
+    let listening = factory.webapp_scripts().has_listeners();
     let purge = {
         let mut table = lock_sessions(factory);
-        table
-            .sessions
-            .retain(|_, live| !is_idle(live.last_access, now, Some(timeout)));
+        let mut expired = Vec::new();
+        table.sessions.retain(|id, live| {
+            let idle = is_idle(live.last_access, now, Some(timeout));
+            if idle && listening {
+                expired.push(id.clone());
+            }
+            !idle
+        });
+        table.expired.extend(expired);
         if now.saturating_sub(table.last_purge) > 60_000 {
             table.last_purge = now;
             true
@@ -1280,6 +1346,12 @@ fn expire_idle(factory: &ExecutionContextFactory) -> Result<(), Error> {
         Ok(())
     })?;
     cache::on_write(&facade, HTTP_SESSION, "delete", &BTreeMap::new()).map_err(Error::from)
+}
+
+/// The sessions that expired in memory since the last call, for the listeners' `sessionDestroyed`. A session that
+/// was only in the database when it expired is deleted with no event.
+pub(crate) fn take_expired(factory: &ExecutionContextFactory) -> Vec<String> {
+    std::mem::take(&mut lock_sessions(factory).expired)
 }
 
 fn install_from_row(factory: &ExecutionContextFactory, id: &str) -> Result<(), Error> {
@@ -1385,6 +1457,10 @@ fn ensure_visit(factory: &Arc<ExecutionContextFactory>, visitor_cookie: Option<&
     let visitor_id = resolve_visitor(&facade, visitor_cookie)?;
     let visit_id = create_visit(&facade, &visitor_id)?;
     set_visit(&visit_id, &visitor_id);
+    // Java defines first-hit-in-visit and never runs it; here it runs when a request starts a visit (Parity-Diffs P9-02)
+    factory
+        .webapp_scripts()
+        .run_actions_logged("first-hit-in-visit", &BTreeMap::new());
     Ok(())
 }
 
@@ -1837,9 +1913,9 @@ fn delete_session_row(facade: &EntityFacade, id: &str) -> Result<(), Error> {
     cache::on_write(facade, HTTP_SESSION, "delete", &session_key(id)).map_err(Error::from)
 }
 
-fn session_key(id: &str) -> BTreeMap<String, Value> {
-    let mut keys = BTreeMap::new();
-    keys.insert("sessionId".to_string(), Value::string(id));
+fn session_key(id: &str) -> crate::entity::FieldMap {
+    let mut keys = crate::entity::FieldMap::new();
+    keys.insert(std::sync::Arc::from("sessionId"), Value::string(id));
     keys
 }
 
@@ -2186,6 +2262,21 @@ fn mac_matches(id: &str, tag: &[u8]) -> Result<bool, Error> {
     mac.update(id.as_bytes());
     // verify_slice compares the tag in constant time.
     Ok(mac.verify_slice(tag).is_ok())
+}
+
+/// A key for another signature, derived from `session_cookie_key`: HMAC-SHA256 of `label` under it, so a value signed
+/// with it is never a valid session tag (the MCP server's `requestState`, `crate::llm::mcp::state`).
+///
+/// # Errors
+///
+/// Returns an error when `session_cookie_key` is not set or not standard base64.
+#[cfg(feature = "llm")]
+pub(crate) fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
+    let key = cookie_key()?;
+    let mut mac =
+        SessionMac::new_from_slice(&key).map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
+    mac.update(label.as_bytes());
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 fn cookie_key() -> Result<Vec<u8>, Error> {

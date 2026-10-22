@@ -12,22 +12,26 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The SFTP subsystem of the built-in SSH server: a view of one resource location (`ssh_sftp_root`, a `runtime://`,
-//! `file:`, `component://` or `dbresource://` directory), never of the host disk outside it. A client path is
-//! normalized against `/`; a `..` that would leave the root is refused. Each call runs on a request worker.
+//! The SFTP subsystem of the built-in SSH server: for a user with `SSH_SFTP`, a view of one resource location
+//! (`ssh-server` `sftp-root`, a `runtime://`, `file:`, `component://` or `dbresource://` directory), never of the host
+//! disk outside it; for any other user (`dav-server` `sftp-drives`), the drives that user may open, one folder each,
+//! through the file services as that user (`moqui_core::dav::files::tree`: a write is an upload and a new version, a
+//! removal goes to the trash). A client path is normalized against `/`; a `..` that would leave the root is refused.
+//! Each call runs on a request worker: on the root with authorization off, on the drives logged in as the user.
 //!
 //! A file opened for reading is read whole; one opened for writing is kept in memory and written on close, because a
-//! `dbresource` file is a row. `ssh_sftp_max_file` bytes (default 256 MiB) bound either, and also the bytes all the
+//! `dbresource` file is a row. `ssh-server` `sftp-max-file` bytes (default 256 MiB) bound either, and also the bytes all the
 //! open files of one channel hold together. A channel has at most [`MAX_HANDLES`] handles open.
 
 use std::collections::HashMap;
 use std::sync::Weak;
 
-use moqui_core::context::{ExecutionContextFactory, ResourceStat};
+use moqui_core::context::{Error as CoreError, ExecutionContextFactory, ResourceStat};
+use moqui_core::dav::files::tree;
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use russh_sftp::server::StatusReply;
 
-use super::on_pool_without_authz;
+use super::{on_pool, on_pool_without_authz};
 
 /// Open file and directory handles on one channel.
 const MAX_HANDLES: usize = 64;
@@ -39,10 +43,106 @@ enum Open {
     Dir { entries: Option<Vec<File>> },
 }
 
+/// What one channel serves.
+#[derive(Clone, Debug)]
+pub(super) enum Backend {
+    /// A resource location, for a user with `SSH_SFTP`.
+    Root(String),
+    /// The drives of this user.
+    Drives { username: String },
+}
+
+/// The storage calls of a channel, on a request worker.
+struct Store<'a> {
+    factory: &'a ExecutionContextFactory,
+    drives: bool,
+}
+
+impl Store<'_> {
+    fn stat(&self, target: &str) -> Result<Option<ResourceStat>, CoreError> {
+        if self.drives {
+            tree::stat(target)
+        } else {
+            self.factory.resource().stat(target)
+        }
+    }
+
+    fn list(&self, target: &str) -> Result<Vec<(String, ResourceStat)>, CoreError> {
+        if self.drives {
+            return tree::list(target);
+        }
+        let resources = self.factory.resource();
+        let mut files = Vec::new();
+        for entry in resources.list(target)? {
+            let stat = resources.stat(&entry.location)?.unwrap_or(ResourceStat {
+                is_file: entry.is_file,
+                size: 0,
+                last_modified: None,
+            });
+            files.push((entry.name, stat));
+        }
+        Ok(files)
+    }
+
+    fn read(&self, target: &str) -> Result<Vec<u8>, CoreError> {
+        if self.drives {
+            tree::read(target)
+        } else {
+            self.factory.resource().get(target)?.read_bytes()
+        }
+    }
+
+    fn write(&self, target: &str, bytes: Vec<u8>) -> Result<(), CoreError> {
+        if self.drives {
+            tree::write(target, bytes)
+        } else {
+            self.factory.resource().write_bytes(target, &bytes)
+        }
+    }
+
+    /// Remove what is at `target` when it is a file (`want_file`) or a folder; false when nothing is there.
+    fn remove(&self, target: &str, want_file: bool) -> Result<bool, CoreError> {
+        match self.stat(target)? {
+            Some(stat) if stat.is_file == want_file => {
+                if self.drives {
+                    tree::remove(target)
+                } else {
+                    self.factory.resource().delete(target)
+                }
+            }
+            Some(_) if want_file => Err(CoreError::new(format!("is a directory: {target}"))),
+            Some(_) => Err(CoreError::new(format!("not a directory: {target}"))),
+            None => Ok(false),
+        }
+    }
+
+    fn make_directory(&self, target: &str) -> Result<(), CoreError> {
+        if self.stat(target)?.is_some() {
+            return Err(CoreError::new(format!("exists: {target}")));
+        }
+        if self.drives {
+            tree::make_directory(target)
+        } else {
+            self.factory.resource().make_directory(target)
+        }
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), CoreError> {
+        if self.stat(to)?.is_some() {
+            return Err(CoreError::new(format!("exists: {to}")));
+        }
+        if self.drives {
+            tree::rename(from, to)
+        } else {
+            self.factory.resource().rename(from, to)
+        }
+    }
+}
+
 /// The handler for one `sftp` channel.
 pub(super) struct SftpFs {
     factory: Weak<ExecutionContextFactory>,
-    root: String,
+    backend: Backend,
     max_file: usize,
     handles: HashMap<String, Open>,
     /// The file bytes the open handles hold, at most `max_file`.
@@ -51,10 +151,14 @@ pub(super) struct SftpFs {
 }
 
 impl SftpFs {
-    pub(super) fn new(factory: Weak<ExecutionContextFactory>, root: String, max_file: usize) -> Self {
+    pub(super) fn new(factory: Weak<ExecutionContextFactory>, backend: Backend, max_file: usize) -> Self {
+        let backend = match backend {
+            Backend::Root(root) => Backend::Root(root.trim_end_matches('/').to_string()),
+            drives => drives,
+        };
         Self {
             factory,
-            root: root.trim_end_matches('/').to_string(),
+            backend,
             max_file,
             handles: HashMap::new(),
             held: 0,
@@ -72,25 +176,49 @@ impl SftpFs {
         Ok(())
     }
 
-    /// The bytes open files may still take before this channel holds `ssh_sftp_max_file`.
+    /// The bytes open files may still take before this channel holds `ssh-server` `sftp-max-file`.
     fn room(&self) -> usize {
         self.max_file.saturating_sub(self.held)
     }
 
     fn too_much_held() -> StatusReply {
-        StatusCode::Failure.with_message("the open files on this channel would hold more than ssh_sftp_max_file bytes")
+        StatusCode::Failure
+            .with_message("the open files on this channel would hold more than ssh-server sftp-max-file bytes")
     }
 
-    /// The location for a client path, or `PermissionDenied` when it climbs above the root.
+    /// The storage target for a client path (a location under the root, or the path in the drives' tree) and the path
+    /// as shown, or `PermissionDenied` when it climbs above the root.
     fn location(&self, path: &str) -> Result<(String, String), StatusReply> {
         let shown =
             normalize(path).ok_or_else(|| StatusCode::PermissionDenied.with_message("outside the SFTP root"))?;
-        let location = if shown == "/" {
-            self.root.clone()
-        } else {
-            format!("{}{shown}", self.root)
+        let location = match &self.backend {
+            Backend::Root(root) if shown == "/" => root.clone(),
+            Backend::Root(root) => format!("{root}{shown}"),
+            Backend::Drives { .. } => shown.clone(),
         };
         Ok((location, shown))
+    }
+
+    /// Run `job` on a request worker: on the root with authorization off, on the drives as the channel's user.
+    async fn run<T, F>(&self, job: F) -> Result<T, CoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Store<'_>) -> Result<T, CoreError> + Send + 'static,
+    {
+        match self.backend.clone() {
+            Backend::Root(_) => {
+                on_pool_without_authz(&self.factory, move |factory| job(&Store { factory, drives: false })).await
+            }
+            Backend::Drives { username } => {
+                on_pool(&self.factory, move |factory| {
+                    moqui_core::user::internal_login_user(&username)?;
+                    let result = job(&Store { factory, drives: true });
+                    let _ = moqui_core::user::logout();
+                    result
+                })
+                .await
+            }
+        }
     }
 
     fn handle_id(&mut self) -> String {
@@ -99,9 +227,7 @@ impl SftpFs {
     }
 
     async fn stat_of(&self, location: String) -> Result<Option<ResourceStat>, StatusReply> {
-        on_pool_without_authz(&self.factory, move |factory| factory.resource().stat(&location))
-            .await
-            .map_err(failure)
+        self.run(move |store| store.stat(&location)).await.map_err(failure)
     }
 }
 
@@ -215,21 +341,7 @@ impl russh_sftp::server::Handler for SftpFs {
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         self.handle_room()?;
         let (location, _) = self.location(&path)?;
-        let listed = on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            let mut files = Vec::new();
-            for entry in resources.list(&location)? {
-                let stat = resources.stat(&entry.location)?.unwrap_or(ResourceStat {
-                    is_file: entry.is_file,
-                    size: 0,
-                    last_modified: None,
-                });
-                files.push((entry.name, stat));
-            }
-            Ok(files)
-        })
-        .await
-        .map_err(failure)?;
+        let listed = self.run(move |store| store.list(&location)).await.map_err(failure)?;
         let entries = listed
             .into_iter()
             .map(|(name, stat)| File::new(name, attributes(&stat)))
@@ -265,24 +377,22 @@ impl russh_sftp::server::Handler for SftpFs {
         // A truncated file is not read, so it takes no room.
         let room = if writing && truncate { usize::MAX } else { self.room() };
         let read_location = location.clone();
-        let existing = on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            match resources.stat(&read_location)? {
+        let existing = self
+            .run(move |store| match store.stat(&read_location)? {
                 Some(stat) if !stat.is_file => {
                     Err(moqui_core::context::Error::new(format!("not a file: {read_location}")))
                 }
                 Some(stat) if usize::try_from(stat.size).unwrap_or(usize::MAX) > max => Err(
-                    moqui_core::context::Error::new(format!("{read_location} is larger than ssh_sftp_max_file")),
+                    moqui_core::context::Error::new(format!("{read_location} is larger than ssh-server sftp-max-file")),
                 ),
                 Some(stat) if usize::try_from(stat.size).unwrap_or(usize::MAX) > room => Ok(Err(())),
                 Some(_) if writing && truncate => Ok(Ok(Some(Vec::new()))),
-                Some(_) => resources.get(&read_location)?.read_bytes().map(|bytes| Ok(Some(bytes))),
+                Some(_) => store.read(&read_location).map(|bytes| Ok(Some(bytes))),
                 None => Ok(Ok(None)),
-            }
-        })
-        .await
-        .map_err(failure)?
-        .map_err(|()| Self::too_much_held())?;
+            })
+            .await
+            .map_err(failure)?
+            .map_err(|()| Self::too_much_held())?;
         // The file may have grown between the stat and the read.
         let size = existing.as_ref().map_or(0, Vec::len);
         if size > self.room() {
@@ -339,7 +449,7 @@ impl russh_sftp::server::Handler for SftpFs {
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
         let end = start.saturating_add(data.len());
         if end > max {
-            return Err(StatusCode::Failure.with_message("the file is larger than ssh_sftp_max_file"));
+            return Err(StatusCode::Failure.with_message("the file is larger than ssh-server sftp-max-file"));
         }
         let grown = end.saturating_sub(bytes.len());
         if grown > room {
@@ -360,11 +470,9 @@ impl russh_sftp::server::Handler for SftpFs {
         }
         match open {
             Some(Open::Write { location, bytes }) => {
-                on_pool_without_authz(&self.factory, move |factory| {
-                    factory.resource().write_bytes(&location, &bytes)
-                })
-                .await
-                .map_err(failure)?;
+                self.run(move |store| store.write(&location, bytes))
+                    .await
+                    .map_err(failure)?;
                 Ok(ok(id))
             }
             Some(_) => Ok(ok(id)),
@@ -374,16 +482,10 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
         let (location, _) = self.location(&filename)?;
-        let removed = on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            match resources.stat(&location)? {
-                Some(stat) if stat.is_file => resources.delete(&location),
-                Some(_) => Err(moqui_core::context::Error::new(format!("is a directory: {location}"))),
-                None => Ok(false),
-            }
-        })
-        .await
-        .map_err(failure)?;
+        let removed = self
+            .run(move |store| store.remove(&location, true))
+            .await
+            .map_err(failure)?;
         if removed {
             Ok(ok(id))
         } else {
@@ -393,15 +495,9 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn mkdir(&mut self, id: u32, path: String, _attrs: FileAttributes) -> Result<Status, Self::Error> {
         let (location, _) = self.location(&path)?;
-        on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            if resources.stat(&location)?.is_some() {
-                return Err(moqui_core::context::Error::new(format!("exists: {location}")));
-            }
-            resources.make_directory(&location)
-        })
-        .await
-        .map_err(failure)?;
+        self.run(move |store| store.make_directory(&location))
+            .await
+            .map_err(failure)?;
         Ok(ok(id))
     }
 
@@ -410,16 +506,10 @@ impl russh_sftp::server::Handler for SftpFs {
         if shown == "/" {
             return Err(StatusCode::PermissionDenied.with_message("the SFTP root stays"));
         }
-        let removed = on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            match resources.stat(&location)? {
-                Some(stat) if !stat.is_file => resources.delete(&location),
-                Some(_) => Err(moqui_core::context::Error::new(format!("not a directory: {location}"))),
-                None => Ok(false),
-            }
-        })
-        .await
-        .map_err(failure)?;
+        let removed = self
+            .run(move |store| store.remove(&location, false))
+            .await
+            .map_err(failure)?;
         if removed {
             Ok(ok(id))
         } else {
@@ -433,15 +523,7 @@ impl russh_sftp::server::Handler for SftpFs {
         if shown == "/" {
             return Err(StatusCode::PermissionDenied.with_message("the SFTP root stays"));
         }
-        on_pool_without_authz(&self.factory, move |factory| {
-            let resources = factory.resource();
-            if resources.stat(&to)?.is_some() {
-                return Err(moqui_core::context::Error::new(format!("exists: {to}")));
-            }
-            resources.rename(&from, &to)
-        })
-        .await
-        .map_err(failure)?;
+        self.run(move |store| store.rename(&from, &to)).await.map_err(failure)?;
         Ok(ok(id))
     }
 }
@@ -453,7 +535,7 @@ mod tests {
     use russh_sftp::protocol::{FileAttributes, OpenFlags};
     use russh_sftp::server::Handler as _;
 
-    use super::{normalize, Open, SftpFs, MAX_HANDLES};
+    use super::{normalize, Backend, Open, SftpFs, MAX_HANDLES};
 
     fn message(reply: &russh_sftp::server::StatusReply) -> &str {
         reply.error_message.as_deref().unwrap_or("")
@@ -461,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_files_and_handles_are_capped_per_channel() {
-        let mut fs = SftpFs::new(Weak::new(), "runtime://sftp".to_string(), 100);
+        let mut fs = SftpFs::new(Weak::new(), Backend::Root("runtime://sftp".to_string()), 100);
         let (location, bytes) = ("runtime://sftp/a".to_string(), vec![0; 60]);
         fs.handles.insert("h1".to_string(), Open::Write { location, bytes });
         let (location, bytes) = ("runtime://sftp/b".to_string(), Vec::new());

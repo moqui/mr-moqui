@@ -25,6 +25,7 @@ With no command, start the HTTP server.
 
 Server
   (no command)     [options]                                Start the HTTP server (HTTP webapp_http_port, default 8080; HTTPS webapp_https_listen_port, default 8443)
+  tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
 
 Data
   load             [name=value ...]                         Load data files into the configured database
@@ -74,6 +75,33 @@ Environment
 Other conf properties are environment variables with underscore names.
 ";
 
+const TUI: &str = "\
+moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapshot PATH [--size WxH]] [--agent]
+          [--server URL [--forget]]
+    The apps in this terminal (the tui render mode), on this runtime and in this process. No port is
+    opened unless --serve, and nothing is written to stderr: the log files and the log pane (Alt+L) get
+    the log. It asks for a login, as the browser does. F1 lists the keys; docs/TUI.md has the rest.
+
+  --path PATH        The first screen (default /apps).
+  --user NAME        Log in as NAME without a password. Only on an instance whose instance_purpose is dev.
+  --serve            Also start the HTTP, SSH and cluster listeners, so the browser can work beside the TUI.
+  --ascii            Plain ASCII for borders and symbols (also when TERM is linux or vt100).
+  --no-color         Monochrome: reverse video and underline only (also when NO_COLOR is set).
+  --snapshot PATH    Print the screen at PATH as text and exit, at --size (default 180x50).
+  --agent            For a program: read command lines on stdin and answer each with the screen as text (look,
+                     key, type, go, focus, set, do, find, elements, help, close), at --size (default 120x40).
+                     Over SSH the same is `agent-apps`; docs/TUI.md, For agents.
+  --server URL       Reach a running server over HTTP instead of this runtime (https, or http to localhost). The
+                     login is asked for once and a login key is kept in ~/.config/moqui/tui/<host>.toml.
+  --forget           With --server: remove that stored key.
+
+  moqui tui
+  moqui tui --user john.doe --path /apps/gallery/List
+  moqui tui --snapshot /apps/gallery/Detail --size 100x40
+  moqui tui --agent --user john.doe
+  moqui tui --server https://erp.example.com
+";
+
 const LOAD: &str = "\
 moqui load [name=value ...]
     Load data files into the configured database.
@@ -94,8 +122,8 @@ Flags:
   location=FILE                   Load only this data file.
   timeout=SECONDS                 Transaction timeout for each record. Omitted uses the
                                   transaction default, 60 seconds.
-  raw=true|false                  Empty-database load: try-insert, and turn off entity ECA,
-                                  audit log, foreign-key create, and the data feed.
+  raw=true|false                  Empty-database load: turn off entity ECA, audit log,
+                                  foreign-key create, and the data feed.
   disableEntityEca=true|false     Turn off entity ECA rules.
   disableAuditLog=true|false      Turn off the entity audit log.
   disableFkCreate=true|false      Do not create foreign keys.
@@ -222,6 +250,30 @@ Options:
                                   the total.
   --log-level level               Console level: trace, debug, info, warn, or error.
                                   The default is warn. The run prints the moqui.log path.
+
+Agent evaluation (docs/Testing.md, Agent evaluation):
+  moqui test tools --agents --llm-profile local-qwen --runs 3 --seed 7
+  moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay
+
+  --agents                        Run the tasks of test/agent/*.agent.js instead of the specs.
+                                  --spec picks agent spec files, --feature tasks by name.
+  --llm-profile model             The model (an llm-facade or LlmModel id) the agent runs on. The
+                                  run is skipped, not failed, when its endpoint does not answer.
+  --replay dir                    Play the recorded model replies of <dir>/<spec>/<task>-<n>.jsonl
+                                  and run the tools live, with no model.
+  --runs N                        Runs of each task (pass@1 and pass^N). The default is 1.
+  --seed S                        The seed of the first run; run n sends S + n - 1.
+  --min-pass F                    The pass@1 a live run needs, 0.75 by default; a replay needs
+                                  every task to pass.
+  --write-baseline                Write test/agent/baseline-<profile>.json from this run.
+
+Skill retrieval (plans/LLM-A2A-Assist.md 7.5):
+  moqui test tools --skills
+
+  --skills                        Run each component's test/skill-retrieval.json over the skill
+                                  files of the framework and every component, with no model and
+                                  no database: recall@3 (0.9 needed) and strong false matches
+                                  (none allowed).
 ";
 
 const HELP: &str = "\
@@ -256,6 +308,7 @@ pub fn overview() -> &'static str {
 pub fn command_help(name: &str) -> Option<&'static str> {
     match name {
         "load" => Some(LOAD),
+        "tui" => Some(TUI),
         "save-db" => Some(SAVE_DB),
         "load-save" => Some(LOAD_SAVE),
         "lint" => Some(LINT),
@@ -320,6 +373,7 @@ fn is_known_command(name: &str) -> bool {
             | "convert"
             | "types"
             | "test"
+            | "tui"
     )
 }
 
@@ -497,6 +551,9 @@ pub fn command_usage(command: &str) -> Error {
         "convert" => "moqui convert --groovy [--write] <dir> ...",
         "types" => "moqui types [--out dir]",
         "test" => "moqui test [component ...] [options]",
+        "tui" => {
+            "moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapshot PATH [--size WxH]] [--agent] [--server URL [--forget]]"
+        }
         "help" => "moqui help [command]",
         "version" => "moqui version",
         _ => "moqui [command] [args...]",

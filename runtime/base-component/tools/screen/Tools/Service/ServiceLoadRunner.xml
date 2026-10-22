@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Service Load Runner" default-menu-index="3" render-modes="vue,qvue" server-static="vue,qvue">
+        default-menu-title="Service Load Runner" default-menu-index="3" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <transition name="getServerStatusMap" authz-action="update">
         <actions><script>ec.web.sendJsonResponse(ec.factory.getStatusMap(true))</script></actions>
@@ -480,7 +480,118 @@ along with this software (see the LICENSE.md file). If not, see
                     }
                 }
             </script>
-        ]]></text><text type="html,vuet"><![CDATA[
+        ]]></text>
+        <!-- the terminal twin: the same form and buttons posting to the same transitions, and the runner's numbers as they are
+            when the screen renders (reload for fresh ones); the charts are tables of the time bins -->
+        <text type="tui"><![CDATA[${JSON.stringify((() => { try {
+            if (typeof ec.service.getLoadRunner !== 'function')
+                return [{t: 'text', id: 'LoadRunnerMissing', style: 'strong', text: 'The service load runner (ec.service.getLoadRunner) is not in this server.'}]
+            const loadRunner = ec.service.getLoadRunner()
+            const fmt = (value) => value == null ? '' : String(ec.l10n.format(value, '#,##0.##'))
+            const safeDivide = (over, under) => under ? fmt(over / under) : '0'
+            const serviceInfos = loadRunner.serviceInfos || []
+            const first = serviceInfos.length ? serviceInfos[0] : null
+            const parameters = (ec.web && ec.web.parameters) || {}
+            const value = (name, fallback) => String(parameters[name] || (first && first[name] != null ? first[name] : '') || fallback)
+            const executor = loadRunner.scheduledExecutor
+            const executorExists = !!executor
+            const running = !!executor && !executor.shutdown && !executor.terminated && !executor.terminating
+            const thisUrl = sri.buildUrl('ServiceLoadRunner').url
+            const populate = {serviceName: 'mantle.GeneralServices.lookup#ById', parametersExpr: "[lookupId:'100000']", targetThreads: '100',
+                runDelayMs: '100', runDelayVaryMs: '10', rampDelayMs: '255', timeBinLength: '1000', timeBinsKeep: '60'}
+            const populateUrl = thisUrl + '?' + Object.keys(populate).map((key) => key + '=' + encodeURIComponent(populate[key])).join('&')
+            const field = (name, title, fallback) => ({t: 'field', id: 'LoadRunner_' + name, name: name, title: title,
+                w: {kind: 'textLine', value: value(name, fallback)}})
+            const nodes = [
+                {t: 'link', id: 'LoadRunnerPopulate', text: 'Populate Test 1: Lookup By ID', url: populateUrl, kind: 'anchor', btnType: 'info'},
+                {t: 'text', id: 'LoadRunnerUnits', style: 'strong', text: 'All delay, run, etc times are in milliseconds (ms), rates in runs per second'},
+                {t: 'form', id: 'LoadRunnerServiceInfo', name: 'LoadRunnerServiceInfo', transitionUrl: sri.buildUrl('setServiceInfo').url, method: 'post',
+                    hidden: [{name: 'runDelayVaryMs', value: value('runDelayVaryMs', '5')}],
+                    c: [field('serviceName', 'Service Name', ''), field('parametersExpr', 'Parameters Expression', ''),
+                        field('targetThreads', 'Threads', '10'), field('runDelayMs', 'Run Delay', '100'), field('rampDelayMs', 'Ramp Delay', '505'),
+                        field('timeBinLength', 'Bin Length', '2000'), field('timeBinsKeep', 'Bins Keep', '20'),
+                        {t: 'field', id: 'LoadRunner_submitBtn', name: 'submitBtn', title: 'Set Service Info', w: {kind: 'submit', text: 'Set Service Info'}}]},
+                {t: 'link', id: 'LoadRunnerBegin', text: 'Begin', url: sri.buildUrl('begin').url, kind: 'hidden-form-link', method: 'post',
+                    btnType: 'success', disabled: executorExists},
+                {t: 'link', id: 'LoadRunnerStopWait', text: 'Stop Wait', url: sri.buildUrl('stopWait').url, kind: 'hidden-form-link', method: 'post',
+                    btnType: 'danger', disabled: !running},
+                {t: 'link', id: 'LoadRunnerRefresh', text: 'Refresh', url: thisUrl, kind: 'anchor'}]
+
+            const statusParts = ['Exec Index ' + loadRunner.execIndex.get(), 'Total Threads ' + fmt(executor ? executor.getQueue().size() : null),
+                'Active Threads ' + fmt(executor ? executor.getActiveCount() : null), 'Running ' + running]
+            const serverStatus = ec.factory.getStatusMap(true) || {}
+            if (serverStatus.System) statusParts.push('CPU Load ' + serverStatus.System.Load + ' (avg last minute)',
+                serverStatus.System.CPU + ' ' + serverStatus.System.Processors + ' threads')
+            if (serverStatus.Heap) statusParts.push('Heap RAM ' + serverStatus.Heap.Used + '/' + serverStatus.Heap.Committed + '/' + serverStatus.Heap.Max)
+            if (serverStatus.JavaStats) statusParts.push('Java GC ' + serverStatus.JavaStats.GcCount + ' GCs ' + serverStatus.JavaStats.GcTimeSeconds + 's')
+            nodes.push({t: 'text', id: 'LoadRunnerStatus', text: statusParts.join(' · ')})
+
+            const rows = serviceInfos.map((info, index) => {
+                const runsPerSecAvg = info.totalTime ? info.runCount / (info.totalTime / 1000) : 0
+                const sinceBegin = info.lastRunTime - info.beginTime
+                const runsPerSecTime = sinceBegin ? info.runCount / (sinceBegin / 1000) : 0
+                const stdDev = info.totalSquaredTime && info.runCount > 1 ? Math.sqrt(Math.abs(info.totalSquaredTime -
+                    ((info.totalTime * info.totalTime) / info.runCount)) / (info.runCount - 1)) : null
+                return {id: String(index), cells: [[String(info.serviceName), String(info.parametersExpr || '')],
+                    String(ec.l10n.format(info.beginTime, 'HH:mm:ss')) + ' - ' + fmt((Date.now() - info.beginTime) / 1000) + 's',
+                    fmt(info.targetThreads), fmt(info.currentThreads.get()), fmt(info.runDelayMs), fmt(info.rampDelayMs), fmt(info.timeBinLength),
+                    fmt(info.timeBinsKeep), fmt(info.runCount), fmt(info.errorCount), safeDivide(info.totalTime, info.runCount), fmt(stdDev),
+                    fmt(info.minTime), fmt(info.maxTime), fmt(runsPerSecAvg), fmt(runsPerSecTime), runsPerSecAvg ? fmt(100 * runsPerSecTime / runsPerSecAvg) : '0',
+                    info.lastRunTime ? new Date(info.lastRunTime).toISOString() : '']}
+            })
+            const right = (title) => ({title: title, align: 'right'})
+            nodes.push({t: 'formList', id: 'LoadRunnerServices', name: 'LoadRunnerServices',
+                columns: [{title: 'Service & Parameters'}, {title: 'Began'}, right('Target'), right('Current'), right('Run Delay'), right('Ramp Delay'),
+                    right('Bin Length'), right('Bins Keep'), right('Run Count'), right('Error Count'), right('Time Average'), right('Std Dev'),
+                    right('Min'), right('Max'), right('Runs/Sec Avg'), right('Runs/Sec Time'), right('Busy Pct'), {title: 'Last Run'}],
+                rows: rows, paging: {index: 0, size: rows.length, count: rows.length}})
+
+            const kinds = [['entityFindOne', 'Entity One'], ['entityFindList', 'Entity List'], ['entityFindIterator', 'Entity Iterator'],
+                ['entityFindCount', 'Entity Count'], ['entityCreate', 'Entity Create'], ['entityUpdate', 'Entity Update'],
+                ['entityDelete', 'Entity Delete'], ['serviceView', 'Service View'], ['serviceOther', 'Service Other']]
+            const statRows = []
+            serviceInfos.forEach((info, index) => {
+                const stats = info.artifactTypeStats ? (typeof ObjectUtilities !== 'undefined' ? ObjectUtilities.objectToMap(info.artifactTypeStats)
+                    : info.artifactTypeStats) : null
+                if (!stats) return
+                statRows.push({id: String(index), cells: [[String(info.serviceName), String(info.parametersExpr || '')], ['Runs', 'Average Time µs', 'Runs/Second']]
+                    .concat(kinds.map(([kind]) => [fmt(stats[kind + 'Count']), safeDivide(stats[kind + 'Time'] / 1000, stats[kind + 'Count']),
+                        safeDivide(stats[kind + 'Count'], stats[kind + 'Time'] / 1000000000)]))})
+            })
+            nodes.push({t: 'formList', id: 'LoadRunnerStats', name: 'LoadRunnerStats',
+                columns: [{title: 'Service & Parameters'}, {title: ''}].concat(kinds.map(([, title]) => right(title))),
+                rows: statRows, paging: {index: 0, size: statRows.length, count: statRows.length}})
+
+            const bins = (info) => {
+                const list = (info.timeBinList || []).map((bin) => {
+                    const stats = bin.artifactTypeStats
+                    const findCount = stats.entityFindOneCount + stats.entityFindListCount + stats.entityFindIteratorCount + stats.entityFindCountCount
+                    const findTime = stats.entityFindOneTime + stats.entityFindListTime + stats.entityFindIteratorTime + stats.entityFindCountTime
+                    const cudCount = stats.entityCreateCount + stats.entityUpdateCount + stats.entityDeleteCount
+                    const cudTime = stats.entityCreateTime + stats.entityUpdateTime + stats.entityDeleteTime
+                    return {beginTime: bin.beginTime, timeAverage: bin.runCount ? bin.totalTime / bin.runCount : 0,
+                        runsPerSecAvg: bin.totalTime ? bin.runCount / (bin.totalTime / 1000) : 0,
+                        entityFindsPerSec: findTime ? findCount / (findTime / 1000000000) : 0,
+                        entityWritePerSec: cudTime ? cudCount / (cudTime / 1000000000) : 0}
+                })
+                if (list.length) list.pop()
+                return list
+            }
+            const binLists = serviceInfos.map(bins)
+            if (binLists.length && binLists[0].length) {
+                const labels = binLists[0].map((bin) => bin.beginTime ? String(ec.l10n.format(bin.beginTime, 'HH:mm:ss')) : '')
+                const chart = (id, title, name) => ({t: 'component', id: id, name: 'chart', props: {title: title, labels: labels,
+                    series: serviceInfos.map((info, index) => ({name: String(info.serviceName), data: binLists[index].map((bin) => Math.round(bin[name] * 100) / 100)}))}})
+                nodes.push(chart('LoadRunnerTimeChart', 'Average Run Time', 'timeAverage'), chart('LoadRunnerRunsChart', 'Runs per Second', 'runsPerSecAvg'),
+                    chart('LoadRunnerFindsChart', 'Entity Finds per Second', 'entityFindsPerSec'),
+                    chart('LoadRunnerWritesChart', 'Entity Writes per Second', 'entityWritePerSec'))
+            }
+            serviceInfos.forEach((info, index) => nodes.push({t: 'text', id: 'LoadRunnerLastResult' + index, style: 'pre',
+                text: JSON.stringify(info.lastResult, null, 2) || ''}))
+            return nodes
+        } catch (err) {
+            return [{t: 'text', id: 'LoadRunnerError', style: 'strong', text: 'The load runner cannot be read: ' + err}]
+        } })())}]]></text><text type="html,vuet"><![CDATA[
             <p><strong>Only supported in the 'qvt' render mode, go to the same URL under /qapps (instead of /apps or /vapps)</strong></p>
         ]]></text></render-mode>
     </widgets>

@@ -12,16 +12,20 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Gallery: the list views of style-guide §8.2 (form-list views, view-board, view-calendar) over the example records
+<!-- Gallery: the list views of style-guide §8.2 (form-list views, view-board, view-calendar, view-tree) over the example records
     (moqui.example.Example, data/ExampleDemoData.xml), with real transitions: a card moved to another column updates the status
-    through the entity's update service, which refuses a move the status flow does not allow; an event moved or resized
-    updates its start and end; a click on empty time creates an example. The archetypes are §3.6 Board and §3.7 Calendar; the
-    .qvue Board and Calendar screens stay as the custom path of §4.8. -->
+    (or the type, grouped by type) through the entity's update service, which refuses a move the status flow does not allow; an
+    event moved or resized updates its start and end; a click on empty time creates an example; a row opens in the peek pane
+    (ExampleDetail with peek=true). The archetypes are §3.6 Board, §3.7 Calendar and §3.8 Split; the .qvue Board and Calendar
+    screens stay as the custom path of §4.8. Below, the §3.15 tree list over an inline work breakdown (example.ExampleServices
+    get#GalleryWorkItems), whose moves and edits only answer with a message. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Views" default-menu-index="17">
 
+    <!-- a card moved on the board: the field it is grouped by (groupField, from group-fields), the status by default -->
     <transition name="updateExampleStatus">
-        <service-call name="update#moqui.example.Example" in-map="{exampleId: exampleId, statusId: statusId}"/>
+        <service-call name="update#moqui.example.Example"
+                in-map="groupField == 'exampleTypeEnumId' ? {exampleId: exampleId, exampleTypeEnumId: exampleTypeEnumId} : {exampleId: exampleId, statusId: statusId}"/>
         <default-response url="."/>
     </transition>
     <transition name="updateExampleTimes">
@@ -44,14 +48,35 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="update#moqui.example.Example"/>
         <default-response url="."><parameter name="exampleId"/></default-response>
     </transition>
+    <!-- the work breakdown's tree: the parents of the matched rows that the find leaves out (ids), and a move (a drag, Tab,
+        Shift+Tab), which posts the row, its new parent and its new previous sibling; nothing is written in the gallery -->
+    <transition name="workItemAncestors" read-only="true">
+        <actions>
+            <service-call name="example.ExampleServices.get#GalleryWorkItems" in-map="{ids: ids}" out-map="found"/>
+            <script>ec.web.sendJsonResponse({ workItemList: found.workItemList })</script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="moveWorkItem" method="post">
+        <actions><message>Would move ${itemId} under ${parentItemId || 'the top'}, after ${previousSiblingId || 'none'} (nothing is written in the gallery)</message></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="editEstimate" method="post">
+        <actions><message>Would set the estimate to ${estimate} (nothing is written in the gallery)</message></actions>
+        <default-response url="."/>
+    </transition>
 
     <actions>
         <entity-find-one entity-name="moqui.example.Example" value-field="example"/>
+        <!-- one level of the work breakdown, the top unless the tree asks for the children of parentItemId, or the rows matching
+            the tree's find; the tree's levels come through the screen's form request (/actions/WorkTree) with parentItemId -->
+        <service-call name="example.ExampleServices.get#GalleryWorkItems" in-map="{parentItemId: parentItemId, itemName: itemName}" out-map="context"/>
     </actions>
     <widgets>
         <container-box type="info"><box-header title="Section 8.2 List views: board and calendar"/><box-body>
             <label type="p" text="One form-list of example records with views=&quot;board,list,calendar&quot;: the switch at the right above the list keeps the choice per form (the LIST_VIEW_ preference; a view parameter in the URL picks one). The board has a column per Example status in its flow order with the count and the sum of sizes; a card shows the name (its link opens the example above the list), the type and start, and the size as a badge. Drag a card to another column: the status moves through update#moqui.example.Example, and a move the flow refuses (In Design to Complete) goes back with its message."/>
             <label type="p" text="The calendar shows each example from its start to its end, colored by status, in month, week, day and list modes; in day mode each type is a column. Drag an event to move it, its lower edge to resize it (the start and end are posted), and click or drag on empty time to create an example there. The Find Options, saved finds and page size of the list apply to every view."/>
+            <label type="p" text="The board groups by status or by type (Group by, view-board group-fields: a move posts the field and its new value) and shows every example the find matches, not the page (all-rows). From 1280 px wide, Peek (peek-url) puts the list beside a pane: a click on a row or card opens the example there, Up and Down move through the rows, Escape closes it."/>
         </box-body></container-box>
 
         <section name="EditExampleSection" condition="example"><widgets>
@@ -78,12 +103,13 @@ along with this software (see the LICENSE.md file). If not, see
             </box-body></container-box>
         </widgets></section>
 
-        <form-list name="ExampleList" list="exampleList" views="board,list,calendar" header-dialog="true" saved-finds="true" show-page-size="true">
+        <form-list name="ExampleList" list="exampleList" views="board,list,calendar" header-dialog="true" saved-finds="true" show-page-size="true"
+                peek-url="../ExampleDetail">
             <entity-find entity-name="moqui.example.Example" list="exampleList">
                 <search-form-inputs default-order-by="exampleDate,exampleId"/>
             </entity-find>
-            <view-board group-field="statusId" card-title-field="exampleName" card-fields="exampleTypeEnumId,exampleDate" badge-field="exampleSize"
-                    sum-field="exampleSize" sum-format="#,##0" transition="updateExampleStatus"/>
+            <view-board group-field="statusId" group-fields="exampleTypeEnumId" card-title-field="exampleName" card-fields="exampleTypeEnumId,exampleDate"
+                    badge-field="exampleSize" sum-field="exampleSize" sum-format="#,##0" transition="updateExampleStatus" all-rows="true"/>
             <view-calendar start-field="exampleDate" end-field="exampleEndDate" title-field="exampleName" color-field="statusId" all-day-field="allDay"
                     resource-field="exampleTypeEnumId" transition="updateExampleTimes" create-transition="createExample" card-fields="exampleTypeEnumId,exampleSize"
                     range-find="true"/>
@@ -106,6 +132,26 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="exampleDate"><header-field title="Starts" show-order-by="true"><date-period/></header-field>
                 <default-field title="Starts"><display format="EEE MMM d, HH:mm"/></default-field></field>
             <field name="exampleEndDate"><default-field title="Ends"><display format="EEE MMM d, HH:mm"/></default-field></field>
+            <field name="findButton"><header-field title="Find"><submit/></header-field></field>
+        </form-list>
+
+        <container-box type="info" style="q-mt-lg"><box-header title="Section 3.15 Tree list"/><box-body>
+            <label type="p" text="A work breakdown as a tree (view-tree): the top-level items, each opened to its children as the tree asks the screen's form request for them; the totals of each branch (Total est., Total act., Done) come with the rows, and the totals row adds the top-level items. Expand opens to a level or all of it; past six levels a row shows its level. A find on the item shows every match under its ancestors, which are muted. Drag a row onto another's upper or lower edge to move it there, or onto its middle to put it under it; Tab and Shift+Tab indent and outdent the focused row. The estimate is edited in place."/>
+        </box-body></container-box>
+        <form-list name="WorkTree" list="workItemList" views="tree,list" skip-form="true" paginate="false">
+            <view-tree parent-field="parentItemId" rollup-fields="totalEstimate,totalActual,doneOfTotal" child-count-field="childCount"
+                    ancestor-transition="workItemAncestors" transition="moveWorkItem"/>
+            <field name="itemId"><default-field><hidden/></default-field></field>
+            <field name="itemName"><header-field title="Item"><text-find size="16" hide-options="true"/></header-field>
+                <default-field title="Item"><display/></default-field></field>
+            <field name="status"><default-field title="Status"><display/></default-field></field>
+            <field name="estimate" align="right"><default-field title="Est.">
+                <editable id="WorkEstimate" text="${estimate}" transition="editEstimate" parameter-name="estimate" widget-type="text-line">
+                    <parameter name="itemId"/></editable></default-field></field>
+            <field name="actual" align="right"><default-field title="Act."><display/></default-field></field>
+            <field name="totalEstimate" align="right"><default-field title="Total est."><display/></default-field></field>
+            <field name="totalActual" align="right"><default-field title="Total act."><display/></default-field></field>
+            <field name="doneOfTotal" align="right"><default-field title="Done"><display/></default-field></field>
             <field name="findButton"><header-field title="Find"><submit/></header-field></field>
         </form-list>
     </widgets>

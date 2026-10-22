@@ -126,12 +126,14 @@ pub fn qvt_static_reports(runtime: &Path, framework: &Path) -> Result<Vec<FileRe
 pub fn render_reports(reports: &[FileReport]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    let (mut clean, mut flagged, mut merged, mut failed) = (0, 0, 0, 0);
+    let (mut clean, mut half, mut flagged, mut merged, mut failed) = (0, 0, 0, 0, 0);
     for (location, report) in reports {
         match report {
             Ok(report) => {
                 if report.is_clean() {
                     clean += 1;
+                } else if report.eligible && report.violations.is_empty() {
+                    half += 1;
                 } else if report.eligible {
                     flagged += 1;
                 } else {
@@ -147,7 +149,7 @@ pub fn render_reports(reports: &[FileReport]) -> String {
     }
     let _ = writeln!(
         out,
-        "{} screens: {clean} clean, {flagged} with violations, {merged} stay a server merge, {failed} did not load",
+        "{} screens: {clean} clean, {half} static half only, {flagged} with violations, {merged} stay a server merge, {failed} did not load",
         reports.len()
     );
     out

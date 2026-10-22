@@ -16,15 +16,16 @@
 //!
 //! Each use stamps the entry with a new tick and queues `(sql, tick)`; an older queue item for the same SQL is stale
 //! and skipped when it reaches the front. A use is O(1), and the queue is compacted once it is twice the cap, so an
-//! eviction is amortized O(1) too.
+//! eviction is amortized O(1) too. The tick is a `Cell`, so a use hashes the SQL text once.
 
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 pub(crate) struct StatementLru<S> {
     cap: usize,
     tick: u64,
-    entries: HashMap<Arc<str>, (S, u64)>,
+    entries: HashMap<Arc<str>, (S, Cell<u64>)>,
     order: VecDeque<(Arc<str>, u64)>,
 }
 
@@ -52,12 +53,11 @@ impl<S> StatementLru<S> {
     /// The statement for `sql`, which becomes the most recently used.
     pub(crate) fn get(&mut self, sql: &str) -> Option<&S> {
         let tick = self.next_tick();
-        let key = Arc::clone(self.entries.get_key_value(sql)?.0);
-        let entry = self.entries.get_mut(sql)?;
-        entry.1 = tick;
-        self.order.push_back((key, tick));
         self.compact();
-        self.entries.get(sql).map(|(statement, _)| statement)
+        let (key, (statement, used)) = self.entries.get_key_value(sql)?;
+        used.set(tick);
+        self.order.push_back((Arc::clone(key), tick));
+        Some(statement)
     }
 
     /// Store `statement` for `sql` as the most recently used. Returns the statement it replaced, or the least recently
@@ -69,7 +69,7 @@ impl<S> StatementLru<S> {
             None => Arc::from(sql),
         };
         self.order.push_back((Arc::clone(&key), tick));
-        if let Some((old, _)) = self.entries.insert(key, (statement, tick)) {
+        if let Some((old, _)) = self.entries.insert(key, (statement, Cell::new(tick))) {
             self.compact();
             return Some(old);
         }
@@ -95,7 +95,7 @@ impl<S> StatementLru<S> {
 
     fn evict(&mut self) -> Option<S> {
         while let Some((key, tick)) = self.order.pop_front() {
-            if self.entries.get(&key).is_some_and(|(_, current)| *current == tick) {
+            if self.entries.get(&key).is_some_and(|(_, current)| current.get() == tick) {
                 return self.entries.remove(&key).map(|(statement, _)| statement);
             }
         }
@@ -106,7 +106,7 @@ impl<S> StatementLru<S> {
         if self.order.len() > self.cap.saturating_mul(2) {
             let entries = &self.entries;
             self.order
-                .retain(|(key, tick)| entries.get(key).is_some_and(|(_, current)| current == tick));
+                .retain(|(key, tick)| entries.get(key).is_some_and(|(_, current)| current.get() == *tick));
         }
     }
 }

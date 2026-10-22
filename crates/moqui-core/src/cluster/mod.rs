@@ -46,7 +46,7 @@ use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::driver::DbRow;
 use crate::entity::exec::with_reserve_tx;
 use crate::entity::EntityFacade;
-use crate::notify::{self, TopicMessage, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE};
+use crate::notify::{self, TopicMessage, COLLAB_UPDATE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE};
 use crate::user::{now_millis, now_value, value_millis};
 
 const MEMBER: &str = "moqui.server.ClusterMember";
@@ -228,18 +228,18 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
             .filter(|name| !name.is_empty())
             .ok_or_else(|| Error::new("entity-cache-invalidate body has no entityName"))?;
         // With the written row's key, only the cached finds it may have changed go.
-        let primary_key: Option<std::collections::BTreeMap<String, Value>> = message
+        let primary_key: Option<crate::entity::FieldMap> = message
             .body
             .get("primaryKey")
             .and_then(serde_json::Value::as_object)
             .filter(|keys| !keys.is_empty())
             .map(|keys| {
                 keys.iter()
-                    .map(|(name, value)| (name.clone(), moqui_lib::json::from_json(value)))
+                    .map(|(name, value)| (std::sync::Arc::from(name.as_str()), moqui_lib::json::from_json(value)))
                     .collect()
             });
         crate::entity::cache::clear_one_cache(facade, name, primary_key.as_ref()).map_err(Error::from)?;
-    } else if topic != NOTIFICATION_MESSAGE {
+    } else if topic != NOTIFICATION_MESSAGE && topic != COLLAB_UPDATE {
         return Err(Error::new(format!("unknown topic {topic}")));
     }
     notify::publish(topic, message)
@@ -264,7 +264,7 @@ pub(crate) fn is_linked(facade: &EntityFacade) -> bool {
 }
 
 fn linked_state(facade: &EntityFacade) -> Option<Arc<ClusterState>> {
-    facade.with_slot(ClusterLink::default, |link| link.0.upgrade())
+    facade.with_slot_read(ClusterLink::default, |link| link.0.upgrade())
 }
 
 /// Publish a cache invalidation after the local clear. An open transaction waits for commit.
@@ -272,8 +272,12 @@ pub(crate) fn note_write(
     facade: &EntityFacade,
     entity_name: &str,
     pk_fields: &[String],
-    values: &std::collections::BTreeMap<String, Value>,
+    values: &crate::entity::FieldMap,
 ) -> Result<(), Error> {
+    // No peer and no local listener: there is no one to tell, so the message (a UUID and a JSON body) is not built.
+    if !is_linked(facade) && !notify::has_listeners(ENTITY_CACHE_INVALIDATE) {
+        return Ok(());
+    }
     let message = TopicMessage {
         origin_id: notify::origin_id().to_string(),
         message_id: crate::entity::uuid_v4().map_err(Error::from)?,
@@ -710,14 +714,10 @@ fn post_with_retry(sender: &Arc<dyn Sender>, base_url: &str, topic: &str, payloa
     false
 }
 
-fn invalidation_body(
-    entity_name: &str,
-    pk_fields: &[String],
-    values: &std::collections::BTreeMap<String, Value>,
-) -> serde_json::Value {
+fn invalidation_body(entity_name: &str, pk_fields: &[String], values: &crate::entity::FieldMap) -> serde_json::Value {
     let mut primary_key = serde_json::Map::new();
     for name in pk_fields {
-        if let Some(value) = values.get(name).filter(|value| !value.is_null()) {
+        if let Some(value) = values.get(name.as_str()).filter(|value| !value.is_null()) {
             primary_key.insert(name.clone(), moqui_lib::json::to_json(value));
         }
     }

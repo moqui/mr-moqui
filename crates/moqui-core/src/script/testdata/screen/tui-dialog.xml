@@ -1,0 +1,8 @@
+<widgets>
+    <container-dialog id="New" button-text="New ${kind}" title="Create">
+        <label text="in dialog"/>
+        <form-single name="NewForm" transition="create" focus-field="name" background-hide-id="New" submit-message="Saved">
+            <field name="name"><default-field title="Name"><text-line/></default-field></field>
+        </form-single>
+    </container-dialog>
+</widgets>

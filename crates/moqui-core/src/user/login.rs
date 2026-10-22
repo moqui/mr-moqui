@@ -30,6 +30,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
+const USER_APP_PASSWORD: &str = "moqui.security.UserAppPassword";
 const PASSWORD_HISTORY: &str = "moqui.security.UserPasswordHistory";
 const INVALID_LOGIN: &str = "The username or password is not valid";
 const WEEK_MILLIS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -53,7 +54,26 @@ pub fn login_user(username: &str, password: &str) -> Result<(), Error> {
     if password_login(username, password)? {
         session::rotate_on_password_login()?;
     }
+    // a password login of its own (the login form) is a person's; a header login marks the session again after it
+    session::set_session_attribute(HEADER_LOGIN, None);
     Ok(())
+}
+
+/// The session attribute that marks a session whose user came by a request header (Basic, `api_key`, `login_key`,
+/// `authUsername`) rather than the login form: the user id. A program holding a key gets such a session and its token
+/// from one request; it is never a person deciding an agent's approval ([`header_login_session`]).
+pub(crate) const HEADER_LOGIN: &str = "moquiHeaderLogin";
+
+/// Mark the bound session as one whose user came by a request header ([`HEADER_LOGIN`]).
+pub fn note_header_login() {
+    let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    session::set_session_attribute(HEADER_LOGIN, Some(&user_id));
+}
+
+/// Whether the bound session's user came by a request header, not the login form: such a session never decides an
+/// agent's approval, whatever cookie and token it later presents.
+pub fn header_login_session() -> bool {
+    session::session_attribute(HEADER_LOGIN).is_some_and(|user_id| !user_id.is_empty())
 }
 
 /// Check the password and set the user for one piece of work, as Java's `loginUser` paired with `logoutLocal`. The
@@ -82,6 +102,11 @@ impl Drop for LocalLogin {
 /// The password check and login of [`login_user`]. True when the session id should rotate: the password was right
 /// and the session did not already hold this user. Credentials that are not valid are noted for the web protection.
 fn password_login(username: &str, password: &str) -> Result<bool, Error> {
+    // A blank form tried no password, so it is not a failure web protection counts.
+    if username.is_empty() || password.is_empty() {
+        clear_pre_authc();
+        return Err(Error::new(INVALID_LOGIN));
+    }
     noting_invalid(check_password_login(username, password))
 }
 
@@ -292,6 +317,112 @@ fn check_login_key(key: &str) -> Result<(), Error> {
     internal_login_user(&text_field(&account, "username"))
 }
 
+/// Log in with an app password (`UserAppPassword`), the password of one device's DAV or SFTP client, which the web login
+/// does not take. The stored `passwordHash` is [`super::password::hash_login_key`] of the password without its dashes and
+/// spaces, in lower case; the row must not be revoked and must be the user's whose username is given. The account's own
+/// checks then apply ([`internal_login_user`]), and `lastUsedDate` is written at most once a minute, in a transaction of
+/// its own. A refusal is noted for the web protection; it is not an account failure, so guesses cannot lock the
+/// account.
+///
+/// # Errors
+///
+/// Returns [`INVALID_LOGIN`](Error) when the password is empty, unknown, revoked or another user's, or the account
+/// cannot log in.
+pub fn login_app_password(username: &str, password: &str) -> Result<(), Error> {
+    noting_invalid(check_app_password(username, password))
+}
+
+/// Whether `password` has the form of an app password ([`new_app_password`]): 20 of its letters and digits once the
+/// dashes and spaces are gone. A protocol server tries such a password as an app password before the account password.
+pub fn looks_like_app_password(password: &str) -> bool {
+    let key = app_password_key(password);
+    key.len() == 20
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+}
+
+/// The form an app password is compared in: no dashes or spaces, lower case.
+pub(crate) fn app_password_key(password: &str) -> String {
+    password
+        .chars()
+        .filter(|ch| *ch != '-' && !ch.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn check_app_password(username: &str, password: &str) -> Result<(), Error> {
+    let key = app_password_key(password);
+    if username.is_empty() || key.is_empty() {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    let hashed = password::hash_login_key(&key)?;
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(row) = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("passwordHash", Value::string(&hashed))
+        .one()?
+    else {
+        return Err(Error::new(INVALID_LOGIN));
+    };
+    if field_millis(&row, "revokedDate").is_some() {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    let user_id = text_field(&row, "userId");
+    let Some(account) = find_user_id(&facade, &user_id)? else {
+        return Err(Error::new(INVALID_LOGIN));
+    };
+    let account_username = text_field(&account, "username");
+    if !account_username.eq_ignore_ascii_case(username.trim()) {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    internal_login_user(&account_username)?;
+    let now = now_millis();
+    if field_millis(&row, "lastUsedDate").is_none_or(|used| now - used > 60_000) {
+        let mut used = facade.make_value(USER_APP_PASSWORD)?;
+        used.set("appPasswordId", Value::string(text_field(&row, "appPasswordId")));
+        used.set("lastUsedDate", stamp_value(now));
+        let tx = facade.transactions_for(USER_APP_PASSWORD)?;
+        // the login stands whatever happens to the note of its use
+        if let Err(err) = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            used.update(&facade)
+        }) {
+            tracing::warn!(
+                "app password {}: last use not written: {err}",
+                text_field(&row, "appPasswordId")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A new app password: 20 letters and digits that are not easily mistaken for each other (about 99 bits), in groups of
+/// four with dashes, as a device's settings screen shows it.
+///
+/// # Errors
+///
+/// Returns an error when the system random source fails.
+pub fn new_app_password() -> Result<String, Error> {
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let mut out = String::with_capacity(24);
+    let mut count = 0;
+    while count < 20 {
+        let mut byte = [0_u8; 1];
+        getrandom::fill(&mut byte).map_err(|err| Error::new(format!("random source failed: {err}")))?;
+        // 248 is the largest multiple of 31 under 256, so every symbol is equally likely
+        if byte[0] >= 248 {
+            continue;
+        }
+        if count > 0 && count % 4 == 0 {
+            out.push('-');
+        }
+        out.push(ALPHABET[usize::from(byte[0]) % ALPHABET.len()] as char);
+        count += 1;
+    }
+    Ok(out)
+}
+
 /// `getLoginKey`: a new 40 character key for the logged-in user, good for `expire_hours`
 /// (the conf `login-key/@expire-hours` when `None`). The key is returned once. Only its hash is
 /// stored, in a transaction of its own, and the user's expired keys are removed.
@@ -388,6 +519,14 @@ pub fn logout_anonymous_only() {
 ///
 /// Returns an error when the account row cannot be updated. The session is cleared either way.
 pub fn logout() -> Result<(), Error> {
+    // As Java's `logoutLocal`, a web logout runs the webapp's before-logout actions while the user is still there.
+    if crate::web::current_request().is_some() {
+        if let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) {
+            factory
+                .webapp_scripts()
+                .run_actions_logged("before-logout", &Default::default());
+        }
+    }
     let _authz = without_authz();
     let update = if let Some(user_id) = session::current_user_id()? {
         match entity_facade() {
@@ -551,7 +690,7 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
     }
     // After the second-factor check, as Java `loginPostPassword`: a code login reaches here through
     // `internal_login_user`, which checks the address too.
-    check_ip_allowed(account, &crate::web::current_client_ip())?;
+    check_ip_allowed(account, &client_ip())?;
     let mut fields = Vec::new();
     if rehash && legacy_hash(account) {
         if let Some(plain) = plain {
@@ -577,7 +716,45 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
     let zone = nonempty(text_field(account, "timeZone"));
     session::set_locale(locale.as_deref());
     session::set_time_zone(zone.as_deref());
-    link_visit(facade, &user_id)
+    link_visit(facade, &user_id)?;
+    // As Java's `UserFacadeImpl`, a web login runs the webapp's after-login actions.
+    if crate::web::current_request().is_some() {
+        if let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) {
+            factory
+                .webapp_scripts()
+                .run_actions_logged("after-login", &Default::default());
+        }
+    }
+    Ok(())
+}
+
+thread_local! {
+    /// The address of a login outside an HTTP request (SSH, the terminal client's dialog): [`with_client_ip`].
+    static LOGIN_CLIENT_IP: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `work` with `client_ip` as the address a login in it checks `ipAllowed` against, for a login with no HTTP
+/// request (an SSH password, the terminal client's login dialog). A request's own address comes first.
+pub fn with_client_ip<T>(client_ip: &str, work: impl FnOnce() -> T) -> T {
+    let before = LOGIN_CLIENT_IP.with(|slot| slot.replace(Some(client_ip.to_string())));
+    struct Restore(Option<String>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            LOGIN_CLIENT_IP.with(|slot| *slot.borrow_mut() = before);
+        }
+    }
+    let _restore = Restore(before);
+    work()
+}
+
+/// The request's address, else the one [`with_client_ip`] gave, else empty.
+fn client_ip() -> String {
+    let web = crate::web::current_client_ip();
+    if !web.is_empty() {
+        return web;
+    }
+    LOGIN_CLIENT_IP.with(|slot| slot.borrow().clone()).unwrap_or_default()
 }
 
 /// `ipAllowed` of the account and of every group it is in, `ALL_USERS` included: when any is set, the client address

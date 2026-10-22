@@ -1,0 +1,25 @@
+<screen require-authentication="false">
+<widgets>
+    <form-single name="Edit" transition="save">
+        <field name="partyId"><default-field><text-line ac-transition="searchParties" ac-min-length="2"><depends-on field="orgId"/></text-line></default-field></field>
+        <field name="city"><default-field><text-line prefix="@" disabled="!canEdit" default-transition="getCity"/></default-field></field>
+        <field name="note"><default-field><editable text="${note}" transition="saveNote" widget-type="select"><option key="a"/></editable></default-field></field>
+        <field name="upload"><default-field><file/></default-field></field>
+    </form-single>
+    <form-list name="Rows" list="rows" transition="saveRows" multi="true" saved-finds="true" select-columns="true" show-csv-button="true" show-all-button="true">
+        <row-selection id-field="id"><action><dialog button-text="Bulk"/><form-single name="Bulk" transition="bulk">
+            <field name="status"><default-field><text-line/></default-field></field></form-single></action></row-selection>
+        <field name="id"><default-field><hidden/></default-field></field>
+        <field name="name"><default-field><text-line/></default-field></field>
+        <field name="qty"><default-field><display/></default-field></field>
+        <field name="when"><default-field><date-find/></default-field></field>
+        <field name="go"><default-field><submit/></default-field></field>
+        <columns><column><field-ref name="name"/><field-ref name="qty"/></column><column><field-ref name="when"/></column><column><field-ref name="go"/></column></columns>
+        <columns type="mobile"><column><field-ref name="name"/></column></columns>
+    </form-list>
+    <status-bar id="Bar" status-id="${statusId}" transition="setStatus" stages="${stageIds}" allowed-status-ids="A,B" title="Order ${orderId}"/>
+    <tree name="Cats" open-path="${path}"/>
+    <button-menu text="More" condition="showMenu"><link url="/a" url-type="plain" text="A"/></button-menu>
+    <subscreens-panel id="Steps" type="wizard" finish-text="Done"/>
+</widgets>
+</screen>

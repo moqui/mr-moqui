@@ -190,11 +190,50 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- A button on an agent's card in a room (content.assist): decide#ChatCard takes it only from this browser session
+        with its token; any human who may post in the room decides an approval, the requester answers a question -->
+    <transition name="chatAssistCard" method="post" begin-transaction="false">
+        <parameter name="chatRoomId" required="true"/><parameter name="eventSeq" required="true"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const params = ec.web.parameters
+                const call = {chatRoomId: String(params.chatRoomId), eventSeq: Number(params.eventSeq)}
+                for (const name of ['decision', 'feedback', 'choice', 'text']) if (params[name] != null && params[name] !== '') call[name] = String(params[name])
+                const out = ec.service.sync().name('org.moqui.agent.AgentServices.decide#ChatCard').parameters(call).disableAuthz().call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(409, errors) }
+                else ec.web.sendJsonResponse({status: out ? out.status ?? null : null})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="chatUnread" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UnreadCounts').disableAuthz().call() || {}
                 ec.web.sendJsonResponse({total: out.total ?? 0, unread: out.unread ?? 0, mentions: out.mentions ?? 0, roomCounts: out.roomCounts ?? {}})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="richTextImage" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const out = ec.service.sync().name('org.moqui.impl.ResourceServices.upload#RichTextImage')
+                    .parameter('contentFile', ec.web.multiPartParameters.contentFile).disableAuthz().call()
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({ url: out && out.url ? out.url : '' })
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="richTextImage" method="get" read-only="true">
+        <path-parameter name="imageId"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const out = ec.service.sync().name('org.moqui.impl.ResourceServices.get#RichTextImage')
+                    .parameter('imageId', String(imageId || '')).disableAuthz().call()
+                if (ec.message.hasError() || !out || !out.location) ec.web.sendJsonError(404, 'No image')
+                else ec.web.sendResourceResponse(out.location, true)
             }
             ]]></script></actions>
         <default-response type="none"/>
@@ -206,7 +245,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- TODO: get fancier with this, crawl screen tree looking for screens that don't require authc, maybe some sort of setting to allow robots or not -->
         <!-- TODO: also generate sitemap XML with paths we want crawled, based on ? -->
         <actions><script><![CDATA[
-            const disallowList = ['apps', 'qapps', 'rest', 'rpc', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'llm']
+            const disallowList = ['apps', 'qapps', 'rest', 'rpc', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'chatAssistCard', 'richTextImage', 'llm', 'a2a', 'mcp']
             let robotsText = "user-agent: *\n"
             for (const disPath of disallowList) robotsText += `disallow: /${disPath}\n`
             ec.web.sendTextResponse(robotsText)

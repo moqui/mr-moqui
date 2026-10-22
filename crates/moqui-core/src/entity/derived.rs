@@ -125,6 +125,51 @@ pub(crate) fn note_write(facade: &EntityFacade, full_name: &str) {
     }
 }
 
+/// Counts the drops. A cache of something read from a definition by name keeps the count it was filled at and starts
+/// over when it changes, as a DB view entity or a data document may be built again under the same name.
+pub(crate) fn generation(facade: &EntityFacade) -> u64 {
+    facade.inner.derived.generation.load(Ordering::Acquire)
+}
+
+/// Something read from a definition, kept by the name it was looked up by until the definitions built at runtime are
+/// dropped ([`generation`] changes). For a facade slot.
+pub(crate) struct ByDefinition<T> {
+    generation: u64,
+    by_name: HashMap<String, T>,
+}
+
+impl<T> Default for ByDefinition<T> {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            by_name: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Clone> ByDefinition<T> {
+    /// What was kept for `name` at `generation`. Entries of an older generation are not returned; the next
+    /// [`Self::insert`] drops them.
+    pub(crate) fn get(&self, name: &str, generation: u64) -> Option<T> {
+        if self.generation != generation {
+            return None;
+        }
+        self.by_name.get(name).cloned()
+    }
+
+    /// Keep `value`, read at `generation` (read before the definition was), unless the definitions changed since. A
+    /// newer generation than the one kept drops everything kept before it.
+    pub(crate) fn insert(&mut self, name: &str, generation: u64, value: T) {
+        if self.generation < generation {
+            self.by_name.clear();
+            self.generation = generation;
+        }
+        if self.generation == generation {
+            self.by_name.insert(name.to_string(), value);
+        }
+    }
+}
+
 /// Drop every built definition, as the tools screens' `clearEntityDefinitionFromCache` (Java drops the one named).
 pub(crate) fn clear(facade: &EntityFacade) {
     let derived = &facade.inner.derived;

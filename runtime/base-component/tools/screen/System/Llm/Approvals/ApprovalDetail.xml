@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One approval: the decision, kind and target for any admin; the arguments, the current → proposed changes, the edited
+    arguments, a conflict, the preview and the outcome only for its own user or with AgentAudit, each such read logged
+    (get#AgentAuditView). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Approval" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="approvalId" required="true"/>
+    <transition name="approvalList"><default-response url="../ApprovalList"/></transition>
+    <transition name="runDetail"><default-response url="../../Runs/RunDetail"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentApproval" value-field="approvalRow"/>
+        <!-- the arguments, snapshot, preview, result and feedback are content: they come only through the service -->
+        <script>if (approvalRow) { for (const name of ['argumentsJson', 'argumentsHash', 'snapshotJson', 'recordRefsJson', 'previewJson', 'resultJson', 'feedback']) approvalRow[name] = null }</script>
+        <service-call name="org.moqui.agent.AgentAdminServices.get#AgentAuditView" in-map="{approvalId:approvalId}" out-map="audit"/>
+        <set field="content" from="audit?.approval ?? {}"/>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Approval ${approvalId ?? ''}"/><box-toolbar>
+            <link url="runDetail" text="Run" condition="approvalRow?.runId" parameter-map="{runId:approvalRow?.runId}"/>
+            <link url="approvalList" text="All Approvals"/>
+        </box-toolbar><box-body>
+            <label text="${audit?.reason ?? ''}" type="p" condition="!audit?.shown"/>
+            <label text="This read of another user's approval is logged." type="p" condition="audit?.audited"/>
+            <form-single name="ApprovalDetail" map="approvalRow">
+                <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="classificationEnumId"><default-field title="Class"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="targetKind"><default-field title="Kind"><display/></default-field></field>
+                <field name="targetName"><default-field title="Target"><display/></default-field></field>
+                <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount" text="${username ?? userId}"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+                <field name="runId"><default-field title="Run"><display/></default-field></field>
+                <field name="toolCallId"><default-field title="Tool Call"><display/></default-field></field>
+                <field name="decisionUserId"><default-field title="Decided By"><display/></default-field></field>
+                <field name="decisionChannel"><default-field title="Channel"><display/></default-field></field>
+                <field name="decisionDate"><default-field title="Decided"><display/></default-field></field>
+                <field name="policy"><default-field><display/></default-field></field>
+                <field name="createdDate"><default-field title="Created"><display/></default-field></field>
+                <field name="expireDate"><default-field title="Expires"><display/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <section name="ContentSection" condition="audit?.shown"><widgets>
+            <container-box><box-header title="What It Does"/><box-body>
+                <form-single name="ApprovalContent" map="content">
+                    <field name="summary"><default-field><display/></default-field></field>
+                    <field name="changesText"><default-field title="Changes"><display/></default-field></field>
+                    <field name="argumentsJson"><default-field title="Arguments"><display/></default-field></field>
+                    <field name="editedText"><default-field title="Edited Arguments"><display/></default-field></field>
+                    <field name="feedback"><default-field><display/></default-field></field>
+                    <field name="previewJson"><default-field title="Preview"><display/></default-field></field>
+                    <field name="resultJson"><default-field title="Outcome"><display/></default-field></field>
+                    <field name="snapshotJson"><default-field title="Snapshot"><display/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

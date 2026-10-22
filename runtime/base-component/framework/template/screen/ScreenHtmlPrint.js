@@ -402,6 +402,13 @@ a { color: blue; }
             return condition ? `if (${condition}) {\n${line}}\n` : line;
         }),
 
+        // a code-view printed as a pre of its code
+        "code-view": stmt((node) => {
+            const line = `{ const $v = ((t) => (t && t !== "null" ? String(t).replace(/\\s+$/, "") : ""))(ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")})); if ($v) sri.write("<pre class=\\"code-view\\"><code>" + $e($v) + "</code></pre>\\n"); }\n`;
+            const condition = attr(node, "condition");
+            return condition ? `if (${condition}) {\n${line}}\n` : line;
+        }),
+
         // a markdown-view printed as its markdown text
         "markdown-view": stmt((node) => {
             const line = `{ const $v = ${S.markdownTextExpr(node)}; if ($v) sri.write("<div class=\\"markdown-view\\" style=\\"white-space:pre-wrap\\">" + $e($v) + "</div>\\n"); }\n`;

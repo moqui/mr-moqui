@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The services offered to the agents as tools of the lazy catalog (find_tools, describe_tools, run_tool). Only an
+    exposed service is a tool; its class is the admin's when set, else the service's own (view is a read, delete is
+    destructive, anything else a write; read-only="true" is a read). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Exposed Services" default-menu-index="1">
+
+    <transition name="exposureDetail"><default-response url="../ExposureDetail"/></transition>
+    <transition name="createExposure"><service-call name="org.moqui.agent.AgentAdminServices.store#AgentToolExposure"/>
+        <default-response url="../ExposureDetail" parameter-map="{toolName:toolName}"/>
+        <error-response url="."/></transition>
+
+    <widgets>
+        <container-box><box-header title="Exposed Services"/><box-toolbar>
+            <container-dialog id="CreateExposureDialog" button-text="Expose a Service">
+                <form-single name="CreateExposure" transition="createExposure">
+                    <field name="toolName"><default-field title="Tool Name" tooltip="The name the model calls it by, such as update_user_group; not mcp__ or a2a__">
+                        <text-line size="30"/></default-field></field>
+                    <field name="serviceName"><default-field title="Service" tooltip="A defined service, or an entity-auto one such as update#moqui.security.UserGroup">
+                        <text-line size="60"/></default-field></field>
+                    <field name="title"><default-field><text-line size="40"/></default-field></field>
+                    <field name="description"><default-field tooltip="What the model reads: what it does, when to use it">
+                        <text-area rows="3" cols="60"/></default-field></field>
+                    <field name="classificationEnumId"><default-field title="Classification" tooltip="Empty is the service's own">
+                        <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
+                            <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentClassification"/>
+                                <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Expose"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <form-list name="ExposureList" list="exposureList" skip-form="true" header-dialog="true">
+                <entity-find entity-name="moqui.agent.AgentToolExposure" list="exposureList">
+                    <search-form-inputs default-order-by="toolName"/></entity-find>
+                <field name="toolName"><header-field title="Tool" show-order-by="true"><text-find size="15" hide-options="true"/></header-field>
+                    <default-field><link url="exposureDetail" text="${toolName}" link-type="anchor"/></default-field></field>
+                <field name="serviceName"><header-field title="Service" show-order-by="true"><text-find size="20" hide-options="true"/></header-field>
+                    <default-field><display/></default-field></field>
+                <field name="title"><default-field><display/></default-field></field>
+                <field name="classificationEnumId"><header-field title="Classification"/><default-field>
+                    <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                <field name="exposeAssistant"><header-field title="Assistant"/><default-field><display/></default-field></field>
+                <field name="exposeMcp"><header-field title="MCP"/><default-field><display/></default-field></field>
+                <field name="previewMode"><header-field title="Preview"/><default-field><display/></default-field></field>
+                <field name="disabled"><default-field><display/></default-field></field>
+                <field name="lockVersion"><header-field title="Version"/><default-field><display/></default-field></field>
+                <field name="findButton"><header-field title="Find"><submit/></header-field><default-field><display text=" "/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

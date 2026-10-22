@@ -1,0 +1,179 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The browser terminal, served by Terminal.xml in the qvue render mode. xterm.js and its fit addon load the first time the
+    page opens (/libs/xterm). The socket (/termws, crate termws.rs) carries the terminal's bytes as binary messages both ways
+    and the size as {"type":"resize","cols":N,"rows":N}, the first message. The terminal fills the page below the header and
+    follows its size. A link the client writes (OSC 8, as `o` "Open in browser" does) opens in a new tab. Text the client
+    copies (a mouse drag, OSC 52) goes to the clipboard; where the browser refuses, it shows in a dialog to copy by hand.
+    When the socket closes, the reason the server gave shows with Reconnect. -->
+<template><div class="m-terminal">
+<!-- the height is on this inner element: the shell's m-subscreens-active gives the root height:100%, which wins over the
+    root's own style and, in a page with no fixed height, is only as tall as the content -->
+<div class="m-terminal-body column no-wrap" :style="{ height: height + 'px', padding: '4px 8px' }">
+    <div ref="screen" class="m-terminal-screen col" style="min-height: 0; overflow: hidden" @click="focus"></div>
+    <div v-if="closed" class="m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm" id="TerminalClosed">
+        <q-icon name="sym_o_link_off"></q-icon>
+        <span class="col">{{reason}}</span>
+        <q-btn dense unelevated no-caps color="primary" :label="labels.reconnect" @click="connect"></q-btn>
+    </div>
+    <div v-else-if="failed" class="m-terminal-closed q-pa-sm text-negative">{{failed}}</div>
+</div>
+<q-dialog v-model="copyOpen" @hide="focus">
+    <q-card style="min-width: 360px; max-width: 90vw">
+        <q-card-section class="text-subtitle1">{{labels.copyByHand}}</q-card-section>
+        <q-card-section class="q-pt-none">
+            <textarea ref="copyText" readonly :value="copyText" rows="8" style="width: 100%; font-family: monospace"></textarea>
+        </q-card-section>
+        <q-card-actions align="right"><q-btn flat no-caps :label="labels.close" v-close-popup></q-btn></q-card-actions>
+    </q-card>
+</q-dialog>
+</div></template>
+
+<script>
+// The terminal's colors: the TUI asks for the background (OSC 11), and xterm.js answers with these.
+const THEMES = {
+    light: { background: "#ffffff", foreground: "#1f2328", cursor: "#1f2328", selectionBackground: "#b6d6fd" },
+    dark: { background: "#16181d", foreground: "#e6e6e6", cursor: "#e6e6e6", selectionBackground: "#3a4a63" }
+};
+const localize = (text) => (moqui.l10n ? moqui.l10n.localize(text) : text);
+
+module.exports = {
+    data() {
+        return { height: 400, closed: false, reason: "", failed: "", copyOpen: false, copyText: "",
+            labels: { reconnect: localize("Reconnect"), ended: localize("The terminal session ended."),
+                notLoaded: localize("The terminal could not load."),
+                copyByHand: localize("The browser did not allow the copy. Select the text and copy it:"),
+                close: localize("Close") } };
+    },
+    computed: {
+        dark() { return this.$q.dark.isActive; }
+    },
+    watch: {
+        dark(dark) { if (this.term) this.term.options.theme = dark ? THEMES.dark : THEMES.light; }
+    },
+    mounted() {
+        // The page may still be moving into place (its transition, the breadcrumbs, the header wrapping), so the height is
+        // measured again on each frame for a short while, and whenever the window, the header, the footer or the page changes.
+        this.onWindowResize = () => this.fitHeight();
+        window.addEventListener("resize", this.onWindowResize);
+        this.layoutObserver = new ResizeObserver(() => this.fitHeight());
+        ["top", "footer", "m-canvas"].forEach((id) => { const el = document.getElementById(id); if (el) this.layoutObserver.observe(el); });
+        const settleUntil = Date.now() + 1500;
+        const settle = () => { this.fitHeight(); if (!this.disposed && Date.now() < settleUntil) requestAnimationFrame(settle); };
+        settle();
+        moqui.loadStylesheet("/libs/xterm/xterm.css");
+        Promise.all([
+            moqui.loadScript("/libs/xterm/xterm.js", null, () => !!window.Terminal),
+            moqui.loadScript("/libs/xterm/addon-fit.js", null, () => !!window.FitAddon)
+        ]).then(() => { if (!this.disposed) this.open(); }, () => { this.failed = this.labels.notLoaded; });
+    },
+    beforeUnmount() {
+        this.disposed = true;
+        window.removeEventListener("resize", this.onWindowResize);
+        if (this.layoutObserver) this.layoutObserver.disconnect();
+        if (this.observer) this.observer.disconnect();
+        if (this.socket) { this.socket.onclose = null; this.socket.close(); }
+        if (this.term) this.term.dispose();
+    },
+    methods: {
+        // all the room from the terminal's top to the footer (fixed, as the header is), less the page's bottom padding, so the
+        // terminal fills the window and the page itself does not scroll
+        fitHeight() {
+            if (!this.$el || !this.$el.getBoundingClientRect) return;
+            const footer = document.getElementById("footer");
+            const bottom = footer ? footer.getBoundingClientRect().top : window.innerHeight;
+            // where the terminal starts with the page scrolled to its top
+            const top = this.$el.getBoundingClientRect().top + window.scrollY;
+            const height = Math.max(200, Math.floor(bottom - top - 8));
+            if (height !== this.height) this.height = height;
+        },
+        focus() { if (this.term) this.term.focus(); },
+        open() {
+            const term = new window.Terminal({
+                fontFamily: 'ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace',
+                fontSize: 14, cursorBlink: false, scrollback: 0, macOptionIsMeta: true,
+                theme: this.dark ? THEMES.dark : THEMES.light,
+                // only web links and paths of this site open, in a new tab
+                linkHandler: { activate: (event, uri) => { if (/^(https?:\/\/|\/(?!\/))/i.test(uri)) window.open(uri, "_blank", "noopener"); } }
+            });
+            this.fitAddon = new window.FitAddon.FitAddon();
+            term.loadAddon(this.fitAddon);
+            term.open(this.$refs.screen);
+            this.term = term;
+            // A copy from the client (a drag selects text, OSC 52 "c;<base64>"): to the clipboard, which a browser allows
+            // shortly after the mouse release that ended the drag, on a secure page or localhost; else a dialog to copy.
+            term.parser.registerOscHandler(52, (data) => {
+                const at = data.indexOf(";");
+                if (at < 0) return true;
+                let text;
+                try {
+                    const bytes = Uint8Array.from(atob(data.slice(at + 1)), (ch) => ch.charCodeAt(0));
+                    text = new TextDecoder().decode(bytes);
+                } catch (e) { return true; }
+                const byHand = () => {
+                    this.copyText = text;
+                    this.copyOpen = true;
+                    this.$nextTick(() => { if (this.$refs.copyText) this.$refs.copyText.select(); });
+                };
+                if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).catch(byHand);
+                else byHand();
+                return true;
+            });
+            const encoder = new TextEncoder();
+            term.onData((data) => this.send(encoder.encode(data)));
+            // the bytes of a mouse report in the X10 encoding, one per character
+            term.onBinary((data) => this.send(Uint8Array.from(data, (ch) => ch.charCodeAt(0) & 0xff)));
+            term.onResize(({ cols, rows }) => this.sendSize(cols, rows));
+            this.observer = new ResizeObserver(() => this.fit());
+            this.observer.observe(this.$refs.screen);
+            this.fit();
+            this.connect();
+        },
+        fit() {
+            if (!this.fitAddon) return;
+            try { this.fitAddon.fit(); } catch (e) { /* not laid out yet */ }
+        },
+        send(bytes) {
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.send(bytes);
+        },
+        sendSize(cols, rows) {
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
+        },
+        connect() {
+            const root = moqui.webrootVue || {};
+            const scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
+            const host = root.appHost || window.location.host;
+            this.closed = false;
+            this.reason = "";
+            this.term.reset();
+            const socket = new WebSocket(scheme + host + (root.appRootPath || "") + "/termws");
+            socket.binaryType = "arraybuffer";
+            socket.onopen = () => {
+                this.fit();
+                this.sendSize(this.term.cols, this.term.rows);
+                this.term.focus();
+            };
+            socket.onmessage = (event) => { if (event.data instanceof ArrayBuffer) this.term.write(new Uint8Array(event.data)); };
+            socket.onclose = (event) => {
+                if (this.socket !== socket) return;
+                this.closed = true;
+                this.reason = event.reason || this.labels.ended;
+                this.$nextTick(() => this.fit());
+            };
+            this.socket = socket;
+        }
+    }
+};
+</script>
+

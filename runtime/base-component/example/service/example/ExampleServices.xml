@@ -53,6 +53,64 @@
         </actions>
     </service>
 
+    <!-- The work breakdown of the gallery's Views screen (form-list view-tree, style-guide §3.15), an inline list: the gallery has no
+        business entities. One level of it (parentItemId; the top when there is no find), the rows of ids (what the tree's
+        ancestor-transition asks for), or with itemName every row whose name has the text, at any level. Each row has its
+        branch's roll-ups as a service computes them, never the browser: totalEstimate and totalActual over the row and every row
+        under it, doneOfTotal (the rows under it that are Complete, of all of them), and childCount. -->
+    <service verb="get" noun="GalleryWorkItems">
+        <in-parameters>
+            <parameter name="parentItemId"/>
+            <parameter name="ids"/>
+            <parameter name="itemName"/>
+        </in-parameters>
+        <out-parameters><parameter name="workItemList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            const item = (itemId, parentItemId, name, status, estimate, actual) => ({ itemId, parentItemId, itemName: itemId + ' ' + name, status, estimate, actual })
+            const all = [
+                item('W-1', null, 'Customer portal', 'In Progress', 4, 3),
+                item('W-4', 'W-1', 'Sign-in and accounts', 'In Progress', 2, 2),
+                item('W-9', 'W-4', 'Password reset', 'Complete', 6, 7.5),
+                item('W-11', 'W-4', 'Two-factor', 'Approved', 0, 0),
+                item('W-12', 'W-11', 'Authenticator enrollment', 'Approved', 6, 0),
+                item('W-13', 'W-11', 'Recovery codes', 'Approved', 4, 0),
+                item('W-14', 'W-11', 'Remembered devices', 'In Planning', 4, 0),
+                item('W-5', 'W-1', 'Order history', 'In Planning', 1, 1),
+                item('W-6', 'W-5', 'Order list', 'Complete', 8, 9),
+                item('W-7', 'W-5', 'Order search', 'In Progress', 12, 6),
+                item('W-8', 'W-7', 'Search index', 'In Progress', 5, 4),
+                item('W-15', 'W-8', 'Field weights', 'Approved', 2, 0),
+                item('W-16', 'W-15', 'Synonyms', 'Approved', 1, 0),
+                item('W-17', 'W-16', 'Stemming rules', 'Approved', 1, 0),
+                item('W-18', 'W-17', 'Language packs', 'In Planning', 3, 0),
+                item('W-2', null, 'Data migration', 'Approved', 8, 0),
+                item('W-20', 'W-2', 'Customer import', 'Approved', 6, 0),
+                item('W-21', 'W-2', 'Product import', 'Approved', 10, 0),
+                item('W-22', 'W-2', 'Order import', 'In Planning', 16, 0),
+                item('W-3', null, 'Training', 'In Planning', 2, 0)
+            ]
+            const kids = {}
+            all.forEach((row) => { (kids[row.parentItemId || ''] = kids[row.parentItemId || ''] || []).push(row) })
+            const roll = (row) => (kids[row.itemId] || []).reduce((sum, kid) => {
+                const under = roll(kid)
+                return { estimate: sum.estimate + kid.estimate + under.estimate, actual: sum.actual + kid.actual + under.actual,
+                    items: sum.items + 1 + under.items, done: sum.done + (kid.status === 'Complete' ? 1 : 0) + under.done }
+            }, { estimate: 0, actual: 0, items: 0, done: 0 })
+            const withTotals = (row) => {
+                const under = roll(row)
+                return Object.assign({}, row, { childCount: (kids[row.itemId] || []).length, totalEstimate: row.estimate + under.estimate,
+                    totalActual: row.actual + under.actual, doneOfTotal: under.items ? under.done + '/' + under.items : '' })
+            }
+            const text = String(itemName || '').trim().toLowerCase()
+            let rows
+            if (ids) { const wanted = String(ids).split(','); rows = all.filter((row) => wanted.includes(row.itemId)) }
+            else if (parentItemId) rows = kids[parentItemId] || []
+            else if (text) rows = all.filter((row) => row.itemName.toLowerCase().includes(text))
+            else rows = kids['']
+            workItemList = rows.map(withTotals)
+        ]]></script></actions>
+    </service>
+
     <!-- What a note service does with the HTML of the qvt rich-text editor (m-rich-text, text-area editor-type rich or
         rich-light): the parameter is allow-html="safe", so the markup is cleaned to the safe list, which keeps the editor's
         blocks, marks, links, images and its mentions, <span data-mention-id="id">@Label</span>; the ids of the mentions are

@@ -284,9 +284,21 @@ test("the root's shell: the current app and its title, the + menu, the account m
     assert.equal(vm.headerTitle, "Gallery");
     // the breadcrumbs start below the app root, whose title the header shows; outside an app, below the apps root
     assert.equal(vm.breadcrumbStart, 2);
+    // the title's menu is that app-root entry: its subscreens are the top-level screens. A tab menu, and the AppList, have none.
+    vm.navMenuList = [
+        { name: "apps", title: "Applications", subscreens: [{ name: "gallery", title: "Gallery" }] },
+        { name: "gallery", title: "Gallery", subscreens: [
+            { name: "Widgets", title: "Widgets", pathWithParams: "/apps/gallery/Widgets" },
+            { name: "Detail", title: "Detail", pathWithParams: "/apps/gallery/Detail", active: true }] }];
+    assert.equal(vm.appScreenMenu.name, "gallery");
+    assert.deepEqual(vm.appScreenMenu.subscreens.map((item) => item.name), ["Widgets", "Detail"]);
+    vm.navMenuList[1].hasTabMenu = true;
+    assert.equal(vm.appScreenMenu, null);
     vm.currentPathList = ["AppList"];
     assert.equal(vm.breadcrumbStart, 1);
+    assert.equal(vm.appScreenMenu, null);
     vm.currentPathList = ["gallery", "Detail"];
+    vm.navMenuList[1].hasTabMenu = false;
     // the current app's kinds first; a kind that needs a record only with one in context
     assert.deepEqual(vm.quickCreateItems.map((item) => item.label), ["Gallery note", "Task"]);
     assert.deepEqual(vm.currentAppQuickCreate.map((item) => item.label), ["Gallery note"]);
@@ -428,7 +440,7 @@ test("a form in the quick-create dialog closes it when it submits without errors
 
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
-    ["m-launcher", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
+    ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
     assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {4}<\/q-page-container>/);
     assert.match(shell, /<m-shell-palette><\/m-shell-palette>/);
     // the notify-history menu only without a Notifications tab

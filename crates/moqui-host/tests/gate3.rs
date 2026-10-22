@@ -225,7 +225,7 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
         "{html}"
     );
     assert!(
-        html.contains("<div class=\"field\"><label for=\"ArtifactGroupForm_artifactGroupId\">Artifact Group ID</label><div class=\"widget\"><span class=\"display\">SYSTEM_APP</span>"),
+        html.contains("<div class=\"field\"><label for=\"ArtifactGroupForm_artifactGroupId\">Artifact Group ID</label><div class=\"widget\"><span class=\"display String\">SYSTEM_APP</span>"),
         "{html}"
     );
     assert!(
@@ -243,7 +243,7 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
         "{html}"
     );
     assert!(
-        html.contains("<span class=\"display\">SYSTEM_APP_ADMIN</span>"),
+        html.contains("<span class=\"display String\">SYSTEM_APP_ADMIN</span>"),
         "{html}"
     );
     assert!(
@@ -591,7 +591,7 @@ fn static_files_are_served_with_validators_compression_and_no_way_out() {
     );
     assert_eq!(
         header(&headers, "cache-control").as_deref(),
-        Some("public, max-age=3600, must-revalidate")
+        Some("max-age=86400, must-revalidate, public")
     );
     assert!(css.contains("--primary"), "{css}");
     let tag = header(&headers, "etag").unwrap();
@@ -794,8 +794,8 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
     assert!(qvue.contains("export default"), "{qvue}");
 
     // a .qvt request that names the client modes (moqui.loadComponent for a container's URL) gets the first of them the screen's
-    // render-modes name, and X-Moqui-Qvt says which: the gallery's QuickTask is qvue alone. GateCompanion's modes are all, so it
-    // stays qvt; without the header a qvue screen has no qvt.
+    // render-modes name, and X-Moqui-Qvt says which: the gallery's QuickTask has qvue and tui, no qvt. GateCompanion's modes
+    // are all, so it stays qvt; without the header a qvue screen has no qvt.
     let with_modes = |path: &str| {
         exchange(
             address,

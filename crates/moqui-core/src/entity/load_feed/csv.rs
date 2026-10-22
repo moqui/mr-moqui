@@ -118,7 +118,7 @@ pub(super) fn load_csv_reader(
     } else {
         let shape = shape_of(facade, &entity_name)?;
         // Java looks each column's field up and fails on one that is not a field of the entity.
-        if let Some((name, _)) = headers.iter().find(|(name, _)| !shape.fields.contains_key(name)) {
+        if let Some((name, _)) = headers.iter().find(|(name, _)| !shape.fields.contains_key(name.as_str())) {
             return Err(Error::new(format!(
                 "csv {location} column {name} is not a field of {}",
                 shape.full_name
@@ -135,8 +135,8 @@ pub(super) fn load_csv_reader(
         if let Some(shape) = &shape {
             let mut fields = BTreeMap::new();
             for (name, text) in &options.default_values {
-                if shape.fields.contains_key(name) {
-                    fields.insert(name.clone(), Value::string(text));
+                if shape.fields.contains_key(name.as_str()) {
+                    fields.insert(shape.name(name), Value::string(text));
                 }
             }
             for (name, index) in &headers {
@@ -150,13 +150,13 @@ pub(super) fn load_csv_reader(
                 };
                 // An empty cell is null, so an update clears the field.
                 if text.is_empty() {
-                    fields.insert(name.clone(), Value::Null);
+                    fields.insert(shape.name(name), Value::Null);
                     continue;
                 }
                 // A BLOB cell is Base64, which Java decodes, failing the file when it is not.
                 if shape
                     .fields
-                    .get(name)
+                    .get(name.as_str())
                     .is_some_and(|field_type| field_type == "binary-very-long")
                 {
                     let bytes = decode_base64(text).ok_or_else(|| {
@@ -165,16 +165,16 @@ pub(super) fn load_csv_reader(
                             shape.full_name
                         ))
                     })?;
-                    fields.insert(name.clone(), Value::Bytes(bytes));
+                    fields.insert(shape.name(name), Value::Bytes(bytes));
                     continue;
                 }
-                fields.insert(name.clone(), Value::string(text));
+                fields.insert(shape.name(name), Value::string(text));
             }
             complete_csv_pk(facade, &shape.full_name, &mut fields)?;
             let stored = store_value(
                 facade,
                 options,
-                &Record {
+                Record {
                     entity: shape.full_name.clone(),
                     fields,
                     children: Vec::new(),

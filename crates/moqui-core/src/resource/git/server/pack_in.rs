@@ -38,18 +38,12 @@ use crate::resource::git::store::{GitStore, Incoming, RefEdit, RefOutcome};
 /// Memory for decoded delta bases while reading the quarantined pack.
 const DELTA_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
-/// A pushed delta is kept as one when its chain is at most `git_db_delta_depth` (50) deep and its object at most
-/// `git_db_delta_max_size` (16 MiB); others are stored whole, as are commits and tags.
+/// A pushed delta is kept as one when its chain is at most `git-server` `db-delta-depth` (50) deep and its object at
+/// most `db-delta-max-size` (16 MiB); others are stored whole, as are commits and tags.
 fn delta_limits() -> (u32, u64) {
-    let number = |name: &str, default: u64| {
-        moqui_lib::env::get_prop_or_env(name)
-            .trim()
-            .parse::<u64>()
-            .unwrap_or(default)
-    };
     (
-        u32::try_from(number("git_db_delta_depth", 50)).unwrap_or(50),
-        number("git_db_delta_max_size", 16 * 1024 * 1024),
+        crate::resource::git::number_setting("db-delta-depth", 50),
+        crate::resource::git::number_setting("db-delta-max-size", 16 * 1024 * 1024),
     )
 }
 
@@ -113,7 +107,7 @@ impl Drop for Quarantine<'_> {
 }
 
 /// Read a pack from `input` into the new directory `dir`, completing a thin pack from `base`. `max_object` caps
-/// the memory of one object (`git_max_object_size`).
+/// the memory of one object (`git-server` `max-object-size`).
 pub(crate) fn receive<'a>(
     base: &'a dyn GitStore,
     input: &mut dyn BufRead,

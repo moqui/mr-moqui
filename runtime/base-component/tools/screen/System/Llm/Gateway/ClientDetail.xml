@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One API client: its scopes, aliases and limits (store#LlmApiClient), a new login key for it, and its recent calls.
+    The credential is shown only by its kind. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Client" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="clientId" required="true"/>
+
+    <transition name="storeClient"><service-call name="org.moqui.agent.AgentAdminServices.store#LlmApiClient"/>
+        <default-response url="." parameter-map="{clientId:clientId}"/></transition>
+    <transition name="setLoginKey"><service-call name="org.moqui.agent.AgentAdminServices.store#LlmApiClient"
+            in-map="{clientId:clientId, loginKey:loginKey}"/>
+        <default-response url="." parameter-map="{clientId:clientId}"/></transition>
+    <transition name="callDetail"><default-response url="../../Calls/CallDetail"/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.llm.LlmApiClient" value-field="client"/>
+        <entity-find entity-name="moqui.llm.LlmCall" list="callList" limit="20">
+            <econdition field-name="clientId"/><order-by field-name="-startDate"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Client ${clientId}"/><box-body>
+            <form-single name="EditClient" map="client" transition="storeClient">
+                <field name="clientId"><default-field><display/></default-field></field>
+                <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount"
+                        key-field-name="userId" text="${username ?? userId}"/></default-field></field>
+                <field name="credential"><default-field title="Credential">
+                    <display text="${client?.appPasswordId ? 'app password ' + client.appPasswordId : (client?.loginKey ? 'login key' : 'none')}"/></default-field></field>
+                <field name="loginKey"><default-field><ignored/></default-field></field>
+                <field name="appPasswordId"><default-field><ignored/></default-field></field>
+                <field name="description"><default-field><text-line size="60"/></default-field></field>
+                <field name="scopes"><default-field tooltip="a2a, mcp, gateway (comma separated)"><text-line size="30"/></default-field></field>
+                <field name="allowedAgents"><default-field title="Allowed Agents" tooltip="Comma separated; empty for all the user may use"><text-line size="60"/></default-field></field>
+                <field name="allowedAliases"><default-field title="Allowed Aliases" tooltip="Comma separated; empty for all the user may use"><text-line size="60"/></default-field></field>
+                <field name="dailyTokens"><default-field title="Tokens a Day" tooltip="On top of the user's own quota"><text-line size="12"/></default-field></field>
+                <field name="dailyCost"><default-field title="Cost a Day"><text-line size="12"/></default-field></field>
+                <field name="requestsPerMinute"><default-field title="Requests per Minute"><text-line size="6"/></default-field></field>
+                <field name="disabled"><default-field><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></default-field></field>
+                <field name="createdDate"><default-field title="Created"><display/></default-field></field>
+                <field name="lastUsedDate"><default-field title="Last Used"><display/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Login Key"/><box-body>
+            <form-single name="SetLoginKey" transition="setLoginKey">
+                <field name="clientId"><default-field><hidden/></default-field></field>
+                <field name="loginKey"><default-field title="Login Key" tooltip="One of the client user's login keys; kept only as its hash">
+                    <password size="40"/></default-field></field>
+                <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Recent Calls"/><box-body>
+            <form-list name="CallList" list="callList" skip-form="true">
+                <field name="callId"><header-field title="Call"/><default-field><link url="callDetail" text="${callId}" link-type="anchor"/></default-field></field>
+                <field name="startDate"><header-field title="Started"/><default-field><display/></default-field></field>
+                <field name="modelId"><header-field title="Model"/><default-field><display/></default-field></field>
+                <field name="httpStatus"><header-field title="Status"/><default-field><display/></default-field></field>
+                <field name="finishReason"><header-field title="Finish"/><default-field><display/></default-field></field>
+                <field name="inputTokens"><header-field title="In"/><default-field><display/></default-field></field>
+                <field name="outputTokens"><header-field title="Out"/><default-field><display/></default-field></field>
+                <field name="usageEstimated"><header-field title="Estimated"/><default-field><display/></default-field></field>
+                <field name="cost"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>
