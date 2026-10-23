@@ -13,7 +13,7 @@
 <a class="current" href="${sri.getScreenUrlInstance().getUrlWithParams()}">${html_title || ec.resource.expand(sri.getScreenUrlInfo().targetScreen.getDefaultMenuName() || "Page", "")}</a>
 <span class="spacer"></span>
 <#list sri.getThemeValues("STRT_HEADER_NAVBAR_ITEM") as navbarItem>
-${raw(ec.resource.expand(navbarItem, ""))}
+${raw(sri.renderInlineText(navbarItem))}
 </#list>
 <details id="history-menu" class="menu"><summary title="${ec.l10n.localize("History")}"><i class="fa fa-list"></i></summary><ul>
 <#list screenHistoryList.slice(0, 25) as screenHistory>
