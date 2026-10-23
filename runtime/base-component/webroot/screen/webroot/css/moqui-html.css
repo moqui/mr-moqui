@@ -50,6 +50,7 @@ a:hover { text-decoration: underline; }
 h1, h2, h3, h4, h5 { margin: .6em 0 .4em; line-height: 1.2; }
 h4 { font-size: 1.1rem; } h5 { font-size: 1rem; }
 p { margin: 0 0 var(--gap); }
+address { margin: 0 0 4px; font-style: normal; line-height: 1.42857143; }
 code, pre, tt { font-family: ui-monospace, "Courier New", monospace; }
 pre { padding: var(--gap); background: var(--stripe); border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; white-space: pre-wrap; }
 pre.pre-plain { white-space: pre; }
@@ -91,6 +92,11 @@ main, section { display: block; }
 /* StatusWidgets.xml compact status/action rows (Java webroot-layout.css). */
 ul.float-plain { display: inline-block; list-style: none outside none; margin: 0 0 -8px; padding: 0; }
 ul.float-plain > li { display: inline-block; line-height: 18px; margin: 0 8px 8px 0; padding: 8px; float: left; }
+/* Party payment-method cards share Java's float-box utility. */
+ul.float-box { display: inline-block; list-style: none outside none; margin: 0 0 -8px; padding: 0; }
+ul.float-box > li { display: inline-block; line-height: 18px; margin: 0 8px 8px 0; padding: 8px; float: left; background: transparent; box-shadow: 0 0 0 1px var(--shaded-inset) inset, 0 0 0 1px var(--shaded-shadow); }
+ul.float-box > li.active { box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 1px var(--shaded-shadow); }
+ul.float-box > li.box-narrow { max-width: 300px; }
 ul.float-plain.condensed { margin: 0; }
 ul.float-plain.condensed > li { margin: 0 4px 0 0; padding: 4px; }
 .shaded-area { padding: 8px; margin-bottom: 8px; line-height: 18px; background: var(--shaded-bg); box-shadow: 0 0 0 1px var(--shaded-inset) inset, 0 0 0 1px var(--shaded-shadow); }
