@@ -30,7 +30,7 @@ return function render(_ctx, _cache) {
           extra: _ctx.$scope['mqExtra_ItemForm']
         }, {
           default: _withCtx((_ctx) => [
-            _createElementVNode("div", { class: "q-mb-md" }, [
+            _createElementVNode("div", { class: "q-my-md" }, [
               _createVNode(_component_m_form, {
                 name: "ItemForm",
                 id: "ItemForm",
@@ -39,7 +39,7 @@ return function render(_ctx, _cache) {
                 "fields-initial": {'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.str(_ctx.$scope['price']),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.str(_ctx.$scope['mode']):_ctx.$mq.str(_ctx.$scope['mode'])),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
               }, {
                 default: _withCtx((formProps) => [
-                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
                     _createVNode(_component_m_display, {
                       name: "itemId",
                       "label-wrapper": "",
@@ -51,7 +51,7 @@ return function render(_ctx, _cache) {
                       fields: formProps.fields
                     }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "display", "fields"])
                   ]),
-                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
                     _createVNode(_component_m_text_line, {
                       id: "ItemForm_name",
                       type: "text",
@@ -63,7 +63,7 @@ return function render(_ctx, _cache) {
                       fields: formProps.fields
                     }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "fields"])
                   ]),
-                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
                     _createVNode(_component_m_drop_down, {
                       name: "status",
                       id: "ItemForm_status",
@@ -73,7 +73,7 @@ return function render(_ctx, _cache) {
                       "onUpdate:modelValue": $event => ((formProps.fields.status) = $event)
                     }, null, 8, ["label", "options", "modelValue", "onUpdate:modelValue"])
                   ]),
-                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
                     _createVNode(_component_m_display, {
                       name: "price",
                       "label-wrapper": "",
@@ -88,7 +88,7 @@ return function render(_ctx, _cache) {
                   ((_ctx.status == 'ACTIVE'))
                     ? (_openBlock(), _createElementBlock("div", {
                         key: 0,
-                        class: "q-pa-xs"
+                        class: "q-ma-sm"
                       }, [
                         _createVNode(_component_m_display, {
                           name: "mode",
@@ -103,7 +103,7 @@ return function render(_ctx, _cache) {
                       ]))
                     : (_openBlock(), _createElementBlock("div", {
                         key: 1,
-                        class: "q-pa-xs"
+                        class: "q-ma-sm"
                       }, [
                         _createVNode(_component_m_display, {
                           name: "mode",
@@ -116,7 +116,7 @@ return function render(_ctx, _cache) {
                           fields: formProps.fields
                         }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "display", "fields"])
                       ])),
-                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
                     _createVNode(_component_q_btn, {
                       dense: "",
                       outline: !formProps.hasFieldsChanged,

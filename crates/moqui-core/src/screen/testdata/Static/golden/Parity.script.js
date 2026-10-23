@@ -143,7 +143,7 @@ return function render(_ctx, _cache) {
       extra: _ctx.$scope['mqExtra_ProductForm']
     }, {
       default: _withCtx((_ctx) => [
-        _createElementVNode("div", { class: "q-mb-md" }, [
+        _createElementVNode("div", { class: "q-my-md" }, [
           _createVNode(_component_m_form, {
             name: "ProductForm",
             id: "ProductForm",
@@ -167,7 +167,7 @@ return function render(_ctx, _cache) {
                   }, {
                     default: _withCtx(() => [
                       _createElementVNode("div", { class: "q-pa-sm" }, [
-                        _createElementVNode("div", { class: "q-pa-xs" }, [
+                        _createElementVNode("div", { class: "q-ma-sm" }, [
                           _createVNode(_component_m_text_line, {
                             id: "ProductForm_productName",
                             type: "text",
@@ -194,7 +194,7 @@ return function render(_ctx, _cache) {
                   }, {
                     default: _withCtx(() => [
                       _createElementVNode("div", { class: "q-pa-sm" }, [
-                        _createElementVNode("div", { class: "q-pa-xs" }, [
+                        _createElementVNode("div", { class: "q-ma-sm" }, [
                           _createVNode(_component_m_text_line, {
                             id: "ProductForm_price",
                             type: "text",
@@ -206,7 +206,7 @@ return function render(_ctx, _cache) {
                             fields: formProps.fields
                           }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "fields"])
                         ]),
-                        _createElementVNode("div", { class: "q-pa-xs" }, [
+                        _createElementVNode("div", { class: "q-ma-sm" }, [
                           _createVNode(_component_m_text_area, {
                             name: "note",
                             id: "ProductForm_note",
@@ -516,7 +516,7 @@ return function render(_ctx, _cache) {
                           extra: _ctx.$scope['mqExtra_ArchiveForm']
                         }, {
                           default: _withCtx((_ctx) => [
-                            _createElementVNode("div", { class: "q-mb-md" }, [
+                            _createElementVNode("div", { class: "q-my-md" }, [
                               _createVNode(_component_m_form, {
                                 name: "ArchiveForm",
                                 id: "ArchiveForm",
@@ -526,7 +526,7 @@ return function render(_ctx, _cache) {
                                 "parent-checkbox-set": mqSelSet
                               }, {
                                 default: _withCtx((formProps) => [
-                                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                                  _createElementVNode("div", { class: "q-ma-sm" }, [
                                     _createVNode(_component_m_text_line, {
                                       id: "ArchiveForm_reason",
                                       type: "text",
@@ -538,7 +538,7 @@ return function render(_ctx, _cache) {
                                       fields: formProps.fields
                                     }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "fields"])
                                   ]),
-                                  _createElementVNode("div", { class: "q-pa-xs" }, [
+                                  _createElementVNode("div", { class: "q-ma-sm" }, [
                                     _createVNode(_component_q_btn, {
                                       dense: "",
                                       outline: !formProps.hasFieldsChanged,

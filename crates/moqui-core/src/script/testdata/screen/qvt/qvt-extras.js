@@ -175,6 +175,118 @@ if (sri.doBoundaryComments()) sri.write("<!-- END   form-single[@name=UpdateSele
         {"name": "id", "title": () => ec.l10n.localize("ID"), "summary": () => {  let $t = ""; sri.pushContext(); try {  $t += $v.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"case-insensitive"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}}); } finally { sri.popContext(); } return $t.trim(); }},
         {"name": "title", "title": () => ec.l10n.localize("Title"), "summary": null},
         {"name": "note", "title": () => ec.l10n.localize("Note"), "summary": null}
+    ],
+    "summaryFields": [
+        {
+            "name": "id",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "case-insensitive",
+            "sub": false,
+            "submit": false,
+            "title": () => ec.l10n.localize("ID"),
+            "find": () => {
+        $v.rowCellOpen("", "", false);
+        sri.pushContext();
+        try {
+            $v.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"case-insensitive"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+        } finally {
+            sri.popContext();
+        }
+        $v.rowCellClose(false);
+        },
+            "dialogField": () => {
+        $v.fieldBox(null, "", false);
+        sri.pushContext();
+        try {
+            $v.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"case-insensitive"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+        } finally {
+            sri.popContext();
+        }
+        sri.write("</div>");
+        },
+            "summary": () => {  let $t = ""; sri.pushContext(); try {  $t += $v.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"case-insensitive"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}}); } finally { sri.popContext(); } return $t.trim(); },
+            "cell": ($m) => {
+                if ($m !== 2) {
+                    $v.rowCellOpen("", "", $m === 2);
+                    sri.pushContext();
+                    try {
+                        $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+                    } finally {
+                        sri.popContext();
+                    }
+                    $v.rowCellClose($m === 2);
+                }
+            }
+        },
+        {
+            "name": "title",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "",
+            "sub": false,
+            "submit": false,
+            "title": () => ec.l10n.localize("Title"),
+            "find": null,
+            "dialogField": () => {},
+            "summary": null,
+            "cell": ($m) => {
+                if ($m !== 2) {
+                    $v.rowCellOpen("", "", $m === 2);
+                    sri.pushContext();
+                    try {
+                        $v.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"title"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+                    } finally {
+                        sri.popContext();
+                    }
+                    $v.rowCellClose($m === 2);
+                }
+            }
+        },
+        {
+            "name": "note",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "",
+            "sub": false,
+            "submit": false,
+            "title": () => ec.l10n.localize("Note"),
+            "find": null,
+            "dialogField": () => {},
+            "summary": null,
+            "first": () => {
+            $v.rowCellOpen("", "", false);
+            sri.pushContext();
+            try {
+                $v.textLine({"name":"text-line","attrs":{},"parent":{"name":"first-row-field","attrs":{},"parent":{"name":"field","attrs":{"name":"note"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+            } finally {
+                sri.popContext();
+            }
+            $v.rowCellClose(false);
+            },
+            "last": () => {
+            $v.rowCellOpen("", "", false);
+            sri.pushContext();
+            try {
+                $v.display({"name":"display","attrs":{"text":"end"},"parent":{"name":"last-row-field","attrs":{},"parent":{"name":"field","attrs":{"name":"note"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+            } finally {
+                sri.popContext();
+            }
+            $v.rowCellClose(false);
+            },
+            "cell": ($m) => {
+                if ($m !== 2) {
+                    $v.rowCellOpen("", "", $m === 2);
+                    sri.pushContext();
+                    try {
+                        $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"note"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
+                    } finally {
+                        sri.popContext();
+                    }
+                    $v.rowCellClose($m === 2);
+                }
+            }
+        }
     ]
 });
 }
@@ -252,6 +364,73 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Everyone] --
     "allFields": [
         {"name": "title", "title": () => ec.l10n.localize("Title"), "summary": null},
         {"name": "go", "title": () => ec.l10n.localize("Save All"), "summary": null}
+    ],
+    "summaryFields": [
+        {
+            "name": "id",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "",
+            "sub": false,
+            "submit": false,
+            "title": () => ec.l10n.localize("ID"),
+            "find": null,
+            "dialogField": () => {},
+            "summary": null,
+            "cell": ($m) => {
+                if ($m !== 2) {
+                    $v.hidden({"name":"hidden","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Everyone"}}}}});
+                }
+            }
+        },
+        {
+            "name": "title",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "",
+            "sub": false,
+            "submit": false,
+            "title": () => ec.l10n.localize("Title"),
+            "find": null,
+            "dialogField": () => {},
+            "summary": null,
+            "cell": ($m) => {
+                if ($m !== 2) {
+                    $v.rowCellOpen("", "", $m === 2);
+                    sri.pushContext();
+                    try {
+                        $v.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"title"},"parent":{"name":"form-list","attrs":{"name":"Everyone"}}}}});
+                    } finally {
+                        sri.popContext();
+                    }
+                    $v.rowCellClose($m === 2);
+                }
+            }
+        },
+        {
+            "name": "go",
+            "align": "",
+            "headerStyle": "",
+            "orderBy": "",
+            "sub": false,
+            "submit": true,
+            "title": () => ec.l10n.localize("Save All"),
+            "find": null,
+            "dialogField": () => {},
+            "summary": null,
+            "cell": ($m) => {
+                if ($m !== 1) {
+                    $v.rowCellOpen("", "", $m === 2);
+                    sri.pushContext();
+                    try {
+                        $v.submit({"name":"submit","attrs":{},"parent":{"name":"default-field","attrs":{"title":"Save All"},"parent":{"name":"field","attrs":{"name":"go"},"parent":{"name":"form-list","attrs":{"name":"Everyone"}}}}});
+                    } finally {
+                        sri.popContext();
+                    }
+                    $v.rowCellClose($m === 2);
+                }
+            }
+        }
     ]
 });
 }
