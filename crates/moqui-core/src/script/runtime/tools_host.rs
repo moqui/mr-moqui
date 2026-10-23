@@ -676,6 +676,13 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.factory.waitWorkerPoolEmpty = host.waitWorkerPoolEmpty;
     ec.web.getRequestDetails = host.getRequestDetails;
     Object.defineProperty(ec.web, "secureRequestParameters", { get: host.secureRequestParameters });
+    // `StringUtilities.masker(mask, placeholder)`: Java's MaskFormatter, null for no mask. Its `valueToString` is a
+    // method, so the formatter is a `Masker` wrapper and has it again when a screen reads it from the stack.
+    wrappers.Masker = (masker) => Object.assign(masker, {
+        valueToString: (value) => host.maskValue(masker.mask, masker.placeholder, value)
+    });
+    su.masker = (mask, placeholder) => (mask == null || String(mask) === "" ? null
+        : wrap("Masker", { mask: String(mask), placeholder: placeholder == null ? "" : String(placeholder) }));
     su.camelCaseToPretty = host.camelCaseToPretty;
     su.prettyToCamelCase = host.prettyToCamelCase;
     // `new URI(null, null, filename, null).toASCIIString()`: a path with the characters a URI does not allow escaped
@@ -2269,6 +2276,28 @@ fn camel_case_to_pretty(ctx: Ctx<'_>, text: Opt<JsValue<'_>>) -> rquickjs::Resul
     })
 }
 
+/// `valueToString(value)` of `StringUtilities.masker(mask, placeholder)`: the value in the mask, as Java's
+/// MaskFormatter shows it; a character the mask does not take throws.
+fn mask_value(
+    ctx: Ctx<'_>,
+    mask: Opt<JsValue<'_>>,
+    placeholder: Opt<JsValue<'_>>,
+    value: Opt<JsValue<'_>>,
+) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        let value = text_or_empty(&ctx, value.0.as_ref())?;
+        let Some(masker) = moqui_lib::string::masker(
+            &text_or_empty(&ctx, mask.0.as_ref())?,
+            &text_or_empty(&ctx, placeholder.0.as_ref())?,
+        ) else {
+            return Ok(value);
+        };
+        masker
+            .value_to_string(&value)
+            .map_err(|err| Exception::throw_message(&ctx, &err))
+    })
+}
+
 fn pretty_to_camel_case(
     ctx: Ctx<'_>,
     text: Opt<JsValue<'_>>,
@@ -2376,6 +2405,7 @@ pub(super) fn install<'js>(
     method!("nextCronExecution", next_cron_execution);
     method!("cronDescription", cron_description);
     method!("prettyToCamelCase", pretty_to_camel_case);
+    method!("maskValue", mask_value);
     let define: Function = eval_js(ctx, TOOLS_JS)?;
     let ec: Object = caught(ctx, "ec", ctx.globals().get("ec"))?;
     caught(
