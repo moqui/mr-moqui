@@ -64,7 +64,7 @@ pub(crate) fn map_row(columns: &[(String, String)], row: &DbRow) -> BTreeMap<Str
         let value = if java.is_empty() {
             raw
         } else {
-            basic_convert(&raw, java).value
+            strip_zeros(basic_convert(&raw, java).value)
         };
         values.insert(name.clone(), value);
     }
@@ -72,4 +72,46 @@ pub(crate) fn map_row(columns: &[(String, String)], row: &DbRow) -> BTreeMap<Str
         values.entry(name.clone()).or_insert_with(|| value.clone());
     }
     values
+}
+
+/// Java's `FieldInfo.safeStripZeroes`: a decimal read for an entity field drops the column's
+/// trailing zeros (1.000000 reads as 1), so only computed values carry a scale.
+fn strip_zeros(value: Value) -> Value {
+    match value {
+        Value::Decimal(number) => Value::Decimal(number.normalize()),
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_row;
+    use crate::driver::DbRow;
+    use moqui_lib::object::{to_plain_string, Value};
+
+    #[test]
+    fn a_decimal_field_reads_without_the_column_scale() {
+        let decimal = |text: &str| Value::Decimal(text.parse().unwrap());
+        let row = DbRow {
+            columns: vec![
+                ("quantity".into(), decimal("1.000000")),
+                ("amount".into(), decimal("16.99000")),
+                ("total".into(), decimal("100.000000")),
+                ("raw".into(), decimal("2.50")),
+            ],
+        };
+        let columns = [
+            ("quantity".to_string(), "java.math.BigDecimal".to_string()),
+            ("amount".to_string(), "java.math.BigDecimal".to_string()),
+            ("total".to_string(), "java.math.BigDecimal".to_string()),
+            ("raw".to_string(), String::new()),
+        ];
+        let values = map_row(&columns, &row);
+        let text = |name: &str| to_plain_string(&values[name]);
+        assert_eq!(text("quantity"), "1");
+        assert_eq!(text("amount"), "16.99");
+        // As Java's safeStripZeroes, 1E+2 is set back to scale 0.
+        assert_eq!(text("total"), "100");
+        assert_eq!(text("raw"), "2.50");
+    }
 }

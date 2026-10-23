@@ -338,8 +338,8 @@ fn audit_text(facade: &EntityFacade, encrypt_field: bool, value: Option<&Value>)
     let Some(value) = present(value) else {
         return Ok(None);
     };
-    // A decimal read back from the database carries the column scale (10.000000); the audit text is the plain value (10).
-    let plain = audit_plain(value);
+    // Java's toPlainString keeps a computed decimal's scale (-3.40); a decimal read from the database has none left.
+    let plain = to_plain_string(value);
     let text = if encrypt_field {
         if let Some((primary, _)) = facade.crypt() {
             encrypt(&plain, &primary)?
@@ -350,13 +350,6 @@ fn audit_text(facade: &EntityFacade, encrypt_field: bool, value: Option<&Value>)
         plain
     };
     Ok(Some(clip_text(&text)))
-}
-
-fn audit_plain(value: &Value) -> String {
-    match value {
-        Value::Decimal(number) => number.normalize().to_string(),
-        other => to_plain_string(other),
-    }
 }
 
 fn clip_text(text: &str) -> String {
@@ -391,7 +384,10 @@ fn insert_audit(
     }
     // Java's getStackNameString, cut at 4000 characters.
     if let Some(stack) = crate::context::ExecutionContext::with_current(|ctx| ctx.artifact_stack_names()) {
-        row.set("artifactStack", Value::string(stack.chars().take(4000).collect::<String>()));
+        row.set(
+            "artifactStack",
+            Value::string(stack.chars().take(4000).collect::<String>()),
+        );
     }
     if let Some(text) = new_text {
         row.set("newValueText", Value::string(text));
@@ -639,16 +635,7 @@ fn find_localized(
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_plain, raw_read, RawReadGuard};
-    use moqui_lib::object::Value;
-
-    #[test]
-    fn audit_text_drops_the_column_scale_of_a_decimal() {
-        let value = Value::Decimal("10.000000".parse().unwrap());
-        assert_eq!(audit_plain(&value), "10");
-        assert_eq!(audit_plain(&Value::Decimal("1.50".parse().unwrap())), "1.5");
-        assert_eq!(audit_plain(&Value::string("x")), "x");
-    }
+    use super::{raw_read, RawReadGuard};
 
     #[test]
     fn a_nested_raw_read_restores_the_outer_flag() {
