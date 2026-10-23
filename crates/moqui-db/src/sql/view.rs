@@ -1045,7 +1045,10 @@ impl<'a> Renderer<'a> {
             .unwrap_or_default();
         let pairs = self.join_keys(member)?;
         let join_from = member.join_from_alias.as_deref();
-        if !lateral {
+        // A member used only by a pushed-down condition still needs a select list.
+        // Its join keys preserve the member's rows (and a nested view's grouping)
+        // without exposing an unrelated field or aggregate to the outer query.
+        if !lateral || exposures.is_empty() {
             for (_, related) in &pairs {
                 let exposure = Exposure::Field(related.clone());
                 if !exposures.contains(&exposure) {

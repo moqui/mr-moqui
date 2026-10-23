@@ -1512,6 +1512,86 @@ fn a_sub_select_member_aggregates_inside_and_takes_its_conditions() {
 }
 
 #[test]
+fn a_filter_only_sub_select_projects_its_join_keys() {
+    let model = billing_model();
+    let view = model.entity("sample.ItemAndBilled").unwrap();
+    let options = SelectOptions {
+        fields: vec!["orderId".into()],
+        ..SelectOptions::default()
+    };
+    let condition = Condition::greater("billingDate", Value::string("2026-01-01"));
+    for lateral in [false, true] {
+        let mut dialect = sample_postgres();
+        if !lateral {
+            dialect.from_lateral_style = None;
+        }
+        let statement = checked(
+            select_view_with(
+                view,
+                &model,
+                &dialect,
+                &values(),
+                Some(&condition),
+                &[],
+                LimitOffset::default(),
+                &options,
+            )
+            .unwrap(),
+        );
+        let sql = unquote(&statement.sql);
+        assert!(
+            sql.contains("SELECT IB.orderId AS orderId, IB.itemSeqId AS itemSeqId FROM ItemBilling IB"),
+            "{sql}"
+        );
+        assert!(sql.contains("IB.billingDate > ?"), "{sql}");
+        assert_eq!(statement.params, vec![billing_from()]);
+        assert_eq!(sql.contains("LATERAL"), lateral);
+        assert!(!sql.contains("GROUP BY"), "{sql}");
+    }
+}
+
+#[test]
+fn a_filter_only_view_sub_select_preserves_its_grouping_and_correlation() {
+    let model = sample_model(&format!(
+        r#"{ORDERS}
+        <view-entity entity-name="BillingSummary" package="sample">
+            <member-entity entity-alias="B" entity-name="sample.ItemBilling"/>
+            <alias name="orderId" entity-alias="B"/>
+            <alias name="billingDate" entity-alias="B"/>
+            <alias name="amount" entity-alias="B" function="sum"/>
+        </view-entity>
+        <view-entity entity-name="OrderAndBilling" package="sample">
+            <member-entity entity-alias="O" entity-name="sample.Order"/>
+            <member-entity entity-alias="BS" entity-name="sample.BillingSummary" join-from-alias="O" join-optional="true" sub-select="true">
+                <key-map field-name="orderId"/>
+            </member-entity>
+            <alias name="orderId" entity-alias="O"/>
+            <alias name="billingDate" entity-alias="BS"/>
+        </view-entity>"#
+    ));
+    let condition = Condition::greater("billingDate", Value::string("2026-01-01"));
+    let statement = checked(
+        select_view_with(
+            model.entity("sample.OrderAndBilling").unwrap(),
+            &model,
+            &sample_postgres(),
+            &values(),
+            Some(&condition),
+            &[],
+            LimitOffset::default(),
+            &SelectOptions {
+                fields: vec!["orderId".into()],
+                ..SelectOptions::default()
+            },
+        )
+        .unwrap(),
+    );
+    let sql = unquote(&statement.sql);
+    assert!(sql.contains("LEFT OUTER JOIN LATERAL (SELECT B.orderId FROM ItemBilling B WHERE (B.billingDate > ? AND O.orderId = B.orderId) GROUP BY B.orderId) BS ON 1=1"), "{sql}");
+    assert_eq!(statement.params, vec![billing_from()]);
+}
+
+#[test]
 fn bad_views_fail_to_load() {
     let root = workspace_root();
     let conf =
