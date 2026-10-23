@@ -672,6 +672,30 @@ fn string_clean_html(text: Opt<String>) -> String {
     crate::service::clean_safe_html(&text.0.unwrap_or_default())
 }
 
+/// `masker(mask, placeholder)`: null for an empty mask, else a formatter whose `valueToString` shows a value in the
+/// mask, as the GL account codes of the accounting screens.
+fn string_masker<'js>(
+    ctx: Ctx<'js>,
+    mask: Opt<JsValue<'js>>,
+    placeholder: Opt<JsValue<'js>>,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let Some(masker) = moqui_lib::string::masker(&opt_id_text(&ctx, &mask)?, &opt_id_text(&ctx, &placeholder)?)
+        else {
+            return Ok(JsValue::new_null(ctx.clone()));
+        };
+        let formatter = Object::new(ctx.clone())?;
+        let value_to_string = Function::new(ctx.clone(), move |ctx: Ctx<'js>, value: Opt<JsValue<'js>>| {
+            let value = opt_id_text(&ctx, &value)?;
+            masker
+                .value_to_string(&value)
+                .map_err(|err| Exception::throw_message(&ctx, &err))
+        })?;
+        formatter.set("valueToString", value_to_string)?;
+        Ok(formatter.into_value())
+    })
+}
+
 fn string_base64_url_decode(ctx: Ctx<'_>, text: Opt<String>) -> rquickjs::Result<String> {
     use base64::Engine;
     host_guard(&ctx, || {
@@ -817,6 +841,7 @@ pub(super) fn fill_helpers<'js>(
     method!(string_utilities, "base64Encode", string_base64_encode);
     method!(string_utilities, "cleanHtml", string_clean_html);
     method!(string_utilities, "urlEncodeIfNeeded", string_url_encode_if_needed);
+    method!(string_utilities, "masker", string_masker);
     method!(
         collection_utilities,
         "paginateParameters",
@@ -927,6 +952,8 @@ mod tests {
             r#"StringUtilities.base64UrlDecode(StringUtilities.base64UrlEncode("hello/world?>")) === "hello/world?>""#,
         );
         holds(r#"StringUtilities.base64UrlEncode("??>>") === "Pz8-Pg""#);
+        holds(r####"StringUtilities.masker("###-###-###", "0").valueToString("2120") === "212-000-000""####);
+        holds(r#"StringUtilities.masker(null, "0") === null"#);
         holds(r#"CollectionUtilities.getMapArrayListValues([{a: 1}, {a: null}, {b: 2}], "a", true).length === 1"#);
         holds(r#"CollectionUtilities.getMapArrayListValues([{a: 1}, {a: null}, {b: 2}], "a", false).length === 3"#);
         holds(

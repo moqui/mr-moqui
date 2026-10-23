@@ -279,6 +279,113 @@ pub fn pretty_to_camel_case(pretty: &str, first_upper: bool) -> String {
     out
 }
 
+/// One position of a `MaskFormatter` mask.
+#[derive(Clone, Debug)]
+enum MaskChar {
+    Literal(char),
+    /// `#`
+    Digit,
+    /// `U`, upper-cased
+    Upper,
+    /// `L`, lower-cased
+    Lower,
+    /// `A`
+    LetterOrDigit,
+    /// `?`
+    Letter,
+    /// `*`
+    Any,
+    /// `H`, upper-cased
+    Hex,
+}
+
+/// `StringUtilities.masker`: a `javax.swing.text.MaskFormatter` whose value has no literal characters.
+#[derive(Clone, Debug)]
+pub struct Masker {
+    mask: Vec<MaskChar>,
+    /// `setPlaceholder`, for a placeholder longer than one character.
+    placeholder: Option<Vec<char>>,
+    /// `setPlaceholderCharacter`; a space unless the placeholder is one character.
+    placeholder_char: char,
+}
+
+/// `StringUtilities.masker(mask, placeholder)`: no formatter for an empty mask.
+pub fn masker(mask: &str, placeholder: &str) -> Option<Masker> {
+    if mask.is_empty() {
+        return None;
+    }
+    let mut chars = mask.chars();
+    let mut parsed = Vec::new();
+    while let Some(ch) = chars.next() {
+        parsed.push(match ch {
+            '#' => MaskChar::Digit,
+            'U' => MaskChar::Upper,
+            'L' => MaskChar::Lower,
+            'A' => MaskChar::LetterOrDigit,
+            '?' => MaskChar::Letter,
+            '*' => MaskChar::Any,
+            'H' => MaskChar::Hex,
+            // A quote makes the next character a literal; a quote at the end of the mask is itself one.
+            '\'' => MaskChar::Literal(chars.next().unwrap_or('\'')),
+            other => MaskChar::Literal(other),
+        });
+    }
+    let placeholder_chars: Vec<char> = placeholder.chars().collect();
+    let (placeholder, placeholder_char) = match placeholder_chars.len() {
+        0 => (None, ' '),
+        1 => (None, placeholder_chars[0]),
+        _ => (Some(placeholder_chars), ' '),
+    };
+    Some(Masker {
+        mask: parsed,
+        placeholder,
+        placeholder_char,
+    })
+}
+
+impl Masker {
+    /// `MaskFormatter.valueToString`: each mask character takes the next value character, a literal is inserted, and
+    /// past the end of the value the placeholder fills in. A character the mask does not accept is an error, as
+    /// Java's `ParseException`; value characters beyond the mask are dropped.
+    pub fn value_to_string(&self, value: &str) -> Result<String, String> {
+        let value: Vec<char> = value.chars().collect();
+        let mut out = String::new();
+        let mut index = 0;
+        for mask_char in &self.mask {
+            if let MaskChar::Literal(literal) = mask_char {
+                out.push(*literal);
+                continue;
+            }
+            let Some(&ch) = value.get(index) else {
+                match self.placeholder.as_ref().and_then(|placeholder| placeholder.get(index)) {
+                    Some(&placeholder) => out.push(placeholder),
+                    None => out.push(self.placeholder_char),
+                }
+                index += 1;
+                continue;
+            };
+            let valid = match mask_char {
+                MaskChar::Digit => ch.is_numeric(),
+                MaskChar::Upper | MaskChar::Lower | MaskChar::Letter => ch.is_alphabetic(),
+                MaskChar::LetterOrDigit => ch.is_alphanumeric(),
+                MaskChar::Any => true,
+                MaskChar::Hex => ch.is_ascii_hexdigit(),
+                MaskChar::Literal(_) => unreachable!(),
+            };
+            if !valid {
+                return Err(format!("Invalid character: {ch}"));
+            }
+            match mask_char {
+                MaskChar::Upper | MaskChar::Hex => out.extend(ch.to_uppercase()),
+                MaskChar::Lower => out.extend(ch.to_lowercase()),
+                _ => out.push(ch),
+            }
+            index += 1;
+        }
+        Ok(out)
+    }
+}
+
 /// Drop a leading UTF-8 BOM and decode. Invalid sequences become U+FFFD,
 /// which is what `new String(bytes, "UTF-8")` does.
 pub fn to_string_clean_bom(bytes: &[u8]) -> String {
@@ -289,6 +396,20 @@ pub fn to_string_clean_bom(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn masker_formats_as_mask_formatter() {
+        assert!(masker("", "0").is_none());
+        let gl = masker("###-###-###", "0").unwrap();
+        assert_eq!(gl.value_to_string("149300000").unwrap(), "149-300-000");
+        // A short value is filled with the placeholder; extra characters are dropped.
+        assert_eq!(gl.value_to_string("2120").unwrap(), "212-000-000");
+        assert_eq!(gl.value_to_string("1234567890").unwrap(), "123-456-789");
+        assert_eq!(gl.value_to_string("").unwrap(), "000-000-000");
+        assert!(gl.value_to_string("12a").is_err());
+        assert_eq!(masker("UL-'#H", "").unwrap().value_to_string("abf").unwrap(), "Ab-#F");
+        assert_eq!(masker("##-##", "abcd").unwrap().value_to_string("1").unwrap(), "1b-cd");
+    }
 
     #[test]
     fn xml_attribute_encoding_and_decoding() {
