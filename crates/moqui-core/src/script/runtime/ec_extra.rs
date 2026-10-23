@@ -243,6 +243,8 @@ fn l10n_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<JsValue<'_>>) -> r
         };
         let host = match pattern.as_deref() {
             Some(pattern) if is_date_pattern(pattern) => epoch_millis_timestamp(&host).unwrap_or(host),
+            // With no pattern Java formats a timestamp as `yyyy-MM-dd HH:mm`; here it arrives as epoch millis text.
+            None | Some("") if is_epoch_millis_text(&host) => epoch_millis_timestamp(&host).unwrap_or(host),
             _ => host,
         };
         l10n::format_value(&host, pattern.as_deref()).map_err(|err| throw_error(&ctx, &Error::new(err.message())))
@@ -279,6 +281,11 @@ fn epoch_millis_timestamp(value: &Value) -> Option<Value> {
         _ => return None,
     };
     Some(moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value)
+}
+
+/// Text of thirteen digits, which is how a timestamp from 2001 to 2286 reaches a script.
+fn is_epoch_millis_text(value: &Value) -> bool {
+    matches!(value, Value::String(text) if text.len() == 13 && text.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Text that begins `yyyy-MM-dd`.
