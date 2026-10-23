@@ -859,11 +859,26 @@ pub(super) fn entity_shape(entity_name: &str) -> Result<Arc<EntityShape>, Error>
 
 fn read_entity_shape(model: &EntityModel, entity_name: &str) -> Result<EntityShape, moqui_lib::error::Error> {
     let entity = model.entity(entity_name)?;
-    let fields: Vec<(String, String, bool)> = entity
-        .fields
-        .iter()
-        .map(|field| (field.name.clone(), field.field_type.clone(), field.is_pk))
-        .collect();
+    // A view's fields are its aliases, a member's primary key making a key of the view, as Java's view definition.
+    let fields: Vec<(String, String, bool)> = if entity.is_view {
+        entity
+            .aliases
+            .iter()
+            .map(|alias| {
+                (
+                    alias.name.clone(),
+                    alias.field_type.clone().unwrap_or_default(),
+                    alias.is_pk,
+                )
+            })
+            .collect()
+    } else {
+        entity
+            .fields
+            .iter()
+            .map(|field| (field.name.clone(), field.field_type.clone(), field.is_pk))
+            .collect()
+    };
     let mut one_relations = Vec::new();
     for relationship in &entity.relationships {
         // The expanded keys, so a relationship with no key-map (the related entity's primary key of the
@@ -875,13 +890,18 @@ fn read_entity_shape(model: &EntityModel, entity_name: &str) -> Result<EntitySha
         let (field, related_key) = relationship.key_pairs[0].clone();
         one_relations.push((field, relationship.related.clone(), related_key));
     }
-    let description_field = entity
-        .fields
+    let description_field = fields
         .iter()
-        .filter(|field| !field.is_pk)
-        .find(|field| field.name.ends_with("Name"))
-        .map(|field| field.name.clone())
-        .or_else(|| entity.field("description").map(|field| field.name.clone()))
+        .filter(|(_, _, is_pk)| !is_pk)
+        .map(|(name, _, _)| name)
+        .find(|name| name.ends_with("Name"))
+        .or_else(|| {
+            fields
+                .iter()
+                .map(|(name, _, _)| name)
+                .find(|name| *name == "description")
+        })
+        .cloned()
         .unwrap_or_default();
     Ok(EntityShape {
         full_name: entity.full_name.clone(),
@@ -1313,10 +1333,26 @@ fn add_auto_entity_columns(form: &MNode, initial: &MNode, shape: &EntityShape, d
 mod tests {
     use moqui_lib::node::MNode;
 
-    use super::{merge_field_node, merge_form_nodes};
+    use moqui_db::model::EntityModel;
+
+    use super::{merge_field_node, merge_form_nodes, read_entity_shape};
+    use crate::testing::framework_dir;
 
     fn parse(xml: &str) -> MNode {
         MNode::parse_text("test", xml).unwrap()
+    }
+
+    #[test]
+    fn a_view_entity_shape_has_its_aliases_and_primary_key() {
+        let framework = framework_dir();
+        let conf = MNode::parse_file(framework.join("conf/MoquiDefaultConf.xml")).unwrap();
+        let model = EntityModel::load_directory(&conf, &framework.join("entity")).unwrap();
+        let shape = read_entity_shape(&model, "moqui.test.FooBar").unwrap();
+        assert_eq!(
+            shape.pk_fields,
+            model.entity("moqui.test.FooBar").unwrap().pk_field_names()
+        );
+        assert!(!shape.pk_fields.is_empty());
     }
 
     #[test]
