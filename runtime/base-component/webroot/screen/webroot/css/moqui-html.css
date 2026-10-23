@@ -348,6 +348,14 @@ td > [data-align="center"], th > [data-align="center"] { text-align: center; }
 .find-field { white-space: nowrap; padding-top: 4px; font-weight: normal; }
 tr.nav-row > th { background: transparent; }
 tr.nav-row nav { font-weight: normal; }
+/* Java uses full-size toolbar exports and a quick saved-find selector. */
+tr.nav-row nav > [data-btn]:not([data-btn="plain"]):not([data-size]) {
+    padding: 6px 12px; font-size: 14px; line-height: 1.42857143; border-radius: 4px;
+}
+tr.nav-row nav > select.saved-find {
+    float: left; width: 160px; height: 34px; margin: 6px 0; padding: 6px 12px;
+    font-size: 14px; color: var(--control-fg); border-color: var(--control-border);
+}
 tr.nav-row nav > button, tr.nav-row nav > a { display: inline-block; margin: 6px 8px 0 0; float: left; }
 ul.pagination { display: inline-block; list-style: none; margin: 6px 6px 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 ul.pagination li { display: inline; }

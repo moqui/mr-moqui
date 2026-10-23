@@ -20,33 +20,41 @@ function renderDialog(label) {
     return html;
 }
 
-function renderList({ fields = [], columns = [], header = true, skipHeader = false, hideNav = false, orderBy = '' } = {}) {
+function renderList({ fields = [], columns = [], header = true, skipHeader = false, hideNav = false, orderBy = '', savedFinds = [], activeFind = '', withSavedFinds = false } = {}) {
     const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'ScreenHtml.js'), 'utf8'));
     const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
         anyMacros: () => ({}), allElements: [], opaqueElements: []
     });
     let html = '';
+    const url = () => ({
+        url: '/apps/FindOrder', path: '/apps/FindOrder',
+        cloneUrlInstance: () => url(),
+        removeParameter() { return this; },
+        addParameter(name, value) { this.url = '/apps/FindOrder?' + name + '=' + encodeURIComponent(value); return this; },
+        getParameterMap: () => ({}), getUrlWithParams() { return this.url; }
+    });
     const context = {
         footer_scripts: new Set(), footer_stylesheets: new Set(),
         sri: {
             write: text => { html += text; },
             makeUrlByType: () => ({ url: '/apps/FindOrder' }),
             getCurrentScreenUrl: () => ({ url: '/apps/FindOrder' }),
-            getScreenUrlInstance: () => ({ cloneUrlInstance: () => ({
-                addParameter(name, value) { this.url = '/apps/FindOrder?' + name + '=' + encodeURIComponent(value); return this; },
-                getUrlWithParams() { return this.url; }
-            }) }),
+            getScreenUrlInstance: url,
+            buildUrl: () => ({ url: '/apps/formSaveFind', getDisableLink: () => false }),
+            getUserFormListFinds: () => savedFinds,
+            getUserDefaultFormListFindId: () => '',
+            getSavedFindFullLocation: () => 'component://test/FindOrder.xml#OrderList',
             getFormHiddenParameters: () => ({ organizationPartyId: 'ORG_TEST' }),
             safeCloseList() {}
         },
         ec: {
-            context: { get: key => key === 'hideNav' && hideNav ? 'true' : key === 'orderByField' ? orderBy : null }, resource: { expand: text => text }, web: { sessionToken: 'test-token' },
+            context: { get: key => key === 'hideNav' && hideNav ? 'true' : key === 'orderByField' ? orderBy : key === 'formListFindId' ? activeFind : null }, resource: { expand: text => text }, web: { sessionToken: 'test-token' },
             l10n: { localize: text => text }
         }
     };
     vm.runInNewContext(module.runtime, context);
     context.$mqHtml.formList({ count: 0 }, { attrs: {
-        name: 'OrderList', list: 'orders', 'header-dialog': String(header), 'skip-header': String(skipHeader)
+        name: 'OrderList', list: 'orders', 'header-dialog': String(header), 'skip-header': String(skipHeader), 'saved-finds': String(withSavedFinds)
     } }, columns, { headerForm: header, allFields: [], summaryFields: fields, hiddenHeaderCells: [] });
     return html;
 }
@@ -140,4 +148,16 @@ test('dialog trigger has an explicit accessible name independent of icon font co
 test('dialog accessible name is HTML-escaped', () => {
     const button = renderDialog('Create "Sales" & Orders').match(/<button[^>]*>/)[0];
     assert.match(button, /aria-label="Create &quot;Sales&quot; &amp; Orders"/);
+});
+
+test('saved finds are directly selectable in list navigation, with an explicit clear option', () => {
+    const savedFinds = [{ description: 'AR <Customers>', formListFind: { formListFindId: 'ar&customer' } }];
+    const html = renderList({ withSavedFinds: true, savedFinds, activeFind: 'ar&customer' });
+    const nav = html.match(/<nav>([\s\S]*?)<\/nav>/)[1];
+    assert.match(nav, /<select[^>]*id="OrderList_QuickSavedFind"[^>]*data-saved-finds[^>]*aria-label="Saved Finds"/);
+    assert.match(nav, /value="_clear"[^>]*data-url="\/apps\/FindOrder\?formListFindId=_clear"/);
+    assert.match(nav, /value="ar&amp;customer"[^>]*data-url="\/apps\/FindOrder\?formListFindId=ar%26customer"[^>]*selected[^>]*>AR &lt;Customers&gt;<\/option>/);
+    assert.ok(nav.indexOf('QuickSavedFind') < nav.indexOf('data-dialog'));
+    assert.doesNotMatch(renderList({ withSavedFinds: true }), /data-saved-finds/);
+    assert.doesNotMatch(renderList({ withSavedFinds: true, savedFinds, hideNav: true }), /data-saved-finds/);
 });

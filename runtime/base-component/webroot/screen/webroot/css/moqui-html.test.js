@@ -32,7 +32,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         <table class="form-list"><tbody><tr><td id="compact-cell"><div class="field" id="table-field"><label>Compact</label><div class="widget"><input id="table-control"><span class="display" id="table-display">Compact</span></div></div></td></tr></tbody></table>
         <button id="button">Find Options</button><button id="NewProductDialog-button" data-dialog="NewProductDialog">New Product</button><strong id="strong">Label</strong>
         <div id="invoice-status"><span class="shaded-area condensed"><ul class="float-plain condensed"><li><div><strong>Status</strong></div><div><strong>In-Process</strong></div></li><li><button>Finalize</button></li><li><button>Cancel</button></li></ul></span></div>
-        <table class="form-list"><thead><tr class="nav-row"><th><nav><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
+        <table class="form-list"><thead><tr class="nav-row"><th><nav><select id="saved-find" class="saved-find"><option>Saved Finds</option></select><button id="find">Find Options</button><ul class="pagination"><li><span id="page">Page 1</span></li></ul><a id="csv" data-btn="default">CSV</a></nav></th></tr></thead></table>
         <section class="box" id="panel"><header id="panel-heading"><h5 id="panel-title">Payment Applications</h5><div class="toolbar" id="panel-toolbar"><button data-btn="primary" id="panel-action">New Payment</button></div></header><div class="body" id="panel-body">Applied Payments</div></section>
         <a data-btn="primary" id="small-action">Current PDF</a><a data-btn="plain" id="plain-action">Account</a><a data-btn="primary" data-size="lg" id="large-action">Large</a>
         <div id="grid" style="width:1440px;padding:0 15px"><div class="row">
@@ -201,6 +201,13 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
                 toolbarTop:document.getElementById('panel-toolbar').getBoundingClientRect().top - document.getElementById('panel-heading').getBoundingClientRect().top,
                 toolbarHeightIndependent:document.getElementById('panel-heading').getBoundingClientRect().height < document.getElementById('panel-toolbar').getBoundingClientRect().height + 20
             },
+            toolbarMetrics: {
+                savedHeight:document.getElementById('saved-find').getBoundingClientRect().height,
+                savedWidth:document.getElementById('saved-find').getBoundingClientRect().width,
+                savedMargin:getComputedStyle(document.getElementById('saved-find')).margin,
+                csvHeight:document.getElementById('csv').getBoundingClientRect().height,
+                csvFont:getComputedStyle(document.getElementById('csv')).fontSize
+            },
             javaMetrics: {
                 font:getComputedStyle(document.body).fontFamily, fontSize:getComputedStyle(document.body).fontSize,
                 lineHeight:getComputedStyle(document.body).lineHeight, background:getComputedStyle(document.body).backgroundColor,
@@ -232,7 +239,8 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { filterMetrics, wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics, verticalMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { toolbarMetrics, filterMetrics, wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics, verticalMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(toolbarMetrics, { savedHeight:34, savedWidth:160, savedMargin:'6px 0px', csvHeight:34, csvFont:'14px' });
     // Java's quick-clear floats left at 20px, without making the filter header taller.
     assert.deepEqual(filterMetrics, { height:32, resetHeight:20, resetFirst:true,
         valueColor:'rgb(60, 118, 61)', labelWeight:'700', fieldGap:'0px' });
