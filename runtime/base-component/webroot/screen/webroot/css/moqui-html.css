@@ -335,7 +335,7 @@ input:user-invalid, select:user-invalid, textarea:user-invalid { border-color: v
 input[data-align="right"] { text-align: right; } input[data-align="center"] { text-align: center; }
 input[type="date"], input[type="time"], input[type="datetime-local"] { min-width: 9em; }
 label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
-.display { display: inline-block; padding: 4px 0; overflow-wrap: anywhere; }
+.display { display: inline-block; padding: 4px 0; overflow-wrap: normal; }
 .display.currency, .display.BigDecimal { text-align: right; }
 .display.Long, .display.Double, .display.Float, .display.Integer { text-align: center; }
 

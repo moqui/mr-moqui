@@ -745,3 +745,17 @@ test('wide table editor actions stay visible on desktop and scroll on small scre
         assert.equal(m.overflow,width===1440?'visible':'auto');assert.equal(m.scrollable,true);assert.equal(m.visible,true);assert.equal(m.clicked,1);
     }
 });
+
+
+test('table display identifiers keep words intact while descriptive text wraps at spaces', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html><style>${css}</style><div style="width:420px"><div class="table-wrap"><table class="form-list"><tbody><tr><td><div><span id="id-value" class="display String">01010101</span></div></td><td><input style="width:400px"></td></tr></tbody></table></div></div><div style="width:100px"><span id="description" class="display">Local gateway for order shipping rate</span></div><pre id="result"></pre><script>
+        const measure=id=>{const e=document.getElementById(id),r=document.createRange();r.selectNodeContents(e);return {lines:r.getClientRects().length,height:e.getBoundingClientRect().height,wrap:getComputedStyle(e).overflowWrap}};
+        document.getElementById('result').textContent=JSON.stringify({id:measure('id-value'),description:measure('description')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-display-wrap-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.equal(m.id.lines,1);assert.equal(m.id.height,20);assert.equal(m.id.wrap,'normal');assert.ok(m.description.lines>1);assert.equal(m.description.wrap,'normal');
+});
