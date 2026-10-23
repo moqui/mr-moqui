@@ -137,7 +137,7 @@ test('saved finds have a separate named dialog, not inside Find Options', () => 
     const html = renderList();
     const saved = dialog(html, 'PaymentList_sfdialog');
     assert.ok(saved);
-    assert.match(saved, /icon="find_in_page" label="Saved Finds"/);
+    assert.match(saved, /label="Saved Finds" icon="find_in_page"/);
     assert.match(saved, /label="Save New Find"/);
     assert.match(saved, /\/qapps\/FindPayment\.xml\.form_list\$PaymentList/);
     const find = dialog(html, 'PaymentList_hdialog');
@@ -189,7 +189,7 @@ test('filter summary uses all fields, escapes labels and keeps hidden reset para
         ],
         hidden: { organizationPartyId: 'ORG_TEST' }
     });
-    assert.match(html, /<strong>Type &lt;&amp;&gt;:<\/strong> <span class="text-positive">Transfer &lt;script&gt;<\/span>/);
+    assert.match(html, /<strong>Type &lt;&amp;&gt;:<\/strong> <span class="text-success">Transfer &lt;script&gt;<\/span>/);
     assert.doesNotMatch(html, /<strong>Empty|<strong>Ignored/);
     const reset = html.match(/<m-form-link[^>]*id="PaymentList_header_clr"[^>]*>/)?.[0];
     assert.ok(reset);

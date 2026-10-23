@@ -1158,86 +1158,91 @@
                 (!at(n, "paginate-always-show") || at(n, "paginate-always-show") === "true" || maxIndex > 0);
         };
 
-        // The page tools of a list, right-aligned in a row: the page size menu, the jump to a page and the page buttons. The nav row above
-        // the table and the one below it (bottomNav) both hold them.
+        // The page tools of a list as Java draws them, after a q-space in its row: the page size menu, the jump to a page and the page buttons.
+        // The nav row in the head of the table and the one at the end of its body both hold them.
         const pageTools = (n, listName, formId) => {
-            let out = '<div class="row"><q-space></q-space>';
-            if (at(n, "show-all-button") === "true" || at(n, "show-page-size") === "true") out += pageSizeMenu(listName);
+            let out = "<q-space></q-space> ";
+            if (at(n, "show-all-button") === "true" || at(n, "show-page-size") === "true") out += pageSizeMenu(listName) + " ";
             const maxIndex = Number(ctx(listName + "PageMaxIndex"));
-            if (maxIndex > 4) out += '<m-form-go-page id-val="' + e(formId) + '" :max-index="' + maxIndex + '"></m-form-go-page>';
-            return out + '<m-form-paginate :paginate="' + e(paginateProps(listName)) + '"></m-form-paginate></div>';
+            if (maxIndex > 4) out += '<m-form-go-page id-val="' + e(formId) + '" :max-index="' + maxIndex + '"></m-form-go-page> ';
+            return out + '<m-form-paginate :paginate="' + e(paginateProps(listName)) + '"></m-form-paginate>';
         };
-        const bottomNav = (n, formId) => {
+        // the nav row at the end of the table body, as Java's footer pagination control
+        const bottomNav = (n, formId, colspan) => {
             if (!isPaginated(n) || ctx("hideNav") === "true") return;
-            w('<div class="form-list-nav-row row items-center"><div class="col-xs-12">' + pageTools(n, at(n, "list"), formId) + "</div></div>\n");
+            w('<tr class="form-list-nav-row"><th colspan="' + colspan + '"><div class="row">' + pageTools(n, at(n, "list"), formId) + "</div></th></tr>\n");
         };
 
-        const nav = (n, cols, cfg) => {
+        // The nav row in the head of the table, as Java's paginationHeader: the find, column, saved find and export tools on the left, the page
+        // tools on the right, then with a find dialog a row that sums up the find parameters.
+        const nav = (n, cols, cfg, colspan) => {
             const listName = at(n, "list");
             const formId = cfg.formId;
             const paginated = isPaginated(n);
             if (!(cfg.headerDialog || cfg.savedFinds || cfg.selectColumns || paginated) || ctx("hideNav") === "true") return;
-            let out = '<div class="form-list-nav-row row items-center"><div class="col-xs-12 col-sm-6"><div class="row items-center">';
+            let out = '<tr class="form-list-nav-row"><th colspan="' + colspan + '"><div class="row"><div class="col-xs-12 col-sm-6"><div class="row">';
             const flush = () => { if (out) { w(out); out = ""; } };
-            const tool = (icon, text) => '<q-btn dense unelevated no-caps class="m-btn-tonal" icon="' + icon + '" label="' + e(text) + '"></q-btn>';
+            const tool = (icon, text) => '<q-btn dense outline no-caps label="' + e(text) + '" icon="' + icon + '"></q-btn>';
+            if (cfg.savedFinds) {
+                const finds = sri.getUserFormListFinds(at(n, "name"));
+                if (finds.length) {
+                    const activeId = ctx("formListFindId") || "";
+                    const active = finds.find((find) => find.formListFind.formListFindId === activeId);
+                    const base = sri.getScreenUrlInstance().path;
+                    out += "<q-btn-dropdown dense outline no-caps" + A({ label: active ? active.description || activeId : L("Select Find"), color: active ? "info" : null }) + "><q-list dense>" +
+                        "<q-item clickable v-close-popup><q-item-section><m-link" + A({ href: base + "?formListFindId=_clear" }) + ">" + t(L("Clear Current Find")) + "</m-link></q-item-section></q-item>" +
+                        finds.map((find) => "<q-item clickable v-close-popup><q-item-section><m-link" + A({ href: base + "?formListFindId=" + encodeURIComponent(find.formListFind.formListFindId) }) + ">" +
+                            t(find.description || find.formListFind.formListFindId) + "</m-link></q-item-section></q-item>").join("") + "</q-list></q-btn-dropdown> ";
+                }
+            }
             if (cfg.headerDialog) {
                 out += '<m-container-dialog id="' + e(formId) + '_hdialog" title="' + e(L("Find Options")) + '"><template v-slot:button>' + tool("search", L("Find Options")) + "</template>";
                 flush();
                 findDialogBody(n, cols, cfg);
-                w("</m-container-dialog>");
+                w("</m-container-dialog> ");
             }
             if (cfg.selectColumns) {
-                out += '<m-container-dialog id="' + e(formId) + '_SelColsDialog" title="' + e(L("Column Fields")) + '"><template v-slot:button>' + tool("view_column", L("Columns")) + "</template>";
+                out += '<m-container-dialog id="' + e(formId) + '_SelColsDialog" title="' + e(L("Column Fields")) + '"><template v-slot:button>' + tool("table_chart", L("Columns")) + "</template>";
                 flush();
                 columnsDialogBody(n, cols, cfg);
-                w("</m-container-dialog>");
+                w("</m-container-dialog> ");
             }
             if (cfg.savedFinds) {
                 out += '<m-container-dialog id="' + e(formId) + '_sfdialog" title="' + e(L("Saved Finds")) + '"><template v-slot:button>' + tool("find_in_page", L("Saved Finds")) + "</template>";
                 flush();
                 savedFindsDialogBody(n, cfg);
-                w("</m-container-dialog>");
+                w("</m-container-dialog> ");
             }
-            // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
             const exportUrl = (mode, filename) => sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", mode).addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").addParameter("saveFilename", filename).getUrlWithParams();
-            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ href, target: target || null }) + "><q-item-section>" + t(text) + "</q-item-section></q-item>";
-            const csv = at(n, "show-csv-button") === "true";
-            const xlsx = at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx");
-            const text = at(n, "show-text-button") === "true";
-            const pdf = at(n, "show-pdf-button") === "true";
-            if (csv || xlsx || text || pdf) {
-                out += '<q-btn-dropdown dense flat no-caps icon="download" label="' + e(L("Export")) + '"><q-list dense>';
-                if (csv) out += exportItem(exportUrl("csv", at(n, "name") + ".csv"), L("CSV"));
-                if (xlsx) out += exportItem(exportUrl("xlsx", at(n, "name") + ".xlsx"), L("XLS"));
-                if (text) {
-                    flush();
-                    textDialog(n, cfg);
-                }
-                if (pdf) {
-                    // the page as a PDF: /fop renders the screen at the rest of the path as html-print and sends the PDF
-                    const print = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("renderMode").removeParameter("lastStandalone").addParameter("pageNoLimit", "true");
-                    out += exportItem("/fop" + print.pathWithParams, L("Print"), "_blank");
-                }
-                out += "</q-list></q-btn-dropdown>";
+            if (at(n, "show-csv-button") === "true") out += '<q-btn dense outline type="a"' + A({ href: exportUrl("csv", at(n, "name") + ".csv"), label: L("CSV") }) + "></q-btn> ";
+            if (at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx")) out += '<q-btn dense outline type="a"' + A({ href: exportUrl("xlsx", at(n, "name") + ".xlsx"), label: L("XLS") }) + "></q-btn> ";
+            if (at(n, "show-text-button") === "true") {
+                flush();
+                textDialog(n, cfg);
+            }
+            if (at(n, "show-pdf-button") === "true") {
+                // the page as a PDF: /fop renders the screen at the rest of the path as html-print and sends the PDF
+                const print = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("renderMode").removeParameter("lastStandalone").addParameter("pageNoLimit", "true");
+                out += '<q-btn dense outline no-caps type="a" target="_blank"' + A({ href: "/fop" + print.pathWithParams, label: L("PDF") }) + "></q-btn> ";
             }
             const count = ctx(listName + "Count");
             if ((count === "" ? 0 : count) === 0) {
-                out += '<span class="text-warning text-weight-medium q-ml-sm q-my-auto">' + t(L(ec.context.sharedMap._entityListNoSearchParms ? "Find Options required to view results" : "No results found")) + "</span>";
+                out += '<strong class="text-warning on-right q-my-auto">' + t(L(ec.context.sharedMap._entityListNoSearchParms ? "Find Options required to view results" : "No results found")) + "</strong>";
             }
-            out += "</div></div>";
-            if (paginated) out += '<div class="col-xs-12 col-sm-6">' + pageTools(n, listName, formId) + "</div>";
-            w(out + "</div>\n");
+            out += "</div></div> ";
+            if (paginated) out += '<div class="col-xs-12 col-sm-6"><div class="row">' + pageTools(n, listName, formId) + "</div></div>";
+            w(out + "</div></th></tr>\n");
             if (cfg.headerDialog) {
                 const summaries = (cfg.summaryFields || []).map((field) => {
                     const value = field.summary ? field.summary() : "";
-                    return value ? '<span style="white-space:nowrap;"><strong>' + t(field.title()) + ':</strong> <span class="text-positive">' + t(value) + '</span></span>' : "";
+                    return value ? '<span style="white-space:nowrap;"><strong>' + t(field.title()) + ':</strong> <span class="text-success">' + t(value) + '</span></span>' : "";
                 }).filter(Boolean);
-                w('<div class="form-list-filter-summary text-center q-pa-sm" style="font-weight:normal;">' + summaries.join(" "));
+                w('<tr><th colspan="' + colspan + '" style="font-weight: normal"><span v-pre>' + summaries.join(" ") + "</span>");
                 if (summaries.length) {
-                    w("<m-form-link" + A({ name: cfg.headerFormId + "_clr", id: cfg.headerFormId + "_clr", action: sri.getCurrentScreenUrl().path, ":fields-initial": initial(hiddenParams(n)) }) +
-                        '><q-btn flat round dense size="sm" type="submit" icon="clear" color="negative"><q-tooltip>' + t(L("Reset to Default")) + '</q-tooltip></q-btn></m-form-link>');
+                    w(" <m-form-link" + A({ name: cfg.headerFormId + "_clr", id: cfg.headerFormId + "_clr", action: sri.getCurrentScreenUrl().path, ":fields-initial": initial(hiddenParams(n)) }) +
+                        '><q-btn dense flat type="submit" icon="clear" color="negative"><q-tooltip>' + t(L("Reset to Default")) + "</q-tooltip></q-btn></m-form-link>");
                 }
-                w("</div>");
+                w("</th></tr>\n");
             }
         };
 
@@ -1305,7 +1310,7 @@
                         ":fields-initial": js_(Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), _findDescription: "" }, params))
                     }) + '><div class="big-row"><div class="q-my-auto big-row-item"><m-text-line' + A({
                         "v-model": "formProps.fields._findDescription", name: "_findDescription", id: formId + "_NewFind_description", label: L("Description"), size: "30", required: true
-                    }) + '></m-text-line></div><div class="big-row-item"><q-btn dense unelevated no-caps color="primary" type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></div></m-form>');
+                    }) + '></m-text-line></div><div class="on-right q-my-auto big-row-item"><q-btn dense outline no-caps type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></div></m-form>');
                 } else w("<div style=\"margin:12px 0;\"><strong>" + t(L("No find parameters (or default), choose some in Find Options to save a new find or update existing")) + "</strong></div>");
             }
         };
@@ -1358,12 +1363,12 @@
             const url = sri.getScreenUrlInstance();
             const params = url.getParameterMap();
             const row = (title, name, value, extra) => '<div class="q-my-sm"><m-text-line' + A(Object.assign({ name, id: formId + "_Text_" + name, label: L(title), "model-value": value, form: formId + "_Text" }, extra || {})) + "></m-text-line></div>";
-            w('<m-container-dialog id="' + e(formId) + '_TextDialog" button-text="' + e(L("Text")) + '" title="' + e(L("Export Fixed-Width Plain Text")) + '"><template v-slot:button><q-item clickable v-close-popup><q-item-section>' + t(L("Text")) + "</q-item-section></q-item></template><form" +
+            w('<m-container-dialog id="' + e(formId) + '_TextDialog" button-text="' + e(L("Text")) + '" title="' + e(L("Export Fixed-Width Plain Text")) + '"><template v-slot:button><q-btn dense outline no-caps label="' + e(L("Text")) + '"></q-btn></template><form' +
                 A({ id: formId + "_Text", method: "post", action: url.url }) + ">" + hiddenInput("renderMode", "text") + hiddenInput("pageNoLimit", "true") + hiddenInput("lastStandalone", "true") +
                 Object.keys(params).map((key) => hiddenInput(key, params[key])).join("") +
                 row("Line Characters", "lineCharacters", "132", { size: "4" }) + row("Page Lines", "pageLines", "88", { size: "4" }) +
                 row("Line Wrap?", "lineWrap", "true", { size: "5" }) + row("Save to Filename", "saveFilename", at(n, "name") + ".txt", { size: "40" }) +
-                '<q-btn dense unelevated no-caps color="primary" type="submit" label="' + e(L("Export Text")) + '"></q-btn></form></m-container-dialog>');
+                '<q-btn dense outline no-caps color="primary" type="submit" label="' + e(L("Export Text")) + '"></q-btn></form></m-container-dialog> ');
         };
 
         // The head of one column: for each field the title with its order-by links, and the find widgets of its header-field.
@@ -1444,6 +1449,7 @@
             const subCols = shown.map((col) => col.filter((f) => f.sub)).filter((col) => col.length > 0);
             const listUrl = sri.makeUrlByType(at(n, "transition"), "transition", null, "false");
             const rowSel = cfg.rowSelection;
+            const navColspan = (visible.length || 100) + (rowSel ? 1 : 0);
             const hidden = hiddenParams(n);
             const disabledList = listUrl.getDisableLink();
             st.multi = multi;
@@ -1498,10 +1504,11 @@
                     w("<m-checkbox-set" + A(Object.assign({ ":checkbox-count": String(info.count), "v-slot:default": "formProps" }, checkboxAttrs)) + ">");
                 }
                 w('<div class="q-my-sm q-table__container q-table__card q-table--horizontal-separator q-table--dense q-table--flat" :class="{\'q-table--dark\':$q.dark.isActive, \'q-table__card--dark\':$q.dark.isActive, \'q-dark\':$q.dark.isActive}">');
-                if (!skipHeader) nav(n, shown, cfg);
                 w(' <div class="' + cls("table q-table", xn(at(n, "style")) || null) + '" id="' + e(formId) + '_table">');
                 if (!skipHeader) {
-                    w('<div class="thead"><div class="tr">');
+                    w('<div class="thead">');
+                    nav(n, shown, cfg, navColspan);
+                    w('<div class="tr">');
                     if (rowSel) {
                         w('<div class="th"><span class="q-my-auto"><q-checkbox dense size="sm" v-model="formProps.checkboxAllState" @update:model-value="formProps.setCheckboxAllState"><q-tooltip>{{formProps.checkboxAllState ? ' + sq(L("Unselect All")) + " : " + sq(L("Select All")) +
                             '}}</q-tooltip></q-checkbox><q-btn flat round dense size="sm" icon="more_vert" :color="formProps.checkboxStates && formProps.checkboxStates.includes(true) ? \'primary\' : \'grey-7\'"><q-tooltip>' + t(L("Row Actions")) + '</q-tooltip><q-menu anchor="top left" self="bottom left">');
@@ -1642,10 +1649,9 @@
                     cols.forEach((col) => col.forEach((f) => f.cell(2)));
                     w("</div></div>");
                 }
-                // the body and the table close, then the bottom nav row sits in the table container as a full-width row like the top one
-                w("</div></div>");
-                if (!skipHeader) bottomNav(n, formId);
-                w("</div>\n");
+                // as Java the footer nav row ends the table body
+                if (!skipHeader) bottomNav(n, formId, navColspan);
+                w("</div></div></div>\n");
                 if (multi) w("</m-form>\n");
                 else if (rowSel && !skipStart) w("</m-checkbox-set>\n");
                 if (views) w("</m-list-views>\n");

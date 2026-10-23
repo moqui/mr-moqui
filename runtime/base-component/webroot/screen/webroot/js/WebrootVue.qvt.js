@@ -1934,15 +1934,38 @@
         beforeUnmount() { moqui.unregisterScreenForm(this); }
     });
 
+    // the page buttons as Java draws them: first and previous, up to three pages before, the current page and range, up to three after, next and last
     component("m-form-paginate", {
         name: "mFormPaginate",
         props: { paginate: Object, formList: Object },
         template:
-            '<div v-if="paginate && paginate.count > 1" class="row no-wrap items-center">' +
-                '<span class="text-caption text-grey-7 q-mx-sm">{{paginate.pageRangeLow}}-{{paginate.pageRangeHigh}} / {{paginate.count}}</span>' +
-                '<q-pagination v-if="paginate.pageMaxIndex > 0" :model-value="paginate.pageIndex + 1" @update:model-value="setIndex($event - 1)" :max="paginate.pageMaxIndex + 1" :max-pages="7"' +
-                    ' direction-links boundary-links size="sm" flat active-design="unelevated" color="grey-8" active-color="primary"></q-pagination>' +
+            '<div v-if="paginate && paginate.count > 1" class="q-pagination row no-wrap items-center">' +
+                '<template v-if="paginate.pageIndex > 0">' +
+                    '<q-btn dense flat no-caps @click.prevent="setIndex(0)" icon="skip_previous"></q-btn>' +
+                    '<q-btn dense flat no-caps @click.prevent="setIndex(paginate.pageIndex-1)" icon="fast_rewind"></q-btn></template>' +
+                '<template v-else><q-btn dense flat no-caps disabled icon="skip_previous"></q-btn><q-btn dense flat no-caps disabled icon="fast_rewind"></q-btn></template>' +
+                '<q-btn v-for="prevIndex in prevArray" :key="prevIndex" dense flat no-caps @click.prevent="setIndex(prevIndex)" :label="prevIndex+1" color="primary"></q-btn>' +
+                '<q-btn dense flat no-caps disabled>{{paginate.pageIndex+1}} / {{paginate.pageMaxIndex+1}} ({{paginate.pageRangeLow}}-{{paginate.pageRangeHigh}} / {{paginate.count}})</q-btn>' +
+                '<q-btn v-for="nextIndex in nextArray" :key="nextIndex" dense flat no-caps @click.prevent="setIndex(nextIndex)" :label="nextIndex+1" color="primary"></q-btn>' +
+                '<template v-if="paginate.pageIndex < paginate.pageMaxIndex">' +
+                    '<q-btn dense flat no-caps @click.prevent="setIndex(paginate.pageIndex+1)" icon="fast_forward"></q-btn>' +
+                    '<q-btn dense flat no-caps @click.prevent="setIndex(paginate.pageMaxIndex)" icon="skip_next"></q-btn></template>' +
+                '<template v-else><q-btn dense flat no-caps disabled icon="fast_forward"></q-btn><q-btn dense flat no-caps disabled icon="skip_next"></q-btn></template>' +
             '</div>',
+        computed: {
+            prevArray() {
+                const pag = this.paginate; const arr = [];
+                if (!pag || pag.pageIndex < 1) return arr;
+                for (let index = Math.max(pag.pageIndex - 3, 0); index <= pag.pageIndex - 1; index++) arr.push(index);
+                return arr;
+            },
+            nextArray() {
+                const pag = this.paginate; const arr = [];
+                if (!pag || pag.pageIndex >= pag.pageMaxIndex) return arr;
+                for (let index = pag.pageIndex + 1; index <= Math.min(pag.pageIndex + 3, pag.pageMaxIndex); index++) arr.push(index);
+                return arr;
+            }
+        },
         methods: {
             setIndex(newIndex) {
                 if (this.formList) this.formList.setPageIndex(newIndex);
@@ -1956,10 +1979,10 @@
         props: { idVal: { type: String, required: true }, maxIndex: Number, formList: Object },
         data() { return { pageIndex: "" }; },
         template:
-            '<q-form v-if="!formList || (formList.paginate && formList.paginate.pageMaxIndex > 4)" @submit.prevent="goPage" class="q-mx-xs">' +
-                '<q-input dense outlined hide-bottom-space v-model="pageIndex" type="text" name="pageIndex" placeholder="Page #" style="width:96px;" input-class="text-center"' +
+            '<q-form v-if="!formList || (formList.paginate && formList.paginate.pageMaxIndex > 4)" @submit.prevent="goPage">' +
+                '<q-input dense v-model="pageIndex" type="text" size="4" name="pageIndex" placeholder="Page #"' +
                     ' :rules="[val => /^\\d*$/.test(val) || \'digits only\', val => !val || ((formList && +val <= formList.paginate.pageMaxIndex + 1) || (maxIndex && +val <= maxIndex + 1)) || \'higher than max\']">' +
-                    '<template v-slot:append><q-btn flat round dense size="sm" type="submit" icon="arrow_forward"></q-btn></template>' +
+                    '<template v-slot:append><q-btn dense flat no-caps type="submit" icon="redo"></q-btn></template>' +
                 '</q-input>' +
             '</q-form>',
         methods: {

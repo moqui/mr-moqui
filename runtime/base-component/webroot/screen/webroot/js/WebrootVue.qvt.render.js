@@ -3629,7 +3629,7 @@
               }, 8, ["id", "action"]))
             }
         } },
-        "m-form-go-page": { hash: "1b62080b", make: function (Vue) {
+        "m-form-go-page": { hash: "941c1a59", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -3640,31 +3640,26 @@
               return (!_ctx.formList || (_ctx.formList.paginate && _ctx.formList.paginate.pageMaxIndex > 4))
                 ? (_openBlock(), _createBlock(_component_q_form, {
                     key: 0,
-                    onSubmit: _withModifiers(_ctx.goPage, ["prevent"]),
-                    class: "q-mx-xs"
+                    onSubmit: _withModifiers(_ctx.goPage, ["prevent"])
                   }, {
                     default: _withCtx(() => [
                       _createVNode(_component_q_input, {
                         dense: "",
-                        outlined: "",
-                        "hide-bottom-space": "",
                         modelValue: _ctx.pageIndex,
                         "onUpdate:modelValue": $event => ((_ctx.pageIndex) = $event),
                         type: "text",
+                        size: "4",
                         name: "pageIndex",
                         placeholder: "Page #",
-                        style: {"width":"96px"},
-                        "input-class": "text-center",
                         rules: [val => /^\d*$/.test(val) || 'digits only', val => !val || ((_ctx.formList && +val <= _ctx.formList.paginate.pageMaxIndex + 1) || (_ctx.maxIndex && +val <= _ctx.maxIndex + 1)) || 'higher than max']
                       }, {
                         append: _withCtx(() => [
                           _createVNode(_component_q_btn, {
-                            flat: "",
-                            round: "",
                             dense: "",
-                            size: "sm",
+                            flat: "",
+                            "no-caps": "",
                             type: "submit",
-                            icon: "arrow_forward"
+                            icon: "redo"
                           })
                         ]),
                         _: 1
@@ -3907,34 +3902,116 @@
               ]))
             }
         } },
-        "m-form-paginate": { hash: "e892c70f", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock } = Vue
+        "m-form-paginate": { hash: "7552bc4a", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, withModifiers: _withModifiers, createVNode: _createVNode, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx } = Vue
 
             return function render(_ctx, _cache) {
-              const _component_q_pagination = _resolveComponent("q-pagination")
+              const _component_q_btn = _resolveComponent("q-btn")
 
               return (_ctx.paginate && _ctx.paginate.count > 1)
                 ? (_openBlock(), _createElementBlock("div", {
                     key: 0,
-                    class: "row no-wrap items-center"
+                    class: "q-pagination row no-wrap items-center"
                   }, [
-                    _createElementVNode("span", { class: "text-caption text-grey-7 q-mx-sm" }, _toDisplayString(_ctx.paginate.pageRangeLow) + "-" + _toDisplayString(_ctx.paginate.pageRangeHigh) + " / " + _toDisplayString(_ctx.paginate.count), 1),
-                    (_ctx.paginate.pageMaxIndex > 0)
-                      ? (_openBlock(), _createBlock(_component_q_pagination, {
-                          key: 0,
-                          "model-value": _ctx.paginate.pageIndex + 1,
-                          "onUpdate:modelValue": $event => (_ctx.setIndex($event - 1)),
-                          max: _ctx.paginate.pageMaxIndex + 1,
-                          "max-pages": 7,
-                          "direction-links": "",
-                          "boundary-links": "",
-                          size: "sm",
-                          flat: "",
-                          "active-design": "unelevated",
-                          color: "grey-8",
-                          "active-color": "primary"
-                        }, null, 8, ["model-value", "onUpdate:modelValue", "max"]))
-                      : _createCommentVNode("", true)
+                    (_ctx.paginate.pageIndex > 0)
+                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            onClick: _withModifiers($event => (_ctx.setIndex(0)), ["prevent"]),
+                            icon: "skip_previous"
+                          }, null, 8, ["onClick"]),
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            onClick: _withModifiers($event => (_ctx.setIndex(_ctx.paginate.pageIndex-1)), ["prevent"]),
+                            icon: "fast_rewind"
+                          }, null, 8, ["onClick"])
+                        ], 64))
+                      : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            disabled: "",
+                            icon: "skip_previous"
+                          }),
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            disabled: "",
+                            icon: "fast_rewind"
+                          })
+                        ], 64)),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.prevArray, (prevIndex) => {
+                      return (_openBlock(), _createBlock(_component_q_btn, {
+                        key: prevIndex,
+                        dense: "",
+                        flat: "",
+                        "no-caps": "",
+                        onClick: _withModifiers($event => (_ctx.setIndex(prevIndex)), ["prevent"]),
+                        label: prevIndex+1,
+                        color: "primary"
+                      }, null, 8, ["onClick", "label"]))
+                    }), 128)),
+                    _createVNode(_component_q_btn, {
+                      dense: "",
+                      flat: "",
+                      "no-caps": "",
+                      disabled: ""
+                    }, {
+                      default: _withCtx(() => [
+                        _createTextVNode(_toDisplayString(_ctx.paginate.pageIndex+1) + " / " + _toDisplayString(_ctx.paginate.pageMaxIndex+1) + " (" + _toDisplayString(_ctx.paginate.pageRangeLow) + "-" + _toDisplayString(_ctx.paginate.pageRangeHigh) + " / " + _toDisplayString(_ctx.paginate.count) + ")", 1)
+                      ]),
+                      _: 1
+                    }),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.nextArray, (nextIndex) => {
+                      return (_openBlock(), _createBlock(_component_q_btn, {
+                        key: nextIndex,
+                        dense: "",
+                        flat: "",
+                        "no-caps": "",
+                        onClick: _withModifiers($event => (_ctx.setIndex(nextIndex)), ["prevent"]),
+                        label: nextIndex+1,
+                        color: "primary"
+                      }, null, 8, ["onClick", "label"]))
+                    }), 128)),
+                    (_ctx.paginate.pageIndex < _ctx.paginate.pageMaxIndex)
+                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            onClick: _withModifiers($event => (_ctx.setIndex(_ctx.paginate.pageIndex+1)), ["prevent"]),
+                            icon: "fast_forward"
+                          }, null, 8, ["onClick"]),
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            onClick: _withModifiers($event => (_ctx.setIndex(_ctx.paginate.pageMaxIndex)), ["prevent"]),
+                            icon: "skip_next"
+                          }, null, 8, ["onClick"])
+                        ], 64))
+                      : (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            disabled: "",
+                            icon: "fast_forward"
+                          }),
+                          _createVNode(_component_q_btn, {
+                            dense: "",
+                            flat: "",
+                            "no-caps": "",
+                            disabled: "",
+                            icon: "skip_next"
+                          })
+                        ], 64))
                   ]))
                 : _createCommentVNode("", true)
             }
