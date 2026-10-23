@@ -709,3 +709,20 @@ test('form labels keep words intact and wrap phrases at spaces', () => {
     assert.deepEqual(m.map(e=>e.fieldHeight),[34,47,67,47]);
     assert.ok(m.every(e=>e.wrap==='normal'&&e.wordBreak==='normal'));
 });
+
+
+test('radio choices match native option gaps and keep label click submission', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const options=(ref)=>['Y','N'].map((v,i)=>`<span id="${ref?'ref':'new'}${i}" ${ref?'style="display:inline;margin-right:0"':'class="radio-choice"'}>${ref?'':'<label>'}<input type="radio" name="disabled" value="${v}" ${i?'':'checked'} ${ref?'style="margin:4px 0 0;vertical-align:baseline;line-height:normal"':''}>&nbsp;${v}${ref?'':'</label>'}</span>`).join('\n');
+    const row=(ref)=>`<form id="${ref?'reference':'actual'}"><div class="field"><label>Disabled</label><div class="widget">${options(ref)}</div></div></form>`;
+    const html=`<!doctype html><html><style>${css}</style><div style="width:600px;padding:0 15px">${row(true)}${row(false)}</div><pre id="result"></pre><script>
+        const measure=id=>{const f=document.getElementById(id),r=f.getBoundingClientRect();return [...f.querySelectorAll('input')].map(i=>{const b=i.getBoundingClientRect();return {x:b.x-r.x,y:b.y-r.y,w:b.width,h:b.height}})};
+        const before=measure('actual'),reference=measure('reference');document.querySelector('#actual .widget span:nth-child(2) label').click();
+        document.getElementById('result').textContent=JSON.stringify({before,reference,value:new FormData(document.getElementById('actual')).get('disabled'),checked:document.querySelectorAll('#actual input:checked').length});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-radio-gap-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(m.before,m.reference);assert.equal(m.value,'N');assert.equal(m.checked,1);
+});

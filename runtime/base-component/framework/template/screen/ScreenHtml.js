@@ -481,9 +481,9 @@
                 const checked = kind === "checkbox" ?
                     allChecked === "true" || (current !== "" && (current === key || current.indexOf(key) >= 0)) :
                     current !== "" && current === key;
-                w("<span" + A({ id: fullId, class: kind === "checkbox" && style ? style : null }) + "><label><input" +
+                w("<span" + A({ id: fullId, class: kind === "radio" ? "radio-choice" : style || null }) + "><label><input" +
                     A({ type: kind, name, value: key, checked: checked || null, title: tip(n), form: owner() }) + ">" +
-                    (text ? " <span>" + e(text) + "</span>" : "") + "</label></span>\n");
+                    (text ? (kind === "radio" ? "&nbsp;" + e(text) : " <span>" + e(text) + "</span>") : "") + "</label></span>\n");
             });
         };
 
