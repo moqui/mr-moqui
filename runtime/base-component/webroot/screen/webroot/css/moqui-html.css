@@ -165,7 +165,16 @@ button:hover, [data-btn]:hover, summary:hover { filter: brightness(.96); text-de
 [data-size="lg"] { padding: 9px 16px; font-size: 1.1em; }
 button:disabled, a.disabled { opacity: .55; pointer-events: none; cursor: default; }
 button.close { background: none; border: 0; font-size: 1.4em; padding: 0 6px; margin: 0; color: var(--muted); }
-.badge { display: inline-block; min-width: 1.4em; padding: 0 6px; border-radius: 10px; background: var(--muted); color: var(--panel); font-size: .8em; text-align: center; }
+.badge { display: inline-block; min-width: 10px; padding: 3px 7px; border-radius: 10px; background: var(--muted); color: var(--panel); font-size: 12px; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap; vertical-align: middle; }
+.badge:empty { display: none; }
+[data-btn]:not([data-btn="plain"]) .badge, button .badge { position: relative; top: -1px; }
+[data-btn="default"] .badge { background: var(--panel-default-fg); }
+[data-btn="primary"] .badge { color: var(--primary); background: var(--panel); }
+[data-btn="success"] .badge { color: var(--success); background: var(--panel); }
+[data-btn="info"] .badge { color: var(--info); background: var(--panel); }
+[data-btn="warning"] .badge { color: var(--warning); background: var(--panel); }
+[data-btn="danger"] .badge { color: var(--danger); background: var(--panel); }
+:is(button, [data-btn])[data-size="xs"] .badge { top: 0; padding: 1px 5px; }
 summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 
 /* ---------- menus (details) ---------- */
