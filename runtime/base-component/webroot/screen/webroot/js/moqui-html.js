@@ -321,6 +321,23 @@
     };
     const withSortable = () => (root.Sortable ? Promise.resolve(root.Sortable) : loadScript("/libs/sortablejs/Sortable.min.js").then(() => root.Sortable));
 
+    // Inline dynamic lists use all loaded options. Java's patched Select2 _resolveWidth adds 24px to the native width.
+    const sizeInlineSelect = (select) => {
+        if (select.multiple || select.hasAttribute("data-search") || !select.closest(".big-item, .big-row-item") || !select.tomselect) return;
+        const measure = doc.createElement("select");
+        for (const option of select.options) measure.appendChild(el("option", { value: option.value }, option.text));
+        measure.setAttribute("aria-hidden", "true");
+        measure.tabIndex = -1;
+        measure.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;width:auto;min-width:0;max-width:none;height:auto;padding:0;border:1px solid;appearance:auto;";
+        measure.style.font = root.getComputedStyle(select).font;
+        doc.body.appendChild(measure);
+        const width = measure.getBoundingClientRect().width;
+        measure.remove();
+        const wrapper = select.tomselect.wrapper;
+        wrapper.style.minWidth = "60px";
+        wrapper.style.width = Math.max(60, width + 24) + "px";
+    };
+
     const initSelect = (select) => {
         const kind = select.dataset.ts;
         const search = select.hasAttribute("data-search");
@@ -330,7 +347,7 @@
             const populate = () => fetchOptions(select).then((options) => {
                 if (!options) return;
                 setNativeOptions(select, options, select.value);
-                if (select.tomselect) select.tomselect.sync();
+                if (select.tomselect) { select.tomselect.sync(); sizeInlineSelect(select); }
                 select.dispatchEvent(new Event("change"));
             });
             onDepends(select, populate);
@@ -349,6 +366,7 @@
                 });
             }
             const instance = new TomSelect(select, settings);
+            sizeInlineSelect(select);
             const note = doc.getElementById(select.id + "_value");
             if (kind === "ac") {
                 instance.on("change", (value) => { if (note) note.textContent = instance.options[value] ? instance.options[value].text : value; });
