@@ -37,6 +37,15 @@ test("optionList reads a list or an options object with the named fields", () =>
     assert.deepEqual(u.optionList([{ value: "k", text: "T" }]), [{ value: "k", text: "T" }]);
 });
 
+test("keptValue keeps a value still offered and otherwise takes the first, as a native select", () => {
+    const options = [{ value: "a", text: "A" }, { value: "b", text: "B" }];
+    assert.equal(u.keptValue("b", options, false, false), "b");
+    assert.equal(u.keptValue("gone", options, false, false), "a");
+    assert.equal(u.keptValue("gone", options, false, true), "");
+    assert.equal(u.keptValue("", [], false, false), "");
+    assert.deepEqual(u.keptValue(["b", "gone"], options, true, false), ["b"]);
+});
+
 test("dependsParams needs every value unless the dependency is optional", () => {
     const values = { f1: "x", f2: "", f3: "z" };
     const read = (id) => values[id];

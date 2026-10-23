@@ -79,7 +79,16 @@
         opened: !!(node.state && node.state.opened), children: Array.isArray(node.children) ? treeNodes(node.children) : node.children ? true : false
     }));
 
-    const pure = { normalizeDateTime, parseJson, queryString, optionList, dependsParams, orderByValue, treeNodes };
+    // The value a select keeps when its options are replaced: the current values still offered, or, as a native single
+    // select with no empty option, the first option.
+    const keptValue = (current, options, multiple, empty) => {
+        const keep = [].concat(current).filter((value) => options.some((item) => item.value === value));
+        if (multiple) return keep;
+        if (keep.length) return keep[0];
+        return !empty && options.length ? options[0].value : "";
+    };
+
+    const pure = { normalizeDateTime, parseJson, queryString, optionList, dependsParams, orderByValue, treeNodes, keptValue };
 
     // ---------- the browser client ----------
 
@@ -295,18 +304,33 @@
         const kind = select.dataset.ts;
         const search = select.hasAttribute("data-search");
         const multiple = select.multiple;
+        let ready = Promise.resolve();
         if (select.dataset.url && !search) {
             // Options come from the transition now and whenever a field they depend on changes.
             const populate = () => fetchOptions(select).then((options) => {
                 if (!options) return;
-                setNativeOptions(select, options, select.value);
-                if (select.tomselect) select.tomselect.sync();
+                const instance = select.tomselect;
+                if (instance) {
+                    // Through Tom Select's own store: a sync after the native options change keeps its old items, out of order
+                    const current = instance.getValue();
+                    instance.clearOptions();
+                    options.forEach((item, index) => {
+                        const option = Object.assign({ $order: index }, item);
+                        if (instance.options[item.value]) instance.updateOption(item.value, option);
+                        else instance.addOption(option);
+                    });
+                    instance.setValue(keptValue(current, options, select.multiple, select.hasAttribute("data-empty")), true);
+                    instance.refreshOptions(false);
+                } else {
+                    setNativeOptions(select, options, select.value);
+                }
                 select.dispatchEvent(new Event("change"));
             });
             onDepends(select, populate);
-            populate();
+            // Tom Select starts from the options the transition gives, as the native select it replaces
+            ready = populate().catch(() => {});
         }
-        withTomSelect().then((TomSelect) => {
+        ready.then(withTomSelect).then((TomSelect) => {
             const settings = {
                 plugins: multiple ? ["remove_button"] : [], create: select.hasAttribute("data-combo") || select.hasAttribute("data-use-actual"),
                 allowEmptyOption: select.hasAttribute("data-empty") || select.options.length === 0, maxOptions: null, closeAfterSelect: !multiple,
@@ -321,6 +345,14 @@
                 });
             }
             const instance = new TomSelect(select, settings);
+            // Tom Select's click only focuses, and with openOnFocus off the list never opens: as select2, a click opens
+            // the list and the next one closes it
+            instance.onClick = () => {
+                if (instance.activeItems.length) { instance.clearActiveItems(); instance.focus(); return; }
+                if (instance.isOpen) { instance.close(); return; }
+                instance.focus();
+                instance.open();
+            };
             const note = doc.getElementById(select.id + "_value");
             if (kind === "ac") {
                 instance.on("change", (value) => { if (note) note.textContent = instance.options[value] ? instance.options[value].text : value; });
