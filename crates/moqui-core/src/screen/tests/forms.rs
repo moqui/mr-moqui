@@ -505,7 +505,10 @@ fn the_shell_wraps_a_page_and_the_real_error_pages_show_the_error_context() {
     // `#`, as Java's getUrlWithBase when the target does not exist. The version query is still appended.
     assert!(html.contains("<link rel=\"stylesheet\" href=\"#?v="), "{html}");
     assert!(html.contains("<script src=\"#?v="), "{html}");
-    assert!(html.contains("defer"), "{html}");
+    // Framework clients execute in the head before widgets in the body use them.
+    let head = html.split("</head>").next().unwrap();
+    assert!(head.contains("<script src="), "{html}");
+    assert!(!head.contains(" defer"), "framework clients must be ready before body widgets");
     let lower = html.to_ascii_lowercase();
     assert!(!lower.contains("jquery") && !lower.contains("bootstrap"), "{html}");
 
