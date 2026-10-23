@@ -1489,6 +1489,8 @@ impl HostEntity {
                 if !set_empty && empty {
                     continue;
                 }
+                // Java's setFieldsEv treats an empty CharSequence as null when setIfEmpty is true.
+                let host = if empty { Value::Null } else { host };
                 self.val().set(name, host);
             }
             Ok(())
@@ -2027,6 +2029,27 @@ mod tests {
                 list.extra = "ignored";
                 return child.extra === "e" && child[0] === "zero" && list[0].enumId === "E1"
                     && list.extra === undefined && child.length === 3;
+            })()"#,
+        );
+    }
+
+    #[test]
+    fn set_fields_empty_strings_clear_to_null() {
+        let ctx = enumerations();
+        let _entered = ctx.enter();
+        holds(
+            r#"(() => {
+                const row = ec.entity.makeValue("moqui.basic.Enumeration");
+                row.enumId = "empty-fields";
+                row.description = "keep";
+                row.enumCode = "keep code";
+                row.setFields({description: "", enumCode: null}, false, null, null);
+                if (row.description !== "keep" || row.enumCode !== "keep code") return false;
+                row.setFields({description: "", enumCode: " "}, true, null, false);
+                if (row.description !== null || row.enumCode !== " " || row.enumId !== "empty-fields") return false;
+                row.create();
+                const stored = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "empty-fields").one();
+                return stored.description === null && stored.enumCode === " ";
             })()"#,
         );
     }
