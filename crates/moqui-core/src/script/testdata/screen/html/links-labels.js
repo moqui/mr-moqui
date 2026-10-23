@@ -2,7 +2,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-single[@name=LinkForm] -->\n");
 sri.pushSingleFormMapContext(fieldValues);
 try {
-    $h.formOpen({"name":"form-single","attrs":{"name":"LinkForm"}}, false);
+    $h.formOpen({"name":"form-single","attrs":{"name":"LinkForm"}}, false, ["a","b","c","d","e"]);
     {
         const $title = ec.l10n.localize("A");
         const $open = $h.fieldOpen("a", $title, false, "", false);

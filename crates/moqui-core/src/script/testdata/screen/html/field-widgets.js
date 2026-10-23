@@ -2,7 +2,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-single[@name=AllFields] -->\n");
 sri.pushSingleFormMapContext(fv);
 try {
-    $h.formOpen({"name":"form-single","attrs":{"name":"AllFields","map":"fv"}}, true);
+    $h.formOpen({"name":"form-single","attrs":{"name":"AllFields","map":"fv"}}, true, ["firstName","bio","userGroupId","status","kind","flag","stamp","day","at","from","amount","price","note","enumId","doc","pw","range","clear","secret","skip","go","sel","lst","mix","withSet","hidden1"]);
     $h.rowOpen("field-row", "");
     sri.write("<div>");
     {
