@@ -68,6 +68,10 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
             <div class="field" id="baseline-textarea"><label>Message</label><div class="widget"><textarea name="message" rows="3">Invoice note</textarea></div></div>
             <div id="following-control"><button>Update</button></div>
         </div>
+        <table class="form-list" id="filtered-list"><thead><tr class="nav-row"><th>Find Options</th></tr><tr><th class="filter-summary" style="font-weight:normal">
+            <span class="filter"><strong>Type:</strong> <span class="filter-value" id="filter-value">Transfer</span></span>
+            <form method="post"><button id="filter-clear" class="filter-clear" data-btn="primary" type="submit" name="clearParameters">×</button></form>
+        </th></tr><tr id="after-filter"><th>ID</th></tr></thead></table>
         <pre id="result"></pre><script>
         const measure = id => {
             const row = document.getElementById(id);
@@ -114,6 +118,14 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         document.getElementById('text-control').focus();
         const focusStyle = getComputedStyle(document.getElementById('text-control'));
         document.getElementById('result').textContent = JSON.stringify({
+            filterMetrics: {
+                height:document.querySelector('#filtered-list .filter-summary').getBoundingClientRect().height,
+                resetHeight:document.getElementById('filter-clear').getBoundingClientRect().height,
+                resetFirst:document.getElementById('filter-clear').getBoundingClientRect().left < document.getElementById('filter-value').getBoundingClientRect().left,
+                valueColor:getComputedStyle(document.getElementById('filter-value')).color,
+                labelWeight:getComputedStyle(document.querySelector('#filtered-list strong')).fontWeight,
+                fieldGap:getComputedStyle(document.querySelector('#filtered-list .filter')).marginRight
+            },
             invalidBorder:getComputedStyle(document.getElementById('invalid-control')).borderTopColor,
             focusOutline:[focusStyle.outlineStyle, focusStyle.outlineWidth, focusStyle.outlineColor],
             wide:measure('wide'), titled:measure('titled'), narrow:measure('narrow'),
@@ -220,7 +232,10 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics, verticalMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { filterMetrics, wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics, verticalMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    // Java's quick-clear floats left at 20px, without making the filter header taller.
+    assert.deepEqual(filterMetrics, { height:32, resetHeight:20, resetFirst:true,
+        valueColor:'rgb(60, 118, 61)', labelWeight:'700', fieldGap:'0px' });
     // Java Bootstrap .form-control and select2-bootstrap use #555 text, #ccc borders and an inset shadow.
     assert.deepEqual(lightControls, Array(4).fill({ color:'rgb(85, 85, 85)', border:'rgb(204, 204, 204)',
         shadow:'rgba(0, 0, 0, 0.075) 0px 1px 1px 0px inset' }));

@@ -15,13 +15,14 @@
     --primary: #337ab7; --success: #5cb85c; --danger: #d9534f; --warning: #f0ad4e; --info: #5bc0de; --default: #777;
     --shaded-bg: #f8f8f8; --shaded-inset: #f8f8f8; --shaded-shadow: #ccc;
     --control-fg: #555; --control-border: #ccc; --control-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
+    --filter-fg: #3c763d;
     --radius: 4px; --gap: 8px;
     --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
         --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
-        --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none;
+        --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
         --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
         --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
         --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
@@ -30,7 +31,7 @@
 :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
-    --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none;
+    --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
     --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
     --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
     --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
@@ -354,8 +355,13 @@ ul.pagination li > a, ul.pagination li > span { display: block; float: left; pad
 ul.pagination li:last-child > a, ul.pagination li:last-child > span { border-right: 0; }
 ul.pagination li > span { color: var(--muted); }
 ul.pagination li.current > a { font-weight: 600; background: var(--stripe); }
-.filter { margin-right: 10px; white-space: nowrap; }
-.filter strong { font-weight: 600; } 
+/* Java DefaultScreenMacros: compact clear button precedes the active filters. */
+table.form-list .filter-summary .filter-clear {
+    float: left; padding: 0 5px; margin: 0 4px 0 0; font-size: 12px; line-height: 1.5;
+}
+.filter { margin-right: 0; white-space: nowrap; }
+.filter strong { font-weight: 700; }
+.filter-value { color: var(--filter-fg); }
 [id$="_SelColsSortable"], [id$="_SelColsSortable"] ul { list-style: none; padding-left: 0; }
 [id$="_SelColsSortable"] ul { padding-left: 18px; min-height: 12px; }
 [id$="_SelColsSortable"] li > div { padding: 3px 8px; margin: 2px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--stripe); cursor: grab; }

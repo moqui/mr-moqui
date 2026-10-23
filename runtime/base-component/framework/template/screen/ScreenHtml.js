@@ -1267,16 +1267,16 @@
                     nav(n, visible, cfg);
                     if (cfg.headerDialog && ec.context.get("hideNav") !== "true") {
                         // Java retains the summary header row even when no filters are active.
-                        w('<tr><th colspan="' + Math.max(visible.length, 1) + '" style="font-weight: normal">');
+                        w('<tr><th colspan="' + Math.max(visible.length, 1) + '" class="filter-summary" style="font-weight: normal">');
                         let summary = "";
                         cfg.summaryFields.forEach((f) => {
                             if (!f.summary || (f.hide && f.hide())) return;
                             const text = f.summary();
-                            if (text) summary += '<span class="filter"><strong>' + e(f.title()) + ":</strong> " + e(text) + "</span> ";
+                            if (text) summary += '<span class="filter"><strong>' + e(f.title()) + ':</strong> <span class="filter-value">' + e(text) + "</span></span> ";
                         });
                         if (summary) {
                             w(summary + "<form" + A({ method: "post", action: sri.getCurrentScreenUrl().url }) + ">" + hiddenInputs() +
-                                '<button type="submit" name="clearParameters" title="' + e(L("Clear")) + '"><i class="fa fa-remove"></i></button></form>');
+                                '<button type="submit" name="clearParameters" class="filter-clear" data-btn="primary" aria-label="' + e(L("Clear")) + '" title="' + e(L("Clear")) + '"><i class="fa fa-remove"></i></button></form>');
                         }
                         w("</th></tr>");
                     }

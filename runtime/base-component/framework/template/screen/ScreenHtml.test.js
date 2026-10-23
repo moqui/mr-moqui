@@ -80,18 +80,21 @@ test('header filter summary includes fields outside visible columns in declarati
     const type = { name: 'orderType', title: () => 'Order Type <&>', summary: () => 'Purchase <script>' };
     const status = { name: 'statusId', title: () => 'Status', summary: () => 'Placed' };
     const html = renderList({ fields: [type, status], columns: [[status]] });
-    assert.match(html, /<strong>Order Type &lt;&amp;&gt;:<\/strong> Purchase &lt;script&gt;/);
-    assert.match(html, /Order Type[\s\S]*<strong>Status:<\/strong> Placed/);
+    assert.match(html, /<strong>Order Type &lt;&amp;&gt;:<\/strong> <span class="filter-value">Purchase &lt;script&gt;<\/span>/);
+    assert.match(html, /Order Type[\s\S]*<strong>Status:<\/strong> <span class="filter-value">Placed/);
     assert.equal((html.match(/<strong>Status:/g) || []).length, 1);
-    assert.match(html, /<th colspan="1" style="font-weight: normal"><span class="filter">/);
+    assert.match(html, /<th colspan="1" class="filter-summary" style="font-weight: normal"><span class="filter">/);
     assert.equal((html.match(/name="clearParameters"/g) || []).length, 1);
+    assert.match(html, /<form[^>]*method="post"[^>]*action="\/apps\/FindOrder"/);
+    assert.match(html, /name="organizationPartyId" value="ORG_TEST"/);
+    assert.match(html, /<button[^>]*class="filter-clear"[^>]*data-btn="primary"[^>]*aria-label="Clear"/);
     assert.doesNotMatch(html, /<div class="title">Order Type/);
 });
 
 test('dialog headers retain an empty summary row between navigation and column titles', () => {
     const column = { name: 'orderId', title: () => 'ID' };
     const html = renderList({ columns: [[column], [{ name: 'orderName', title: () => 'Name' }]] });
-    assert.match(html, /<\/nav><\/th><\/tr>\s*<tr><th colspan="2" style="font-weight: normal"><\/th><\/tr><tr><th>/);
+    assert.match(html, /<\/nav><\/th><\/tr>\s*<tr><th colspan="2" class="filter-summary" style="font-weight: normal"><\/th><\/tr><tr><th>/);
     assert.doesNotMatch(html, /name="clearParameters"/);
     for (const options of [{ header: false }, { skipHeader: true }, { hideNav: true }]) {
         assert.doesNotMatch(renderList({ ...options, columns: [[column]] }), /style="font-weight: normal"/);
