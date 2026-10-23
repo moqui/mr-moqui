@@ -100,6 +100,12 @@ fn clean_param(
         return Ok(None);
     };
     if is_empty(&value) {
+        // As Java, an empty value with no default whose type is not the parameter's is null rather than converted,
+        // so a blank price field reaches a BigDecimal parameter as null.
+        let has_default = param.default_expr.is_some() || param.default_value.is_some();
+        if defaulted.is_none() && !has_default && !empty_matches_type(&value, &param.java_type) {
+            return Ok(Some(Value::Null));
+        }
         return Ok(defaulted);
     }
     // Convert first, so the checks see the type they were written for.
@@ -330,6 +336,17 @@ fn check_param(param: &ParamDef, value: &Value) -> Result<(), Error> {
         apply_check(&param.name, check, value)?;
     }
     Ok(())
+}
+
+/// Whether an empty string, map, or list is already an instance of the parameter's type.
+fn empty_matches_type(value: &Value, java_type: &str) -> bool {
+    let simple = short_type(java_type);
+    match value {
+        Value::Map(_) => matches!(simple, "Map" | "HashMap" | "LinkedHashMap" | "TreeMap" | "Object"),
+        Value::List(_) => matches!(simple, "List" | "ArrayList" | "Collection" | "Object"),
+        Value::String(_) => matches!(simple, "String" | "CharSequence" | "Object"),
+        _ => true,
+    }
 }
 
 fn short_type(java_type: &str) -> &str {
@@ -702,5 +719,41 @@ mod time_range_tests {
         };
         assert!(apply_check("when", &plain, &Value::string("4102444800000")).is_ok());
         assert!(apply_check("when", &plain, &Value::string("12/2099")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod empty_param_tests {
+    use super::*;
+
+    fn param(name: &str, java_type: &str) -> ParamDef {
+        ParamDef {
+            name: name.to_string(),
+            java_type: java_type.to_string(),
+            required: Required::False,
+            default_value: None,
+            default_expr: None,
+            allow_html: AllowHtml::None,
+            checks: Vec::new(),
+            auto: None,
+            entity_name: None,
+            field_name: None,
+            format: None,
+        }
+    }
+
+    #[test]
+    fn an_empty_string_for_a_typed_parameter_is_null() {
+        let mut scope = DefaultScope::default();
+        let params = BTreeMap::from([
+            ("unitAmount".to_string(), Value::string("")),
+            ("comments".to_string(), Value::string("")),
+        ]);
+        // a BigDecimal gets null, as Java, so the service calculates the price rather than taking a manual one
+        let amount = clean_param(&param("unitAmount", "BigDecimal"), &params, &mut scope).unwrap();
+        assert!(matches!(amount, Some(Value::Null)), "{amount:?}");
+        // a String keeps its empty value
+        let comments = clean_param(&param("comments", "String"), &params, &mut scope).unwrap();
+        assert!(comments.is_none(), "{comments:?}");
     }
 }
