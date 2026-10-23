@@ -330,3 +330,43 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     assert.equal(darkStatus.shadeShadow, 'rgb(8, 8, 8) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
     assert.match(darkStatus.shadeShadow, /rgb\(51, 51, 51\)/);
 });
+
+
+test('inline list filters match Java control height and submit alignment', () => {
+    const css = fs.readFileSync(path.join(__dirname, 'moqui-html.css'), 'utf8');
+    const html = `<!doctype html><html data-theme="light"><style>${css}</style>
+        <table class="form-list"><thead><tr>
+            <th><div class="title">Category ID</div><div class="find-field"><span class="find text-find"><input id="text" size="15"></span></div></th>
+            <th><div class="title">Type</div><div class="find-field"><select id="select"><option>Catalog</option></select></div></th>
+            <th><div class="title"></div><div class="find-field"><button id="submit" data-btn="primary">Find</button></div></th>
+        </tr></thead><tbody><tr><td><input id="row-input"></td><td><input id="check" type="checkbox"></td></tr></tbody></table>
+        <pre id="result"></pre><script>
+        const metric=id=>{const el=document.getElementById(id),r=el.getBoundingClientRect(),c=getComputedStyle(el);return {height:r.height,y:r.y,color:c.color,border:c.borderTopColor,shadow:c.boxShadow,padding:c.padding,weight:c.fontWeight}};
+        const light={text:metric('text'),select:metric('select'),submit:metric('submit'),row:metric('row-input'),check:metric('check')};
+        document.documentElement.dataset.theme='dark';
+        document.getElementById('result').textContent=JSON.stringify({light,dark:metric('text')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-inline-'));
+    let dom;
+    try {
+        dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+            '--headless','--disable-gpu','--user-data-dir='+profile,'--dump-dom',
+            'data:text/html,'+encodeURIComponent(html)
+        ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});
+    } finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.equal(light.text.height,34);
+    assert.equal(light.select.height,34);
+    assert.equal(light.text.y,light.select.y);
+    assert.equal(light.submit.y-light.text.y,2);
+    assert.equal(light.text.weight,'700');
+    assert.equal(light.submit.weight,'400');
+    assert.equal(light.text.color,'rgb(85, 85, 85)');
+    assert.equal(light.text.border,'rgb(204, 204, 204)');
+    assert.equal(light.text.padding,'6px 12px');
+    assert.notEqual(light.text.shadow,'none');
+    assert.equal(light.row.height,30,'editable rows keep compact controls');
+    assert.equal(light.check.shadow,'none');
+    assert.equal(dark.shadow,'none');
+    assert.equal(dark.color,'rgb(221, 227, 234)');
+});
