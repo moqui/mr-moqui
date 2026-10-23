@@ -215,5 +215,13 @@ fn menu_items_take_the_image_of_the_named_screen_not_its_default_subscreen() {
     let body = response.body_text();
     assert_eq!(response.status, 200, "{body}");
     assert!(body.contains("[App:fa fa-cogs:icon]"), "{body}");
+    // A standalone request renders only its last screen, but Java's `sri.buildUrl` resolves with `lastStandalone` 0,
+    // so the image is the same.
+    let mut standalone = request("GET", "/Apps/List");
+    standalone.query.push(("lastStandalone".to_string(), "1".to_string()));
+    let response = serve_at(&world.factory, standalone, &root);
+    let body = response.body_text();
+    assert_eq!(response.status, 200, "{body}");
+    assert!(body.contains("[App:fa fa-cogs:icon]"), "{body}");
     let _ = std::fs::remove_dir_all(&dir);
 }
