@@ -61,7 +61,22 @@ pub(super) fn temporal_text(value: &Value) -> String {
     }
 }
 
+// Keep the large native builder out of the recursive conversion frames.
+#[inline(never)]
+fn find_to_js<'js>(ctx: &Ctx<'js>, find: &EntityFind) -> rquickjs::Result<JsValue<'js>> {
+    wrap_find(ctx, find.clone()).and_then(|class| class.into_js(ctx))
+}
+
+#[inline(never)]
+fn find_to_host(ctx: &Ctx<'_>, class: &Class<'_, HostFind>) -> Result<Value, Error> {
+    let find = class.borrow().peek(ctx).map_err(|err| js_caught(ctx, err))?;
+    Ok(Value::Object(HostObject::new(find)))
+}
+
 pub(super) fn object_to_js<'js>(ctx: &Ctx<'js>, object: &HostObject) -> rquickjs::Result<JsValue<'js>> {
+    if let Some(find) = object.downcast::<EntityFind>() {
+        return find_to_js(ctx, &find);
+    }
     if let Some(inner) = object.downcast::<EntityCell>() {
         return entity_to_js(ctx, HostEntity::of(inner));
     }
@@ -305,6 +320,10 @@ fn js_value_to_host_in<'js>(ctx: &Ctx<'_>, value: &JsValue<'js>, path: &mut Vec<
         }
         if let Some(class) = object.as_class::<HostEntity>() {
             return Ok(Value::Object(HostObject(class.borrow().inner.clone())));
+        }
+        // XML actions keep the find in context for later sections such as Show SQL.
+        if let Some(class) = object.as_class::<HostFind>() {
+            return find_to_host(ctx, class);
         }
         if let Some(class) = object.as_class::<HostList>() {
             return Ok(Value::Object(HostObject(class.borrow().inner.clone())));

@@ -14,7 +14,7 @@
 
 //! Entity find. The condition tree is `moqui_db`. A view uses `select_view`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::{
     count_view, count_with, select_view_with, select_with, select_with_head, Condition, ConditionValues, FieldRef,
@@ -22,6 +22,7 @@ use moqui_db::sql::{
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
+use moqui_lib::sync::lock;
 
 use super::cache::{self, FindLookup};
 use super::exec::{after_statement, query_tx};
@@ -60,6 +61,8 @@ pub struct EntityFind {
     scrollable: bool,
     /// Java's `useClone`: read from a clone datasource of the entity's group when one is open.
     use_clone: bool,
+    /// SQL actually executed by this find; clones retain its diagnostic history.
+    query_texts: Arc<Mutex<Vec<String>>>,
 }
 
 impl EntityFind {
@@ -82,7 +85,16 @@ impl EntityFind {
             use_cache: None,
             scrollable: false,
             use_clone: false,
+            query_texts: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub(crate) fn query_texts(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.query_texts)
+    }
+
+    fn record_query(&self, sql: &str) {
+        lock(&self.query_texts).push(sql.to_string());
     }
 
     /// Java's `useClone(true)`: read from a clone of the entity's group (`{group}#clone1` and so on) when one is open,
@@ -284,6 +296,7 @@ impl EntityFind {
         if let Some(schema) = self.sim_view_schema(false)? {
             let plan = self.plan(false, condition)?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
+            self.record_query(&plan.sql);
             let values = self.rows_to_values(&plan, rows)?;
             return Ok(self.attach_l10n(EntityList::new(values)));
         }
@@ -300,6 +313,7 @@ impl EntityFind {
         self.require_transaction_for_lock()?;
         let plan = self.plan(false, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
+        self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
         let values = self.rows_to_values(&plan, rows)?;
         let list = EntityList::new(values);
@@ -464,6 +478,7 @@ impl EntityFind {
         if let Some(schema) = self.sim_view_schema(true)? {
             let plan = self.plan(true, self.combined())?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
+            self.record_query(&plan.sql);
             return count_of(&rows);
         }
         let condition = self.combined();
@@ -477,6 +492,7 @@ impl EntityFind {
         }
         let plan = self.plan(true, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
+        self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
         let count = count_of(&rows)?;
         if !bypass {
@@ -554,6 +570,7 @@ impl EntityFind {
         let plan = self.plan(false, condition)?;
         plan.tx
             .with_connection(|conn| conn.open_stream(&plan.sql, &plan.params))?;
+        self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
         Ok(EntityListIterator::stream(
             self.facade,

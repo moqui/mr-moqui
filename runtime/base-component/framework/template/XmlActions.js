@@ -451,9 +451,9 @@
                 ${list}PageRangeLow = ${list}PageIndex * ${list}PageSize + 1;
                 ${list}PageRangeHigh = Math.min(${list}PageIndex * ${list}PageSize + ${list}PageSize, ${list}Count);
             ` : "";
-            // The local temp holds the find; the list itself is a context name.
+            // Keep the find in context too: later screen sections read its executed SQL.
             return js`
-                var ${list}_xafind = ${findPrefix(node)};
+                ${list}_xafind = ${findPrefix(node)};
                 ${sfi ? searchFormLines(list, sfi) : ""}
                 ${pageLines}
                 ${list} = ${run};
