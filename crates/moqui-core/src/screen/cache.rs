@@ -261,6 +261,8 @@ pub struct ScreenFacade {
     conf: ScreenConf,
     definitions: MCache<String, Arc<ScreenDef>>,
     urls: MCache<String, Arc<ScreenUrlInfo>>,
+    /// The full path a `//` screen path finds, or `None` when it finds none, as Java's `screenFindPathCache`.
+    find_paths: MCache<String, Option<Vec<String>>>,
     /// The icon class for a text by theme, as Java's `themeIconByTextByTheme`.
     icons: MCache<String, Option<String>>,
     /// Milliseconds between checks of a definition's files; negative is never.
@@ -276,6 +278,10 @@ impl ScreenFacade {
             definitions: MCache::new("screen.definition", CacheConfig::new().background(false)),
             urls: MCache::new(
                 "screen.url",
+                CacheConfig::new().background(false).max_entries(MAX_URL_ENTRIES),
+            ),
+            find_paths: MCache::new(
+                "screen.find.path",
                 CacheConfig::new().background(false).max_entries(MAX_URL_ENTRIES),
             ),
             icons: MCache::new(
@@ -389,6 +395,7 @@ impl ScreenFacade {
         if stale {
             // Resolved paths hold the old definition.
             let _ = self.urls.clear();
+            let _ = self.find_paths.clear();
         }
         Ok(loaded)
     }
@@ -433,6 +440,14 @@ impl ScreenFacade {
         let _ = self.urls.put(key, info);
     }
 
+    pub(super) fn cached_find_path(&self, key: &str) -> Option<Option<Vec<String>>> {
+        self.find_paths.get(&key.to_string()).ok().flatten()
+    }
+
+    pub(super) fn put_find_path(&self, key: String, path: Option<Vec<String>>) {
+        let _ = self.find_paths.put(key, path);
+    }
+
     pub(super) fn theme_icon(&self, theme: &str, text: &str) -> Option<Option<String>> {
         self.icons.get(&format!("{theme}\u{1}{text}")).ok().flatten()
     }
@@ -467,6 +482,7 @@ impl ScreenFacade {
     pub fn clear(&self) {
         let _ = self.definitions.clear();
         let _ = self.urls.clear();
+        let _ = self.find_paths.clear();
         let _ = self.icons.clear();
     }
 
@@ -477,7 +493,12 @@ impl ScreenFacade {
 
     /// The definition, URL, and theme icon caches as the cache admin screen lists them.
     pub fn cache_infos(&self) -> Vec<moqui_lib::cache::CacheInfo> {
-        vec![self.definitions.info(), self.urls.info(), self.icons.info()]
+        vec![
+            self.definitions.info(),
+            self.urls.info(),
+            self.find_paths.info(),
+            self.icons.info(),
+        ]
     }
 
     /// Clear the one of [`Self::cache_infos`] named `name`. False when none has that name. A definition clears
@@ -487,6 +508,8 @@ impl ScreenFacade {
             self.clear();
         } else if name == self.urls.info().name {
             let _ = self.urls.clear();
+        } else if name == self.find_paths.info().name {
+            let _ = self.find_paths.clear();
         } else if name == self.icons.info().name {
             let _ = self.icons.clear();
         } else {

@@ -207,11 +207,17 @@ fn child_nodes(
                     let url_type = Some(link_node.attribute("url-type").unwrap_or_default())
                         .filter(|text| !text.is_empty())
                         .unwrap_or_else(|| "transition".to_string());
+                    // ScreenTree passes `expand-transition-url`, "true" when not set.
+                    let expand = link_node
+                        .attribute("expand-transition-url")
+                        .filter(|text| !text.is_empty())
+                        .is_none_or(|text| text == "true");
                     let url = super::urls::make_url_by_type(
                         state,
                         &link_node.attribute("url").unwrap_or_default(),
                         &url_type,
                         Some(&lit),
+                        expand,
                     )?;
                     let url_text = if link_node.attribute("url-noparam").as_deref() == Some("true") {
                         url.path()
