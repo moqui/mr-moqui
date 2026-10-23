@@ -441,6 +441,12 @@ impl EntityFacade {
         super::sequence::temp_reset_sequenced_id_primary(self, &seq_name);
     }
 
+    /// Drop every sequence bank. Java re-initializes its `ExecutionContextFactory` after an empty-db load, so the
+    /// server starts with no banks and each sequence's next id skips past the ids banked during the load.
+    pub fn reset_sequence_banks(&self) {
+        super::sequence::reset_sequence_banks(self);
+    }
+
     /// The bank name of a sequence: the full name of an entity, or the name as given.
     fn sequence_name(&self, seq_name: &str) -> String {
         self.with_entity(seq_name, |entity, _, _| Ok(entity.full_name.clone()))
