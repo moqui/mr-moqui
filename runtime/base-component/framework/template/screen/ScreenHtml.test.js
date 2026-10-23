@@ -184,3 +184,18 @@ test('omitted field links emit no placeholder or URL and visible links keep thei
     assert.equal(visible.urls,1);assert.match(visible.html,/<a[^>]+href="\/apps\/Facility\?facilityId=1"[^>]*>Parent &lt;&amp;&gt;<\/a>/);
     assert.doesNotMatch(visible.html,/&nbsp;|<form/);
 });
+
+
+test('radio choices preserve selection and clickable escaped text with native inline spacing', () => {
+    const factory=vm.runInNewContext(fs.readFileSync(path.join(__dirname,'ScreenHtml.js'),'utf8'));
+    const module=factory({stmt:fn=>fn,noops:()=>({})},{anyMacros:()=>({}),allElements:[],opaqueElements:[]});
+    let html='';
+    const context={sri:{write:text=>{html+=text},getFieldOptions:()=>new Map([['Y','Y <&>'],['N','N']]),getFieldValueString:()=> 'N'},
+        ec:{context:{get:()=>null},resource:{expand:text=>text}}};
+    vm.runInNewContext(module.runtime,context);
+    const form={attrs:{name:'StoreForm'}},field={attrs:{name:'disabled'},parent:form};
+    context.$mqHtml.radio({attrs:{},parent:{attrs:{},parent:field}});
+    assert.match(html,/<span id="StoreForm_disabled" class="radio-choice"><label><input type="radio" name="disabled" value="Y">&nbsp;Y &lt;&amp;&gt;<\/label><\/span>/);
+    assert.match(html,/<span id="StoreForm_disabled_1" class="radio-choice"><label><input type="radio" name="disabled" value="N" checked>&nbsp;N<\/label><\/span>/);
+    assert.equal((html.match(/ checked/g)||[]).length,1);
+});

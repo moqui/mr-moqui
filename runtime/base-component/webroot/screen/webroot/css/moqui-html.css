@@ -360,6 +360,9 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .field > label, .field > .label { padding-top: 7px; text-align: right; font-weight: 600; overflow-wrap: normal; }
 .field > .widget { min-width: 0; }
 .field .widget > span[id] { margin-right: 10px; display: inline-block; }
+/* Radio options follow native inline text baselines and gaps, with clickable labels. */
+.field .widget > span.radio-choice { display: inline; margin-right: 0; }
+.radio-choice input[type="radio"] { margin: 4px 0 0; vertical-align: baseline; line-height: normal; }
 .field[data-submit] > .label { visibility: hidden; }
 @media (max-width: 639px) { .field { grid-template-columns: 1fr; } .field > label, .field > .label { text-align: left; padding-top: 0; } .field[data-submit] > .label { display: none; } }
 .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(22em, 100%), 1fr)); column-gap: 16px; }
