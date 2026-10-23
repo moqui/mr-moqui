@@ -42,7 +42,7 @@ pub(crate) fn clean(
     let mut known = BTreeSet::new();
     // As Java, every parameter is checked and each that fails is a validation error for its field, so a form shows
     // them all beside their fields; the service does not run when there is one.
-    let mut failed: Vec<(String, String)> = Vec::new();
+    let mut failed: Vec<(String, Error)> = Vec::new();
     let mut scope = DefaultScope::default();
     for param in declared.iter() {
         if param.name.is_empty() || param.required == Required::Disabled {
@@ -55,20 +55,31 @@ pub(crate) fn clean(
                 params.insert(param.name.clone(), value);
             }
             Ok(None) => {}
-            Err(err) => failed.push((param.name.clone(), err.message().to_string())),
+            Err(err) => failed.push((param.name.clone(), err)),
         }
     }
     if !failed.is_empty() {
+        // A validation error's message is Java's own, which does not name the field; the error text does.
+        let shown = |err: &Error| match err.kind() {
+            crate::context::ErrorKind::Validation => err.message().to_string(),
+            _ => {
+                let message = err.message();
+                let text = message.strip_prefix("parameter ").unwrap_or(message);
+                format!("{text} (in service {})", def.name)
+            }
+        };
         let joined = failed
             .iter()
-            .map(|(_, message)| message.as_str())
+            .map(|(field, err)| match err.kind() {
+                crate::context::ErrorKind::Validation => format!("{} (for field {field})", err.message()),
+                _ => err.message().to_string(),
+            })
             .collect::<Vec<_>>()
             .join("; ");
         crate::context::ExecutionContext::with_current(|ec| {
             let mut messages = ec.message();
-            for (field, message) in &failed {
-                let text = message.strip_prefix("parameter ").unwrap_or(message);
-                messages.add_validation_error("", field, &def.name, &format!("{text} (in service {})", def.name));
+            for (field, err) in &failed {
+                messages.add_validation_error("", field, &def.name, &shown(err));
             }
         });
         return Err(Error::of_kind(crate::context::ErrorKind::Validation, joined));
@@ -94,7 +105,11 @@ fn clean_param(
     }
     let current = defaulted.clone().or_else(|| params.get(&param.name).cloned());
     if param.required == Required::True && is_blank(current.as_ref()) {
-        return Err(Error::new(format!("parameter {} is required", param.name)));
+        // Java's message, which the page shows with the field's name.
+        return Err(Error::of_kind(
+            crate::context::ErrorKind::Validation,
+            crate::l10n::localize("Field cannot be empty").unwrap_or_else(|_| "Field cannot be empty".to_string()),
+        ));
     }
     let Some(value) = current else {
         return Ok(None);

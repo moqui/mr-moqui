@@ -1244,13 +1244,10 @@ mod tests {
             (messages.errors().to_vec(), messages.validation_errors().to_vec())
         })
         .unwrap();
-        assert!(
-            errors
-                .iter()
-                .any(|text| text.contains("amount") && text.contains("required")),
-            "{errors:?}"
-        );
+        // Java's message, which does not name the field; the validation error does.
+        assert!(errors.iter().any(|text| text == "Field cannot be empty"), "{errors:?}");
         assert_eq!(validation.len(), 1);
+        assert_eq!(validation[0].message, "Field cannot be empty");
         assert_eq!(
             (validation[0].field.as_str(), validation[0].service.as_str()),
             ("amount", "need#Value")
