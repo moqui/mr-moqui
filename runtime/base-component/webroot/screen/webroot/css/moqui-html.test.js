@@ -271,7 +271,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     }
     // Java tables have one 8px bottom margin; their scroll wrappers add no spacing.
     assert.deepEqual(tableMetrics, {
-        betweenTables:8, belowLastTable:9, overflowWidth:200, scrollWidth:400, overflowX:'auto'
+        betweenTables:8, belowLastTable:9, overflowWidth:200, scrollWidth:400, overflowX:'visible'
     });
     // Java webroot-layout.css/table-condensed and webroot-theme.css flattening, with Bootstrap typography.
     // Java Bootstrap 15px column padding/negative row margins and webroot-layout.css nav padding.
@@ -725,4 +725,23 @@ test('radio choices match native option gaps and keep label click submission', (
     finally {fs.rmSync(profile,{recursive:true,force:true});}
     const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     assert.deepEqual(m.before,m.reference);assert.equal(m.value,'N');assert.equal(m.checked,1);
+});
+
+
+test('wide table editor actions stay visible on desktop and scroll on small screens', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html><style>${css}</style><div class="table-wrap" style="width:min(600px,100%)"><table style="width:800px"><tbody><tr><td style="width:700px">Gateway</td><td><button id="update">Update</button></td></tr></tbody></table></div><pre id="result"></pre><script>
+        const wrap=document.querySelector('.table-wrap'),button=document.getElementById('update');let clicked=0;button.addEventListener('click',()=>clicked++);
+        const overflow=getComputedStyle(wrap).overflowX,scrollable=wrap.scrollWidth>wrap.clientWidth;
+        if(innerWidth<768)wrap.scrollLeft=wrap.scrollWidth;
+        const r=button.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);hit?.click();
+        document.getElementById('result').textContent=JSON.stringify({overflow,scrollable,visible:hit===button,clicked,viewport:innerWidth});
+        </script>`;
+    for(const width of [1440,600]) {
+        const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-wide-table-'));let dom;
+        try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--window-size='+width+',1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+        finally {fs.rmSync(profile,{recursive:true,force:true});}
+        const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+        assert.equal(m.overflow,width===1440?'visible':'auto');assert.equal(m.scrollable,true);assert.equal(m.visible,true);assert.equal(m.clicked,1);
+    }
 });

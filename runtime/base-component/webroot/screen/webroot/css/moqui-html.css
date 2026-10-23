@@ -397,6 +397,8 @@ details.panel > .body { padding: 8px 10px; }
 /* ---------- form-list ---------- */
 
 .table-wrap { overflow-x: auto; }
+/* Desktop editors and their popups may extend beyond a narrow panel, as in Java. */
+@media (min-width: 768px) { .table-wrap { overflow: visible; } }
 table { border-collapse: collapse; }
 table.form-list { width: 100%; background: var(--panel); margin-bottom: 8px; }
 table.form-list th, table.form-list td { padding: 5px; text-align: left; vertical-align: middle; border-top: 1px solid var(--line); }
