@@ -861,9 +861,60 @@ fn a_section_in_a_form_list_cell_keeps_the_rows_form_for_the_cells_after_it() {
         "{html}"
     );
     let button = &html[html.find("id=\"Lines_packButton_0\"").unwrap()..];
-    assert!(button[..button.find('>').unwrap()].contains("form=\"Lines_0\""), "{html}");
+    assert!(
+        button[..button.find('>').unwrap()].contains("form=\"Lines_0\""),
+        "{html}"
+    );
     let quantity = &html[html.find("id=\"Lines_quantity_0\"").unwrap()..];
-    assert!(quantity[..quantity.find('>').unwrap()].contains("form=\"Lines_0\""), "{html}");
+    assert!(
+        quantity[..quantity.find('>').unwrap()].contains("form=\"Lines_0\""),
+        "{html}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A date-time field starts at its value rounded to the minute step, as Java's picker sets it, so the form posts the
+/// same time; a time-only field, which has no picker in Java, keeps its minutes.
+#[test]
+fn a_date_time_starts_on_its_minute_step() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-minute-step-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("Form.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false">
+    <transition name="pack"><default-response url="."/></transition>
+    <widgets>
+        <form-single name="Pack" transition="pack">
+            <field name="packDate"><default-field><date-time default-value="2026-10-23 10:01"/></default-field></field>
+            <field name="lateDate"><default-field><date-time default-value="2026-10-23 23:58"/></default-field></field>
+            <field name="quarterDate"><default-field>
+                <date-time default-value="2026-10-23 10:08" minute-stepping="15"/></default-field></field>
+            <field name="packTime"><default-field><date-time type="time" default-value="10:01"/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let html = serve_at(&world.factory, request("GET", "/"), &root).body_text();
+    assert!(
+        html.contains("name=\"packDate\" id=\"Pack_packDate\" value=\"2026-10-23T10:00\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("name=\"lateDate\" id=\"Pack_lateDate\" value=\"2026-10-24T00:00\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("name=\"quarterDate\" id=\"Pack_quarterDate\" value=\"2026-10-23T10:15\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("name=\"packTime\" id=\"Pack_packTime\" value=\"10:01\""),
+        "{html}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -290,12 +290,25 @@
             if (at(n, "format") && at(n, "format") !== dateDefault(n)) return null;
             return at(n, "type") === "time" ? "time" : at(n, "type") === "date" ? "date" : "datetime-local";
         };
+        // Java's date-time picker sets its value to the nearest minute step (10:01 is 10:00 with a step of 5), so that
+        // is the time the form posts. A time-only field has no picker in Java and keeps its minutes.
+        const stepped = (value, minutes) => {
+            const parts = /^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)$/.exec(value || "");
+            if (!parts || !(minutes > 1)) return value;
+            const [, year, month, day, hour, minute] = parts.map(Number);
+            const time = new Date(Date.UTC(year, month - 1, day, hour, Math.round(minute / minutes) * minutes));
+            const two = (number) => String(number).padStart(2, "0");
+            return time.getUTCFullYear() + "-" + two(time.getUTCMonth() + 1) + "-" + two(time.getUTCDate()) + " " +
+                two(time.getUTCHours()) + ":" + two(time.getUTCMinutes());
+        };
         const nativeValue = (type, value) => (type === "datetime-local" && value ? value.replace(" ", "T") : value);
         const dateInput = (n, name, id, value, check) => {
             const kind = nativeType(n);
+            const step = kind === "datetime-local" || kind === "time" ? Number(at(n, "minute-stepping") || 5) : null;
             return "<input" + A({
-                type: kind || "text", name, id, value: nativeValue(kind, value), required: check && check.required ? true : null,
-                step: kind === "datetime-local" || kind === "time" ? String(Number(at(n, "minute-stepping") || 5) * 60) : null,
+                type: kind || "text", name, id, value: nativeValue(kind, kind === "datetime-local" ? stepped(value, step) : value),
+                required: check && check.required ? true : null,
+                step: step ? String(step * 60) : null,
                 placeholder: kind ? null : at(n, "format"), "data-format": kind ? null : at(n, "format"), title: tip(n), form: owner()
             }) + ">";
         };
