@@ -643,10 +643,7 @@
 
         const link = (n, inField) => {
             const parts = linkParts(n);
-            if (!parts) {
-                if (inField) w("&nbsp;");
-                return;
-            }
+            if (!parts) return;
             if (inField) {
                 const id = fid(n) + "_" + at(n, "url").replace(/\./g, "_");
                 const form = linkForm(n, parts, id);
