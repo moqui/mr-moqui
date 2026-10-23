@@ -285,6 +285,8 @@
             const isAsync = has(node, "async") && attr(node, "async") !== "false";
             const call = serviceCallChain(node, isAsync);
             const outMap = attr(node, "out-map");
+            const sendJson = has(node, "web-send-json-response") && attr(node, "web-send-json-response") !== "false"
+                ? attr(node, "web-send-json-response") : "";
             let callLines;
             if (outMap && !isAsync) {
                 // A context name read is a copy, so the merged map is assigned back.
@@ -303,7 +305,11 @@
                     var call_service_result = ${call};
                     ${assign}
                 `;
-            } else callLines = `${call};`;
+            } else callLines = sendJson ? `var call_service_result = ${call};` : `${call};`;
+            // As Java: the result, or an expression over it, is the transition's JSON response.
+            const sendLines = !sendJson ? ""
+                : sendJson === "true" ? "ec.web.sendJsonResponse(call_service_result);"
+                : `ec.web.sendJsonResponse(ec.resource.expression(${jsString(sendJson)}, "", call_service_result));`;
             const errorLines = attr(node, "ignore-error") === "true"
                 ? js`
                     if (ec.message.hasError()) {
@@ -315,6 +321,7 @@
             return js`
                 if (true) {
                     ${callLines}
+                    ${sendLines}
                     ${errorLines}
                 }
             `;
