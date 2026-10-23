@@ -667,3 +667,28 @@ test('centered untitled search rows follow inline text flow and wrap at narrow w
     for(const r of m.narrow.controls) assert.ok(r.x>=0&&r.x+r.width<=300);
     assert.equal(m.plain.gap,'20px');assert.equal(m.plain.controls[0].x,15);
 });
+
+test('disabled text links use source muted colors while button surfaces fade', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>
+        <div><a href="#" class="disabled" aria-disabled="true" id="anchor">Marketing</a>
+        <a href="#" class="disabled" data-btn="plain" id="plain">Unavailable</a>
+        <a href="#" class="disabled" data-btn="primary" id="action">Unavailable action</a>
+        <button disabled data-btn="primary" id="button">Disabled button</button>
+        <a href="#" id="enabled">Enabled</a></div><pre id="result"></pre><script>
+        const metrics=()=>Object.fromEntries(['anchor','plain','action','button','enabled'].map(id=>{const s=getComputedStyle(document.getElementById(id));return [id,{color:s.color,opacity:s.opacity,pointer:s.pointerEvents,cursor:s.cursor}]}));
+        const light=metrics();document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,dark:metrics()});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-disabled-links-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    for(const [theme,muted] of [[light,'rgb(119, 119, 119)'],[dark,'rgb(139, 151, 165)']]) {
+        for(const id of ['anchor','plain']) {assert.equal(theme[id].color,muted);assert.equal(theme[id].opacity,'1');}
+        for(const id of ['action','button']) {assert.equal(theme[id].opacity,'0.65');assert.equal(theme[id].color,'rgb(255, 255, 255)');}
+        for(const id of ['anchor','plain','action','button']) {assert.equal(theme[id].pointer,'none');assert.equal(theme[id].cursor,'default');}
+        assert.equal(theme.enabled.opacity,'1');assert.notEqual(theme.enabled.color,muted);assert.equal(theme.enabled.pointer,'auto');
+    }
+});
