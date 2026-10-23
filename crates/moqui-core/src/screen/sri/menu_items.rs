@@ -89,8 +89,11 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
             Some(expression) => script::eval_condition(expression)?,
             None => false,
         };
-        let image = ScreenUrlInfo::resolve(&state.factory, &root, &url.names, 0)
-            .ok()
+        // The image of the walk the URL was built from: resolving the full path again would count its default
+        // subscreens as explicit, so a default's image would replace the item's own, unlike Java's `sui.menuImage`.
+        let image = url
+            .info
+            .as_ref()
             .and_then(|info| info.menu_image.clone())
             .unwrap_or_default();
         out.push(MenuEntry {
