@@ -678,8 +678,24 @@ fn document_condition(cond: &DocCondition) -> Result<Condition, Error> {
     })
 }
 
+/// Formats like Java's `DateTimeFormatter.ISO_INSTANT`, which prints the fraction in groups of three digits
+/// (`.840`, not `.84`).
+fn iso_instant(stamp: Timestamp) -> String {
+    let seconds = stamp.strftime("%Y-%m-%dT%H:%M:%S");
+    let nanos = stamp.subsec_nanosecond();
+    if nanos == 0 {
+        format!("{seconds}Z")
+    } else if nanos % 1_000_000 == 0 {
+        format!("{seconds}.{:03}Z", nanos / 1_000_000)
+    } else if nanos % 1_000 == 0 {
+        format!("{seconds}.{:06}Z", nanos / 1_000)
+    } else {
+        format!("{seconds}.{nanos:09}Z")
+    }
+}
+
 fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Timestamp) -> Vec<Document> {
-    let stamp_text = stamp.to_string();
+    let stamp_text = iso_instant(stamp);
     let mut docs: IndexMap<String, Document> = IndexMap::new();
     for row in rows {
         let id = info.doc_id(row);
@@ -923,7 +939,16 @@ fn text(value: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::field_path_to_list;
+    use super::{field_path_to_list, iso_instant};
+
+    #[test]
+    fn iso_instant_prints_fraction_in_groups_of_three() {
+        let at = |text: &str| iso_instant(text.parse().unwrap());
+        assert_eq!(at("2026-10-23T19:27:18.84Z"), "2026-10-23T19:27:18.840Z");
+        assert_eq!(at("2026-10-23T19:27:18Z"), "2026-10-23T19:27:18Z");
+        assert_eq!(at("2026-10-23T19:27:18.1234Z"), "2026-10-23T19:27:18.123400Z");
+        assert_eq!(at("2026-10-23T19:27:18.000000001Z"), "2026-10-23T19:27:18.000000001Z");
+    }
 
     #[test]
     fn a_date_expression_returning_epoch_millis_is_a_timestamp() {
