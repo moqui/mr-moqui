@@ -1693,8 +1693,8 @@
               ], 4))
             }
         } },
-        "m-qapps-root": { hash: "d402adf4", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, createElementVNode: _createElementVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent, createSlots: _createSlots, withModifiers: _withModifiers, vShow: _vShow } = Vue
+        "m-qapps-root": { hash: "e78520bc", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, createElementVNode: _createElementVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent, createSlots: _createSlots, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
@@ -1717,6 +1717,7 @@
               const _component_q_toolbar = _resolveComponent("q-toolbar")
               const _component_q_header = _resolveComponent("q-header")
               const _component_m_menu_nav_item = _resolveComponent("m-menu-nav-item")
+              const _component_q_drawer = _resolveComponent("q-drawer")
               const _component_m_subscreens_active = _resolveComponent("m-subscreens-active")
               const _component_q_page = _resolveComponent("q-page")
               const _component_q_page_container = _resolveComponent("q-page-container")
@@ -2206,40 +2207,40 @@
                       ]),
                       _: 1
                     }),
-                    _createVNode(_component_q_page_container, null, {
+                    _createVNode(_component_q_drawer, {
+                      modelValue: _ctx.leftOpen,
+                      "onUpdate:modelValue": $event => ((_ctx.leftOpen) = $event),
+                      side: "left",
+                      bordered: ""
+                    }, {
                       default: _withCtx(() => [
-                        _createElementVNode("div", { class: "shell-row" }, [
-                          _withDirectives(_createElementVNode("div", {
-                            class: _normalizeClass(["app-menu-col", { 'app-menu-overlay': _ctx.$q.screen.lt.md }])
-                          }, [
-                            _createVNode(_component_q_btn, {
-                              dense: "",
-                              flat: "",
-                              icon: "menu",
-                              onClick: $event => (_ctx.toggleLeftOpen()),
-                              class: "lt-sm"
-                            }, null, 8, ["onClick"]),
-                            _createVNode(_component_q_list, {
-                              dense: "",
-                              padding: ""
-                            }, {
-                              default: _withCtx(() => [
-                                _createVNode(_component_m_menu_nav_item, { "menu-index": 0 })
-                              ]),
-                              _: 1
-                            })
-                          ], 2), [
-                            [_vShow, _ctx.leftOpen]
+                        _createVNode(_component_q_btn, {
+                          dense: "",
+                          flat: "",
+                          icon: "menu",
+                          onClick: $event => (_ctx.toggleLeftOpen()),
+                          class: "lt-sm"
+                        }, null, 8, ["onClick"]),
+                        _createVNode(_component_q_list, {
+                          dense: "",
+                          padding: ""
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_m_menu_nav_item, { "menu-index": 0 })
                           ]),
-                          _createVNode(_component_q_page, { class: "shell-page-col" }, {
-                            default: _withCtx(() => [
-                              _createElementVNode("div", { class: "q-ma-sm" }, [
-                                _createVNode(_component_m_subscreens_active)
-                              ])
-                            ]),
-                            _: 1
-                          })
-                        ])
+                          _: 1
+                        })
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue"]),
+                    _createVNode(_component_q_page_container, { class: "q-ma-sm" }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_page, null, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_m_subscreens_active)
+                          ]),
+                          _: 1
+                        })
                       ]),
                       _: 1
                     }),

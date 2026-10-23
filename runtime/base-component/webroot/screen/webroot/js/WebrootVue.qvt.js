@@ -2528,17 +2528,14 @@
         "        </q-btn>\n" +
         "    </q-toolbar></q-header>\n" +
         "\n" +
-        "    <q-page-container>\n" +
-        "        <div class=\"shell-row\">\n" +
-        "            <div v-show=\"leftOpen\" class=\"app-menu-col\" :class=\"{ 'app-menu-overlay': $q.screen.lt.md }\">\n" +
-        "                <q-btn dense flat icon=\"menu\" @click=\"toggleLeftOpen()\" class=\"lt-sm\"></q-btn>\n" +
-        "                <q-list dense padding><m-menu-nav-item :menu-index=\"0\"></m-menu-nav-item></q-list>\n" +
-        "            </div>\n" +
-        "            <q-page class=\"shell-page-col\">\n" +
-        "                <div class=\"q-ma-sm\"><m-subscreens-active></m-subscreens-active></div>\n" +
-        "            </q-page>\n" +
-        "        </div>\n" +
-        "    </q-page-container>\n" +
+        "    <q-drawer v-model=\"leftOpen\" side=\"left\" bordered>\n" +
+        "        <q-btn dense flat icon=\"menu\" @click=\"toggleLeftOpen()\" class=\"lt-sm\"></q-btn>\n" +
+        "        <q-list dense padding><m-menu-nav-item :menu-index=\"0\"></m-menu-nav-item></q-list>\n" +
+        "    </q-drawer>\n" +
+        "\n" +
+        "    <q-page-container class=\"q-ma-sm\"><q-page>\n" +
+        "        <m-subscreens-active></m-subscreens-active>\n" +
+        "    </q-page></q-page-container>\n" +
         "\n" +
         "    <q-footer reveal bordered class=\"bg-grey-9 text-white row q-pa-xs\" id=\"footer\">\n" +
         "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +

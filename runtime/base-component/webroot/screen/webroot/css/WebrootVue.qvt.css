@@ -38,13 +38,6 @@ body.test.body--dark #top { background:#224422!important; color:white; }
 .body--dark .q-menu { background-color:black; }
 .body--dark .q-drawer { background-color: black; }
 
-/* Under the header the row is the menu, then the page. */
-.shell-row { display:flex; align-items:stretch; height:calc(100vh - 86px); min-height:0; overflow:hidden; }
-.app-menu-col { flex:0 0 300px; width:300px; min-height:0; overflow:auto; border-right:1px solid rgba(0,0,0,0.12); background:#fff; }
-.app-menu-overlay { position:fixed; z-index:2000; top:50px; bottom:0; left:0; box-shadow:0 0 16px rgba(0,0,0,0.2); }
-.body--dark .app-menu-col { background:#000; border-right-color:rgba(255,255,255,0.12); }
-.shell-page-col { flex:1 1 auto; min-width:0; min-height:0; overflow:auto; }
-.shell-page-col.q-page { min-height:0 !important; }
 .body--dark img.invertible { -webkit-filter: invert(90%); filter: invert(90%); }
 
 @media (min-width:576px) {
@@ -214,7 +207,7 @@ ul.float-plain.condensed li { margin: 0 4px 0 0; padding: 4px; }
 
     #top, #footer { display: none; }
     .q-page-container { padding:0!important; }
-    .q-drawer, .q-tabs, .q-btn, .form-list-nav-row, .app-menu-col { display: none; }
+    .q-drawer, .q-tabs, .q-btn, .form-list-nav-row { display: none; }
 
     tbody>tr:nth-child(even)>td, .tbody .tr:nth-child(even)>.td { background-color: #EEEEEE !important; }
 }
