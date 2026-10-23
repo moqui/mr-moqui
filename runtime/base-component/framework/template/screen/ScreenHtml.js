@@ -54,6 +54,13 @@
         if (node.children.length) parts.push(`"children":[${node.children.map(childLit).join(",")}]`);
         return `{${parts.join(",")}}`;
     };
+    // A form-list as the host reads it: its attributes and its hidden-parameters, the inputs Java writes into the
+    // header and multi forms.
+    const formListLit = (node) => {
+        const hidden = child(node, "hidden-parameters");
+        if (!hidden) return bareLit(node);
+        return bareLit(node).replace(/}$/, `,"children":[${childLit(hidden)}]}`);
+    };
     const pick = (attrs, names) => {
         const out = {};
         names.forEach((name) => { if (attrs && attrs[name] !== undefined) out[name] = attrs[name]; });
@@ -1622,7 +1629,7 @@
             if (sri.doBoundaryComments()) sri.write(${lit(`<!-- BEGIN form-list[@name=${attr(node, "name")}] -->\n`)});
             {
                 const $info = sri.openFormList(${lit(attr(node, "name"))});
-                $h.formList($info, ${bareLit(node)}, [
+                $h.formList($info, ${formListLit(node)}, [
                     ${cols}
                 ], ${cfg});
             }
