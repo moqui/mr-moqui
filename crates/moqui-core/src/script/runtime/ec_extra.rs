@@ -22,6 +22,9 @@ use crate::l10n;
 
 const LOCALIZE_LIMIT: usize = 256;
 
+/// The Moqui Framework version this engine implements (Moqui's framework/build.gradle).
+const MOQUI_FRAMEWORK_VERSION: &str = "4.0.0";
+
 /// Run `body` with the entries of an additional-context object in a frame of their own.
 fn with_additional<'js, T>(
     ctx: &Ctx<'js>,
@@ -838,12 +841,13 @@ pub(super) fn fill_helpers<'js>(
 pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result<(), Error> {
     caught(ctx, "ec.l10n", ec.set("l10n", l10n_object(ctx)?))?;
     caught(ctx, "ec.context", ec.set("context", context_object(ctx)?))?;
-    // `ec.factory.moquiVersion`, which the footer items of the default theme show.
+    // `ec.factory.moquiVersion`, which the footer items of the default theme show: the version of the Moqui
+    // Framework this engine implements, as Moqui shows its own.
     let factory = caught(ctx, "ec.factory", Object::new(ctx.clone()))?;
     caught(
         ctx,
         "ec.factory.moquiVersion",
-        factory.set("moquiVersion", env!("CARGO_PKG_VERSION")),
+        factory.set("moquiVersion", MOQUI_FRAMEWORK_VERSION),
     )?;
     super::native_tools::install(ctx, ec, &factory)?;
     caught(ctx, "ec.factory", ec.set("factory", factory))?;

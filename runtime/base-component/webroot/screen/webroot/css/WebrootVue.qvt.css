@@ -1,10 +1,10 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-a { color:var(--q-color-primary); text-decoration:none; }
+a { color:var(--q-primary); text-decoration:none; }
 .q-menu a, .q-toolbar a { color:inherit; }
 
-.text-success { color:var(--q-color-positive); }
-.text-danger { color:var(--q-color-negative); }
+.text-success { color:var(--q-positive); }
+.text-danger { color:var(--q-negative); }
 .text-mono { font-family: monospace,monospace; }
 strong, .text-strong { font-weight:bold; }
 
@@ -88,7 +88,7 @@ form.q-form { width:100%; }
 .q-field--disabled .q-field__control > div { opacity:1 !important; }
 /* END q-field label move */
 
-.q-field--focused .q-field__input { border-bottom: var(--q-color-primary) solid 1px; margin-left:8px; }
+.q-field--focused .q-field__input { border-bottom: var(--q-primary) solid 1px; margin-left:8px; }
 
 .q-field--dense .q-field__marginal { height:auto; min-height:40px; }
 .q-field__prepend { max-width:75%; }
@@ -232,7 +232,7 @@ div.container-panel-header, div.container-panel-footer { width: 100%; }
 .form-title { white-space: nowrap; font-weight: bold; }
 .form-order-by { margin: 0; white-space: nowrap; height: 18px; display: inline-block; vertical-align: top; }
 .form-order-by a { display: block; height: 10px; font-size: 14px; margin: -2px 0; }
-.form-order-by a.active { color: var(--q-color-primary); }
+.form-order-by a.active { color: var(--q-primary); }
 .form-single-field-group { margin: 4px 0; }
 .panel { margin-bottom: 12px; }
 .panel .panel-heading>h5 { margin: 4px 8px; font-size: 16px; }
@@ -240,7 +240,6 @@ div.container-panel-header, div.container-panel-footer { width: 100%; }
 span.hover-image-container { position: relative; }
 span.hover-image-container img.hover-image { position: absolute; display: none; z-index: 10; background-color: #FFF6E8; padding: 6px; }
 span.hover-image-container:hover img.hover-image { display: initial; margin: 10px 0 0 5px; }
-.text-inline { display: inline; }
 .text-find-options { margin-left: 4px; }
 .editable-label { border-bottom: 1px dashed currentColor; }
 .markdown-preview { border: 1px solid rgba(0,0,0,0.12); margin-top: 4px; }

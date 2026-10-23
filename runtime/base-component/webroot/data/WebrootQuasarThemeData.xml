@@ -21,10 +21,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Default Theme (note that DEFAULT ScreenTheme record defined in ScreenEntities.xml) -->
 
-    <!-- Style sheets of the qvt shell, in order: Font Awesome 4 for the fa icons of the screens, the Material icons Quasar uses,
-         Quasar, and the layout and widget styles loaded last to override. The paths are the vendored libraries (webroot/README.md). -->
+    <!-- Style sheets of the qvt shell, in order: Font Awesome 4 for the fa icons of the screens, Roboto (the font Quasar names;
+         from Google Fonts, as Moqui loads it), the Material icons Quasar uses, Quasar, and the layout and widget styles loaded last
+         to override. The local paths are the vendored libraries (webroot/README.md). -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="1" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/libs/fontawesome/css/font-awesome.min.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="2" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900"/>
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="3" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/libs/material-icons/material-icons.css"/>
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="4" resourceTypeEnumId="STRT_STYLESHEET"

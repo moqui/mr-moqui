@@ -2541,7 +2541,7 @@
         "    </q-page-container>\n" +
         "\n" +
         "    <q-footer reveal bordered class=\"bg-grey-9 text-white row q-pa-xs\" id=\"footer\">\n" +
-        "        <div v-html=\"shell.footerHtml\" style=\"display:contents;\"></div>\n" +
+        "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +
         "    </q-footer>\n" +
         "</q-layout>\n" +
         "\n" +

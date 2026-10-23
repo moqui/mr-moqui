@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
         require-authentication="true" default-menu-include="false" default-menu-title="App List">
 
     <widgets>
-        <container style="center">
+        <container style="text-center">
             <label text="Choose an Application" type="h2"/>
             <render-mode>
                 <text type="html"><![CDATA[

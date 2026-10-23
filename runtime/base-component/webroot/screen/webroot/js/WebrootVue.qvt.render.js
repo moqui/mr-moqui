@@ -1693,7 +1693,7 @@
               ], 4))
             }
         } },
-        "m-qapps-root": { hash: "eab70574", make: function (Vue) {
+        "m-qapps-root": { hash: "d402adf4", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, createElementVNode: _createElementVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent, createSlots: _createSlots, withModifiers: _withModifiers, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -2252,7 +2252,7 @@
                       default: _withCtx(() => [
                         _createElementVNode("div", {
                           innerHTML: _ctx.shell.footerHtml,
-                          style: {"display":"contents"}
+                          class: "row full-width"
                         }, null, 8, ["innerHTML"])
                       ]),
                       _: 1
