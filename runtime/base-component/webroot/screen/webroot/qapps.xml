@@ -36,7 +36,8 @@ along with this software (see the LICENSE.md file). If not, see
         // stylesheets (a database loaded before it keeps Quasar's Material Icons until the theme data is loaded again)
         if (sri.getThemeValues('STRT_STYLESHEET').some((sheet) => String(sheet).includes('/libs/material-symbols/')))
             footer_scripts.add('/libs/quasar/icon-set/material-symbols-outlined.umd.prod.js')
-        footer_scripts.add('/js/MoquiLib.js')
+        // Screen custom elements can request data while the body parses, before Vue mounts.
+        html_scripts.add('/js/MoquiLib.js')
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')

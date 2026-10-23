@@ -141,3 +141,27 @@ test('inline remote options set the natural width and resize after a dependency 
     assert.equal(m.updated.value,'CAN_BC');assert.equal(m.updated.submitted,'CAN_BC');assert.equal(m.updated.count,1);
     assert.ok(Math.abs(m.owner-670)<0.05);assert.equal(m.search,'');assert.equal(m.calls,2);assert.equal(m.temporarySelects,0);
 });
+
+
+test('head clients expose requests before body components and bind HTML after parsing', () => {
+    const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{execFileSync}=require('node:child_process');
+    for(const mode of ['html','qapps']) {
+        const source=fs.readFileSync(path.join(__dirname,mode==='html'?'moqui-html.js':'MoquiLib.js'),'utf8');
+        const html=`<!doctype html><html><head><meta name="moquiSessionToken" content="initial"><script>
+            window.calls=[];window.fetch=(url,options)=>{calls.push({url,credentials:options.credentials});return Promise.resolve(new Response('[]',{headers:{'Content-Type':'application/json'}}))};
+            </script><script>${source}</script></head><body><button data-dialog="detail">Details</button><dialog id="detail">Loaded</dialog><pre id="result"></pre><script>
+            const before={request:typeof moqui.request,ready:document.readyState,bound:document.documentElement.classList.contains('js')};
+            const answer=moqui.request('/calendar/events');
+            document.addEventListener('DOMContentLoaded',()=>{setTimeout(async()=>{await answer;${mode==='html'?"document.querySelector('button').click();":''}
+                document.getElementById('result').textContent=JSON.stringify({before,calls,bound:document.documentElement.classList.contains('js'),opened:document.querySelector('dialog').open});},0)},{once:true});
+            </script></body></html>`;
+        const dir=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-head-client-'));let dom;
+        try {const file=path.join(dir,'test.html');fs.writeFileSync(file,html);
+            dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--user-data-dir='+path.join(dir,'profile'),'--virtual-time-budget=1000','--dump-dom','file://'+file],{encoding:'utf8',timeout:20000,maxBuffer:3*1024*1024,stdio:['ignore','pipe','pipe']});
+        } finally {fs.rmSync(dir,{recursive:true,force:true});}
+        const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,mode+' finishes a component request');
+        const m=JSON.parse(match[1]);assert.deepEqual(m.before,{request:'function',ready:'loading',bound:false});
+        assert.deepEqual(m.calls,[{url:'/calendar/events',credentials:'same-origin'}]);
+        if(mode==='html'){assert.equal(m.bound,true);assert.equal(m.opened,true);}
+    }
+});
