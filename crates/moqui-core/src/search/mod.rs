@@ -999,8 +999,23 @@ pub fn index_feeds_on_start_empty() {
             if missing {
                 let mut parameters = std::collections::BTreeMap::new();
                 parameters.insert("dataFeedId".to_string(), Value::string(&feed_id));
-                let job_run_id = crate::service::run_job_now("IndexDataFeedDocuments", &parameters)?;
-                tracing::info!("Found index does not exist for DataFeed {feed_id}, started job {job_run_id} to index");
+                if crate::deterministic::enabled() {
+                    // Java's deterministic mode runs no service jobs and indexes the feed inline instead.
+                    let out =
+                        crate::service::sync("org.moqui.search.SearchServices.index#DataFeedDocuments", &parameters)?;
+                    let indexed = out
+                        .get("documentsIndexed")
+                        .map(moqui_lib::object::to_plain_string)
+                        .unwrap_or_default();
+                    tracing::info!(
+                        "Found index does not exist for DataFeed {feed_id}, indexed {indexed} documents inline"
+                    );
+                } else {
+                    let job_run_id = crate::service::run_job_now("IndexDataFeedDocuments", &parameters)?;
+                    tracing::info!(
+                        "Found index does not exist for DataFeed {feed_id}, started job {job_run_id} to index"
+                    );
+                }
             }
         }
         Ok(())

@@ -1014,6 +1014,10 @@ fn boot_server(
         // Java restarts the factory after the empty-db load, persisting bootstrap
         // statistics before serving requests. Flush here, not only at final shutdown.
         factory.flush_artifact_hits().map_err(moqui_lib::error::Error::from)?;
+        // The restarted factory's ElasticFacade indexes, inline, each indexOnStartEmpty feed the load left without an index.
+        if search.is_some() {
+            index_feeds_on_start_empty(&factory);
+        }
     }
     tracing::info!(
         "Table check and empty-db load finished in {:.3} seconds",
@@ -1330,10 +1334,21 @@ fn load_in_context(
         // Java's checkEmptyDb loads in an AT_OTHER loadDataEmptyDb frame that needs no authorization, marked
         // authorized for all actions, with the anonymous user logged in.
         let frame = empty_db_load.then(EmptyDbLoadFrame::push).transpose()?;
-        for location in framework_files.iter().chain(&conf_files).chain(component_data) {
-            records = records.saturating_add(load_one(facade, location, &options)?);
+        // Java's EntityDataFeed reads the real-time DataFeed entities once, on the factory's first write. In an
+        // empty-db load that write comes before any DataFeed row is loaded, so no loaded record reaches a feed.
+        let feed_before = facade.flags().disable_data_feed;
+        if empty_db_load {
+            facade.set_disable_data_feed(true);
         }
+        let loaded = (|| {
+            for location in framework_files.iter().chain(&conf_files).chain(component_data) {
+                records = records.saturating_add(load_one(facade, location, &options)?);
+            }
+            Ok::<_, moqui_lib::error::Error>(())
+        })();
+        facade.set_disable_data_feed(feed_before);
         drop(frame);
+        loaded?;
         if empty_db_load {
             // Java's Moqui.loadData re-initializes the ExecutionContextFactory after an empty-db load ("Data loaded
             // into empty DB, re-initializing ExecutionContextFactory"), so the server starts with no sequence banks.
