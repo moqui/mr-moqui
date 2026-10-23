@@ -496,3 +496,35 @@ test('form-list row editors match Java controls without enlarging plugin searche
     assert.equal(light.check.shadow,'none');assert.equal(light.submit.height,34);assert.equal(light.plugin.height,30);assert.equal(light.plugin.padding,'4px 8px');
     assert.equal(dark.shadow,'none');assert.equal(dark.color,'rgb(221, 227, 234)');assert.equal(dark.height,34);
 });
+
+
+test('dashboard process lanes, arrows and raw quick-info containers match Java at desktop and mobile widths', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>
+        <div><div class="big-row-item" id="quick-one">Sales</div><div class="big-row-item" id="quick-two">Placed</div></div>
+        <div class="row diagram-sequence" id="diagram">${['Customers','Internal','Suppliers'].map((name,i)=>`<div class="col" style="--sm:4" id="lane-${i}"><p class="visible-xs-block" id="mobile-${i}">&nbsp;</p><div class="diagram-sequence-actor" id="actor-${i}">${name}</div><div class="diagram-sequence-item" id="item-${i}">Order<i class="fa left" id="left-${i}"></i><i class="fa right" id="right-${i}"></i></div><div class="diagram-sequence-item smaller" id="small-${i}">Return</div><p class="hidden-xs" id="desktop-${i}">&nbsp;</p>${i===1?'<p>Extra process step</p>':''}</div>`).join('')}</div>
+        <pre id="result"></pre><script>
+        const metric=id=>{const e=document.getElementById(id),s=getComputedStyle(e),r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,font:s.fontSize,weight:s.fontWeight,display:s.display,margin:s.margin,padding:s.padding,borderLeft:s.borderLeft,borderRight:s.borderRight,borderBottom:s.borderBottom,position:s.position,left:s.left,right:s.right,bottom:s.bottom,before:getComputedStyle(e,'::before').content}};
+        document.getElementById('result').textContent=JSON.stringify({diagram:metric('diagram'),lanes:[0,1,2].map(i=>metric('lane-'+i)),actor:metric('actor-0'),item:metric('item-0'),small:metric('small-0'),left:metric('left-0'),right:metric('right-0'),mobile:metric('mobile-0'),desktop:metric('desktop-0'),quick:[metric('quick-one'),metric('quick-two')]});
+        </script>`;
+    for(const width of [1440,600]) {
+        const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-process-map-'));
+        let dom;
+        try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+            '--headless','--disable-gpu','--window-size='+width+',1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+        ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+        finally {fs.rmSync(profile,{recursive:true,force:true});}
+        const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+        assert.equal(m.diagram.width,Math.min(width,900));assert.equal(m.diagram.x,(width-Math.min(width,900))/2);
+        assert.ok(m.lanes.every(l=>Math.abs(l.width-(width>=768?300:600))<0.1), JSON.stringify(m));
+        if(width>=768) {assert.equal(m.lanes[0].y,m.lanes[1].y);assert.ok(m.lanes[1].height>m.lanes[0].height, 'lane borders follow their own content height');}
+        else assert.ok(m.lanes[1].y>m.lanes[0].y);
+        assert.equal(m.lanes[0].borderLeft,'1px dashed rgb(127, 127, 127)');assert.equal(m.lanes[2].borderRight,'1px dashed rgb(127, 127, 127)');
+        assert.equal(m.actor.font,'19.2px');assert.equal(m.actor.weight,'700');assert.equal(m.actor.margin,'0px 0px 14px');
+        assert.equal(m.item.position,'relative');assert.equal(m.item.borderBottom,'2px solid rgb(127, 127, 127)');assert.equal(m.item.margin,'0px 0px 8px');assert.equal(m.small.font,'14px');
+        assert.equal(m.left.position,'absolute');assert.equal(m.left.left,'-2px');assert.equal(m.left.bottom,'-8px');assert.equal(m.left.before,'"\uf053"');
+        assert.equal(m.right.right,'-2px');assert.equal(m.right.before,'"\uf054"');
+        assert.equal(m.mobile.display,width>=768?'none':'block');assert.equal(m.desktop.display,width>=768?'block':'none');
+        assert.equal(m.quick[0].display,'inline-block');assert.equal(m.quick[0].margin,'0px 15px');assert.equal(m.quick[0].y,m.quick[1].y);
+    }
+});
