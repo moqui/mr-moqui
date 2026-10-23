@@ -1247,7 +1247,7 @@
                 if (multi && info.count > 0) {
                     w('<tr><td colspan="' + Math.max(visible.length, 1) + '">');
                     st.owner = formId;
-                    cols.forEach((col) => col.forEach((f) => f.cell(2)));
+                    cfg.finalCells.forEach((cell) => cell(2));
                     w("</td></tr>");
                 }
                 w("</tbody></table></div>\n");
@@ -1581,6 +1581,9 @@
             const sub = child(field, tag);
             return `() => {\n${subWidgets(sub)}}`;
         };
+        // As in Java, the final row of a multi form holds the submit widget of every field, in the order of the
+        // form, whether or not a form-list-column shows the field.
+        const hasSubmit = (field) => [...childrenNamed(field, "conditional-field"), child(field, "default-field")].some((sub) => sub && child(sub, "submit"));
         const hiddenDefault = fields.filter(S.listFieldHiddenWidget).map((field) => `() => {\nconst $m = 0;\n${cellCode(field)}}`);
         const cfg = js`
             {
@@ -1605,6 +1608,9 @@
                 ],
                 "allFields": [
                     ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}}`).join(",\n")}
+                ],
+                "finalCells": [
+                    ${fields.filter(hasSubmit).map((field) => `($m) => {\n${cellCode(field)}}`).join(",\n")}
                 ],
                 "summaries": [
                     ${fields.map(summaryField).filter(Boolean).join(",\n")}
