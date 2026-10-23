@@ -511,6 +511,36 @@ impl ServicePools {
         super::jobs::persist_queued(&factory, name, parameters)
     }
 
+    /// Java `ec.runInWorkerThread`: run `task` later in a fresh context with no user, and do not wait for it. Inline
+    /// it is queued like an async call; an idle pool runs it now.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no factory is entered, or the pool is stopped or its queue full.
+    pub(crate) fn run_in_worker(&self, task: impl FnOnce() + Send + 'static) -> Result<(), Error> {
+        let run_task = move || -> ClosureOut {
+            task();
+            Ok(Box::new(()))
+        };
+        let Some(shared) = &self.shared else {
+            let factory = capture_factory()?;
+            let run: ClosureFn = Box::new(move || {
+                let ctx = factory.new_context();
+                let _entered = ctx.enter();
+                run_task()
+            });
+            match &self.inline {
+                Some(inline) => {
+                    let (reply, _) = mpsc::channel();
+                    lock(&inline.queue).push_back(Work::Closure(ClosureJob { run, reply }));
+                }
+                None => drop(run()),
+            }
+            return Ok(());
+        };
+        queue_closure(shared, Box::new(run_task)).map(drop)
+    }
+
     /// One scheduler pass now, as the scheduler thread runs it on its interval.
     pub fn tick(&self) -> super::jobs::PassReport {
         match &self.shared {

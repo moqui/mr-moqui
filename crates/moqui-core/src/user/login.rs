@@ -14,6 +14,9 @@
 
 //! Login against `moqui.security.UserAccount`. A bound web session rotates on password success.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use moqui_db::sql::{select as sql_select, update as sql_update, Condition, FieldRef, LimitOffset};
 use moqui_lib::object::{basic_convert, Value};
 
@@ -26,6 +29,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
+const USER_LOGIN_HISTORY: &str = "moqui.security.UserLoginHistory";
 const PASSWORD_HISTORY: &str = "moqui.security.UserPasswordHistory";
 const INVALID_LOGIN: &str = "The username or password is not valid";
 const WEEK_MILLIS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -94,28 +98,83 @@ fn password_login(username: &str, password: &str) -> Result<(), Error> {
         password::burn_verify(password);
         return Err(err);
     }
+    // As Java's realm, once the account passes the gate every outcome is kept, a pending second factor as a failure.
+    let outcome = authenticate(&facade, &account, password, now);
+    save_history(&text_field(&account, "userId"), password, matches!(outcome, Ok(true)));
+    outcome.map(drop)
+}
+
+/// The password and post-password checks of [`password_login`]. True when the login finished, false when it waits
+/// for a second factor.
+fn authenticate(facade: &EntityFacade, account: &EntityValue, password: &str, now: i64) -> Result<bool, Error> {
     // A legacy hash checks in microseconds; the argon2 burn keeps it as slow as an unknown user, so
     // the time does not tell which usernames exist.
-    if legacy_hash(&account) {
+    if legacy_hash(account) {
         password::burn_verify(password);
     }
-    if !password_ok(&account, password)? {
-        let user_id = text_field(&account, "userId");
+    if !password_ok(account, password)? {
+        let user_id = text_field(account, "userId");
         if !user_id.is_empty() {
-            increment_failed(&facade, &user_id)?;
+            increment_failed(facade, &user_id)?;
         }
         return Err(Error::new(INVALID_LOGIN));
     }
-    post_password(&account, now)?;
-    let user_id = text_field(&account, "userId");
+    post_password(account, now)?;
+    let user_id = text_field(account, "userId");
     if !user_id.is_empty() && super::factor::second_factor_required(&user_id)? {
-        rehash_legacy(&facade, &account, password)?;
-        let account_username = text_field(&account, "username");
+        rehash_legacy(facade, account, password)?;
+        let account_username = text_field(account, "username");
         session::set_session_attribute(PRE_AUTHC_USERNAME, Some(&account_username));
         session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
-        return Ok(());
+        return Ok(false);
     }
-    finish_login(&facade, &account, Some(password), true)
+    finish_login(facade, account, Some(password), true)?;
+    Ok(true)
+}
+
+/// Java `MoquiShiroRealm.loginSaveHistory`: the time and visit are taken now, and a worker then creates the
+/// `UserLoginHistory` row unless the user has one from the last minute. A failure there is only logged.
+fn save_history(user_id: &str, password: &str, successful: bool) {
+    if user_id.is_empty() || !policy::login_history_store() {
+        return;
+    }
+    let from_date = now_effective_millis();
+    let mut fields = BTreeMap::from([
+        ("userId".to_string(), Value::string(user_id)),
+        ("fromDate".to_string(), stamp_value(from_date)),
+        ("successfulLogin".to_string(), Value::string(if successful { "Y" } else { "N" })),
+    ]);
+    if let Some(visit_id) = session::visit_id().ok().flatten() {
+        fields.insert("visitId".to_string(), Value::string(visit_id));
+    }
+    if !successful && policy::login_history_incorrect_password() {
+        fields.insert("passwordUsed".to_string(), Value::string(password));
+    }
+    let user_id = user_id.to_string();
+    let task = move || {
+        if let Err(err) = store_history(&user_id, from_date, &fields) {
+            tracing::warn!(error = %err, "UserLoginHistory create failed");
+        }
+    };
+    let queued = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory()))
+        .ok_or_else(|| Error::new("no execution context"))
+        .and_then(|factory| factory.service_pools().run_in_worker(task));
+    if let Err(err) = queued {
+        tracing::warn!(error = %err, "UserLoginHistory create failed");
+    }
+}
+
+fn store_history(user_id: &str, from_date: i64, fields: &BTreeMap<String, Value>) -> Result<(), Error> {
+    let _authz = without_authz();
+    let recent = entity_facade()?
+        .find(USER_LOGIN_HISTORY)?
+        .eq("userId", Value::string(user_id))
+        .condition(Condition::greater("fromDate", stamp_value(from_date - 60_000)))
+        .count()?;
+    if recent == 0 {
+        crate::service::call::sync("create#moqui.security.UserLoginHistory", fields)?;
+    }
+    Ok(())
 }
 
 /// Every login starts by forgetting an earlier pre-authenticated user, so a finished login does
@@ -955,6 +1014,50 @@ mod tests {
         assert!(err.to_string().contains("must be changed"), "{err}");
         assert!(!text(&load_user(&facade, "stale"), "currentPassword").starts_with("$argon2"));
         assert!(session::current_username().unwrap().is_none());
+        session::reset_session();
+    }
+
+    #[test]
+    fn a_login_once_the_account_is_known_leaves_one_history_row_a_minute() {
+        let (ctx, facade) = open_ctx();
+        let _guard = ctx.enter();
+        let history = |user: &str| {
+            facade
+                .find(USER_LOGIN_HISTORY)
+                .unwrap()
+                .eq("userId", Value::string(user))
+                .list()
+                .unwrap()
+        };
+        create_user(&facade, "ada", "Secret1!", |_| {});
+        assert_eq!(login_user("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+        let rows = history("ada");
+        let row = rows.iter().next().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(text(row, "successfulLogin"), "N");
+        assert_eq!(text(row, "passwordUsed"), "wrong");
+        // A second login within the minute is not kept.
+        login_user("ada", "Secret1!").unwrap();
+        assert_eq!(history("ada").len(), 1);
+        logout().unwrap();
+
+        create_user(&facade, "bob", "Secret1!", |_| {});
+        login_user("bob", "Secret1!").unwrap();
+        let rows = history("bob");
+        let row = rows.iter().next().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(text(row, "successfulLogin"), "Y");
+        assert!(row.get("passwordUsed").is_none_or(Value::is_null));
+        logout().unwrap();
+
+        // Java has no userId for an unknown or disabled account, so it keeps nothing.
+        create_user(&facade, "stuck", "Secret1!", |value| {
+            value.set("disabled", Value::string("Y"));
+        });
+        assert!(login_user("stuck", "Secret1!").is_err());
+        assert!(login_user("nobody", "Secret1!").is_err());
+        assert!(history("stuck").is_empty());
+        assert!(history("nobody").is_empty());
         session::reset_session();
     }
 
