@@ -304,7 +304,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     assert.deepEqual(formMetrics, {
         textHeight: 34, selectHeight: 34, staticHeight: 34, plainStaticHeight: 34,
         inlineStaticHeight: 34, linkHeight: 34,
-        fieldGap: '15px', labelPadding: '7px', tableControlPadding: '4px 8px', tableControlHeight: 30,
+        fieldGap: '15px', labelPadding: '7px', tableControlPadding: '6px 12px', tableControlHeight: 34,
         tableDisplayHeight: 20, tableFieldGap: '0px',
         bigRowGap: '8px', bigItemGap: '0px'
     });
@@ -339,7 +339,7 @@ test('inline list filters match Java control height and submit alignment', () =>
             <th><div class="title">Category ID</div><div class="find-field"><span class="find text-find"><input id="text" size="15"></span></div></th>
             <th><div class="title">Type</div><div class="find-field"><select id="select"><option>Catalog</option></select></div></th>
             <th><div class="title"></div><div class="find-field"><button id="submit" data-btn="primary">Find</button></div></th>
-        </tr></thead><tbody><tr><td><input id="row-input"></td><td><input id="check" type="checkbox"></td></tr></tbody></table>
+        </tr></thead><tbody><tr><td><input id="row-input" form="editor"></td><td><input id="check" type="checkbox"></td></tr></tbody></table>
         <pre id="result"></pre><script>
         const metric=id=>{const el=document.getElementById(id),r=el.getBoundingClientRect(),c=getComputedStyle(el);return {height:r.height,y:r.y,color:c.color,border:c.borderTopColor,shadow:c.boxShadow,padding:c.padding,weight:c.fontWeight}};
         const light={text:metric('text'),select:metric('select'),submit:metric('submit'),row:metric('row-input'),check:metric('check')};
@@ -365,7 +365,7 @@ test('inline list filters match Java control height and submit alignment', () =>
     assert.equal(light.text.border,'rgb(204, 204, 204)');
     assert.equal(light.text.padding,'6px 12px');
     assert.notEqual(light.text.shadow,'none');
-    assert.equal(light.row.height,30,'editable rows keep compact controls');
+    assert.equal(light.row.height,34,'editable rows use Java form-control height');
     assert.equal(light.check.shadow,'none');
     assert.equal(dark.shadow,'none');
     assert.equal(dark.color,'rgb(221, 227, 234)');
@@ -470,4 +470,29 @@ test('party addresses and float-box cards retain Java typography and spacing', (
     assert.equal(light.active.shadow,'rgb(51, 122, 183) 0px 0px 0px 1px inset, rgb(204, 204, 204) 0px 0px 0px 1px');
     assert.equal(dark.shadow,'rgb(8, 8, 8) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
     assert.equal(darkActive.shadow,'rgb(59, 130, 214) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
+});
+
+
+test('form-list row editors match Java controls without enlarging plugin searches or action inputs', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><form id="editor"></form>
+        <table class="form-list" data-editor><tbody>${[0,1].map(i=>`<tr><td><div><input id="sequence-${i}" form="editor" size="4" value="${i}"></div></td><td><div><input form="editor" size="30" value="Ground Parcel"></div></td><td><select id="select-${i}" form="editor"><option>Ground</option></select></td></tr>`).join('')}</tbody></table>
+        <table class="form-list"><tbody><tr><td><input id="check-0" type="checkbox" form="editor"></td><td><input id="submit-0" type="submit" form="editor" value="Update"></td><td><div class="ts-control"><input id="plugin-0" size="1"></div></td></tr></tbody></table>
+        <pre id="result"></pre><script>
+        const metric=id=>{const e=document.getElementById(id),s=getComputedStyle(e),r=e.getBoundingClientRect();return {height:r.height,width:r.width,padding:s.padding,color:s.color,border:s.borderTopColor,shadow:s.boxShadow,weight:s.fontWeight}};
+        const light={text:metric('sequence-0'),select:metric('select-0'),check:metric('check-0'),submit:metric('submit-0'),plugin:metric('plugin-0'),rows:[...document.querySelectorAll('[data-editor] tr')].map(e=>e.getBoundingClientRect().height)};
+        document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,dark:metric('sequence-0')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-row-editor-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.equal(light.text.height,34);assert.equal(light.text.width,77);assert.equal(light.text.padding,'6px 12px');assert.equal(light.text.weight,'400');
+    assert.equal(light.text.color,'rgb(85, 85, 85)');assert.equal(light.text.border,'rgb(204, 204, 204)');assert.notEqual(light.text.shadow,'none');
+    assert.equal(light.select.height,34);assert.ok(light.rows.every(h=>h>=44.5&&h<=45), '34px controls plus padding and collapsed edge borders');
+    assert.equal(light.check.shadow,'none');assert.equal(light.submit.height,34);assert.equal(light.plugin.height,30);assert.equal(light.plugin.padding,'4px 8px');
+    assert.equal(dark.shadow,'none');assert.equal(dark.color,'rgb(221, 227, 234)');assert.equal(dark.height,34);
 });
