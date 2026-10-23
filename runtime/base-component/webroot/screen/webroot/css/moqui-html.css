@@ -345,7 +345,16 @@ td > [data-align="center"], th > [data-align="center"] { text-align: center; }
 .title .order-by a:hover { color: blue; }
 .title .order-by a.active { color: red; }
 .title .order-by a.active:hover { color: darkred; }
-.find-field { white-space: nowrap; padding-top: 4px; font-weight: normal; }
+/* Java inline header fields inherit the bold header and use full-size form controls.
+   An untitled submit column still reserves the title line. */
+table.form-list thead .title:empty::before { content: "\00a0"; }
+.find-field { white-space: nowrap; padding-top: 4px; }
+.find-field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.find-field select {
+    height: 34px; padding: 6px 12px;
+    color: var(--control-fg); border-color: var(--control-border); box-shadow: var(--control-shadow);
+}
+.find-field > button { margin-top: 2px; vertical-align: middle; font-weight: normal; }
 tr.nav-row > th { background: transparent; }
 tr.nav-row nav { font-weight: normal; }
 /* Java uses full-size toolbar exports and a quick saved-find selector. */
