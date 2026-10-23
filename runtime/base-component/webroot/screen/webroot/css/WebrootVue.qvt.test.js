@@ -116,3 +116,39 @@ test('list typography preserves Java text size and multiline row heights in both
         fs.rmSync(profile, { recursive: true, force: true });
     }
 });
+
+test('alternate list views retain header tools and hide rows and footers in both renderers', () => {
+    const css = fs.readFileSync(path.join(__dirname, 'WebrootVue.qvt.css'), 'utf8');
+    const cases = ['list', 'board', 'calendar', 'tree'].flatMap(view => ['merged', 'static'].map(renderer => {
+        const top = '<div class="form-list-nav-row" data-top>Find Options</div>';
+        const footer = '<div class="form-list-nav-row" data-footer>Next page</div>';
+        const head = '<div class="thead"><div class="form-header-field">Filter</div>' + (renderer === 'merged' ? top : '') + '</div>';
+        const rows = '<div class="tbody"><div data-row>Invoice</div>' + (renderer === 'merged' ? footer : '') + '</div>';
+        return `<div data-case="${view}-${renderer}" class="m-list-views--${view}"><div class="m-list-views-list">
+            <div class="q-table__container">${renderer === 'static' ? top : ''}<div class="table">${head}${rows}</div>${renderer === 'static' ? footer : ''}</div>
+        </div></div>`;
+    }));
+    const html = `<!DOCTYPE html><style>${css}</style>${cases.join('')}<pre id="result"></pre><script>
+        document.getElementById('result').textContent = JSON.stringify([...document.querySelectorAll('[data-case]')].map(el => ({
+            name: el.dataset.case,
+            top: el.querySelector('[data-top]').getClientRects().length > 0,
+            row: el.querySelector('[data-row]').getClientRects().length > 0,
+            footer: el.querySelector('[data-footer]').getClientRects().length > 0
+        })));
+    </script>`;
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'moqui-list-views-css-'));
+    try {
+        const fixture = path.join(profile, 'fixture.html');
+        fs.writeFileSync(fixture, html);
+        const dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
+            '--headless', '--disable-gpu', '--user-data-dir=' + profile, '--dump-dom', 'file://' + fixture
+        ], { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+        const match = dom.match(/<pre id="result">([^<]+)<\/pre>/);
+        assert.ok(match, 'browser did not report list visibility');
+        assert.deepEqual(JSON.parse(match[1]), ['list', 'board', 'calendar', 'tree'].flatMap(view => ['merged', 'static'].map(renderer => ({
+            name: `${view}-${renderer}`, top: true, row: view === 'list', footer: view === 'list'
+        }))));
+    } finally {
+        fs.rmSync(profile, { recursive: true, force: true });
+    }
+});

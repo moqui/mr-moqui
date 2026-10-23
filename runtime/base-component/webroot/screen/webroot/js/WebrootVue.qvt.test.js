@@ -18,6 +18,25 @@ require("./WebrootVue.qvt.js");
 const compiler = globalThis.VueCompilerDOM;
 const qvt = moqui.qvt;
 
+test("page buttons stay within the result pages and dispatch the selected index", () => {
+    const paginate = qvt.components["m-form-paginate"];
+    for (const [pageIndex, before, after] of [
+        [0, [], [1, 2, 3]],
+        [4, [1, 2, 3], [5, 6, 7]],
+        [8, [5, 6, 7], []]
+    ]) {
+        const state = { paginate: { pageIndex, pageMaxIndex: 8 } };
+        assert.deepEqual(paginate.computed.prevArray.call(state), before);
+        assert.deepEqual(paginate.computed.nextArray.call(state), after);
+    }
+    assert.deepEqual(paginate.computed.prevArray.call({ paginate: null }), []);
+    assert.deepEqual(paginate.computed.nextArray.call({ paginate: { pageIndex: 0, pageMaxIndex: 0 } }), []);
+    const calls = [];
+    paginate.methods.setIndex.call({ formList: { setPageIndex: index => calls.push(index) } }, 5);
+    paginate.methods.setIndex.call({ $root: { setParameters: params => calls.push(params) } }, 2);
+    assert.deepEqual(calls, [5, { pageIndex: 2 }]);
+});
+
 test("every component has a template that compiles", () => {
     const names = Object.keys(qvt.components);
     assert.ok(names.length >= 38, "components: " + names.length);
