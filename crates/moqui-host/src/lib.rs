@@ -1334,6 +1334,11 @@ fn load_in_context(
             records = records.saturating_add(load_one(facade, location, &options)?);
         }
         drop(frame);
+        if empty_db_load {
+            // Java's Moqui.loadData re-initializes the ExecutionContextFactory after an empty-db load ("Data loaded
+            // into empty DB, re-initializing ExecutionContextFactory"), so the server starts with no sequence banks.
+            facade.reset_sequence_banks();
+        }
     } else {
         tracing::info!(
             "Found {existing} Enumeration records, NOT loading empty-db-load data types ({types}); use the load command with types or components to load more"

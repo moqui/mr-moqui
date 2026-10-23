@@ -144,6 +144,14 @@ impl SequenceBanks {
         let bank = self.bank(seq_name);
         *bank.lock().unwrap_or_else(PoisonError::into_inner) = SequenceBank { current: 0, end: -1 };
     }
+
+    /// Drop every bank, as a new Java `ExecutionContextFactory` starts with none.
+    fn reset_all(&self) {
+        let names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        for bank in names.values() {
+            *bank.lock().unwrap_or_else(PoisonError::into_inner) = SequenceBank { current: 0, end: -1 };
+        }
+    }
 }
 
 /// `EntityFacade.tempSetSequencedIdPrimary(seqName, nextSeqNum, bankSize)`. Factory wide, as Java.
@@ -154,6 +162,11 @@ pub(crate) fn temp_set_sequenced_id_primary(facade: &EntityFacade, seq_name: &st
 /// `EntityFacade.tempResetSequencedIdPrimary(seqName)`.
 pub(crate) fn temp_reset_sequenced_id_primary(facade: &EntityFacade, seq_name: &str) {
     facade.inner.banks.temp_reset(seq_name);
+}
+
+/// Drop every bank of `facade`, so each sequence's next id comes from a database refill.
+pub(crate) fn reset_sequence_banks(facade: &EntityFacade) {
+    facade.inner.banks.reset_all();
 }
 
 struct PrimarySpec {
@@ -555,6 +568,19 @@ mod tests {
         assert_eq!(next(&banks), 100_051);
         drop(next);
         assert_eq!(refills, 1);
+    }
+
+    #[test]
+    fn reset_all_refills_every_bank_past_the_stored_last_id() {
+        // The empty-db load banked 100051..=100101 and used only 100051; a new Java factory starts at 100102.
+        let banks = SequenceBanks::default();
+        let fill = |hint| Ok(fill_bank(Some(100_050), 50, hint));
+        assert_eq!(banks.next_id("A", 1, fill).unwrap(), 100_051);
+        assert_eq!(banks.next_id("B", 1, fill).unwrap(), 100_051);
+        banks.reset_all();
+        let refill = |hint| Ok(fill_bank(Some(100_101), 50, hint));
+        assert_eq!(banks.next_id("A", 1, refill).unwrap(), 100_102);
+        assert_eq!(banks.next_id("B", 1, refill).unwrap(), 100_102);
     }
 
     #[test]
