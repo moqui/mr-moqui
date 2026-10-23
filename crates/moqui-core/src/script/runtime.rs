@@ -820,6 +820,11 @@ impl Drop for RunValues<'_> {
     }
 }
 
+/// Whether a script is running on this thread.
+pub(crate) fn in_script() -> bool {
+    DEPTH.with(Cell::get) > 0
+}
+
 /// The engine of the innermost running script.
 fn current_engine() -> Option<Rc<Engine>> {
     let depth = DEPTH.with(Cell::get);

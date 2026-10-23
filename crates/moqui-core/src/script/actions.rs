@@ -15,7 +15,7 @@
 //! XML actions. One cached script per action XML text. Names in that script are bare.
 
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{mpsc, Mutex, OnceLock, PoisonError};
 
 use moqui_lib::node::MNode;
 use rquickjs::{Ctx, Object};
@@ -145,7 +145,11 @@ fn generated(xml: &str) -> Result<ScriptText, Error> {
 
 fn generate(xml: &str) -> Result<String, Error> {
     let debug = std::env::var_os(DEBUG_ENV);
-    let source = generate_with(xml, debug.is_some())?;
+    let source = if super::runtime::in_script() {
+        generate_apart(xml, debug.is_some())?
+    } else {
+        generate_with(xml, debug.is_some())?
+    };
     if debug.is_some_and(|value| value == "dump") {
         eprintln!("---- generated action script ----");
         for (index, line) in source.lines().enumerate() {
@@ -164,6 +168,44 @@ fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
         let (source, _) = render(ctx, &macros, &root)?;
         Ok(source)
     })
+}
+
+/// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
+const GENERATOR_STACK: usize = 2 * 1024 * 1024;
+
+type Job = (String, bool, mpsc::Sender<Result<String, Error>>);
+
+/// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
+/// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
+/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter.
+fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
+    static GENERATOR: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
+    let sender = GENERATOR.get_or_init(|| {
+        let (sender, jobs) = mpsc::channel::<Job>();
+        let started = std::thread::Builder::new()
+            .name("xml-actions-generator".into())
+            .stack_size(GENERATOR_STACK)
+            .spawn(move || {
+                for (xml, debug, reply) in jobs {
+                    let _ = reply.send(generate_with(&xml, debug));
+                }
+            });
+        if let Err(err) = started {
+            tracing::warn!("could not start the XML actions generator thread: {err}");
+        }
+        Mutex::new(sender)
+    });
+    let (reply, result) = mpsc::channel();
+    let sent = sender
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .send((xml.to_string(), debug, reply));
+    match sent {
+        Ok(()) => result
+            .recv()
+            .unwrap_or_else(|_| Err(Error::new("the XML actions generator thread stopped"))),
+        Err(_) => generate_with(xml, debug),
+    }
 }
 
 /// The macro table. The support script evaluates to an object, and the actions script
@@ -765,5 +807,82 @@ mod tests {
 
     fn open_facade() -> EntityFacade {
         crate::testing::open()
+    }
+
+    const SHIPMENT_ITEMS_ACTIONS: &str = r#"<actions>
+    <service-call name="mantle.shipment.ShipmentInfoServices.get#ShipmentDisplayInfo" in-map="{shipmentId:shipmentId}" out-map="context"/>
+
+    <!-- get first 'open' package for default -->
+    <set field="activePackage" from="shipmentPackageList?.find(it => it.weight == null || it.shipmentBoxTypeId == null)"/>
+    <set field="activePackageSeqId" from="activePackage?.shipmentPackageSeqId"/>
+    <log message="activePackageSeqId ${activePackageSeqId}"/>
+
+    <!-- get all products for filter form -->
+    <set field="allProductIds" from="shipmentItemDetailList.map(it => it.productId)"/>
+    <entity-find entity-name="mantle.product.Product" list="allProductList">
+        <econdition field-name="productId" operator="in" from="allProductIds"/>
+        <order-by field-name="pseudoId"/>
+    </entity-find>
+
+    <if condition="filterProductId">
+        <filter-map-list list="shipmentItemDetailList"><field-map field-name="productId" from="filterProductId"/></filter-map-list>
+    </if>
+    <if condition="onlyRemaining == 'Y'">
+        <set field="tempItemDetailList" from="[]"/>
+        <iterate list="shipmentItemDetailList" entry="sid">
+            <if condition="isOutgoing || isTransfer">
+                <if condition="toDecimal(sid.quantity).subtract(sid.quantityTotal ?? 0).compare(0) &gt; 0">
+                    <script>tempItemDetailList.push(sid)</script><continue/></if>
+            </if>
+            <if condition="isIncoming || isTransfer">
+                <if condition="toDecimal(sid.quantity).subtract(sid.quantityAcceptedTotal ?? 0).subtract(sid.quantityRejectedTotal ?? 0).compare(0) &gt; 0">
+                    <script>tempItemDetailList.push(sid)</script><continue/></if>
+            </if>
+        </iterate>
+        <set field="shipmentItemDetailList" from="tempItemDetailList"/>
+    </if>
+
+    <set field="pageSize" from="pageSize || '10'"/>
+</actions>"#;
+
+    #[test]
+    fn actions_first_generated_deep_inside_a_script_generate() -> Result<(), Error> {
+        use crate::script::runtime::{eval_source, js_error, with_ctx};
+        /// Host frames under a script, as a template that renders a link many screens deep has: they use the stack
+        /// until a nested engine would get little more than the least it may have.
+        fn host_frames(base: usize, then: &dyn Fn() -> String) -> String {
+            let frame = [0_u8; 2 * 1024];
+            let here = std::hint::black_box(&frame).as_ptr() as usize;
+            if base.abs_diff(here) > 1235 * 1024 {
+                then()
+            } else {
+                host_frames(base, then)
+            }
+        }
+        // The screen actions of SimpleScreens' ShipmentItems, first loaded while Order Detail renders its Shipment
+        // links. A comment makes the text distinct, so the cache does not hold it from another test.
+        let xml = format!("<!-- {} -->{SHIPMENT_ITEMS_ACTIONS}", line!());
+        let outcome = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let base = [0_u8; 1];
+                let base = std::hint::black_box(&base).as_ptr() as usize;
+                with_ctx(|ctx| {
+                    let generate = rquickjs::Function::new(ctx.clone(), move || {
+                        host_frames(base, &|| match super::check_actions(&xml) {
+                            Ok(()) => "generated".to_string(),
+                            Err(err) => err.message().to_string(),
+                        })
+                    })
+                    .map_err(js_error)?;
+                    let call: rquickjs::Function = eval_source(ctx, "(function (generate) { return generate(); })")?;
+                    call.call::<_, String>((generate,)).map_err(js_error)
+                })
+            })
+            .unwrap()
+            .join()
+            .expect("the thread did not overflow")?;
+        assert_eq!(outcome, "generated");
+        Ok(())
     }
 }
