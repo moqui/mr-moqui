@@ -440,3 +440,34 @@ test('dashboard screen body keeps the page shell while dashboard widgets use a g
     const result=JSON.parse(dom.match(/<pre id="result" hidden="">([^<]+)<\/pre>/)[1]);
     assert.deepEqual(result,{display:'flex',direction:'column',margin:'0px',topWidth:1440,contentWidth:1440,footerWidth:1440,grid:'grid',columns:3,gap:'12px',empty:'none'});
 });
+
+
+test('party addresses and float-box cards retain Java typography and spacing', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><div style="width:690px">
+        ${[1,2].map(i=>`<div class="row" id="contact-${i}"><div class="col" style="--lg:6"><button>Update</button></div><div class="col" style="--lg:6"><strong>Phone</strong><address id="address-${i}">1-801-234-5678</address></div></div>`).join('')}
+        <ul class="float-box" id="cards"><li class="box-narrow" id="card"><strong>Demo Bank Account</strong><address>Demo Bank (Checking)<br>Ziziwork Retail</address><button>Update</button></li><li class="active" id="active-card">Selected</li></ul>
+        </div><pre id="result"></pre><script>
+        const style=id=>{const s=getComputedStyle(document.getElementById(id));return {display:s.display,list:s.listStyleType,padding:s.padding,margin:s.margin,line:s.lineHeight,fontStyle:s.fontStyle,shadow:s.boxShadow,max:s.maxWidth,background:s.backgroundColor}};
+        const light={address:style('address-1'),list:style('cards'),card:style('card'),active:style('active-card')};
+        const rows=[1,2].map(i=>document.getElementById('contact-'+i).getBoundingClientRect().height);
+        document.documentElement.dataset.theme='dark';
+        document.getElementById('result').textContent=JSON.stringify({light,rows,dark:style('card'),darkActive:style('active-card')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-detail-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,rows,dark,darkActive}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.equal(light.address.fontStyle,'normal');assert.equal(light.address.line,'20px');assert.equal(light.address.margin,'0px 0px 4px');
+    assert.deepEqual(rows,[44,44]);
+    assert.equal(light.list.display,'inline-block');assert.equal(light.list.list,'none');assert.equal(light.list.margin,'0px 0px -8px');assert.equal(light.list.padding,'0px');
+    assert.equal(light.card.padding,'8px');assert.equal(light.card.margin,'0px 8px 8px 0px');assert.equal(light.card.line,'18px');assert.equal(light.card.max,'300px');
+    assert.equal(light.card.background,'rgba(0, 0, 0, 0)');assert.equal(dark.background,'rgba(0, 0, 0, 0)');
+    assert.equal(light.card.shadow,'rgb(248, 248, 248) 0px 0px 0px 1px inset, rgb(204, 204, 204) 0px 0px 0px 1px');
+    assert.equal(light.active.shadow,'rgb(51, 122, 183) 0px 0px 0px 1px inset, rgb(204, 204, 204) 0px 0px 0px 1px');
+    assert.equal(dark.shadow,'rgb(8, 8, 8) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
+    assert.equal(darkActive.shadow,'rgb(59, 130, 214) 0px 0px 0px 1px inset, rgb(51, 51, 51) 0px 0px 0px 1px');
+});
