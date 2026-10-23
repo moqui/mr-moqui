@@ -24,6 +24,7 @@ browser is the Chromium smoke of Gate 3 (`crates/moqui-host/tests/gate3_browser.
 | `nav` | `data-tab-hash` | Login tabs: the `.tab-panel` sections follow the URL hash |
 | any | `data-move-to="id"` | moves the element into `#id` (a `ul` gets a `li` around it): popup menus and crumbs go to the navbar |
 | `button`, `a` | `data-confirm="text"` | `confirm()` before the click does anything |
+| `select` | `data-saved-finds` | navigates to the selected option’s `data-url` |
 | `button` | `data-clear="formId"` | clears the form's fields |
 | `button` | `data-theme-toggle`, `data-pref-url` | switches dark and light, and posts `OUTER_STYLE` |
 | `button` | `data-nav-toggle` | opens the navbar on a narrow screen |

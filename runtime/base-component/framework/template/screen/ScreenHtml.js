@@ -948,6 +948,21 @@
             const selectColumns = cfg.selectColumns;
             if (!(cfg.headerDialog || savedFinds || selectColumns || paginated) || ec.context.get("hideNav") === "true") return;
             let out = '<tr class="nav-row"><th colspan="' + Math.max(cols.length, 1) + '"><nav>';
+            if (savedFinds) {
+                const finds = sri.getUserFormListFinds(at(n, "name"));
+                if (finds.length) {
+                    const active = ec.context.get("formListFindId") || "";
+                    const base = sri.getScreenUrlInstance().url.split("?")[0];
+                    out += "<select" + A({ class: "saved-find", id: formId + "_QuickSavedFind", "data-saved-finds": true, "aria-label": L("Saved Finds") }) +
+                        "><option" + A({ value: "", disabled: true, selected: !finds.some((find) => find.formListFind.formListFindId === active) ? true : null }) + ">" + e(L("Saved Finds")) + "</option>" +
+                        "<option" + A({ value: "_clear", "data-url": base + "?formListFindId=_clear" }) + ">" + e(L("Clear Current Find")) + "</option>";
+                    finds.forEach((find) => {
+                        const id = find.formListFind.formListFindId;
+                        out += "<option" + A({ value: id, "data-url": base + "?formListFindId=" + encodeURIComponent(id), selected: id === active ? true : null }) + ">" + e(find.description || id) + "</option>";
+                    });
+                    out += "</select>";
+                }
+            }
             if (cfg.headerDialog || savedFinds) {
                 out += "<button" + A({ type: "button", "data-dialog": formId + "_hdialog", title: L("Find Options") }) + '><i class="fa fa-share"></i> ' + e(L("Find Options")) + "</button>";
             }

@@ -582,6 +582,11 @@
 
     // One listener on the document handles clicks on every element the macros write.
     const delegate = () => {
+        doc.addEventListener("change", (event) => {
+            const select = event.target.closest && event.target.closest("select[data-saved-finds]");
+            const option = select && select.selectedOptions[0];
+            if (option && option.dataset.url) root.location.assign(option.dataset.url);
+        });
         doc.addEventListener("click", (event) => {
             const target = event.target;
             if (!target.closest) return;

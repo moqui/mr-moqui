@@ -76,3 +76,22 @@ test("the options of an editable select from its editable-load answer", () => {
     assert.deepEqual(u.editableOptions({ E: "Letter E", selected: "E" }), { options: [{ value: "E", label: "Letter E" }], selected: "E" });
     assert.deepEqual(u.editableOptions(null), { options: [] });
 });
+
+test('saved-find changes navigate to the selected URL and ignore the placeholder and other selects', () => {
+    const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+    const listeners = {}, visited = [];
+    const document = {
+        documentElement: { classList: { add() {} } },
+        querySelector: () => null, querySelectorAll: () => [],
+        addEventListener: (name, handler) => { listeners[name] = handler; }
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'moqui-html.js'), 'utf8'), {
+        window: { document, location: { assign: url => visited.push(url) } }
+    });
+    const change = url => listeners.change({ target: { closest: () => ({ selectedOptions: [{ dataset: { url } }] }) } });
+    change('/apps/FindOrder?formListFindId=sales');
+    change('/apps/FindOrder?formListFindId=_clear');
+    change(undefined);
+    listeners.change({ target: { closest: () => null } });
+    assert.deepEqual(visited, ['/apps/FindOrder?formListFindId=sales', '/apps/FindOrder?formListFindId=_clear']);
+});
