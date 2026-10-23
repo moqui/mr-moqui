@@ -1550,12 +1550,8 @@ fn save_messages() {
     for (message, kind) in &messages {
         user::session::add_flash_message_typed(message, kind);
     }
-    // A validation error with a field is shown by that field; its text is not also an error line at the top.
-    let as_text: Vec<String> = validation
-        .iter()
-        .filter(|error| !error.field.is_empty())
-        .map(|error| error.message.clone())
-        .collect();
+    // A validation error is kept as one, which the next page shows with its field; its text is not also an error line.
+    let as_text: Vec<String> = validation.iter().map(|error| error.message.clone()).collect();
     for message in errors.iter().filter(|message| !as_text.contains(message)) {
         user::session::add_flash_error(message);
     }

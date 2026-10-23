@@ -118,7 +118,7 @@ pub(super) fn form_post(path: &str, body: &str) -> WebRequest {
 }
 
 #[test]
-fn a_validation_error_shows_by_its_field_and_a_message_keeps_its_type_after_the_redirect() {
+fn a_validation_error_shows_by_its_field_and_at_the_top_and_a_message_keeps_its_type_after_the_redirect() {
     let site = Site::new("validation");
     let world = World::open("");
     let mut jar = Vec::new();
@@ -141,12 +141,59 @@ fn a_validation_error_shows_by_its_field_and_a_message_keeps_its_type_after_the_
     let html = serve_at(&world.factory, with_cookies(request("GET", "/"), &jar), &site.root).body_text();
     assert!(html.contains("data-type=\"warning\""), "{html}");
     assert!(html.contains("Check this"), "{html}");
-    // The field's own error is under the field, not a line at the top of the page.
+    // The field's own error is under the field, and at the top of the page with the field's name as Java's apps.xml
+    // header, which is what shows an error for a field that is not on the page, once.
     assert!(
         html.contains("<div class=\"field-error\" role=\"alert\">Title needs a letter</div>"),
         "{html}"
     );
-    assert!(!html.contains("data-type=\"danger\""), "{html}");
+    assert_eq!(html.matches("data-type=\"danger\"").count(), 1, "{html}");
+    assert!(html.contains("Title needs a letter (for field Title)</div>"), "{html}");
+}
+
+/// A required service parameter left empty is Java's "Field cannot be empty" for that field, which the page shows
+/// at the top when the form has no such field, as Java's header shows a service's validation error.
+#[test]
+fn an_empty_required_service_parameter_shows_as_java_on_the_next_page() {
+    let site = Site::new("required");
+    let services = site.dir.join("NeedServices.xml");
+    std::fs::write(
+        &services,
+        r#"<services>
+    <service verb="need" noun="Facility" authenticate="false">
+        <in-parameters><parameter name="facilityId" required="true"/></in-parameters>
+    </service>
+</services>"#,
+    )
+    .unwrap();
+    let screen = std::fs::read_to_string(&site.root).unwrap().replacen(
+        "<widgets>",
+        r#"<transition name="need"><service-call name="need#Facility"/><default-response url="."/></transition>
+    <widgets>"#,
+        1,
+    );
+    std::fs::write(&site.root, screen).unwrap();
+    let world = World::open("");
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&services)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    let mut jar = Vec::new();
+    let page = serve_at(&world.factory, request("GET", "/"), &site.root);
+    cookies(&page, &mut jar);
+    let token = token_of(&page.body_text());
+    let posted = serve_at(
+        &world.factory,
+        with_cookies(form_post("/need", &format!("moquiSessionToken={token}")), &jar),
+        &site.root,
+    );
+    assert_eq!(posted.status, 302, "{}", posted.body_text());
+    cookies(&posted, &mut jar);
+    let html = serve_at(&world.factory, with_cookies(request("GET", "/"), &jar), &site.root).body_text();
+    assert!(html.contains("Field cannot be empty (for field Facility ID)</div>"), "{html}");
+    assert_eq!(html.matches("data-type=\"danger\"").count(), 1, "{html}");
 }
 
 #[test]

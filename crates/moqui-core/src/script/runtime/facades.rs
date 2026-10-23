@@ -650,13 +650,13 @@ impl HostWeb {
         host_guard(&ctx, || host_to_js(&ctx, map_value(crate::web::parameters())))
     }
 
-    /// Messages and errors for the page: what the last response saved, then what this request added.
+    /// Messages, errors and validation errors for the page: what the last response saved, then what this request added.
     /// Each is `{message, typeString}` with `info` or `danger`.
     #[qjs(rename = "getPageMessages")]
     fn get_page_messages<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
             let saved = crate::web::saved_for_page();
-            let (messages, errors) = with_ec(&ctx, |ec| {
+            let (messages, errors, validation) = with_ec(&ctx, |ec| {
                 let facade = ec.message();
                 let messages: Vec<(String, String)> = facade
                     .messages()
@@ -664,7 +664,24 @@ impl HostWeb {
                     .enumerate()
                     .map(|(index, text)| (text.clone(), facade.message_type(index).to_string()))
                     .collect();
-                (messages, facade.errors().to_vec())
+                let validation: Vec<(String, String)> = facade
+                    .validation_errors()
+                    .iter()
+                    .map(|error| {
+                        (
+                            error.message.clone(),
+                            moqui_lib::string::camel_case_to_pretty(&error.field),
+                        )
+                    })
+                    .collect();
+                // A validation error is also an error line here; the page shows it once, with its field.
+                let errors: Vec<String> = facade
+                    .errors()
+                    .iter()
+                    .filter(|text| !validation.iter().any(|(message, _)| message == *text))
+                    .cloned()
+                    .collect();
+                (messages, errors, validation)
             })?;
             let entry = |text: &str, kind: &str| {
                 let mut map = indexmap::IndexMap::new();
@@ -680,9 +697,16 @@ impl HostWeb {
                     .zip(saved.message_types.iter())
                     .map(|(text, kind)| entry(text, kind)),
             );
+            // As Java's apps.xml header, a validation error is its message and the field it is for.
+            let invalid = |message: &str, field: &str| entry(&format!("{message} (for field {field})"), "danger");
             list.extend(saved.errors.iter().map(|text| entry(text, "danger")));
+            list.extend(saved.validation_errors.iter().map(|error| {
+                let get = |key: &str| error.get(key).map(String::as_str).unwrap_or("");
+                invalid(get("message"), get("fieldPretty"))
+            }));
             list.extend(messages.iter().map(|(text, kind)| entry(text, kind)));
             list.extend(errors.iter().map(|text| entry(text, "danger")));
+            list.extend(validation.iter().map(|(message, field)| invalid(message, field)));
             host_to_js(&ctx, Value::List(list))
         })
     }
