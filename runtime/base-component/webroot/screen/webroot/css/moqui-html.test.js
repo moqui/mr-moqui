@@ -390,3 +390,31 @@ test('desktop navbar menus match Java type and spacing without button chrome', (
     const result=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     assert.deepEqual(result,{font:'15.4px',line:'20px',padding:'15px 6px',border:'0px',margin:'0px',color:'rgb(187, 187, 187)',height:50,y:1,x:68.5,navbarHeight:51,crumbY:16,menuOpen:true});
 });
+
+
+test('typed panels retain Java flat headings and semantic borders in both themes', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const types=['default','info','success','warning','danger','primary'];
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>
+        ${types.map(t=>`<section class="box" data-type="${t}"><header><h5>${t}</h5><div class="toolbar"><button>Update</button></div></header><div class="body">Content</div></section>`).join('')}
+        <pre id="result"></pre><script>
+        function read(){return [...document.querySelectorAll('section')].map(e=>{const h=e.querySelector('header'),s=getComputedStyle(h),b=getComputedStyle(e);return {background:s.backgroundColor,color:s.color,border:b.borderTopColor,headingBorder:s.borderBottomColor,toolbar:getComputedStyle(h.querySelector('.toolbar')).position}})}
+        const light=read();document.documentElement.dataset.theme='dark';
+        document.getElementById('result').textContent=JSON.stringify({light,dark:read()});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-panel-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(light.map(x=>x.color),['rgb(34, 34, 34)','rgb(49, 112, 143)','rgb(60, 118, 61)','rgb(138, 109, 59)','rgb(169, 68, 66)','rgb(255, 255, 255)']);
+    assert.deepEqual(light.map(x=>x.border),['rgb(221, 221, 221)','rgb(188, 232, 241)','rgb(214, 233, 198)','rgb(250, 235, 204)','rgb(235, 204, 209)','rgb(51, 122, 183)']);
+    assert.deepEqual(dark.map(x=>x.color),['rgb(221, 227, 234)','rgb(47, 165, 201)','rgb(63, 163, 86)','rgb(216, 154, 47)','rgb(224, 86, 91)','rgb(255, 255, 255)']);
+    for(const mode of [light,dark])for(const [i,x] of mode.entries()){
+        assert.equal(x.background,i===5?(mode===light?'rgb(51, 122, 183)':'rgb(59, 130, 214)'):'rgba(0, 0, 0, 0)');
+        assert.equal(x.headingBorder,'rgba(0, 0, 0, 0)');assert.equal(x.toolbar,'absolute');
+    }
+    assert.deepEqual(dark.slice(0,5).map(x=>x.border),Array(5).fill('rgb(52, 61, 72)'));
+});

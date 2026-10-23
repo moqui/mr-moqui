@@ -23,6 +23,7 @@
     :root:not([data-theme="light"]) {
         --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
         --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
+        --panel-info-fg: var(--info); --panel-success-fg: var(--success); --panel-warning-fg: var(--warning); --panel-danger-fg: var(--danger); --panel-typed-border: var(--line);
         --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
         --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
         --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
@@ -32,6 +33,7 @@
     color-scheme: dark;
     --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
     --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
+    --panel-info-fg: var(--info); --panel-success-fg: var(--success); --panel-warning-fg: var(--warning); --panel-danger-fg: var(--danger); --panel-typed-border: var(--line);
     --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
     --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
     --shaded-bg: #3f3f3f; --shaded-inset: #080808; --shaded-shadow: #333;
@@ -172,7 +174,7 @@ details.menu li.active > a { font-weight: 600; }
 
 section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
 /* Java Bootstrap panel headings plus webroot-layout.css's toolbar/body rules. */
-section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: var(--stripe); border-radius: var(--radius) var(--radius) 0 0; }
+section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: transparent; border-radius: var(--radius) var(--radius) 0 0; }
 section.box > header h5 { display: inline-block; margin: 0; font-size: 16px; font-weight: 500; line-height: 1.1; }
 section.box > header .toolbar { position: absolute; top: 0; right: 0; }
 section.box > .body { padding: 8px; }
@@ -203,11 +205,17 @@ a.number-card:hover, a.number-card:focus-visible { border-color: var(--primary);
 .number-card[data-size="sm"] .number-card-value { font-size: 1.25rem; } .number-card[data-size="lg"] .number-card-value { font-size: 2rem; }
 .number-card-delta { font-size: .8rem; color: var(--muted); }
 .number-card-delta[data-tone="good"] { color: var(--success); } .number-card-delta[data-tone="bad"] { color: var(--danger); }
+/* Java's flat theme retains the Bootstrap title and outer-border colors. */
+section.box[data-type="primary"] { border-color: var(--primary); }
 section.box[data-type="primary"] > header { background: var(--primary); color: #fff; }
-section.box[data-type="info"] > header { background: var(--info); color: #fff; }
-section.box[data-type="success"] > header { background: var(--success); color: #fff; }
-section.box[data-type="warning"] > header { background: var(--warning); color: #fff; }
-section.box[data-type="danger"] > header { background: var(--danger); color: #fff; }
+section.box[data-type="info"] { border-color: var(--panel-typed-border, #bce8f1); }
+section.box[data-type="info"] > header { color: var(--panel-info-fg, #31708f); }
+section.box[data-type="success"] { border-color: var(--panel-typed-border, #d6e9c6); }
+section.box[data-type="success"] > header { color: var(--panel-success-fg, #3c763d); }
+section.box[data-type="warning"] { border-color: var(--panel-typed-border, #faebcc); }
+section.box[data-type="warning"] > header { color: var(--panel-warning-fg, #8a6d3b); }
+section.box[data-type="danger"] { border-color: var(--panel-typed-border, #ebccd1); }
+section.box[data-type="danger"] > header { color: var(--panel-danger-fg, #a94442); }
 
 .panel-layout .panel-middle { display: flex; align-items: flex-start; gap: 8px; }
 .panel-layout .panel-middle > main { flex: 1; min-width: 0; }
