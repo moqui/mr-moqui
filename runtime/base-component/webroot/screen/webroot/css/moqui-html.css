@@ -494,6 +494,9 @@ table.form-list .filter-summary .filter-clear {
 /* Enhanced single selects retain the normal form-control geometry, including empty values. */
 .field > .widget > .ts-wrapper { width: 100%; margin-top: -2px; }
 .big-item .field > .widget > .ts-wrapper { width: auto; }
+/* Java select2 has a 60px minimum; empty inline searches can fit their label. */
+.big-item .field > .widget > .ts-wrapper.single { width: 100%; min-width: 60px; }
+.big-item .field > .widget > .ts-wrapper.single .ts-control > input { min-width: 0; }
 .ts-wrapper.single { --ts-pr-min: 24px; }
 .ts-wrapper.single .ts-control { min-height: 34px; height: 34px; padding: 6px 12px; border-radius: var(--radius); color: var(--control-fg); border-color: var(--control-border); box-shadow: var(--control-shadow); font-size: 14px; line-height: 20px; }
 .ts-wrapper.single .ts-control > .item { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
