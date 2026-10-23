@@ -251,11 +251,13 @@ pub fn build_url_from_target(state: &RenderState, subscreen_path: &str) -> Resul
 ///
 /// Returns an error when the request's path cannot be resolved again.
 pub fn current_url(state: &RenderState) -> Result<UrlInstance, Error> {
-    resolve_names(state, state.url_info.full_path.clone())
+    resolve_names_at(state, state.url_info.full_path.clone(), state.url_info.last_standalone)
 }
 
+/// A built URL resolves with `lastStandalone` 0, as Java's `sri.buildUrl`: the request's value changes which screens
+/// render, and so the `menu_image` the walk picks, but not the URL.
 fn resolve_names(state: &RenderState, names: Vec<String>) -> Result<UrlInstance, Error> {
-    resolve_names_at(state, names, state.url_info.last_standalone)
+    resolve_names_at(state, names, 0)
 }
 
 /// A URL for path names from the root, resolved with `last_standalone`. That only changes which screens render, so
