@@ -128,6 +128,9 @@ fn clean_param(
         value
     } else if let Some(items) = text_collection(&value, &param.java_type) {
         items
+    } else if let Some(stamp) = text_timestamp(&value, param) {
+        // As Java's ParameterInfo, a time stamp entered as text is read by the parameter's format in the user's zone.
+        stamp
     } else {
         convert_checked(&value, &param.java_type).ok_or_else(|| {
             Error::new(format!(
@@ -141,6 +144,16 @@ fn clean_param(
     let value = clean_html(param, value)?;
     check_param(param, &value)?;
     Ok(Some(value))
+}
+
+/// A `Timestamp` parameter given as text, parsed as `ec.l10n.parseTimestamp(text, format)`. None for any other
+/// parameter or value, and for text that is no time stamp, which the plain conversion then reports.
+fn text_timestamp(value: &Value, param: &ParamDef) -> Option<Value> {
+    if short_type(&param.java_type) != "Timestamp" {
+        return None;
+    }
+    let text = value.as_str()?;
+    crate::l10n::parse_timestamp_format(text.trim(), param.format.as_deref())
 }
 
 /// `ParameterInfo` for a `List` or `Set` parameter given as text: square brackets stripped, then split on commas, or
@@ -770,5 +783,21 @@ mod empty_param_tests {
         // a String keeps its empty value
         let comments = clean_param(&param("comments", "String"), &params, &mut scope).unwrap();
         assert!(comments.is_none(), "{comments:?}");
+    }
+
+    #[test]
+    fn a_time_stamp_entered_as_text_is_in_the_users_zone() {
+        let context = crate::context::ExecutionContextFactory::test_context();
+        let _entered = context.enter();
+        crate::user::session::set_time_zone(Some("US/Central"));
+        let mut scope = DefaultScope::default();
+        // a date-time field posts the wall time the user sees, which is 15:00 UTC in Chicago
+        let params = BTreeMap::from([("packDate".to_string(), Value::string("2026-10-23 10:00"))]);
+        let packed = clean_param(&param("packDate", "java.sql.Timestamp"), &params, &mut scope).unwrap();
+        let Some(Value::Timestamp(stamp)) = packed else {
+            panic!("{packed:?}")
+        };
+        assert_eq!(stamp.to_string(), "2026-10-23T15:00:00Z");
+        crate::user::session::set_time_zone(None);
     }
 }
