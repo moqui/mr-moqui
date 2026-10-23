@@ -262,3 +262,33 @@ for (const mode of ['Html', 'Qvt']) {
         assert.equal(summary(), '');
     });
 }
+
+test('empty HTML display widgets retain a text line and preserve hidden values', () => {
+    const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'ScreenHtml.js'), 'utf8'));
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
+        anyMacros: () => ({}), allElements: [], opaqueElements: []
+    });
+    let html = '', value = '';
+    const context = {
+        sri: {
+            write: text => { html += text; }, getFieldValueString: () => value,
+            getFieldValuePlainString: () => value, getFieldValueClass: () => '',
+            getFieldEntityValue: () => value
+        },
+        ec: { context: { get: () => null }, resource: { expand: text => text } }
+    };
+    vm.runInNewContext(module.runtime, context);
+    for (const widget of ['display', 'displayEntity']) {
+        const node = { attrs: {}, parent: { attrs: {}, parent: { attrs: { name: 'emptyField' } } } };
+        html = '';
+        context.$mqHtml[widget](node);
+        assert.match(html, /class="display">&#160;<\/span>/);
+        assert.match(html, /type="hidden"[^>]*value=""/);
+        value = '0';
+        html = '';
+        context.$mqHtml[widget](node);
+        assert.match(html, /class="display">0<\/span>/);
+        assert.match(html, /type="hidden"[^>]*value="0"/);
+        value = '';
+    }
+});
