@@ -2,7 +2,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-single[@name=Everything] -->\n");
 sri.pushSingleFormMapContext(fv);
 try {
-    $h.formOpen({"name":"form-single","attrs":{"name":"Everything","map":"fv","background-submit":"true","background-reload-id":"Dyn","focus-field":"firstName","transition":"save","pass-through-parameters":"true"}}, true);
+    $h.formOpen({"name":"form-single","attrs":{"name":"Everything","map":"fv","background-submit":"true","background-reload-id":"Dyn","focus-field":"firstName","transition":"save","pass-through-parameters":"true"}}, true, ["firstName","email","ac","dflt","bio","find","status","multi","remote","kind","flag","stamp","day","at","between","period","range","amount","shown","dynamicShown","enumId","doc","pw","where","clear","secret","skip","hid","mix","go","viaLink"]);
     $h.fieldGroup({"name":"field-group","attrs":{"title":"Names","box":"true"}});
     {
         const $title = ec.l10n.localize("First");
