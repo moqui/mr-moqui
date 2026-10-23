@@ -357,7 +357,7 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .field > .widget > p, .field > .widget > span.text-inline,
 .field > .widget > a:not(.btn):not([data-btn]) { display: inline-block; min-height: 34px; padding: 7px 0; margin-bottom: 0; }
 .field { display: grid; grid-template-columns: minmax(7em, calc(var(--lc, 2) * 100% / 12)) minmax(0, 1fr); gap: 2px 12px; align-items: start; margin-bottom: 15px; }
-.field > label, .field > .label { padding-top: 7px; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.field > label, .field > .label { padding-top: 7px; text-align: right; font-weight: 600; overflow-wrap: normal; }
 .field > .widget { min-width: 0; }
 .field .widget > span[id] { margin-right: 10px; display: inline-block; }
 .field[data-submit] > .label { visibility: hidden; }
