@@ -420,6 +420,9 @@ fn verified_host_behaviors() {
     holds(r#"ec.l10n.roundCurrency(toDecimal("2.345"), "USD", false, "HALF_EVEN").toString() === "2.34""#);
     holds(r#"ec.l10n.roundCurrency(toDecimal("2.345"), "USD").toString() === "2.35""#);
     holds(r#"ec.user.getPeriodRange("week", "").length === 2"#);
+    // Java's text for a period: the offset, the period, and the first and last days
+    holds(r#"ec.user.getPeriodDescription("30d", "-3", "2026-10-23") === "-3 30 Days from 2026-10-23 (2026-07-25 to 2026-10-23)""#);
+    holds(r#"ec.user.getPeriodDescription("week", "0", "2026-10-14") === "This Week from 2026-10-14 (2026-10-11 to 2026-10-17)""#);
     // timestamp conditions from epoch-millis text
     holds(
         r#"ec.entity.find("moqui.basic.Enumeration").condition("lastUpdatedStamp", "less", "1791979200000").count() === 0"#,

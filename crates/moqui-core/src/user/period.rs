@@ -30,31 +30,46 @@ use crate::context::Error;
 ///
 /// Returns an error when `offset` is not a whole number or `basis` is not a `yyyy-MM-dd` date or epoch millis.
 pub fn period_range(period: &str, offset: &str, basis: &str) -> Result<(Value, Value), Error> {
-    let offset = if offset.trim().is_empty() {
-        0
-    } else {
-        offset
-            .trim()
-            .parse::<i32>()
-            .map_err(|_| Error::new(format!("period offset {offset} is not a whole number")))?
-    };
     let zone = zone();
-    let basis = if basis.trim().is_empty() {
-        moqui_lib::clock::now().to_zoned(zone.clone()).date()
+    let (from, thru) = range_dates(period, parse_offset(offset)?, basis_date(basis, &zone)?)?;
+    Ok((stamp(from, &zone)?, stamp(thru, &zone)?))
+}
+
+/// The first and last days of the range for `period`, as `UserFacadeImpl.getPeriodDescription` shows them.
+///
+/// # Errors
+///
+/// As [`period_range`].
+pub fn period_days(period: &str, offset: &str, basis: &str) -> Result<(Date, Date), Error> {
+    let (from, thru) = range_dates(period, parse_offset(offset)?, basis_date(basis, &zone())?)?;
+    Ok((from, add_days(thru, -1)?))
+}
+
+fn parse_offset(offset: &str) -> Result<i32, Error> {
+    if offset.trim().is_empty() {
+        return Ok(0);
+    }
+    offset
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| Error::new(format!("period offset {offset} is not a whole number")))
+}
+
+fn basis_date(basis: &str, zone: &TimeZone) -> Result<Date, Error> {
+    if basis.trim().is_empty() {
+        Ok(moqui_lib::clock::now().to_zoned(zone.clone()).date())
     } else if let Ok(millis) = basis.trim().parse::<i64>() {
         // a Date or Timestamp parameter reaches a script as epoch millis
-        Timestamp::from_millisecond(millis)
+        Ok(Timestamp::from_millisecond(millis)
             .map_err(|_| Error::new(format!("period date {basis} is out of range")))?
             .to_zoned(zone.clone())
-            .date()
+            .date())
     } else {
         basis
             .trim()
             .parse::<Date>()
-            .map_err(|_| Error::new(format!("period date {basis} is not yyyy-MM-dd or epoch millis")))?
-    };
-    let (from, thru) = range_dates(period, offset, basis)?;
-    Ok((stamp(from, &zone)?, stamp(thru, &zone)?))
+            .map_err(|_| Error::new(format!("period date {basis} is not yyyy-MM-dd or epoch millis")))
+    }
 }
 
 fn zone() -> TimeZone {

@@ -1143,9 +1143,9 @@
                     if (cfg.headerDialog) {
                         // The active find parameters are shown as text with a button that clears them.
                         let summary = "";
-                        visible.flat().forEach((f) => {
-                            if (!f.summary) return;
-                            const text = f.summary();
+                        cfg.summaries.forEach((f) => {
+                            if (f.hide && f.hide()) return;
+                            const text = f.text();
                             if (text) summary += '<span class="filter"><strong>' + e(f.title()) + ":</strong> " + e(text) + "</span> ";
                         });
                         if (summary) {
@@ -1265,7 +1265,7 @@
             }
             if (type === "date-period") {
                 const period = String(ec.context.get(name + "_period") || "").toLowerCase();
-                if (period) return period + " " + (ec.context.get(name + "_poffset") || "0") + " " + (ec.context.get(name + "_pdate") || "");
+                if (period) return ec.user.getPeriodDescription(period, ec.context.get(name + "_poffset") || "0", ec.context.get(name + "_pdate") || "");
             }
             if (type === "date-find" || type === "date-period" || type === "range-find") {
                 const format = type === "date-find" ? dateDefault(n) : "yyyy-MM-dd";
@@ -1509,6 +1509,18 @@
         return `() => {\n${body}}`;
     };
 
+    // The text of the active find value of a field for the line of filters above a list, as Java's form-list
+    // header-dialog writes it: every field with a header-field, in the order of the form, that is not hidden.
+    const summaryField = (field) => {
+        const headerField = child(field, "header-field");
+        if (!headerField || !headerField.children.length) return null;
+        const hide = attr(field, "hide");
+        const hiddenSub = (sub) => !!(child(sub, "hidden") || child(sub, "ignored"));
+        if (field.children.every(hiddenSub) || (!hide && field.children.length === 1 && hiddenSub(headerField))) return null;
+        const text = `() => { let $v = ""; sri.pushContext(); try { ${setCode(headerField)} ${headerField.children.filter((w) => w.name !== "set").map((w) => `$v += $h.valueText(${wlit(w, true)});`).join(" ")} } finally { sri.popContext(); } return $v.trim(); }`;
+        return `{${hide ? `"hide": () => (${raw(hide)}), ` : ""}"title": () => ${titleCode(headerField)}, "text": ${text}}`;
+    };
+
     const columnField = (field, fieldIndex) => {
         const header = S.headerSub(field);
         const headerField = child(field, "header-field");
@@ -1518,8 +1530,6 @@
         const first = sideCode(field, "first-row-field", false);
         const second = sideCode(field, "second-row-field", false);
         const last = sideCode(field, "last-row-field", false);
-        const summary = headerField && headerField.children.length && !child(headerField, "hidden") && !child(headerField, "ignored") ?
-            `() => { let $v = ""; sri.pushContext(); try { ${setCode(headerField)} ${headerField.children.filter((w) => w.name !== "set" && w.name !== "link").map((w) => `$v += $h.valueText(${wlit(w, true)});`).join(" ")} } finally { sri.popContext(); } return $v.trim(); }` : "null";
         return js`
             {
                 "name": ${lit(attr(field, "name"))},
@@ -1532,7 +1542,6 @@
                 "title": () => ${titleCode(header)},
                 "find": ${find || "null"},
                 "dialogField": ${dialogFieldCode(field) || "() => {}"},
-                "summary": ${summary},
                 ${first ? `"first": ${first},` : ""}
                 ${second ? `"second": ${second},` : ""}
                 ${last ? `"last": ${last},` : ""}
@@ -1576,6 +1585,9 @@
                 ],
                 "allFields": [
                     ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}}`).join(",\n")}
+                ],
+                "summaries": [
+                    ${fields.map(summaryField).filter(Boolean).join(",\n")}
                 ]
             }
         `.replace(/\n$/, "");
