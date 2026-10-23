@@ -374,7 +374,7 @@ impl ArtifactHits {
 /// removed: by bucket, `(h ^ (h >>> 16)) & (capacity - 1)` of the Java `String.hashCode`, and in each bucket by
 /// insertion, which a resize keeps. The capacity starts at 16 and doubles while the size is over 3/4 of it. A bucket
 /// of 8 or more keys, which Java turns into a tree once the capacity is 64, is not modelled.
-fn java_hash_map_order<'a>(keys: impl Iterator<Item = (&'a str, u64)>) -> Vec<String> {
+pub(crate) fn java_hash_map_order<'a>(keys: impl Iterator<Item = (&'a str, u64)>) -> Vec<String> {
     let mut keyed: Vec<(u32, u64, &str)> = Vec::new();
     for (key, order) in keys {
         let hash = key
