@@ -47,7 +47,7 @@ pub fn get_field_value(field: &NodeLit, default_value: &str) -> Result<Value, Er
                 field.attr("from")
             };
             if !from.is_empty() {
-                return script::eval_value(from);
+                return script::eval_field_value(from);
             }
             let map_name = if form.attr("map").is_empty() {
                 "fieldValues"

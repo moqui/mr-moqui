@@ -1508,6 +1508,44 @@ pub fn eval_value(expression: &str) -> Result<Value, Error> {
     })
 }
 
+/// Evaluate a field's `from` expression to a host value. A timestamp, date, or time reaches a script as epoch
+/// millis text, so when the expression is a plain path such as `segment.actualStartDate` and the value at that path
+/// is a temporal value, the temporal value is returned, which a display formats as Java does.
+///
+/// # Errors
+///
+/// Returns an error when the expression does not parse, throws, or gives a value that cannot be held.
+pub fn eval_field_value(expression: &str) -> Result<Value, Error> {
+    let value = eval_value(expression)?;
+    if !matches!(value, Value::String(_)) {
+        return Ok(value);
+    }
+    Ok(temporal_at_path(expression).unwrap_or(value))
+}
+
+/// The timestamp, date, or time at a plain dotted path in the context, read without converting it for a script.
+fn temporal_at_path(expression: &str) -> Option<Value> {
+    let mut names = expression
+        .trim()
+        .split('.')
+        .map(|name| name.strip_suffix('?').unwrap_or(name));
+    let is_name = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    };
+    let first = names.next().filter(|name| is_name(name))?;
+    let mut value = context_value(first)?;
+    for name in names {
+        if !is_name(name) {
+            return None;
+        }
+        value = value_field(&value, name)?;
+    }
+    matches!(value, Value::Timestamp(_) | Value::Date(_) | Value::Time(_)).then_some(value)
+}
+
 /// Run a script once, not kept, named `file_name` in stack traces, and return its value as a host value. The test
 /// harness runs a spec file with it, so an error names the spec file and line.
 pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
