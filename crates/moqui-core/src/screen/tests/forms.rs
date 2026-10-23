@@ -871,10 +871,8 @@ fn a_tree_answers_its_node_data() {
     assert_eq!(top[0]["li_attr"]["treeNodeName"], "Country");
     assert_eq!(top[0]["children"], true, "France has a city to show: {top}");
     assert_eq!(top[1]["children"], false, "{top}");
-    assert!(
-        top[0]["a_attr"]["href"].as_str().unwrap().ends_with("/show?code=FR"),
-        "{top}"
-    );
+    // `show` only redirects to this screen, so the link goes to the screen, as Java expands an alias transition.
+    assert_eq!(top[0]["a_attr"]["href"], "/?code=FR", "{top}");
     let opened = fetch(&[("treeNodeId", "#"), ("treeOpenPath", "FR")]);
     assert_eq!(opened[0]["state"]["opened"], true, "{opened}");
     assert_eq!(opened[0]["children"][0]["id"], "FR/Paris", "{opened}");

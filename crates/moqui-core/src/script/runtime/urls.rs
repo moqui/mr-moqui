@@ -218,7 +218,7 @@ fn sri_make_url_by_type<'js>(
     url: String,
     url_type: String,
     parameter_parent: Opt<JsValue<'js>>,
-    _expand_transition_url: Opt<String>,
+    expand_transition_url: Opt<String>,
 ) -> rquickjs::Result<Class<'js, HostUrl>> {
     host_guard(&ctx, || {
         let parent = match parameter_parent.0.as_ref().filter(|value| value.is_object()) {
@@ -226,7 +226,9 @@ fn sri_make_url_by_type<'js>(
             None => None,
         };
         let made = with_render(&ctx, false, |state| {
-            urls::make_url_by_type(state, &url, &url_type, parent.as_ref())
+            // Java's `"true".equals(expandTransitionUrlString)`: only an explicit "true" expands an alias transition.
+            let expand = expand_transition_url.0.as_deref() == Some("true");
+            urls::make_url_by_type(state, &url, &url_type, parent.as_ref(), expand)
         })?;
         wrap(&ctx, made)
     })

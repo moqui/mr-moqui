@@ -15,14 +15,14 @@
 //! URL instances for `sri.buildUrl` and `sri.makeUrlByType`: a screen path or a transition resolved
 //! against the screen being rendered, with its parameters.
 //!
-//! Not ported: the transition-as-alias expansion, `ScreenPathAlias`, and `content` URLs.
+//! Not ported: `ScreenPathAlias` and `content` URLs.
 
 use std::sync::Arc;
 
 use indexmap::IndexMap;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use super::definition::{ScreenDef, TransitionDef};
+use super::definition::{ResponseKind, ScreenDef, TransitionDef};
 use super::render::parameter_value;
 use super::sri::{self, active_screen_path, NodeLit};
 use super::url::{encode_path, resolve_screen_path, ScreenUrlInfo};
@@ -430,10 +430,18 @@ pub fn make_url_by_type(
     orig_url: &str,
     url_type: &str,
     parameter_parent: Option<&NodeLit>,
+    expand_transition_url: bool,
 ) -> Result<UrlInstance, Error> {
     let kind = script::expand_localized(url_type)?;
     let mut url = match kind.as_str() {
-        "transition" | "screen" => build_url(state, orig_url)?,
+        "transition" | "screen" => {
+            let url = build_url(state, orig_url)?;
+            if expand_transition_url {
+                expand_transition_alias(state, url)?
+            } else {
+                url
+            }
+        }
         "content" => return Err(Error::new("The url-type of content is not yet supported")),
         _ => {
             let plain = script::expand_localized(orig_url)?;
@@ -471,6 +479,48 @@ pub fn make_url_by_type(
         }
     }
     Ok(url)
+}
+
+/// Java's `UrlInstance.expandTransitionAliasUrl`: a transition with no condition, actions, service or conditional
+/// response, whose default response is a screen-path URL, is an alias for that screen. The link goes to the screen
+/// directly, with the parameters of the screens on its path from the context (OrderDetail's `shipmentDetail` carries
+/// the `shipmentId` ShipmentDetail declares) and the response's own parameters.
+fn expand_transition_alias(state: &RenderState, url: UrlInstance) -> Result<UrlInstance, Error> {
+    let Some(info) = url.info.clone() else {
+        return Ok(url);
+    };
+    let Some(transition) = info.transition(None) else {
+        return Ok(url);
+    };
+    let response = &transition.default_response;
+    if transition.condition.is_some()
+        || transition.actions.is_some()
+        || transition.single_service.is_some()
+        || !transition.conditional_responses.is_empty()
+        || response.kind != ResponseKind::Url
+        || response.url_type != "screen-path"
+    {
+        return Ok(url);
+    }
+    let mut alias_parameters = IndexMap::new();
+    for parameter in &response.parameters {
+        if let Some(value) = parameter_value(parameter)? {
+            alias_parameters.insert(parameter.name.clone(), to_plain_string(&value));
+        }
+    }
+    if let Some(expression) = &response.parameter_map {
+        for (name, value) in script::eval_map(expression)? {
+            alias_parameters.insert(name, to_plain_string(&value));
+        }
+    }
+    let target = if response.url.contains("${") {
+        script::expand(&response.url)?
+    } else {
+        response.url.clone()
+    };
+    let mut alias = resolve_names(state, resolve_screen_path(&info.pre_transition_path, &target))?;
+    alias.parameters.extend(alias_parameters);
+    Ok(alias)
 }
 
 /// `sri.isAnchorLink(linkNode, urlInstance)`.

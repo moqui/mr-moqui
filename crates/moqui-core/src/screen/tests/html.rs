@@ -78,6 +78,13 @@ fn containers_links_and_labels() {
     check("containers", &[]);
 }
 
+// A link to a transition that only redirects to a screen gets that screen's URL and parameters, as Java's
+// UrlInstance.expandTransitionAliasUrl does.
+#[test]
+fn links_to_alias_transitions() {
+    check("Alias", &[]);
+}
+
 #[test]
 fn form_single_with_every_field_type() {
     check("fields", &[("_openDialog", "none")]);

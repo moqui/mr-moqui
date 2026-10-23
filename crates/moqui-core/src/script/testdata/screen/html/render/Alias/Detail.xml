@@ -1,0 +1,4 @@
+<screen require-authentication="false">
+    <parameter name="detailId" required="true"/>
+    <widgets><label text="detail ${detailId}"/></widgets>
+</screen>
