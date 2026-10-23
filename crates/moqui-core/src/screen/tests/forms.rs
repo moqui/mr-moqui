@@ -192,8 +192,68 @@ fn an_empty_required_service_parameter_shows_as_java_on_the_next_page() {
     assert_eq!(posted.status, 302, "{}", posted.body_text());
     cookies(&posted, &mut jar);
     let html = serve_at(&world.factory, with_cookies(request("GET", "/"), &jar), &site.root).body_text();
-    assert!(html.contains("Field cannot be empty (for field Facility ID)</div>"), "{html}");
+    assert!(
+        html.contains("Field cannot be empty (for field Facility ID)</div>"),
+        "{html}"
+    );
     assert_eq!(html.matches("data-type=\"danger\"").count(), 1, "{html}");
+}
+
+/// A transition's service-call with web-send-json-response sends the service's result, or the named expression over it,
+/// as the JSON response, as the dynamic options of FindOrder's facility drop-down read them.
+#[test]
+fn a_service_call_with_web_send_json_response_sends_its_result() {
+    let site = Site::new("send-json");
+    let services = site.dir.join("ListServices.xml");
+    std::fs::write(
+        &services,
+        r#"<services>
+    <service verb="list" noun="Facilities" authenticate="false">
+        <in-parameters><parameter name="ownerPartyId"/></in-parameters>
+        <out-parameters><parameter name="resultList" type="List"/></out-parameters>
+        <actions><script>resultList = [{facilityId: ownerPartyId + '_WH', label: 'Warehouse'}]</script></actions>
+    </service>
+</services>"#,
+    )
+    .unwrap();
+    let screen = std::fs::read_to_string(&site.root).unwrap().replacen(
+        "<widgets>",
+        r#"<transition name="facilities" require-session-token="false">
+        <service-call name="list#Facilities" in-map="{ownerPartyId: ownerPartyId}" web-send-json-response="resultList"/>
+        <default-response type="none"/></transition>
+    <transition name="whole" require-session-token="false">
+        <service-call name="list#Facilities" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <widgets>"#,
+        1,
+    );
+    std::fs::write(&site.root, screen).unwrap();
+    let world = World::open("");
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let failures = crate::service::lint(std::slice::from_ref(&services)).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    let listed = serve_at(
+        &world.factory,
+        form_post("/facilities", "ownerPartyId=ZIRET"),
+        &site.root,
+    );
+    assert_eq!(listed.status, 200, "{}", listed.body_text());
+    let json: serde_json::Value = serde_json::from_str(&listed.body_text()).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{"facilityId": "ZIRET_WH", "label": "Warehouse"}])
+    );
+
+    let whole = serve_at(&world.factory, form_post("/whole", "ownerPartyId=ZIRET"), &site.root);
+    assert_eq!(whole.status, 200, "{}", whole.body_text());
+    let json: serde_json::Value = serde_json::from_str(&whole.body_text()).unwrap();
+    assert_eq!(
+        json["resultList"],
+        serde_json::json!([{"facilityId": "ZIRET_WH", "label": "Warehouse"}])
+    );
 }
 
 #[test]
