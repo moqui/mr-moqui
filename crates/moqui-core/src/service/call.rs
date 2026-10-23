@@ -1208,7 +1208,13 @@ fn run_entity(
     })?;
     let mut record = facade.make_value(noun)?;
     for (key, value) in fields {
-        record.set(key, value.clone());
+        // Java's setFields(..., true, ...) clears an empty form string, including optional foreign keys.
+        let value = if matches!(value, Value::String(text) if text.is_empty()) {
+            Value::Null
+        } else {
+            value.clone()
+        };
+        record.set(key, value);
     }
     // `EntityAutoServiceRunner.checkFromDate`: a `fromDate` primary key left out of a create or store is
     // `ec.user.nowTimestamp`.
@@ -1731,6 +1737,72 @@ mod tests {
         assert!(sql.contains("INSERT") && sql.contains("test_entity"), "{sql}");
         assert!(sql.contains("UPDATE") && sql.contains("test_entity"), "{sql}");
         assert!(!sql.contains("ON CONFLICT"), "{sql}");
+    }
+
+    /// Java's entity-auto runner uses setFields(..., true, ...): an empty form string clears
+    /// the field to null, while an omitted field and nonempty whitespace keep their meanings.
+    #[test]
+    fn entity_auto_empty_fields_clear_to_null() {
+        for declared in [false, true] {
+            let (facade, ctx) = seeded_context(&[]);
+            let _entered = ctx.enter();
+            let _authz = ctx.disable_authz();
+            if declared {
+                let path = write_fixture(
+                    "entity-auto-empty",
+                    r#"<services>
+                        <service verb="create" noun="moqui.test.TestEntity" type="entity-auto">
+                            <in-parameters><auto-parameters/></in-parameters>
+                        </service>
+                        <service verb="update" noun="moqui.test.TestEntity" type="entity-auto">
+                            <in-parameters><auto-parameters/></in-parameters>
+                        </service>
+                        <service verb="store" noun="moqui.test.TestEntity" type="entity-auto">
+                            <in-parameters><auto-parameters/></in-parameters>
+                        </service>
+                    </services>"#,
+                );
+                assert!(crate::service::lint(&[path]).unwrap().is_empty());
+            }
+            for verb in ["create", "update", "store"] {
+                let id = format!("empty-{verb}");
+                if verb == "update" {
+                    let mut row = facade.make_value("moqui.test.TestEntity").unwrap();
+                    row.set("testId", Value::string(&id));
+                    row.set("testMedium", Value::string("clear me"));
+                    row.set("testLong", Value::string("keep me"));
+                    row.create(&facade).unwrap();
+                }
+                let params = BTreeMap::from([
+                    ("testId".to_string(), Value::string(&id)),
+                    ("testMedium".to_string(), Value::string("")),
+                    ("testIndicator".to_string(), Value::string(" ")),
+                ]);
+                super::sync_checked(
+                    &format!("{verb}#moqui.test.TestEntity"),
+                    &params,
+                    &super::CallOptions::default(),
+                )
+                .unwrap();
+                let stored = facade
+                    .find("moqui.test.TestEntity")
+                    .unwrap()
+                    .eq("testId", Value::string(&id))
+                    .use_cache(false)
+                    .one()
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    stored.get("testMedium"),
+                    Some(&Value::Null),
+                    "{verb}, declared={declared}"
+                );
+                assert_eq!(stored.get("testIndicator"), Some(&Value::string(" ")));
+                if verb == "update" {
+                    assert_eq!(stored.get("testLong"), Some(&Value::string("keep me")));
+                }
+            }
+        }
     }
 
     #[test]
