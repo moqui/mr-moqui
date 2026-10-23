@@ -175,10 +175,6 @@ body.desktop .q-table .tr:not(.q-tr--no-hover):hover .td:not(.q-td--no-hover):be
 
 /* the sort arrows of a column head sit on the title line */
 .form-title { white-space: nowrap; font-weight: 500; }
-.form-order-by { display:inline; white-space:nowrap; margin-left:2px; }
-.form-order-by a { display:inline; color:#9e9e9e; }
-.form-order-by a.active { color: var(--q-primary); }
-.form-order-by .q-icon { font-size:18px; margin:0 -5px; vertical-align:middle; }
 
 /* ====== Old Handy Styles ====== */
 

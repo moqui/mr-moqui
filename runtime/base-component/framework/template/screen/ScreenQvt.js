@@ -1387,8 +1387,8 @@
                     let descUrl = pathUrl("orderByField", "-" + (insensitive ? "^" : "") + f.name);
                     if (asc) ascUrl = descUrl;
                     if (desc) descUrl = ascUrl;
-                    out += ' <span class="form-order-by"><m-link href="' + e(ascUrl) + '"' + (asc ? ' class="active"' : "") + '><q-icon name="arrow_drop_up"></q-icon></m-link> <m-link href="' + e(descUrl) + '"' + (desc ? ' class="active"' : "") +
-                        '><q-icon name="arrow_drop_down"></q-icon></m-link></span>';
+                    out += ' <span class="form-order-by"><m-link href="' + e(ascUrl) + '"' + (asc ? ' class="active"' : "") + '><i class="fa fa-caret-up"></i></m-link> <m-link href="' + e(descUrl) + '"' + (desc ? ' class="active"' : "") +
+                        '><i class="fa fa-caret-down"></i></m-link></span>';
                 }
                 out += "</div>";
                 w(out);
