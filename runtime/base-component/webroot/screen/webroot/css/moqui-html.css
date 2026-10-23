@@ -136,7 +136,35 @@ span.shaded-area { display: inline-block; white-space: normal; }
         font-size: 1.1em; line-height: 20px; color: #bbb;
     }
     .navbar #navbar-menu-crumbs { margin-right: 15px; }
+    .navbar #navbar-menu-crumbs:empty { display: none; }
+    .navbar { border-top: 1px solid #080808; box-shadow: inset 0 -1px #080808; }
+    /* Java floats the user's tools right in reverse source order, so what a screen appends to #navbar-buttons
+       (Marble's organization menu) sits leftmost, then history, the theme's navbar items, dark/light and logout,
+       each a borderless Bootstrap navbar-btn btn-sm with no gap between them. */
+    .navbar .spacer ~ * { order: 3; }
+    .navbar #navbar-buttons > .spacer ~ * { margin-left: calc(-1 * var(--gap)); }
+    .navbar .logout ~ * { order: 1; }
+    .navbar #history-menu { order: 2; }
+    .navbar [data-theme-toggle] { order: 4; }
+    .navbar .logout { order: 5; }
+    .navbar .spacer ~ .btn-group { display: inline-flex; }
+    .navbar .spacer ~ :is(button, a), .navbar .spacer ~ .btn-group > a, .navbar .spacer ~ details.menu > summary {
+        display: inline-block; margin-top: 10px; margin-bottom: 10px; margin-right: 0; padding: 5px 10px; border: 1px solid transparent; border-radius: 3px;
+        background: transparent; color: #9d9d9d; font-size: 12px; line-height: 18px; filter: none;
+    }
+    .navbar .spacer ~ .btn-group > a + a { margin-left: -1px; }
+    .navbar .spacer ~ :is(button, a):hover, .navbar .spacer ~ .btn-group > a:hover, .navbar .spacer ~ details.menu > summary:hover {
+        border-color: #3a3a3a; background: #3a3a3a; text-decoration: none;
+    }
+    .navbar .spacer ~ a.logout { color: #d9534f; }
 }
+/* Bootstrap's label, as the navbar counters use it. */
+.navbar .label { display: inline; padding: .2em .6em .3em; border-radius: .25em; color: #fff; font-size: 75%; font-weight: 700;
+    line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; background: #9d9d9d; }
+.navbar .label:empty { display: none; }
+.navbar a .label { position: relative; top: -1px; }
+.navbar .label-danger { background: #d9534f; } .navbar .label-info { background: #46b8da; } .navbar .label-success { background: #449d44; }
+.navbar .label-primary { background: #2e6da4; } .navbar .label-warning { background: #985f0d; }
 @media (max-width: 767px) {
     .navbar .nav-toggle { display: inline-block; margin-left: auto; }
     .navbar #navbar-buttons { display: none; flex-basis: 100%; }
