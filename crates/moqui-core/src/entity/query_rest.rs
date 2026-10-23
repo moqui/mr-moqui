@@ -1797,6 +1797,15 @@ fn write_response_json(out: &mut String, value: &Value, depth: usize) {
             out.push_str(&"  ".repeat(depth));
             out.push('}');
         }
+        Value::Object(_) => {
+            if let Some(fields) = crate::script::value_map(value) {
+                write_response_json(out, &Value::Map(fields), depth);
+            } else if let Some(items) = crate::script::value_items(value) {
+                write_response_json(out, &Value::List(items), depth);
+            } else {
+                write_json_value(out, value);
+            }
+        }
         other => write_json_value(out, other),
     }
 }
@@ -2167,5 +2176,44 @@ mod tests {
 }"#;
         assert_eq!(encode_json(&value), expected);
         assert_eq!(encode_json(&Value::List(Vec::new())), "[ ]");
+    }
+
+    #[test]
+    fn response_json_serializes_shared_entity_values_and_entity_lists_as_records() {
+        use crate::entity::{EntityList, EntityValue};
+        use moqui_lib::object::HostObject;
+        use std::sync::{Arc, Mutex};
+
+        let record = EntityValue::from_fields(
+            Arc::from("test.TimePeriod"),
+            BTreeMap::from([
+                (Arc::from("timePeriodId"), Value::string("FY2026")),
+                (Arc::from("periodName"), Value::string("Fiscal <&> year")),
+                (Arc::from("fromDate"), Value::Date(jiff::civil::date(2026, 1, 1))),
+                (Arc::from("parentPeriodId"), Value::Null),
+            ]),
+        );
+        let cell = Arc::new(Mutex::new(record.clone()));
+        let shared = Value::Object(HostObject(cell.clone()));
+        let expected = serde_json::json!({"timePeriodId":"FY2026", "periodName":"Fiscal <&> year",
+            "fromDate":1767225600000_i64, "parentPeriodId":null});
+        let decode = |value: &Value| serde_json::from_str::<serde_json::Value>(&encode_json(value)).unwrap();
+        assert_eq!(decode(&shared), expected);
+        assert_eq!(
+            decode(&Value::List(vec![shared.clone()])),
+            serde_json::json!([expected])
+        );
+        let list = Value::Object(HostObject::new(EntityList::new(vec![record])));
+        assert_eq!(decode(&list), serde_json::json!([expected]));
+        cell.lock()
+            .unwrap()
+            .set("periodName", Value::string("Updated fiscal year"));
+        let nested = Value::Map(indexmap::IndexMap::from([(
+            "options".to_string(),
+            Value::List(vec![shared]),
+        )]));
+        let mut changed = expected;
+        changed["periodName"] = serde_json::json!("Updated fiscal year");
+        assert_eq!(decode(&nested), serde_json::json!({"options":[changed]}));
     }
 }
