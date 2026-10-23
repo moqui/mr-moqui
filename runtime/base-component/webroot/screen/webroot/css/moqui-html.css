@@ -501,6 +501,12 @@ table.form-list .filter-summary .filter-clear {
     .field:not(.big-row) { margin-left: -15px; margin-right: -15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
     .field:not(.big-row) > label, .field:not(.big-row) > .label { padding-left: 15px; padding-right: 15px; }
     .field:not(.big-row) > .widget { padding-left: 15px; padding-right: 15px; }
+    /* Titled big rows share the normal label gutter; their inline fields use text-space gaps. */
+    .field.big-row:has(> label) { margin: 0 -15px 15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
+    .field.big-row > label { padding-left: 15px; padding-right: 15px; }
+    .field.big-row:has(> label) > .widget { display: block; padding-left: 15px; padding-right: 15px; }
+    .field.big-row:has(> label) > .widget > .big-item { display: inline-block; }
+    .field.big-row:has(> label) > .widget > .big-item > .field { display: block; }
     .field-row { margin: 0 -15px; column-gap: 0; }
     .field-row > div { padding: 0 15px; }
     .field-row > div > .field { grid-template-columns: calc(100% / 3) minmax(0, 1fr); }

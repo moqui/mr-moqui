@@ -584,3 +584,34 @@ test('remote single selects retain full-width, empty-value and active-search con
     assert.equal(light.invalid.border,'rgb(217, 83, 79)');assert.equal(active.outline,'solid');assert.equal(active.inputHeight,20);
     assert.equal(dark.color,'rgb(221, 227, 234)');assert.equal(dark.shadow,'none');assert.equal(dark.border,'rgb(52, 61, 72)');
 });
+
+
+test('titled big rows align with normal labels and preserve native inline spacing', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const item=(id,size)=>`<div class="big-item"><div class="field"><div class="widget"><input id="${id}" size="${size}"></div></div></div>`;
+    const html=`<!doctype html><html><style>${css}</style><div style="width:840px;padding:0 15px">
+        <div class="field"><label>Address</label><div class="widget"><input id="normal" size="30"></div></div>
+        <div class="field big-row" id="city-row"><label>City/Zip</label><div class="widget">${item('city',30)}
+            ${item('zip',8)}
+            ${item('ext',4)}</div></div>
+        <div class="field big-row" id="latitude-row"><label>Latitude / Longitude</label><div class="widget">${item('latitude',15)}
+            ${item('longitude',15)}</div></div>
+        <div class="field big-row" id="untitled"><div class="widget">${item('find',30)}${item('other',8)}</div></div>
+        </div><pre id="result"></pre><script>
+        const metric=id=>{const e=document.getElementById(id),r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+        document.getElementById('result').textContent=JSON.stringify({normal:metric('normal'),city:metric('city'),zip:metric('zip'),ext:metric('ext'),latitude:metric('latitude'),longitude:metric('longitude'),label:metric('latitude-row'),labelHeight:document.querySelector('#latitude-row>label').getBoundingClientRect().height,margin:getComputedStyle(document.getElementById('city-row')).marginBottom,untitledGap:getComputedStyle(document.querySelector('#untitled>.widget')).columnGap});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-titled-row-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.equal(m.city.x,m.normal.x);assert.equal(m.latitude.x,m.normal.x);
+    assert.equal(m.city.width,288);assert.equal(m.zip.width,109);assert.equal(m.ext.width,77);
+    assert.ok(Math.abs(m.zip.x-m.city.x-m.city.width-3.890625)<0.05);
+    assert.ok(Math.abs(m.ext.x-m.zip.x-m.zip.width-3.890625)<0.05);
+    assert.equal(m.city.y,m.zip.y);assert.equal(m.zip.y,m.ext.y);
+    assert.equal(m.labelHeight,47);assert.equal(m.label.height,47);assert.equal(m.margin,'15px');assert.equal(m.untitledGap,'20px');
+});
