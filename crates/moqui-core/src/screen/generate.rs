@@ -383,7 +383,15 @@ fn describe(request: &UnitRequest<'_>) -> String {
 }
 
 fn make_unit(module: &ModeModule<'_>, body: String) -> Result<Unit, Error> {
-    let source = format!("(function () {{\n\"use strict\";\n{}{body}}})", module.prelude);
+    let source = if module.epilogue.is_empty() {
+        format!("(function () {{\n\"use strict\";\n{}{body}}})", module.prelude)
+    } else {
+        // The epilogue runs however the body ends, so a nested unit hands back the state it found.
+        format!(
+            "(function () {{\n\"use strict\";\n{}try {{\n{body}\n}} finally {{\n{}}}\n}})",
+            module.prelude, module.epilogue
+        )
+    };
     crate::script::check_program(&source).map_err(|err| Error::new(format!("{}\n{source}", err.message())))?;
     Ok(Unit {
         id: NEXT_UNIT.fetch_add(1, Ordering::Relaxed),
@@ -426,11 +434,12 @@ fn unit_root(def: &ScreenDef, section: &str, fail: bool) -> Result<Option<MNode>
     }
 }
 
-/// A loaded mode: the macro table, the elements it treats as opaque, and its runtime prelude.
+/// A loaded mode: the macro table, the elements it treats as opaque, and its runtime prelude and epilogue.
 pub struct ModeModule<'js> {
     macros: Object<'js>,
     opaque: HashSet<String>,
     prelude: String,
+    epilogue: String,
     runtime: Arc<str>,
     runtime_id: u64,
 }
@@ -465,6 +474,7 @@ fn load_mode_source<'js>(ctx: &Ctx<'js>, source: &str, mode: &str, debug: bool) 
         .get("opaque")
         .map_err(|_| Error::new(format!("macro module for {mode} has no opaque list")))?;
     let prelude: String = module.get("prelude").unwrap_or_default();
+    let epilogue: String = module.get("epilogue").unwrap_or_default();
     let runtime: String = module.get("runtime").unwrap_or_default();
     let runtime_id = {
         use std::hash::{Hash, Hasher};
@@ -476,6 +486,7 @@ fn load_mode_source<'js>(ctx: &Ctx<'js>, source: &str, mode: &str, debug: bool) 
         macros,
         opaque: walker::names_of(&opaque)?,
         prelude,
+        epilogue,
         runtime: Arc::from(runtime),
         runtime_id,
     })
