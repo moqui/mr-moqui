@@ -415,6 +415,12 @@ mod tests {
             "moqui.entity.document.DataDocument",
             &[("dataDocumentId", "DOC1"), ("primaryEntityName", "moqui.test.Foo")],
         );
+        // As Java, a write reaches a document only through one of its fields.
+        create_row(
+            &facade,
+            "moqui.entity.document.DataDocumentField",
+            &[("dataDocumentId", "DOC1"), ("fieldSeqId", "01"), ("fieldPath", "fooText")],
+        );
         create_row(
             &facade,
             "moqui.entity.feed.DataFeed",
