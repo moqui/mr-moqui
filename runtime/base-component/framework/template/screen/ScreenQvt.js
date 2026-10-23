@@ -1500,7 +1500,7 @@
             }
             if (type === "date-period") {
                 const period = String(ctx(name + "_period")).toLowerCase();
-                if (period) return period + " " + (ctx(name + "_poffset") || "0") + " " + ctx(name + "_pdate");
+                if (period) return ec.user.getPeriodDescription(period, ctx(name + "_poffset") || "0", ctx(name + "_pdate") || "");
             }
             if (type === "date-find" || type === "date-period" || type === "range-find") {
                 const format = type === "date-find" ? dateDefault(n) : "yyyy-MM-dd";

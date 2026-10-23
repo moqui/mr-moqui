@@ -32,7 +32,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             $h.fieldClose($open, false);
         }
         },
-            "summary": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); },
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -56,7 +55,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("The Title"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -80,7 +78,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("Qty"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "right", $m === 2);
@@ -105,7 +102,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("Amt"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2 && !ec.resource.condition("hideAmt", "")) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -129,7 +125,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("Status"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if (status == 'X') {
                     if ($m !== 2) {
@@ -166,7 +161,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("Open"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -190,7 +184,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "title": () => ec.l10n.localize("Do"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 1) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -233,6 +226,9 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
         {"name": "status", "title": () => ec.l10n.localize("Status")},
         {"name": "link", "title": () => ec.l10n.localize("Open")},
         {"name": "b", "title": () => ec.l10n.localize("Do")}
+    ],
+    "summaries": [
+        {"title": () => ec.l10n.localize("ID"), "text": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); }}
     ]
 });
 }
@@ -251,7 +247,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Cols] -->\n"
             "title": () => ec.l10n.localize("A"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -275,7 +270,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Cols] -->\n"
             "title": () => ec.l10n.localize("B"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -299,7 +293,6 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Cols] -->\n"
             "title": () => ec.l10n.localize("C"),
             "find": null,
             "dialogField": () => {},
-            "summary": null,
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
@@ -332,6 +325,8 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Cols] -->\n"
         {"name": "a", "title": () => ec.l10n.localize("A")},
         {"name": "b", "title": () => ec.l10n.localize("B")},
         {"name": "c", "title": () => ec.l10n.localize("C")}
+    ],
+    "summaries": [
     ]
 });
 }

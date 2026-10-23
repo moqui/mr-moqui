@@ -43,7 +43,7 @@ pub use login::{
 pub(crate) use login::{now_effective_millis, now_effective_value, now_millis, now_value, value_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use password::hash_password;
-pub use period::period_range;
+pub use period::{period_days, period_range};
 pub use policy::password_acceptable;
 pub use preference::{
     get_preference, get_preference_for, get_preferences, has_permission, is_in_group, set_preference, user_group_ids,

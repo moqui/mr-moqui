@@ -653,6 +653,17 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         if (period) return host.periodRange(String(period), String(inputs[baseName + "_poffset"] ?? ""), String(inputs[baseName + "_pdate"] ?? ""));
         return [inputs[baseName + "_from"] || null, inputs[baseName + "_thru"] || null];
     };
+    // `getPeriodDescription(period, poffset, pdate)`: "This Week (2026-10-18 to 2026-10-24)" and the like, as Java writes it.
+    ec.user.getPeriodDescription = function (period, poffset, pdate) {
+        period = String(period ?? ""); poffset = String(poffset ?? ""); pdate = String(pdate ?? "");
+        const L = (text) => ec.l10n.localize(text);
+        const names = { day: L("Day"), "7d": "7 " + L("Days"), "30d": "30 " + L("Days"), week: L("Week"), weeks: L("Weeks"),
+            month: L("Month"), months: L("Months"), quarter: L("Quarter"), year: L("Year"), "7r": "+/-7d", "30r": "+/-30d" };
+        const days = host.periodDays(period, poffset, pdate);
+        const offset = poffset === "0" ? L("This") : poffset === "-1" ? L("Last") : poffset === "1" ? L("Next") : poffset;
+        return offset + " " + (names[period] ?? "") + (pdate ? " " + L("from##period") + " " + pdate : "") +
+            " (" + days[0] + " " + L("to##period") + " " + days[1] + ")";
+    };
     Object.defineProperty(ec.message, "messageInfos", { get: host.messageInfos });
 
     // ---- factory and web ----
@@ -2214,6 +2225,15 @@ fn period_range<'js>(ctx: Ctx<'js>, period: String, offset: String, basis: Strin
     })
 }
 
+/// The first and last days, `yyyy-MM-dd`, of a period range, for `ec.user.getPeriodDescription`.
+fn period_days<'js>(ctx: Ctx<'js>, period: String, offset: String, basis: String) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let (from, last) = crate::user::period_days(&period, &offset, &basis)
+            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
+        js_texts(&ctx, vec![from.to_string(), last.to_string()])
+    })
+}
+
 /// `ec.message.messageInfos`: the messages as `{message, typeString}`. The port keeps no type with a message.
 fn message_infos<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
@@ -2331,6 +2351,7 @@ pub(super) fn install<'js>(
     method!("getFindFiltersForUser", get_find_filters_for_user);
     method!("getAllEntityNamesWithMaster", get_all_entity_names_with_master);
     method!("periodRange", period_range);
+    method!("periodDays", period_days);
     method!("messageInfos", message_infos);
     method!("resourceText", resource_text);
     method!("resourcePutText", resource_put_text);
