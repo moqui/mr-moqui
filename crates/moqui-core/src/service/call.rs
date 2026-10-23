@@ -744,7 +744,12 @@ fn run_entity(
         if reserved(key) || matches!(value, Value::Map(_) | Value::List(_)) {
             continue;
         }
-        record.set(key, value.clone());
+        // Java's `setFields(parameters, true, ...)` sets an empty string as null: an empty drop-down is no key.
+        let value = match value {
+            Value::String(text) if text.is_empty() => Value::Null,
+            other => other.clone(),
+        };
+        record.set(key, value);
     }
     // `EntityAutoServiceRunner.checkFromDate`: a `fromDate` primary key left out of a create or store is
     // `ec.user.nowTimestamp`.
@@ -1194,6 +1199,27 @@ mod tests {
         assert!(sql.contains("INSERT") && sql.contains("test_entity"), "{sql}");
         assert!(sql.contains("UPDATE") && sql.contains("test_entity"), "{sql}");
         assert!(!sql.contains("ON CONFLICT"), "{sql}");
+    }
+
+    #[test]
+    fn entity_auto_sets_empty_string_as_null() {
+        let facade = crate::testing::open_with_tape(Arc::new(Mutex::new(Vec::new())));
+        let ctx = ExecutionContextFactory::test_context();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        let mut params = BTreeMap::new();
+        params.insert("testId".into(), Value::string("T2"));
+        params.insert("testMedium".into(), Value::string(""));
+        sync("create#moqui.test.TestEntity", &params).unwrap();
+        let row = facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string("T2"))
+            .one()
+            .unwrap()
+            .expect("created row");
+        assert!(matches!(row.get("testMedium"), None | Some(Value::Null)), "{row:?}");
     }
 
     #[test]
