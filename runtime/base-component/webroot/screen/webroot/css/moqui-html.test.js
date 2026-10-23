@@ -418,3 +418,25 @@ test('typed panels retain Java flat headings and semantic borders in both themes
     }
     assert.deepEqual(dark.slice(0,5).map(x=>x.border),Array(5).fill('rgb(52, 61, 72)'));
 });
+
+
+test('dashboard screen body keeps the page shell while dashboard widgets use a grid', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><body class="dev dashboard">
+        <div id="top"><nav class="navbar">Navigation</nav></div><div id="content"><div class="inner">
+        <div class="dashboard" style="width:650px"><div class="dashboard-item">One</div><div class="dashboard-item">Two</div><div class="dashboard-item" id="empty"></div></div>
+        </div></div><div id="footer">Footer</div><pre id="result" hidden></pre><script>
+        const s=getComputedStyle(document.body),g=getComputedStyle(document.querySelector('div.dashboard'));
+        document.getElementById('result').textContent=JSON.stringify({display:s.display,direction:s.flexDirection,margin:s.margin,
+        topWidth:document.getElementById('top').getBoundingClientRect().width,contentWidth:document.getElementById('content').getBoundingClientRect().width,footerWidth:document.getElementById('footer').getBoundingClientRect().width,
+        grid:g.display,columns:g.gridTemplateColumns.split(' ').length,gap:g.gap,empty:getComputedStyle(document.getElementById('empty')).display});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-dashboard-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const result=JSON.parse(dom.match(/<pre id="result" hidden="">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(result,{display:'flex',direction:'column',margin:'0px',topWidth:1440,contentWidth:1440,footerWidth:1440,grid:'grid',columns:3,gap:'12px',empty:'none'});
+});
