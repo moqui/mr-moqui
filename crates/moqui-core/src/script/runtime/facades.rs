@@ -498,6 +498,25 @@ impl HostUser {
             Err(err) => Err(Exception::throw_message(&ctx, err.message())),
         })
     }
+
+    /// The session's `Visit`, which services such as `create#OrderHeader` default their `visitId` to.
+    #[qjs(get)]
+    fn visit_id<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || match crate::user::visit_id() {
+            Ok(Some(id)) if !id.is_empty() => id.into_js(&ctx),
+            Ok(_) => Null.into_js(&ctx),
+            Err(err) => Err(Exception::throw_message(&ctx, err.message())),
+        })
+    }
+
+    #[qjs(get)]
+    fn visitor_id<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || match crate::user::visitor_id() {
+            Ok(Some(id)) if !id.is_empty() => id.into_js(&ctx),
+            Ok(_) => Null.into_js(&ctx),
+            Err(err) => Err(Exception::throw_message(&ctx, err.message())),
+        })
+    }
 }
 
 fn session_time_zone_name() -> String {
