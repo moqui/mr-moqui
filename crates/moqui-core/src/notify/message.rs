@@ -248,7 +248,8 @@ impl NotificationMessage {
                 self.title_text.as_deref().unwrap_or(""),
                 self.link_text.as_deref().unwrap_or(""),
                 &type_name,
-                show_alert,
+                // Java persists its own showAlert field, unset unless showAlert() was called, not the topic's default.
+                self.show_alert.unwrap_or(false),
                 &self.notify_user_ids,
             )?;
             self.notification_message_id = Some(id);
@@ -769,7 +770,7 @@ fn stored_json(message: &IndexMap<String, Value>, raw: Option<&str>) -> Option<S
     if message.is_empty() {
         return None;
     }
-    Some(moqui_lib::json::to_json(&Value::Map(message.clone())).to_string())
+    Some(moqui_lib::json::to_json_text(&Value::Map(message.clone())))
 }
 
 fn field_str(row: &EntityValue, name: &str) -> Option<String> {

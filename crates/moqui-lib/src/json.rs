@@ -46,6 +46,42 @@ pub fn to_json(value: &Value) -> serde_json::Value {
     }
 }
 
+/// JSON text for a value, with each map's keys in the map's order, as Groovy's `JsonOutput` writes a
+/// `LinkedHashMap`. [`to_json`] sorts them: a `serde_json` object is a `BTreeMap`.
+pub fn to_json_text(value: &Value) -> String {
+    let mut out = String::new();
+    write_json_text(&mut out, value);
+    out
+}
+
+fn write_json_text(out: &mut String, value: &Value) {
+    match value {
+        Value::List(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json_text(out, item);
+            }
+            out.push(']');
+        }
+        Value::Map(entries) => {
+            out.push('{');
+            for (index, (key, item)) in entries.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::Value::String(key.clone()).to_string());
+                out.push(':');
+                write_json_text(out, item);
+            }
+            out.push('}');
+        }
+        leaf => out.push_str(&to_json(leaf).to_string()),
+    }
+}
+
 /// A value for JSON. Objects keep their key order.
 pub fn from_json(json: &serde_json::Value) -> Value {
     match json {
@@ -75,6 +111,29 @@ pub fn from_json(json: &serde_json::Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_text_keeps_map_order() {
+        let inner = Value::Map(
+            [("z".to_string(), Value::I64(1)), ("a".to_string(), Value::Null)]
+                .into_iter()
+                .collect(),
+        );
+        let map = Value::Map(
+            [
+                ("_type".to_string(), Value::string("MantleEvent")),
+                ("_id".to_string(), Value::string("100000")),
+                ("name".to_string(), Value::string("Zoë \"picks\"")),
+                ("list".to_string(), Value::List(vec![inner, Value::Bool(true)])),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(
+            to_json_text(&map),
+            r#"{"_type":"MantleEvent","_id":"100000","name":"Zoë \"picks\"","list":[{"z":1,"a":null},true]}"#
+        );
+    }
 
     #[test]
     fn numbers_keep_their_kind_and_non_ascii_text_survives() {
