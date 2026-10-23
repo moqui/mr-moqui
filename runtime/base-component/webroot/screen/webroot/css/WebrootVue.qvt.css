@@ -138,10 +138,11 @@ td, .td { min-height:21px; }
 /* the row selection column (m-sel) is as narrow as its checkbox: the automatic table layout would give the first column the slack */
 .q-table .m-sel { width: 1%; white-space: nowrap; }
 .q-table .thead .tr, .q-table .tbody .td { height: 48px; }
-.q-table .th { font-weight: 500; font-size: 12px; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
+.q-table .th { font-weight: 500; font-size: 13px; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
 .q-table .th, .q-table .td { padding: 7px 16px; background-color: inherit; }
 .q-table .thead, .q-table .td, .q-table .th { border-style: solid; border-width: 0; }
-.q-table .tbody .td { font-size: 13px; }
+/* Java WebrootVue.qvt.css overrides the Quasar defaults for list readability. */
+.q-table .tbody .td { font-size: 14px; }
 
 .q-table--no-wrap .th, .q-table--no-wrap .td { white-space: nowrap; }
 .q-table--grid .q-table__middle .thead, .q-table--grid .q-table__middle .thead .th { border: 0 !important; }
