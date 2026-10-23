@@ -299,7 +299,9 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 /* Java Bootstrap .form-control and select2-bootstrap control surfaces.
    Keep specificity below validation states and leave native checkboxes/radios/files alone. */
 :where(.field > .widget) input:not(:where([type="checkbox"], [type="radio"], [type="file"])),
-:where(.field > .widget) select, :where(.field > .widget) textarea {
+:where(.field > .widget) select, :where(.field > .widget) textarea,
+:where(table.form-list tbody) input[form]:not(:where([type="checkbox"], [type="radio"], [type="file"], [type="hidden"], [type="submit"], [type="reset"], [type="button"])),
+:where(table.form-list tbody) select[form], :where(table.form-list tbody) textarea[form] {
     color: var(--control-fg); border-color: var(--control-border); box-shadow: var(--control-shadow);
 }
 .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
@@ -354,9 +356,10 @@ table.form-list-sub { width: 100%; }
 table.form-list-sub th, table.form-list-sub td { padding: 2px 8px; text-align: left; vertical-align: top; }
 table.form-list tr[data-total] td { font-weight: bold; border-top: 2px solid var(--line); }
 table.form-list td > div { margin: 0; }
-table.form-list .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
-table.form-list .field > .widget select { height: auto; padding: 4px 8px; }
-table.form-list .field > .widget textarea { min-height: 0; padding: 4px 8px; }
+/* List editors use Java's normal form-control size; Tom Select's internal search stays compact. */
+table.form-list tbody input[form]:not(:where([type="checkbox"], [type="radio"], [type="file"], [type="hidden"], [type="submit"], [type="reset"], [type="button"])),
+table.form-list tbody select[form] { height: 34px; padding: 6px 12px; margin-top: 0; }
+table.form-list tbody textarea[form] { min-height: 34px; padding: 6px 12px; }
 table.form-list .field { margin-bottom: 0; }
 table.form-list .display, table.form-list .field > .widget > .display { min-height: 0; padding: 0; }
 table.form-list .field > .widget > p, table.form-list .field > .widget > span.text-inline,
