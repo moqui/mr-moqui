@@ -692,3 +692,20 @@ test('disabled text links use source muted colors while button surfaces fade', (
         assert.equal(theme.enabled.opacity,'1');assert.notEqual(theme.enabled.color,muted);assert.equal(theme.enabled.pointer,'auto');
     }
 });
+
+test('form labels keep words intact and wrap phrases at spaces', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const rows=['Organization','Auto Reservation','Default Disable Promotions','Latitude / Longitude'].map((title,i)=>`<div class="field" id="row-${i}"><label>${title}</label><div class="widget"><input></div></div>`).join('');
+    const html=`<!doctype html><html><style>${css}</style><div style="width:600px;padding:0 15px">${rows}</div><pre id="result"></pre><script>
+        document.getElementById('result').textContent=JSON.stringify([...document.querySelectorAll('.field')].map(e=>{const l=e.querySelector('label'),s=getComputedStyle(l);return {labelHeight:l.getBoundingClientRect().height,fieldHeight:e.getBoundingClientRect().height,wrap:s.overflowWrap,wordBreak:s.wordBreak}}));
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-label-wrap-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(m.map(e=>e.labelHeight),[27,47,67,47]);
+    assert.deepEqual(m.map(e=>e.fieldHeight),[34,47,67,47]);
+    assert.ok(m.every(e=>e.wrap==='normal'&&e.wordBreak==='normal'));
+});
