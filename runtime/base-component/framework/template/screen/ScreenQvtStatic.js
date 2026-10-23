@@ -1223,8 +1223,8 @@
                 if (f.orderBy) {
                     const insensitive = f.orderBy === "case-insensitive";
                     const ascName = (insensitive ? "^" : "") + f.name;
-                    out += '<span class="form-order-by"><a href="#" @click.prevent="hs.sortBy(' + e(sq(ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq(ascName)) + ') === \'asc\'}"><q-icon name="arrow_drop_up"></q-icon></a>' +
-                        '<a href="#" @click.prevent="hs.sortBy(' + e(sq("-" + ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq("-" + ascName)) + ') === \'desc\'}"><q-icon name="arrow_drop_down"></q-icon></a></span>';
+                    out += '<span class="form-order-by"><a href="#" @click.prevent="hs.sortBy(' + e(sq(ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq(ascName)) + ') === \'asc\'}"><i class="fa fa-caret-up"></i></a> ' +
+                        '<a href="#" @click.prevent="hs.sortBy(' + e(sq("-" + ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq("-" + ascName)) + ') === \'desc\'}"><i class="fa fa-caret-down"></i></a></span>';
                 }
                 out += "</div>";
                 w(out);
