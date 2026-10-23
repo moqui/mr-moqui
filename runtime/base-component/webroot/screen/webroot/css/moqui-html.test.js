@@ -642,3 +642,28 @@ test('badges retain fixed Bootstrap metrics and button contrast across text size
     assert.equal(light.xs.height,14);assert.equal(light.xs.top,'0px');assert.equal(light.xs.padding,'1px 5px');
     assert.equal(dark.background,'rgb(221, 227, 234)');assert.equal(dark.color,'rgb(28, 33, 40)');
 });
+
+test('centered untitled search rows follow inline text flow and wrap at narrow widths', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const row=id=>`<div class="field big-row" id="${id}"><div class="widget"><div class="big-item"><div class="field"><div class="widget"><select><option>Any Type</option><option>Communication Event</option></select></div></div></div>
+        <div class="big-item"><div class="field"><div class="widget"><input size="25"></div></div></div>
+        <div class="big-item"><div class="field"><div class="widget"><button data-btn="primary">Search</button></div></div></div></div></div>`;
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><div style="width:720px;padding:0 15px" class="text-center">${row('wide')}</div><div style="width:300px;padding:0 15px" class="text-center">${row('narrow')}</div><div style="width:720px;padding:0 15px">${row('plain')}</div><pre id="result"></pre><script>
+        const metric=id=>{const r=document.getElementById(id),els=[...r.querySelectorAll('select,input,button')];return {row:{x:r.getBoundingClientRect().x,width:r.getBoundingClientRect().width},controls:els.map(e=>{const x=e.getBoundingClientRect();return {x:x.x,y:x.y,width:x.width,height:x.height}}),gap:getComputedStyle(r.firstElementChild).columnGap}};
+        document.getElementById('result').textContent=JSON.stringify({wide:metric('wide'),narrow:metric('narrow'),plain:metric('plain')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-search-row-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const [select,input,button]=m.wide.controls;
+    assert.equal(select.width,183);assert.equal(input.width,247);assert.equal(button.width,60.03125);
+    assert.equal(select.x,109.09375);assert.equal(input.x,295.984375);assert.equal(button.x,546.875);
+    assert.ok(Math.abs(input.x-select.x-select.width-3.890625)<0.05);
+    assert.ok(Math.abs(select.y-input.y)<2, 'native select and text control stay on the same line');assert.equal(button.height,30);
+    assert.ok(m.narrow.controls[1].y>m.narrow.controls[0].y);
+    for(const r of m.narrow.controls) assert.ok(r.x>=0&&r.x+r.width<=300);
+    assert.equal(m.plain.gap,'20px');assert.equal(m.plain.controls[0].x,15);
+});
