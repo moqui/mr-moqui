@@ -39,17 +39,18 @@ const EXPIRED_CREDENTIALS: &str = "moquiExpiredCredentials";
 /// Check the password and, on success, set the in-memory user.
 ///
 /// Unknown users, an empty username, and an empty password share one message.
-/// A bound web session rotates its id only after this password check succeeds.
+/// As in Java, a bound web session is renewed before the password is checked: its visit is closed and it moves to
+/// a new id and token, whether or not the password is right.
 ///
 /// A user who needs a second factor is not logged in. The password was right, so the session
-/// rotates and remembers the user in `moquiPreAuthcUsername` with `moquiAuthcFactorRequired`,
+/// remembers the user in `moquiPreAuthcUsername` with `moquiAuthcFactorRequired`,
 /// and this returns `Ok` with no current user, as Java's `loginUser` returns false without an
 /// error. The code then comes through `validate#ExternalUserAuthcCode` and [`internal_login_user`].
 pub fn login_user(username: &str, password: &str) -> Result<(), Error> {
-    if password_login(username, password)? {
-        session::rotate_on_password_login()?;
+    if !username.is_empty() && !password.is_empty() {
+        session::renew_for_login()?;
     }
-    Ok(())
+    password_login(username, password)
 }
 
 /// Check the password and set the user for one piece of work, as Java's `loginUser` paired with `logoutLocal`. The
@@ -75,9 +76,8 @@ impl Drop for LocalLogin {
     }
 }
 
-/// The password check and login of [`login_user`]. True when the session id should rotate: the password was right
-/// and the session did not already hold this user.
-fn password_login(username: &str, password: &str) -> Result<bool, Error> {
+/// The password check and login of [`login_user`].
+fn password_login(username: &str, password: &str) -> Result<(), Error> {
     clear_pre_authc();
     if username.is_empty() || password.is_empty() {
         return Err(Error::new(INVALID_LOGIN));
@@ -113,12 +113,9 @@ fn password_login(username: &str, password: &str) -> Result<bool, Error> {
         let account_username = text_field(&account, "username");
         session::set_session_attribute(PRE_AUTHC_USERNAME, Some(&account_username));
         session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
-        return Ok(true);
+        return Ok(());
     }
-    // A request repeating Basic credentials for the user its session already holds keeps its id.
-    let same_user = session::current_username()?.as_deref() == Some(username);
-    finish_login(&facade, &account, Some(password), true)?;
-    Ok(!same_user)
+    finish_login(&facade, &account, Some(password), true)
 }
 
 /// Every login starts by forgetting an earlier pre-authenticated user, so a finished login does

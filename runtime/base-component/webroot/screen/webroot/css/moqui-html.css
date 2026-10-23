@@ -13,7 +13,7 @@
     --link: #1a5fb4; --nav-bg: #22303f; --nav-fg: #e8edf2; --nav-line: #394b5e;
     --primary: #1a5fb4; --success: #2b8a3e; --danger: #c92a2a; --warning: #b9770e; --info: #0c7a9c; --default: #5c6b7a;
     --radius: 4px; --gap: 8px;
-    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -33,7 +33,7 @@
 /* ---------- page ---------- */
 
 *, *::before, *::after { box-sizing: border-box; }
-html { font-family: var(--font); font-size: 15px; line-height: 1.45; -webkit-text-size-adjust: 100%; }
+html { font-family: var(--font); font-size: 14px; line-height: 1.42857143; -webkit-text-size-adjust: 100%; }
 body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -209,10 +209,28 @@ details.panel > .body { padding: 8px 10px; }
 .form-signin input { display: block; width: 100%; font-size: 1.15em; margin-bottom: 6px; padding: 8px 10px; }
 .form-signin button { width: 100%; margin: 4px 0; }
 .form-signin ul { padding-left: 24px; }
-.Login .tabs ul { justify-content: center; flex-wrap: nowrap; overflow-x: auto; padding: 0; }
-.Login .tabs li { flex: 1 0 auto; text-align: center; }
-.Login .tabs li > a { padding: 6px 8px; white-space: nowrap; }
-.Login { padding-top: 24px; }
+/* the sign-in page keeps the sizes of the Bootstrap 3 page it replaces: tabs, stacked inputs, a large button */
+body.Login { background: #444 url("../images/pattern/cream_pixels.png") repeat; color: #222; }
+#content.Login > .inner { padding: 16px 15px; }
+.Login nav.form-signin { padding: 10px; margin: 0 auto; }
+.Login .tabs ul { flex-wrap: nowrap; justify-content: flex-start; gap: 0; margin: 0; padding: 0; border-bottom-color: #ddd; }
+.Login .tabs li { flex: none; margin-bottom: -1px; }
+.Login .tabs li > a { padding: 10px 6px; margin-right: 2px; line-height: 20px; white-space: nowrap; color: #337ab7; }
+.Login .tabs li > a:hover { background: #eee; border-color: #eee #eee #ddd; }
+.Login .tabs li.active > a { font-weight: 700; color: #555; background: #fff; border-color: #ddd #ddd transparent; margin-bottom: 0; }
+.Login form.form-signin { padding: 10px; margin: 0 auto; border-radius: 3px; }
+.Login .form-signin input { font-size: 1.2em; line-height: 1.42857143; padding: 6px 12px; margin: 0 0 -1px; color: #555; background: #fff;
+    border-color: #ccc; border-radius: 0; box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075); }
+.Login .form-signin input:required:invalid { background-color: #fee; }
+.Login .form-signin input::placeholder { color: #999; }
+.Login .form-signin input:focus { outline: 0; border-color: #66afe9; box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075), 0 0 8px rgba(102, 175, 233, .6); }
+.Login .form-signin input[type="hidden"] + input { border-top-left-radius: 4px; border-top-right-radius: 4px; }
+.Login .form-signin input:has(+ button) { border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; margin-bottom: 10px; }
+.Login .form-signin button[data-size="lg"] { padding: 10px 16px; font-size: 18px; line-height: 1.3333333; border-radius: 6px; }
+.Login [data-btn="primary"] { background: #337ab7; border-color: #2e6da4; }
+.Login [data-btn="danger"] { background: #d9534f; border-color: #d43f3a; }
+.Login #TestLoginLink { display: block; }
+.Login #TestLoginLink button { padding: 5px 10px; font-size: 12px; line-height: 1.5; border-radius: 3px; margin: 4px 0 0; }
 
 /* ---------- form-list ---------- */
 
