@@ -29,6 +29,14 @@
             <field name="note"><default-field><text-line/></default-field></field>
             <field name="all"><default-field title="Save"><submit/></default-field></field>
         </form-list>
+        <form-list name="MultiColumns" list="rowList" multi="true" transition="saveAll" paginate="false">
+            <field name="id"><default-field><display/></default-field></field>
+            <field name="add"><header-field title="Find"><submit/></header-field>
+                <default-field title="Add"><submit/></default-field></field>
+            <field name="note"><default-field><text-line/></default-field></field>
+            <form-list-column><field-ref name="id"/></form-list-column>
+            <form-list-column><field-ref name="note"/></form-list-column>
+        </form-list>
         <form-list name="Dialog" list="rowList" paginate="false" header-dialog="true">
             <field name="id"><header-field><text-find/></header-field><default-field><display/></default-field></field>
             <field name="title"><default-field><display/></default-field></field>
