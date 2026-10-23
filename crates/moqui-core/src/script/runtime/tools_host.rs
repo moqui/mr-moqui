@@ -92,6 +92,7 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.entity.getAllEntitiesInfo = host.getAllEntitiesInfo;
     ec.entity.getAllEntityInfo = host.getAllEntityInfo;
     ec.entity.getDatasourceGroupNames = host.getDatasourceGroupNames;
+    ec.entity.getDatabaseConfName = host.getDatabaseConfName;
     ec.entity.getEecaRuleCount = host.getEecaRuleCount;
     // Query statistics are a conf flag, off by default in Java (entity-facade@query-stats); the port does not keep them.
     ec.entity.getQueryStatsList = () => [];
@@ -1101,6 +1102,14 @@ fn pretty_name(
             Some(title.as_str()).filter(|text| !text.is_empty()),
             Some(base.as_str()).filter(|text| !text.is_empty()),
         ))
+    })
+}
+
+fn get_database_conf_name(ctx: Ctx<'_>, entity_name: String) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        facade_of(&ctx)?
+            .with_group(&entity_name, |_, dialect, _, _| Ok(dialect.name.clone()))
+            .map_err(|err| throw_lib(&ctx, &err))
     })
 }
 
@@ -2555,6 +2564,7 @@ pub(super) fn install<'js>(
     method!("entityDefinitionInfo", entity_definition_info);
     method!("prettyName", pretty_name);
     method!("getDatasourceGroupNames", get_datasource_group_names);
+    method!("getDatabaseConfName", get_database_conf_name);
     method!("getEecaRuleCount", get_eeca_rule_count);
     method!("eecaRuleTexts", eeca_rule_texts);
     method!("runSqlStatement", run_sql_statement);

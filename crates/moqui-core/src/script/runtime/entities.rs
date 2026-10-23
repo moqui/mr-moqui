@@ -1809,6 +1809,16 @@ mod tests {
     }
 
     #[test]
+    fn database_conf_name_uses_the_entity_datasource() {
+        let context = enumerations();
+        let _entered = context.enter();
+        holds("ec.entity.getDatabaseConfName('moqui.basic.Enumeration') === 'postgres'");
+        holds("ec.entity.getDatabaseConfName('Enumeration') === 'postgres'");
+        let missing = run_script("ec.entity.getDatabaseConfName('missing.Entity')").unwrap_err();
+        assert!(missing.to_string().contains("missing.Entity"), "{missing}");
+    }
+
+    #[test]
     fn tx_cache_db_refuses_flush_mode_and_needs_an_overlay() {
         let context = enumerations();
         let _entered = context.enter();
