@@ -21,9 +21,10 @@
 <#assign sheetUrl = sheet.indexOf("http") === 0 ? sheet : sri.buildUrl(sheet).url>
 <link rel="stylesheet" href="${sheetUrl}${(sheet.indexOf("http") !== 0 && sheetUrl.indexOf("?") < 0) ? "?v=" + ec.web.getResourceDistinctValue() : ""}">
 </#list>
+<#-- Request clients must exist before a body custom element connects; other head scripts stay deferred. -->
 <#list Array.from(new Set(Array.from(html_scripts || []).concat(sri.getThemeValues("STRT_SCRIPT")))) as script>
 <#assign scriptUrl = script.indexOf("http") === 0 ? script : sri.buildUrl(script).url>
-<script src="${scriptUrl}${(script.indexOf("http") !== 0 && scriptUrl.indexOf("?") < 0) ? "?v=" + ec.web.getResourceDistinctValue() : ""}" defer></script>
+<script src="${scriptUrl}${(script.indexOf("http") !== 0 && scriptUrl.indexOf("?") < 0) ? "?v=" + ec.web.getResourceDistinctValue() : ""}"<#if script != "/js/moqui-html.js" && script != "/js/MoquiLib.js"> defer</#if>></script>
 </#list>
 </head>
 <body class="${System.getProperty("instance_purpose") || "production"}${sri.getThemeValues("STRT_BODY_CLASS").map((item) => " " + item).join("")} ${sri.getScreenUrlInfo().targetScreen.screenName || ""}${hideNav == "true" ? " hide-nav" : ""}">

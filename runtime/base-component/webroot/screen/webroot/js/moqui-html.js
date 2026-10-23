@@ -10,7 +10,8 @@
     if (typeof module !== "undefined" && module.exports) module.exports = api.pure;
     if (root.document) {
         root.moqui = api.client;
-        api.client.start();
+        if (root.document.readyState === "loading") root.document.addEventListener("DOMContentLoaded", api.client.start, { once: true });
+        else api.client.start();
     }
 })(typeof window !== "undefined" ? window : globalThis, function (root) {
     "use strict";
