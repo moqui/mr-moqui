@@ -370,3 +370,23 @@ test('inline list filters match Java control height and submit alignment', () =>
     assert.equal(dark.shadow,'none');
     assert.equal(dark.color,'rgb(221, 227, 234)');
 });
+
+
+test('desktop navbar menus match Java type and spacing without button chrome', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><nav class="navbar">
+        <a class="brand"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='37.5' height='30'%3E%3C/svg%3E"></a>
+        <div id="navbar-buttons"><ul id="header-menus"><li><details class="menu" open><summary id="menu">Application</summary><ul><li><a href="#">Marble ERP</a></li></ul></details></li></ul><div id="navbar-menu-crumbs"><a class="crumb">Categories</a></div><a class="current">Find Category</a></div>
+        </nav><pre id="result"></pre><script>
+        const e=document.getElementById('menu'),s=getComputedStyle(e),r=e.getBoundingClientRect(),nav=document.querySelector('.navbar').getBoundingClientRect();
+        document.getElementById('result').textContent=JSON.stringify({font:s.fontSize,line:s.lineHeight,padding:s.padding,border:s.borderTopWidth,margin:s.margin,color:s.color,height:r.height,y:r.y,x:r.x,navbarHeight:nav.height,crumbY:document.querySelector('.crumb').getBoundingClientRect().y,menuOpen:document.querySelector('details').open});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-navbar-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const result=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(result,{font:'15.4px',line:'20px',padding:'15px 6px',border:'0px',margin:'0px',color:'rgb(187, 187, 187)',height:50,y:1,x:68.5,navbarHeight:51,crumbY:16,menuOpen:true});
+});
