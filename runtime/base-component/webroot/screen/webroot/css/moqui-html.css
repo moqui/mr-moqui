@@ -111,6 +111,16 @@ span.shaded-area { display: inline-block; white-space: normal; }
 .navbar button, .navbar summary { background: transparent; color: var(--nav-fg); border-color: var(--nav-line); }
 .navbar button:hover, .navbar summary:hover { background: rgba(255, 255, 255, .1); }
 .navbar details.menu > summary { padding: 4px 10px; }
+/* Java desktop navbar links are 50px menu surfaces, not bordered toolbar buttons. */
+@media (min-width: 768px) {
+    .navbar { gap: 16px; padding: 0 15px; border-top: 1px solid transparent; }
+    .navbar #header-menus { gap: 0; }
+    .navbar #header-menus details.menu > summary {
+        margin: 0; padding: 15px 6px; border: 0;
+        font-size: 1.1em; line-height: 20px; color: #bbb;
+    }
+    .navbar #navbar-menu-crumbs { margin-right: 15px; }
+}
 @media (max-width: 767px) {
     .navbar .nav-toggle { display: inline-block; margin-left: auto; }
     .navbar #navbar-buttons { display: none; flex-basis: 100%; }
