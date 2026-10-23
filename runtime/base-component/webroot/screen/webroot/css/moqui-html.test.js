@@ -562,13 +562,14 @@ test('raw headings use Java type scale while panel and dialog overrides remain i
 test('remote single selects retain full-width, empty-value and active-search control geometry', () => {
     const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
     const pluginCss=fs.readFileSync(path.join(__dirname,'../libs/tom-select/tom-select.css'),'utf8');
-    const wrapper=(id,text)=>`<div class="ts-wrapper single input-hidden has-items" id="${id}"><div class="ts-control"><div class="item">${text}</div><input type="text" size="1"></div></div>`;
+    const wrapper=(id,text)=>`<div class="ts-wrapper single ${text ? 'input-hidden has-items' : 'has-options'}" id="${id}"><div class="ts-control">${text ? `<div class="item">${text}</div>` : ''}<input type="text" size="1"></div></div>`;
     // Load plugin CSS last, as the client does after its first remote select.
     const html=`<!doctype html><html data-theme="light"><style>${css}</style><style>${pluginCss}</style>
         <div style="width:840px;padding:0 15px"><div class="field"><label>Owner</label><div class="widget">${wrapper('owner','ZIRET: Ziziwork Retail & Wholesale')}</div></div><div class="field"><label>Parent</label><div class="widget">${wrapper('empty','')}</div></div><div class="field" data-invalid><label>Invalid</label><div class="widget">${wrapper('invalid','Value')}</div></div></div>
+        <div class="field big-row"><div class="widget"><div class="big-item"><div class="field"><label>Time Period</label><div class="widget">${wrapper('inline-empty','')}</div></div></div> <div class="big-item"><div class="field"><div class="widget">${wrapper('inline-set','Value').replace('id="inline-set"','id="inline-set" style="width:215px"')}</div></div></div></div></div>
         <pre id="result"></pre><script>
         const metric=id=>{const e=document.querySelector('#'+id+' .ts-control'),s=getComputedStyle(e),r=e.getBoundingClientRect(),i=e.querySelector('input');return {width:r.width,height:r.height,padding:s.padding,font:s.fontSize,line:s.lineHeight,color:s.color,border:s.borderTopColor,shadow:s.boxShadow,inputHeight:i.getBoundingClientRect().height,arrow:getComputedStyle(e,'::after').borderTopWidth,outline:s.outlineStyle,offset:r.y-e.closest('.widget').getBoundingClientRect().y,fieldHeight:e.closest('.field').getBoundingClientRect().height}};
-        const light={owner:metric('owner'),empty:metric('empty'),invalid:metric('invalid')};
+        const light={owner:metric('owner'),empty:metric('empty'),invalid:metric('invalid'),inlineEmpty:metric('inline-empty'),inlineSet:metric('inline-set')};
         const owner=document.getElementById('owner');owner.classList.remove('input-hidden');owner.classList.add('input-active','focus');const active=metric('owner');
         document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,active,dark:metric('owner')});
         </script>`;
@@ -581,6 +582,7 @@ test('remote single selects retain full-width, empty-value and active-search con
     const {light,active,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     for(const m of [light.owner,light.empty,active,dark]) {assert.ok(Math.abs(m.width-670)<0.05);assert.equal(m.height,34);assert.equal(m.padding,'6px 24px 6px 12px');assert.equal(m.font,'14px');assert.equal(m.line,'20px');assert.equal(m.arrow,'4px');assert.equal(m.offset,-2);assert.equal(m.fieldHeight,32);}
     assert.equal(light.owner.color,'rgb(85, 85, 85)');assert.equal(light.owner.border,'rgb(204, 204, 204)');assert.notEqual(light.owner.shadow,'none');
+    assert.ok(Math.abs(light.inlineEmpty.width-79.890625)<0.05,JSON.stringify(light.inlineEmpty));assert.equal(light.inlineSet.width,215);
     assert.equal(light.invalid.border,'rgb(217, 83, 79)');assert.equal(active.outline,'solid');assert.equal(active.inputHeight,20);
     assert.equal(dark.color,'rgb(221, 227, 234)');assert.equal(dark.shadow,'none');assert.equal(dark.border,'rgb(52, 61, 72)');
 });
