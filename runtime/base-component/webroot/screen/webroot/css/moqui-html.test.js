@@ -59,6 +59,15 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
                 <td><div data-align="center" id="center-value"><span class="display Integer">7</span></div></td>
                 <td><div id="left-value"><span class="display">Sales</span></div></td></tr></tbody>
         </table>
+        <div style="width:690px" id="vertical-form">
+            <div class="field-row" id="vertical-pair"><div><div class="field" id="paired-date"><label>Date</label><div class="widget"><input type="datetime-local" value="2026-10-01T12:00"></div></div></div>
+                <div><div class="field"><label>Total</label><div class="widget"><span class="display">$0.00</span></div></div></div></div>
+            <div class="field" id="standalone-select"><label>Store</label><div class="widget"><select name="store"><option value="test" selected>Test store</option></select></div></div>
+            <div class="field" id="standalone-date"><label>Due Date</label><div class="widget"><input type="date" name="due" value="2026-10-31"></div></div>
+            <div class="field" id="multiline-select"><label>Settlement<br>Term</label><div class="widget"><select><option>Net 30</option></select></div></div>
+            <div class="field" id="baseline-textarea"><label>Message</label><div class="widget"><textarea name="message" rows="3">Invoice note</textarea></div></div>
+            <div id="following-control"><button>Update</button></div>
+        </div>
         <pre id="result"></pre><script>
         const measure = id => {
             const row = document.getElementById(id);
@@ -138,6 +147,18 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
                 scrollWidth:document.getElementById('overflow-wrapper').scrollWidth,
                 overflowX:getComputedStyle(document.getElementById('overflow-wrapper')).overflowX
             },
+            verticalMetrics: {
+                rows:['paired-date', 'standalone-select', 'standalone-date', 'multiline-select', 'baseline-textarea'].map(id => {
+                    const field=document.getElementById(id), widget=field.querySelector('.widget');
+                    const control=widget.querySelector('input,select,textarea');
+                    return { height:field.getBoundingClientRect().height, widgetHeight:widget.getBoundingClientRect().height,
+                        controlOffset:control.getBoundingClientRect().top - field.getBoundingClientRect().top,
+                        controlHeight:control.getBoundingClientRect().height };
+                }),
+                pairHeight:document.getElementById('vertical-pair').getBoundingClientRect().height,
+                followingGap:document.getElementById('following-control').getBoundingClientRect().top - document.getElementById('baseline-textarea').getBoundingClientRect().bottom,
+                values:[document.querySelector('#standalone-select select').value, document.querySelector('#standalone-date input').value, document.querySelector('#baseline-textarea textarea').value]
+            },
             tabMetrics: {
                 mixedHeight:document.querySelector('#mixed-tabs ul').getBoundingClientRect().height,
                 plainHeight:document.querySelector('#plain-tabs ul').getBoundingClientRect().height,
@@ -199,7 +220,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
     }
-    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    const { wide, titled, narrow, javaMetrics, formMetrics, lightStatus, darkStatus, widgetMetrics, gridMetrics, tableMetrics, alignmentMetrics, lightControls, darkControls, checkboxShadow, invalidBorder, focusOutline, tabMetrics, verticalMetrics } = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     // Java Bootstrap .form-control and select2-bootstrap use #555 text, #ccc borders and an inset shadow.
     assert.deepEqual(lightControls, Array(4).fill({ color:'rgb(85, 85, 85)', border:'rgb(204, 204, 204)',
         shadow:'rgba(0, 0, 0, 0.075) 0px 1px 1px 0px inset' }));
@@ -208,6 +229,16 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
     assert.equal(checkboxShadow, 'none');
     assert.equal(invalidBorder, 'rgb(217, 83, 79)');
     assert.deepEqual(focusOutline, ['solid', '2px', 'rgb(51, 122, 183)']);
+    // Java input-group/select2 have -2px top margins. Textareas retain their baseline descent.
+    // A paired static value and a multiline label still determine their respective row heights.
+    assert.deepEqual(verticalMetrics, {
+        rows:[{ height:32, widgetHeight:32, controlOffset:-2, controlHeight:34 },
+            { height:32, widgetHeight:32, controlOffset:-2, controlHeight:34 },
+            { height:32, widgetHeight:32, controlOffset:-2, controlHeight:34 },
+            { height:47, widgetHeight:32, controlOffset:-2, controlHeight:34 },
+            { height:79, widgetHeight:79, controlOffset:0, controlHeight:74 }],
+        pairHeight:49, followingGap:15, values:['test', '2026-10-31', 'Invoice note']
+    });
     // Bootstrap .nav-tabs gives every li a -1px bottom margin so links overlap the shared border.
     assert.deepEqual(tabMetrics, { mixedHeight:42, plainHeight:42, wrappedHeight:83,
         activeBottomGap:0, inactiveBottomGap:0, followingGap:8 });
