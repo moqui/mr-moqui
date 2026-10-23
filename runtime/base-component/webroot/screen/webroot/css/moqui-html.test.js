@@ -409,7 +409,7 @@ test('typed panels retain Java flat headings and semantic borders in both themes
     ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
     finally {fs.rmSync(profile,{recursive:true,force:true});}
     const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
-    assert.deepEqual(light.map(x=>x.color),['rgb(34, 34, 34)','rgb(49, 112, 143)','rgb(60, 118, 61)','rgb(138, 109, 59)','rgb(169, 68, 66)','rgb(255, 255, 255)']);
+    assert.deepEqual(light.map(x=>x.color),['rgb(51, 51, 51)','rgb(49, 112, 143)','rgb(60, 118, 61)','rgb(138, 109, 59)','rgb(169, 68, 66)','rgb(255, 255, 255)']);
     assert.deepEqual(light.map(x=>x.border),['rgb(221, 221, 221)','rgb(188, 232, 241)','rgb(214, 233, 198)','rgb(250, 235, 204)','rgb(235, 204, 209)','rgb(51, 122, 183)']);
     assert.deepEqual(dark.map(x=>x.color),['rgb(221, 227, 234)','rgb(47, 165, 201)','rgb(63, 163, 86)','rgb(216, 154, 47)','rgb(224, 86, 91)','rgb(255, 255, 255)']);
     for(const mode of [light,dark])for(const [i,x] of mode.entries()){
@@ -527,4 +527,33 @@ test('dashboard process lanes, arrows and raw quick-info containers match Java a
         assert.equal(m.mobile.display,width>=768?'none':'block');assert.equal(m.desktop.display,width>=768?'block':'none');
         assert.equal(m.quick[0].display,'inline-block');assert.equal(m.quick[0].margin,'0px 15px');assert.equal(m.quick[0].y,m.quick[1].y);
     }
+});
+
+
+test('raw headings use Java type scale while panel and dialog overrides remain intact', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>
+        ${[1,2,3,4,5,6].map(i=>`<h${i} id="heading-${i}">Heading <small id="small-${i}">Detail</small></h${i}><div class="h${i}" id="class-${i}">Heading</div>`).join('')}
+        <section class="box"><header id="panel"><h5 id="panel-title">Title</h5></header></section>
+        <dialog open><header><h4 id="dialog-title">Find Parameters</h4></header></dialog>
+        <pre id="result"></pre><script>
+        const metric=id=>{const s=getComputedStyle(document.getElementById(id));return {font:s.fontSize,weight:s.fontWeight,line:s.lineHeight,margin:s.margin,color:s.color}};
+        const light={headings:[1,2,3,4,5,6].map(i=>metric('heading-'+i)),classes:[1,2,3,4,5,6].map(i=>metric('class-'+i)),small:[1,2,3,4,5,6].map(i=>metric('small-'+i)),panel:metric('panel'),panelTitle:metric('panel-title'),dialog:metric('dialog-title')};
+        document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,dark:{heading:metric('heading-4'),panel:metric('panel')}});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-headings-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    assert.deepEqual(light.headings.map(x=>x.font),['36px','30px','24px','18px','14px','12px']);
+    assert.deepEqual(light.classes,light.headings);
+    for(const [i,h] of light.headings.entries()) {assert.equal(h.weight,'500');assert.ok(Math.abs(parseFloat(h.line)-parseFloat(h.font)*1.1)<0.01);assert.equal(h.margin,i<3?'20px 0px 10px':'10px 0px');}
+    assert.deepEqual(light.small.map(x=>x.font),['23.4px','19.5px','15.6px','13.5px','10.5px','9px']);
+    assert.ok(light.small.every(x=>x.weight==='400'&&x.color==='rgb(119, 119, 119)'));
+    assert.equal(light.panel.color,'rgb(51, 51, 51)');assert.equal(light.panelTitle.font,'16px');assert.equal(light.panelTitle.margin,'0px');
+    assert.equal(light.dialog.font,'18px');assert.equal(light.dialog.margin,'0px');
+    assert.equal(dark.heading.color,'rgb(221, 227, 234)');assert.equal(dark.panel.color,'rgb(221, 227, 234)');
 });

@@ -14,6 +14,7 @@
     --link: #337ab7; --nav-bg: #0c1b29; --nav-fg: #9d9d9d; --nav-line: #222;
     --primary: #337ab7; --success: #5cb85c; --danger: #d9534f; --warning: #f0ad4e; --info: #5bc0de; --default: #777;
     --shaded-bg: #f8f8f8; --shaded-inset: #f8f8f8; --shaded-shadow: #ccc;
+    --panel-default-fg: #333;
     --control-fg: #555; --control-border: #ccc; --control-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
     --filter-fg: #3c763d;
     --radius: 4px; --gap: 8px;
@@ -22,7 +23,7 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
         --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
-        --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
+        --panel-default-fg: var(--fg); --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
         --panel-info-fg: var(--info); --panel-success-fg: var(--success); --panel-warning-fg: var(--warning); --panel-danger-fg: var(--danger); --panel-typed-border: var(--line);
         --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
         --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
@@ -32,7 +33,7 @@
 :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #14181d; --panel: #1c2128; --fg: #dde3ea; --muted: #8b97a5; --line: #343d48; --stripe: #20262d; --hover: #29313a;
-    --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
+    --panel-default-fg: var(--fg); --control-fg: var(--fg); --control-border: var(--line); --control-shadow: none; --filter-fg: var(--success);
     --panel-info-fg: var(--info); --panel-success-fg: var(--success); --panel-warning-fg: var(--warning); --panel-danger-fg: var(--danger); --panel-typed-border: var(--line);
     --link: #6cb0ff; --nav-bg: #0f1318; --nav-line: #2a333d;
     --primary: #3b82d6; --success: #3fa356; --danger: #e0565b; --warning: #d89a2f; --info: #2fa5c9; --default: #7d8b99;
@@ -47,8 +48,15 @@ html { font-family: var(--font); font-size: 14px; line-height: 1.42857143; -webk
 body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
-h1, h2, h3, h4, h5 { margin: .6em 0 .4em; line-height: 1.2; }
-h4 { font-size: 1.1rem; } h5 { font-size: 1rem; }
+/* Bootstrap heading metrics used by Java's raw label elements and dialogs. */
+h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6 { font-family: inherit; font-weight: 500; line-height: 1.1; color: inherit; }
+h1, h2, h3, .h1, .h2, .h3 { margin-top: 20px; margin-bottom: 10px; }
+h4, h5, h6, .h4, .h5, .h6 { margin-top: 10px; margin-bottom: 10px; }
+h1, .h1 { font-size: 36px; } h2, .h2 { font-size: 30px; } h3, .h3 { font-size: 24px; }
+h4, .h4 { font-size: 18px; } h5, .h5 { font-size: 14px; } h6, .h6 { font-size: 12px; }
+:is(h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6) :is(small, .small) { font-weight: 400; line-height: 1; color: var(--muted); }
+:is(h1, h2, h3, .h1, .h2, .h3) :is(small, .small) { font-size: 65%; }
+:is(h4, h5, h6, .h4, .h5, .h6) :is(small, .small) { font-size: 75%; }
 p { margin: 0 0 var(--gap); }
 address { margin: 0 0 4px; font-style: normal; line-height: 1.42857143; }
 code, pre, tt { font-family: ui-monospace, "Courier New", monospace; }
@@ -203,7 +211,7 @@ details.menu li.active > a { font-weight: 600; }
 
 section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
 /* Java Bootstrap panel headings plus webroot-layout.css's toolbar/body rules. */
-section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: transparent; border-radius: var(--radius) var(--radius) 0 0; }
+section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: transparent; color: var(--panel-default-fg); border-radius: var(--radius) var(--radius) 0 0; }
 section.box > header h5 { display: inline-block; margin: 0; font-size: 16px; font-weight: 500; line-height: 1.1; }
 section.box > header .toolbar { position: absolute; top: 0; right: 0; }
 section.box > .body { padding: 8px; }
