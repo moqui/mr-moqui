@@ -306,7 +306,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         inlineStaticHeight: 34, linkHeight: 34,
         fieldGap: '15px', labelPadding: '7px', tableControlPadding: '6px 12px', tableControlHeight: 34,
         tableDisplayHeight: 20, tableFieldGap: '0px',
-        bigRowGap: '8px', bigItemGap: '0px'
+        bigRowGap: '15px', bigItemGap: '0px'
     });
     for (const status of [lightStatus, darkStatus]) {
         assert.equal(status.listStyle, 'none');
@@ -643,7 +643,7 @@ test('badges retain fixed Bootstrap metrics and button contrast across text size
     assert.equal(dark.background,'rgb(221, 227, 234)');assert.equal(dark.color,'rgb(28, 33, 40)');
 });
 
-test('centered untitled search rows follow inline text flow and wrap at narrow widths', () => {
+test('untitled search rows follow inline text flow and wrap at narrow widths', () => {
     const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
     const row=id=>`<div class="field big-row" id="${id}"><div class="widget"><div class="big-item"><div class="field"><div class="widget"><select><option>Any Type</option><option>Communication Event</option></select></div></div></div>
         <div class="big-item"><div class="field"><div class="widget"><input size="25"></div></div></div>
@@ -665,7 +665,9 @@ test('centered untitled search rows follow inline text flow and wrap at narrow w
     assert.ok(Math.abs(select.y-input.y)<2, 'native select and text control stay on the same line');assert.equal(button.height,30);
     assert.ok(m.narrow.controls[1].y>m.narrow.controls[0].y);
     for(const r of m.narrow.controls) assert.ok(r.x>=0&&r.x+r.width<=300);
-    assert.equal(m.plain.gap,'20px');assert.equal(m.plain.controls[0].x,15);
+    assert.equal(m.plain.controls[0].x,15);
+    assert.ok(Math.abs(m.plain.controls[1].x-m.plain.controls[0].x-m.plain.controls[0].width-3.890625)<0.05);
+    assert.ok(Math.abs(m.plain.controls[2].x-m.plain.controls[1].x-m.plain.controls[1].width-3.890625)<0.05);
 });
 
 test('disabled text links use source muted colors while button surfaces fade', () => {
