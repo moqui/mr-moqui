@@ -615,3 +615,30 @@ test('titled big rows align with normal labels and preserve native inline spacin
     assert.equal(m.city.y,m.zip.y);assert.equal(m.zip.y,m.ext.y);
     assert.equal(m.labelHeight,47);assert.equal(m.label.height,47);assert.equal(m.margin,'15px');assert.equal(m.untitledGap,'20px');
 });
+
+
+test('badges retain fixed Bootstrap metrics and button contrast across text sizes', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>
+        <div style="font-size:40px"><span class="badge" id="plain">0</span><span class="badge" id="empty"></span></div>
+        <a data-btn="default">Placed <span class="badge" id="default">0</span></a>
+        <a data-btn="primary">Placed <span class="badge" id="primary">12</span></a>
+        <a data-btn="success">Placed <span class="badge" id="success">12</span></a>
+        <a data-btn="default" data-size="xs">Placed <span class="badge" id="xs">0</span></a>
+        <pre id="result"></pre><script>
+        const metric=id=>{const e=document.getElementById(id),s=getComputedStyle(e);return {height:e.getBoundingClientRect().height,font:s.fontSize,weight:s.fontWeight,line:s.lineHeight,padding:s.padding,background:s.backgroundColor,color:s.color,top:s.top,display:s.display}};
+        const light=Object.fromEntries(['plain','empty','default','primary','success','xs'].map(id=>[id,metric(id)]));
+        document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,dark:metric('default')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-badge-'));let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    for(const m of [light.plain,light.default,light.primary,light.success]) {assert.equal(m.font,'12px');assert.equal(m.height,18);assert.equal(m.weight,'700');assert.equal(m.line,'12px');assert.equal(m.padding,'3px 7px');}
+    assert.equal(light.empty.display,'none');assert.equal(light.default.top,'-1px');assert.equal(light.default.background,'rgb(51, 51, 51)');assert.equal(light.default.color,'rgb(255, 255, 255)');
+    assert.equal(light.primary.color,'rgb(51, 122, 183)');assert.equal(light.primary.background,'rgb(255, 255, 255)');assert.equal(light.success.color,'rgb(92, 184, 92)');
+    assert.equal(light.xs.height,14);assert.equal(light.xs.top,'0px');assert.equal(light.xs.padding,'1px 5px');
+    assert.equal(dark.background,'rgb(221, 227, 234)');assert.equal(dark.color,'rgb(28, 33, 40)');
+});
