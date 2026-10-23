@@ -366,6 +366,12 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .field.big-row > .widget:first-child { grid-column: 1 / -1; }
 .big-item .field { grid-template-columns: 1fr; margin-bottom: 0; }
 .big-item .field > label { text-align: left; padding-top: 0; }
+/* Centered source columns use the inline text flow of field-row-big, including whitespace between items. */
+:is(.text-center, .center) .field.big-row:not(:has(> label)) { margin-bottom: 15px; }
+:is(.text-center, .center) .field.big-row:not(:has(> label)) > .widget { display: block; }
+:is(.text-center, .center) .field.big-row:not(:has(> label)) > .widget > .big-item { display: inline-block; }
+:is(.text-center, .center) .field.big-row:not(:has(> label)) > .widget > .big-item > .field { display: block; }
+
 .field-group > h5 { border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 details.panel { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 6px; background: var(--panel); }
 details.panel > summary { display: block; margin: 0; border: 0; border-radius: var(--radius); text-align: left; background: var(--stripe); font-weight: 600; }
