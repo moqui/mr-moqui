@@ -1673,8 +1673,26 @@
                 return transition ? sri.getFieldTransitionValue(transition, n, value, "label", false) || "" : value;
             }
             if (type === "display-entity") return sri.getFieldEntityValue(n) || "";
-            if (type === "drop-down" || type === "check" || type === "radio") {
-                const current = type === "drop-down" ? sri.getFieldValuePlainString(fieldOf(n), "") : sri.getFieldValueString(n);
+            if (type === "drop-down") {
+                let current = sri.getFieldValuePlainString(fieldOf(n), "") || xn(at(n, "no-current-selected-key"));
+                if (current.indexOf("[") === 0) current = current.substring(1, current.length - 1).replace(/ /g, "");
+                if (!current) return "";
+                const multiple = xn(at(n, "allow-multiple")) === "true";
+                const values = current.split(",");
+                if (!multiple) values.length = 1;
+                const options = sri.getFieldOptions(n);
+                const dynamic = first(n, "dynamic-options");
+                const text = values.map((value) => {
+                    if (dynamic && !first(n, "list-options")) {
+                        return sri.getFieldTransitionValue(at(dynamic, "transition"), dynamic, value,
+                            at(dynamic, "label-field") || "label", false) || value;
+                    }
+                    return options.get(value) || (!multiple && at(n, "current-description") ? x(at(n, "current-description")) : "") || value;
+                }).join(", ");
+                return text + (param(name + "_not") === "Y" ? " (" + L("Not") + ")" : "");
+            }
+            if (type === "check" || type === "radio") {
+                const current = sri.getFieldValueString(n);
                 if (!current) return "";
                 const options = sri.getFieldOptions(n);
                 const text = current.split(",").map((part) => options.get(part) || part).join(", ");

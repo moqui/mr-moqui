@@ -199,3 +199,66 @@ test('radio choices preserve selection and clickable escaped text with native in
     assert.match(html,/<span id="StoreForm_disabled_1" class="radio-choice"><label><input type="radio" name="disabled" value="N" checked>&nbsp;N<\/label><\/span>/);
     assert.equal((html.match(/ checked/g)||[]).length,1);
 });
+
+for (const mode of ['Html', 'Qvt']) {
+    test(`${mode}: dynamic filter summaries use configured labels with ID fallback`, () => {
+        const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, `Screen${mode}.js`), 'utf8'));
+        const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
+            anyMacros: () => ({}), allElements: [], opaqueElements: []
+        });
+        let current = 'ORG_TEST,Missing';
+        const calls = [];
+        const dynamic = { name: 'dynamic-options', attrs: { transition: 'partyLookup', 'label-field': 'partyLabel' } };
+        const widget = { name: 'drop-down', attrs: { 'allow-multiple': 'true' }, children: [dynamic], parent: {
+            parent: { attrs: { name: 'fromPartyId' } }
+        } };
+        const context = {
+            sri: {
+                getFieldValuePlainString: () => current,
+                getFieldValueString: () => current,
+                getFieldOptions: () => new Map([['Static', 'Static label']]),
+                getFieldTransitionValue: (...args) => {
+                    calls.push(args);
+                    return args[2] === 'ORG_TEST' ? 'Example <&> Company' : '';
+                }
+            },
+            ec: {
+                context: { get: () => null },
+                web: { parameters: { fromPartyId_not: 'Y' } },
+                resource: { expand: text => text.replace('${description}', 'Current description') },
+                l10n: { localize: text => text }
+            }
+        };
+        vm.runInNewContext(module.runtime, context);
+        const summary = () => context[`$mq${mode}`].valueText(widget);
+        assert.equal(summary(), 'Example <&> Company, Missing (Not)');
+        assert.deepEqual(calls[0], ['partyLookup', dynamic, 'ORG_TEST', 'partyLabel', false]);
+        calls.length = 0;
+        current = '[ORG_TEST, Missing]';
+        assert.equal(summary(), 'Example <&> Company, Missing (Not)');
+        widget.attrs['allow-multiple'] = 'false';
+        assert.equal(summary(), 'Example <&> Company (Not)');
+        delete dynamic.attrs['label-field'];
+        calls.length = 0;
+        summary();
+        assert.equal(calls[0][3], 'label');
+        widget.children.push({ name: 'list-options' });
+        calls.length = 0;
+        current = 'Static';
+        assert.equal(summary(), 'Static label (Not)');
+        assert.equal(calls.length, 0);
+        current = 'ORG_TEST';
+        widget.attrs['current-description'] = '${description}';
+        assert.equal(summary(), 'Current description (Not)');
+        assert.equal(calls.length, 0);
+        delete widget.attrs['current-description'];
+        widget.children = [];
+        assert.equal(summary(), 'ORG_TEST (Not)');
+        widget.attrs['no-current-selected-key'] = 'Static';
+        current = '';
+        assert.equal(summary(), 'Static label (Not)');
+        delete widget.attrs['no-current-selected-key'];
+        current = '';
+        assert.equal(summary(), '');
+    });
+}
