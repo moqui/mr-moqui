@@ -9,6 +9,7 @@
         <set field="rowListPageRangeLow" from="41"/>
         <set field="rowListPageRangeHigh" from="60"/>
         <set field="orderByField" value="-id"/>
+        <set field="workEffortId" value="WE1"/>
     </actions>
     <widgets>
         <form-list name="Rich" list="rowList" show-csv-button="true" show-all-button="true" style="wide">
@@ -29,7 +30,8 @@
             <field name="note"><default-field><text-line/></default-field></field>
             <field name="all"><default-field title="Save"><submit/></default-field></field>
         </form-list>
-        <form-list name="MultiColumns" list="rowList" multi="true" transition="saveAll" paginate="false">
+        <form-list name="MultiColumns" list="rowList" multi="true" transition="saveAll" paginate="false" header-dialog="true">
+            <hidden-parameters><parameter name="workEffortId"/></hidden-parameters>
             <field name="id"><default-field><display/></default-field></field>
             <field name="add"><header-field title="Find"><submit/></header-field>
                 <default-field title="Add"><submit/></default-field></field>
