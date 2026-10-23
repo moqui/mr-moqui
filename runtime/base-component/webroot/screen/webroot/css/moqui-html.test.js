@@ -759,3 +759,46 @@ test('table display identifiers keep words intact while descriptive text wraps a
     const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     assert.equal(m.id.lines,1);assert.equal(m.id.height,20);assert.equal(m.id.wrap,'normal');assert.ok(m.description.lines>1);assert.equal(m.description.wrap,'normal');
 });
+
+test('field rows retain two desktop columns with a lone field and stack on mobile', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const field=name=>`<div><div class="field"><label>${name}</label><div class="widget"><input></div></div></div>`;
+    const html=`<!doctype html><html><style>${css}</style><div style="width:min(690px,100%);padding:0 15px"><div class="field-row" id="single">${field('Country of Origin')}</div><div class="field-row" id="triple">${['First','Second','Third'].map(field).join('')}</div></div><pre id="result"></pre><script>
+        const measure=id=>{const e=document.getElementById(id),r=e.getBoundingClientRect();return {width:r.width,cells:[...e.children].map(c=>{const b=c.getBoundingClientRect();return {x:b.x-r.x,y:b.y-r.y,width:b.width}})}};
+        document.getElementById('result').textContent=JSON.stringify({single:measure('single'),triple:measure('triple')});
+        </script>`;
+    for(const width of [1440,600]) {
+        const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-field-columns-'));let dom;
+        try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--window-size='+width+',1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+        finally {fs.rmSync(profile,{recursive:true,force:true});}
+        const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+        const columns=width===1440?2:1;
+        assert.equal(m.single.cells[0].width,m.single.width/columns);
+        assert.ok(m.triple.cells.every(c=>c.width===m.triple.width/columns));
+        assert.equal(m.triple.cells[2].x,0);
+        assert.ok(m.triple.cells[2].y>m.triple.cells[0].y);
+        if(columns===2)assert.equal(m.triple.cells[1].y,m.triple.cells[0].y);
+        else assert.ok(m.triple.cells[1].y>m.triple.cells[0].y);
+    }
+});
+
+test('nested columns use their own breakpoints without inheriting parent widths', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const html=`<!doctype html><html><style>${css}</style><div style="width:min(900px,100%);padding:0 15px"><div class="row"><div class="col" style="--lg:7"><div class="row" id="nested"><div class="col" style="--sm:7">Date</div><div class="col" style="--sm:5">Available</div></div></div></div></div><pre id="result"></pre><script>
+        const e=document.getElementById('nested'),r=e.getBoundingClientRect();document.getElementById('result').textContent=JSON.stringify({width:r.width,cells:[...e.children].map(c=>{const b=c.getBoundingClientRect();return {x:b.x-r.x,y:b.y-r.y,width:b.width}})});
+        </script>`;
+    for(const width of [1440,600]) {
+        const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-nested-columns-'));let dom;
+        try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',['--headless','--disable-gpu','--window-size='+width+',1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+        finally {fs.rmSync(profile,{recursive:true,force:true});}
+        const m=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+        if(width===1440) {
+            assert.equal(m.cells[0].y,m.cells[1].y);
+            assert.ok(Math.abs(m.cells[0].width-m.width*7/12)<0.02);
+            assert.ok(Math.abs(m.cells[1].width-m.width*5/12)<0.02);
+        } else {
+            assert.ok(m.cells.every(c=>c.width===m.width&&c.x===0));
+            assert.ok(m.cells[1].y>m.cells[0].y);
+        }
+    }
+});

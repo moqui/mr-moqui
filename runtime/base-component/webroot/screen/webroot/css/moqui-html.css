@@ -193,7 +193,7 @@ details.menu li.active > a { font-weight: 600; }
 /* ---------- containers ---------- */
 
 .row { display: flex; flex-wrap: wrap; margin: 0 -15px; }
-.row > .col { --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 15px; }
+.row > .col { --xs: initial; --sm: initial; --md: initial; --lg: initial; --c: var(--xs, 12); flex: 0 0 calc(var(--c) * 100% / 12); max-width: calc(var(--c) * 100% / 12); padding: 0 15px; }
 @media (min-width: 768px) { .row > .col { --c: var(--sm, var(--xs, 12)); } }
 @media (min-width: 992px) { .row > .col { --c: var(--md, var(--sm, var(--xs, 12))); } }
 @media (min-width: 1200px) { .row > .col { --c: var(--lg, var(--md, var(--sm, var(--xs, 12)))); } }
@@ -365,7 +365,7 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .radio-choice input[type="radio"] { margin: 4px 0 0; vertical-align: baseline; line-height: normal; }
 .field[data-submit] > .label { visibility: hidden; }
 @media (max-width: 639px) { .field { grid-template-columns: 1fr; } .field > label, .field > .label { text-align: left; padding-top: 0; } .field[data-submit] > .label { display: none; } }
-.field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(22em, 100%), 1fr)); column-gap: 16px; }
+.field-row { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 16px; }
 .field-row > div > .field { grid-template-columns: minmax(6em, 33%) minmax(0, 1fr); }
 .field.big-row { margin-bottom: 8px; }
 .big-row > .widget { display: flex; flex-wrap: wrap; gap: 0 20px; }
@@ -530,7 +530,7 @@ table.form-list .filter-summary .filter-clear {
     .field.big-row:has(> label) > .widget { display: block; padding-left: 15px; padding-right: 15px; }
     .field.big-row:has(> label) > .widget > .big-item { display: inline-block; }
     .field.big-row:has(> label) > .widget > .big-item > .field { display: block; }
-    .field-row { margin: 0 -15px; column-gap: 0; }
+    .field-row { margin: 0 -15px; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 0; }
     .field-row > div { padding: 0 15px; }
     .field-row > div > .field { grid-template-columns: calc(100% / 3) minmax(0, 1fr); }
     .big-item .field { grid-template-columns: 1fr; }
