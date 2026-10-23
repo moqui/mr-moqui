@@ -165,3 +165,55 @@ fn menu_data_lists_what_the_user_may_view_and_runs_the_pre_actions_for_titles() 
     assert_eq!(status, 404);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An app's menu item shows the app's own image, as Java's `sui.menuImage`: the image of its default subscreen,
+/// which the walk reaches but the path does not name, does not replace it.
+#[test]
+fn menu_items_take_the_image_of_the_named_screen_not_its_default_subscreen() {
+    let dir = std::env::temp_dir().join(format!("moqui-menu-image-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/Apps/App")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false">
+            <subscreens default-item="Apps"/>
+            <widgets><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/Apps.xml",
+        r#"<screen require-authentication="false">
+            <subscreens default-item="List">
+                <subscreens-item name="List" menu-include="false" location="{dir}/Root/Apps/List.xml"/>
+                <subscreens-item name="App" menu-title="App" location="{dir}/Root/Apps/App.xml"/>
+            </subscreens>
+            <widgets><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/Apps/List.xml",
+        r#"<screen require-authentication="false"><widgets><render-mode><text type="html"><![CDATA[<#list sri.getMenuItems("/Apps") as item>[${item.name}:${item.image}:${item.imageType}]</#list>]]></text></render-mode></widgets></screen>"#,
+    );
+    write(
+        "Root/Apps/App.xml",
+        r#"<screen require-authentication="false" menu-image="fa fa-cogs" menu-image-type="icon">
+            <subscreens default-item="Dash">
+                <subscreens-item name="Dash" location="{dir}/Root/Apps/App/Dash.xml"/>
+            </subscreens>
+            <widgets><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/Apps/App/Dash.xml",
+        r#"<screen require-authentication="false" menu-image="fa fa-tachometer" menu-image-type="icon"><widgets/></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let response = serve_at(&world.factory, request("GET", "/Apps/List"), &root);
+    let body = response.body_text();
+    assert_eq!(response.status, 200, "{body}");
+    assert!(body.contains("[App:fa fa-cogs:icon]"), "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
