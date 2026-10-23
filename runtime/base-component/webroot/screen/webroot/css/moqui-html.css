@@ -178,6 +178,29 @@ details.menu li.active > a { font-weight: 600; }
 @media (min-width: 992px) { .row > .col { --c: var(--md, var(--sm, var(--xs, 12))); } }
 @media (min-width: 1200px) { .row > .col { --c: var(--lg, var(--md, var(--sm, var(--xs, 12)))); } }
 
+
+/* Java's raw screen containers use these independently of the form big-row widget. */
+.big-row-item { display: inline-block; margin-left: 15px; margin-right: 15px; }
+.big-row-item input, .big-row-item select { display: inline-block; }
+
+/* Marble's three-lane business process map (webroot-layout.css). */
+.diagram-sequence { align-items: flex-start; font-size: 16px; text-align: center; width: 900px; max-width: 100%; margin-left: auto; margin-right: auto; }
+.diagram-sequence > div { border-right: rgb(127, 127, 127) dashed thin; }
+.diagram-sequence > div:first-child { border-left: rgb(127, 127, 127) dashed thin; }
+.diagram-sequence p { margin-bottom: 10px; }
+.diagram-sequence-item { position: relative; border-bottom: rgb(127, 127, 127) solid 2px; margin-bottom: 8px; }
+.diagram-sequence-item.smaller { font-size: 14px; }
+.diagram-sequence-item i.left { position: absolute; font-size: 14px; bottom: -8px; left: -2px; color: rgb(127, 127, 127); }
+.diagram-sequence-item i.left::before { content: "\f053"; }
+.diagram-sequence-item i.right { position: absolute; font-size: 14px; bottom: -8px; right: -2px; color: rgb(127, 127, 127); }
+.diagram-sequence-item i.right::before { content: "\f054"; }
+.diagram-sequence-actor { font-size: larger; font-weight: bold; margin-bottom: 14px; border-top: rgb(127, 127, 127) solid 1px; border-bottom: rgb(127, 127, 127) solid 1px; }
+.visible-xs-block { display: none !important; }
+@media (max-width: 767px) {
+    .visible-xs-block { display: block !important; }
+    .hidden-xs { display: none !important; }
+}
+
 section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
 /* Java Bootstrap panel headings plus webroot-layout.css's toolbar/body rules. */
 section.box > header { position: relative; padding: 10px 15px; border-bottom: 1px solid transparent; background: transparent; border-radius: var(--radius) var(--radius) 0 0; }
