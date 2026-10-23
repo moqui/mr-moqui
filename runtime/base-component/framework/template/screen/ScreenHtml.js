@@ -1276,8 +1276,13 @@
             return sri.getFieldValueString(n);
         };
 
+        // A section rendered inside a form (a section-iterate in a form-list cell) is a unit of its own; it starts
+        // clean and gives the enclosing form back its row's owner form and ids, as Java's separate template does.
+        const save = () => Object.assign({}, st);
+        const restore = (saved) => { reset(); Object.assign(st, saved); };
+
         const h = {
-            reset, e, lib, fid, fnm,
+            reset, save, restore, e, lib, fid, fnm,
             textLine, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
             dropDown, check: (n) => checkOrRadio(n, "checkbox"), radio: (n) => checkOrRadio(n, "radio"), display, displayEntity,
             image, label, link, editable, containerDialog, dynamicDialog, dynamicContainer, tree,
@@ -1292,7 +1297,8 @@
     };
 
     const runtime = "(" + runtimeFunction.toString() + ")();";
-    const prelude = "const $h = globalThis.$mqHtml;\n$h.reset();\n";
+    const prelude = "const $h = globalThis.$mqHtml;\nconst $saved = $h.save();\n$h.reset();\n";
+    const epilogue = "$h.restore($saved);\n";
 
     // ---- macros ----
 
@@ -1775,5 +1781,5 @@
     // button-menu hands the macros of its items to its own macro, which writes them in list items.
     const opaque = S.opaqueElements.filter((name) => name !== "button-menu");
 
-    return { macros, opaque, prelude, runtime };
+    return { macros, opaque, prelude, epilogue, runtime };
 })

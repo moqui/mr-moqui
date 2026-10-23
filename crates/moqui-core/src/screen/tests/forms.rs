@@ -823,6 +823,50 @@ fn an_aggregated_form_list_groups_rows_with_sub_rows_and_totals() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A section-iterate in a form-list cell renders as a unit of its own; the cells after it still belong to the row's
+/// form, as in Java, so the row's submit posts the row.
+#[test]
+fn a_section_in_a_form_list_cell_keeps_the_rows_form_for_the_cells_after_it() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-section-cell-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("Form.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false">
+    <transition name="pack"><default-response url="."/></transition>
+    <actions>
+        <script>lines = [{item: 'Bolt', parts: ['a', 'b']}]</script>
+    </actions>
+    <widgets>
+        <form-list name="Lines" list="lines" transition="pack">
+            <field name="item"><default-field><display/></default-field></field>
+            <field name="parts"><default-field>
+                <section-iterate name="PartSection" list="parts" entry="part"><widgets>
+                    <label text="${part}"/>
+                </widgets></section-iterate>
+            </default-field></field>
+            <field name="quantity"><default-field><text-line size="6"/></default-field></field>
+            <field name="packButton"><default-field><submit/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let html = serve_at(&world.factory, request("GET", "/"), &root).body_text();
+    assert!(html.contains("id=\"Lines_0\""), "the row's form: {html}");
+    assert!(
+        html.contains("id=\"Lines_quantity_0\"") && html.contains("id=\"Lines_packButton_0\""),
+        "{html}"
+    );
+    let button = &html[html.find("id=\"Lines_packButton_0\"").unwrap()..];
+    assert!(button[..button.find('>').unwrap()].contains("form=\"Lines_0\""), "{html}");
+    let quantity = &html[html.find("id=\"Lines_quantity_0\"").unwrap()..];
+    assert!(quantity[..quantity.find('>').unwrap()].contains("form=\"Lines_0\""), "{html}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `{screen}/actions/{tree}` answers the jstree nodes of a tree: the root's sub-nodes for `treeNodeId=#`, a node's own
 /// for its id and `treeNodeName`, with the children of the nodes on `treeOpenPath`.
 #[test]
