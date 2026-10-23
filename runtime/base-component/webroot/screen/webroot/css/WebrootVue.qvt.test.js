@@ -78,3 +78,41 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
         muted: 'rgb(97, 97, 97)', chipColor: 'rgb(1, 2, 3)', chipTinted: true, containerOverflow: 'auto', selNarrow: true
     });
 });
+
+test('list typography preserves Java text size and multiline row heights in both densities and themes', () => {
+    const css = fs.readFileSync(path.join(__dirname, 'WebrootVue.qvt.css'), 'utf8');
+    const quasar = fs.readFileSync(path.join(__dirname, '../libs/quasar/quasar.prod.css'), 'utf8');
+    const table = (theme, dense) => `<div class="${theme === 'dark' ? 'body--dark' : ''}">
+        <div data-case="${theme}-${dense}" class="q-table__container q-table--horizontal-separator ${dense ? 'q-table--dense' : ''} ${theme === 'dark' ? 'q-table--dark' : ''}">
+            <div class="q-table table"><div class="thead"><div class="tr"><div class="th">Product</div><div class="th">Type</div></div></div>
+                <div class="tbody"><div class="tr"><div class="td"><div>DEMO_1_1</div><div>Demo Product One-One</div></div><div class="td">Inventory</div></div>
+                    <div class="tr"><div class="td">DEMO_1_2</div><div class="td">Inventory</div></div></div>
+            </div>
+        </div></div>`;
+    const html = `<!DOCTYPE html><style>${quasar}\n${css}</style>` +
+        ['light', 'dark'].flatMap(theme => [false, true].map(dense => table(theme, dense))).join('') +
+        `<pre id="result"></pre><script>
+            document.getElementById('result').textContent = JSON.stringify([...document.querySelectorAll('[data-case]')].map(table => {
+                const cell = table.querySelector('.tbody .td'), heading = table.querySelector('.th');
+                return { name: table.dataset.case, headerSize: getComputedStyle(heading).fontSize,
+                    bodySize: getComputedStyle(cell).fontSize, lineHeight: getComputedStyle(cell).lineHeight,
+                    rowHeight: cell.getBoundingClientRect().height };
+            }));
+        </script>`;
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'moqui-list-type-'));
+    try {
+        const fixture = path.join(profile, 'fixture.html');
+        fs.writeFileSync(fixture, html);
+        const dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
+            '--headless', '--disable-gpu', '--user-data-dir=' + profile, '--dump-dom', 'file://' + fixture
+        ], { encoding: 'utf8', timeout: 20000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+        const match = dom.match(/<pre id="result">([^<]+)<\/pre>/);
+        assert.ok(match, 'browser did not report table metrics');
+        const result = JSON.parse(match[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
+        assert.deepEqual(result, ['light', 'dark'].flatMap(theme => [false, true].map(dense => ({
+            name: `${theme}-${dense}`, headerSize: '13px', bodySize: '14px', lineHeight: '21px', rowHeight: dense ? 51 : 57
+        }))));
+    } finally {
+        fs.rmSync(profile, { recursive: true, force: true });
+    }
+});
