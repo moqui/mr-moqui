@@ -377,6 +377,11 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 .field.big-row:not(:has(> label)) > .widget { display: block; }
 .field.big-row:not(:has(> label)) > .widget > .big-item { display: inline-block; max-width: 100%; }
 .field.big-row:not(:has(> label)) > .widget > .big-item > .field { display: block; }
+/* Java big-row field labels are block control-labels above each widget. */
+.field.big-row:not(:has(> label)) > .widget > .big-item > .field > label { display: block; }
+@media (min-width: 768px) {
+    .field.big-row:not(:has(> label)) > .widget > .big-item > .field > label { padding-top: 7px; }
+}
 
 .field-group > h5 { border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 details.panel { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 6px; background: var(--panel); }

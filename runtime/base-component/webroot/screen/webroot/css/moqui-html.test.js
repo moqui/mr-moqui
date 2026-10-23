@@ -648,9 +648,10 @@ test('untitled search rows follow inline text flow and wrap at narrow widths', (
     const row=id=>`<div class="field big-row" id="${id}"><div class="widget"><div class="big-item"><div class="field"><div class="widget"><select><option>Any Type</option><option>Communication Event</option></select></div></div></div>
         <div class="big-item"><div class="field"><div class="widget"><input size="25"></div></div></div>
         <div class="big-item"><div class="field"><div class="widget"><button data-btn="primary">Search</button></div></div></div></div></div>`;
-    const html=`<!doctype html><html data-theme="light"><style>${css}</style><div style="width:720px;padding:0 15px" class="text-center">${row('wide')}</div><div style="width:300px;padding:0 15px" class="text-center">${row('narrow')}</div><div style="width:720px;padding:0 15px">${row('plain')}</div><pre id="result"></pre><script>
+    const labeled=`<div class="field big-row" id="labeled"><div class="widget"><div class="big-item"><div class="field"><label>Organization with a long title</label><div class="widget"><select><option>Any</option></select></div></div></div></div></div>`;
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style>${labeled}<div style="width:720px;padding:0 15px" class="text-center">${row('wide')}</div><div style="width:300px;padding:0 15px" class="text-center">${row('narrow')}</div><div style="width:720px;padding:0 15px">${row('plain')}</div><pre id="result"></pre><script>
         const metric=id=>{const r=document.getElementById(id),els=[...r.querySelectorAll('select,input,button')];return {row:{x:r.getBoundingClientRect().x,width:r.getBoundingClientRect().width},controls:els.map(e=>{const x=e.getBoundingClientRect();return {x:x.x,y:x.y,width:x.width,height:x.height}}),gap:getComputedStyle(r.firstElementChild).columnGap}};
-        document.getElementById('result').textContent=JSON.stringify({wide:metric('wide'),narrow:metric('narrow'),plain:metric('plain')});
+        document.getElementById('result').textContent=JSON.stringify({wide:metric('wide'),narrow:metric('narrow'),plain:metric('plain'),labeled:(()=>{const e=document.querySelector('#labeled label'),s=document.querySelector('#labeled select'),l=e.getBoundingClientRect(),r=s.getBoundingClientRect();return {labelHeight:l.height,labelWidth:l.width,labelY:l.y,controlY:r.y,controlWidth:r.width}})()});
         </script>`;
     const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-search-row-'));let dom;
     try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
@@ -665,6 +666,8 @@ test('untitled search rows follow inline text flow and wrap at narrow widths', (
     assert.ok(Math.abs(select.y-input.y)<2, 'native select and text control stay on the same line');assert.equal(button.height,30);
     assert.ok(m.narrow.controls[1].y>m.narrow.controls[0].y);
     for(const r of m.narrow.controls) assert.ok(r.x>=0&&r.x+r.width<=300);
+    assert.equal(m.labeled.labelHeight,27);assert.ok(m.labeled.labelWidth>m.labeled.controlWidth);
+    assert.equal(m.labeled.controlY-m.labeled.labelY,25);
     assert.equal(m.plain.controls[0].x,15);
     assert.ok(Math.abs(m.plain.controls[1].x-m.plain.controls[0].x-m.plain.controls[0].width-3.890625)<0.05);
     assert.ok(Math.abs(m.plain.controls[2].x-m.plain.controls[1].x-m.plain.controls[1].width-3.890625)<0.05);
