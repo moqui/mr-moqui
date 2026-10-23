@@ -507,7 +507,7 @@
             } else if (unit) {
                 value = currencyText(sri.getFieldValue(field, ""), ec.resource.expression(unit, ""), hideSymbol);
             } else value = sri.getFieldValueString(n);
-            const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "";
+            const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "&#160;";
             let out = "<span" + A({
                 // the value's type (BigDecimal, Long...) as a class, as Java's html display writes sri.getFieldValueClass
                 class: cls("display", sri.getFieldValueClass(field), unit ? "currency" : null, xn(at(n, "style"))), title: tip(n), id: dyn ? id + "_display" : null
@@ -525,7 +525,7 @@
         const displayEntity = (n) => {
             const value = sri.getFieldEntityValue(n) || "";
             const alsoHidden = (!at(n, "also-hidden") || at(n, "also-hidden") === "true") && !st.skipForm;
-            const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "";
+            const body = value ? (at(n, "encode") === "false" ? value : e(value).replace(/\n/g, "<br>")) : "&#160;";
             w("<span" + A({ class: cls("display", xn(at(n, "style"))) }) + ">" + body + "</span>" +
                 (alsoHidden ? "<input" + A({ type: "hidden", id: fid(n), name: fnm(n), value: sri.getFieldValuePlainString(fieldOf(n), ""), form: owner() }) + ">" : ""));
         };
