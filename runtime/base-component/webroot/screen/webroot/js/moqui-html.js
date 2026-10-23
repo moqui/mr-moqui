@@ -309,7 +309,9 @@
         withTomSelect().then((TomSelect) => {
             const settings = {
                 plugins: multiple ? ["remove_button"] : [], create: select.hasAttribute("data-combo") || select.hasAttribute("data-use-actual"),
-                allowEmptyOption: select.hasAttribute("data-empty") || select.options.length === 0, maxOptions: null, closeAfterSelect: !multiple
+                allowEmptyOption: select.hasAttribute("data-empty") || select.options.length === 0, maxOptions: null, closeAfterSelect: !multiple,
+                // As select2 in Java's apps: focus, such as a dialog focusing its first field, does not open the list
+                openOnFocus: false
             };
             if (search) {
                 Object.assign(settings, {
