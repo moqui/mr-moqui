@@ -9,6 +9,8 @@ a { color:var(--q-primary); text-decoration:none; }
 strong, .text-strong { font-weight:bold; }
 
 form, fieldset { border:none; display:contents; }
+/* Quasar 2 makes .q-page a flow root; Quasar 1 lets the first heading's top margin collapse through it */
+.q-page { display:block; }
 
 /* Quasar styles have huge h? sizes by default, trim down to something more reasonable */
 h1, .text-h1 { font-size:2.5rem; line-height:2.5rem; letter-spacing:initial; }
