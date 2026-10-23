@@ -161,3 +161,26 @@ test('saved finds are directly selectable in list navigation, with an explicit c
     assert.doesNotMatch(renderList({ withSavedFinds: true }), /data-saved-finds/);
     assert.doesNotMatch(renderList({ withSavedFinds: true, savedFinds, hideNav: true }), /data-saved-finds/);
 });
+
+
+test('omitted field links emit no placeholder or URL and visible links keep their anchor', () => {
+    const factory=vm.runInNewContext(fs.readFileSync(path.join(__dirname,'ScreenHtml.js'),'utf8'));
+    const module=factory({stmt:fn=>fn,noops:()=>({})},{anyMacros:()=>({}),allElements:[],opaqueElements:[]});
+    const render=(attrs,inField=true)=>{
+        let html='',urls=0;
+        const context={sri:{write:text=>{html+=text},getThemeIconClass:()=>'',
+            makeUrlByType:()=>{urls++;return {url:'/apps/Facility',getDisableLink:()=>false,getUrlWithParams:()=>'/apps/Facility?facilityId=1'}},isAnchorLink:()=>true},
+            ec:{context:{get:()=>null},resource:{condition:()=>false,expand:text=>text}}};
+        vm.runInNewContext(module.runtime,context);
+        const form={attrs:{name:'FacilityForm'}},field={attrs:{name:'parentFacilityId'},parent:form};
+        context.$mqHtml.link({attrs:{url:'editFacility','link-type':'anchor',...attrs},children:[],parent:{parent:field}},inField);
+        return {html,urls};
+    };
+    for(const inField of [true,false]) {
+        for(const attrs of [{text:'View',condition:'parentFacilityId'},{text:''},{text:'null'}])
+            assert.deepEqual(render(attrs,inField),{html:'',urls:0});
+    }
+    const visible=render({text:'Parent <&>'});
+    assert.equal(visible.urls,1);assert.match(visible.html,/<a[^>]+href="\/apps\/Facility\?facilityId=1"[^>]*>Parent &lt;&amp;&gt;<\/a>/);
+    assert.doesNotMatch(visible.html,/&nbsp;|<form/);
+});
