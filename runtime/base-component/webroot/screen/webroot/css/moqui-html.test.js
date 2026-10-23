@@ -557,3 +557,30 @@ test('raw headings use Java type scale while panel and dialog overrides remain i
     assert.equal(light.dialog.font,'18px');assert.equal(light.dialog.margin,'0px');
     assert.equal(dark.heading.color,'rgb(221, 227, 234)');assert.equal(dark.panel.color,'rgb(221, 227, 234)');
 });
+
+
+test('remote single selects retain full-width, empty-value and active-search control geometry', () => {
+    const css=fs.readFileSync(path.join(__dirname,'moqui-html.css'),'utf8');
+    const pluginCss=fs.readFileSync(path.join(__dirname,'../libs/tom-select/tom-select.css'),'utf8');
+    const wrapper=(id,text)=>`<div class="ts-wrapper single input-hidden has-items" id="${id}"><div class="ts-control"><div class="item">${text}</div><input type="text" size="1"></div></div>`;
+    // Load plugin CSS last, as the client does after its first remote select.
+    const html=`<!doctype html><html data-theme="light"><style>${css}</style><style>${pluginCss}</style>
+        <div style="width:840px;padding:0 15px"><div class="field"><label>Owner</label><div class="widget">${wrapper('owner','ZIRET: Ziziwork Retail & Wholesale')}</div></div><div class="field"><label>Parent</label><div class="widget">${wrapper('empty','')}</div></div><div class="field" data-invalid><label>Invalid</label><div class="widget">${wrapper('invalid','Value')}</div></div></div>
+        <pre id="result"></pre><script>
+        const metric=id=>{const e=document.querySelector('#'+id+' .ts-control'),s=getComputedStyle(e),r=e.getBoundingClientRect(),i=e.querySelector('input');return {width:r.width,height:r.height,padding:s.padding,font:s.fontSize,line:s.lineHeight,color:s.color,border:s.borderTopColor,shadow:s.boxShadow,inputHeight:i.getBoundingClientRect().height,arrow:getComputedStyle(e,'::after').borderTopWidth,outline:s.outlineStyle,offset:r.y-e.closest('.widget').getBoundingClientRect().y,fieldHeight:e.closest('.field').getBoundingClientRect().height}};
+        const light={owner:metric('owner'),empty:metric('empty'),invalid:metric('invalid')};
+        const owner=document.getElementById('owner');owner.classList.remove('input-hidden');owner.classList.add('input-active','focus');const active=metric('owner');
+        document.documentElement.dataset.theme='dark';document.getElementById('result').textContent=JSON.stringify({light,active,dark:metric('owner')});
+        </script>`;
+    const profile=fs.mkdtempSync(path.join(os.tmpdir(),'moqui-html-remote-select-'));
+    let dom;
+    try {dom=execFileSync(process.env.CHROMIUM_PATH||'chromium',[
+        '--headless','--disable-gpu','--window-size=1440,1000','--user-data-dir='+profile,'--dump-dom','data:text/html,'+encodeURIComponent(html)
+    ],{encoding:'utf8',timeout:20000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+    finally {fs.rmSync(profile,{recursive:true,force:true});}
+    const {light,active,dark}=JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
+    for(const m of [light.owner,light.empty,active,dark]) {assert.ok(Math.abs(m.width-670)<0.05);assert.equal(m.height,34);assert.equal(m.padding,'6px 24px 6px 12px');assert.equal(m.font,'14px');assert.equal(m.line,'20px');assert.equal(m.arrow,'4px');assert.equal(m.offset,-2);assert.equal(m.fieldHeight,32);}
+    assert.equal(light.owner.color,'rgb(85, 85, 85)');assert.equal(light.owner.border,'rgb(204, 204, 204)');assert.notEqual(light.owner.shadow,'none');
+    assert.equal(light.invalid.border,'rgb(217, 83, 79)');assert.equal(active.outline,'solid');assert.equal(active.inputHeight,20);
+    assert.equal(dark.color,'rgb(221, 227, 234)');assert.equal(dark.shadow,'none');assert.equal(dark.border,'rgb(52, 61, 72)');
+});

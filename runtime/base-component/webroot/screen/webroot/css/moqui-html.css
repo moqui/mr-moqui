@@ -463,6 +463,19 @@ table.form-list .filter-summary .filter-clear {
 .ts-control, .ts-wrapper.single.input-active .ts-control { color: var(--fg); }
 .ts-control input { color: var(--fg); }
 
+/* Enhanced single selects retain the normal form-control geometry, including empty values. */
+.field > .widget > .ts-wrapper { width: 100%; margin-top: -2px; }
+.big-item .field > .widget > .ts-wrapper { width: auto; }
+.ts-wrapper.single { --ts-pr-min: 24px; }
+.ts-wrapper.single .ts-control { min-height: 34px; height: 34px; padding: 6px 12px; border-radius: var(--radius); color: var(--control-fg); border-color: var(--control-border); box-shadow: var(--control-shadow); font-size: 14px; line-height: 20px; }
+.ts-wrapper.single .ts-control > .item { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ts-wrapper.single .ts-control > input { height: auto !important; font-size: 14px; }
+.ts-wrapper.single .ts-control::after { content: ""; position: absolute; top: 50%; right: 12px; margin-top: -2px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid var(--muted); pointer-events: none; }
+.ts-wrapper.single.dropdown-active .ts-control::after { border-top: 0; border-bottom: 4px solid var(--muted); }
+.ts-wrapper.single.focus .ts-control { outline: 2px solid var(--primary); outline-offset: 1px; }
+.field[data-invalid] .ts-wrapper.single .ts-control { border-color: var(--danger); }
+
+
 /* ---------- error page ---------- */
 
 .error-page { max-width: 46em; margin: 24px auto; padding: 16px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
