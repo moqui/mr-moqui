@@ -1228,7 +1228,7 @@
             if (paginated) out += '<div class="col-xs-12 col-sm-6">' + pageTools(n, listName, formId) + "</div>";
             w(out + "</div>\n");
             if (cfg.headerDialog) {
-                const summaries = (cfg.allFields || []).map((field) => {
+                const summaries = (cfg.summaryFields || []).map((field) => {
                     const value = field.summary ? field.summary() : "";
                     return value ? '<span style="white-space:nowrap;"><strong>' + t(field.title()) + ':</strong> <span class="text-positive">' + t(value) + '</span></span>' : "";
                 }).filter(Boolean);
@@ -2453,6 +2453,9 @@
                 ],
                 "allFields": [
                     ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}, "summary": ${summaryCode(field)}}`).join(",\n")}
+                ],
+                "summaryFields": [
+                    ${fields.map(columnField).join(",\n")}
                 ]
             }
         `.replace(/\n$/, "");
