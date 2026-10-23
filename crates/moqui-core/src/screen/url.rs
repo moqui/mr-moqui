@@ -481,6 +481,79 @@ pub fn resolve_screen_path(from: &[String], url: &str) -> Vec<String> {
     names
 }
 
+/// Resolve a transition response or link `screen-path` from the root screen at `root_location`, as Java's
+/// `ScreenUrlInfo.parseSubScreenPath`: a leading `//` finds the screen by name anywhere under the root
+/// ([`find_subscreen_path`]), so `//marble/Shipment` is `apps/marble/Shipment`. Other paths are [`resolve_screen_path`].
+/// A `//` path that finds nothing is left from the root, where it does not resolve.
+pub fn resolve_screen_path_at(
+    factory: &ExecutionContextFactory,
+    root_location: &str,
+    from: &[String],
+    url: &str,
+) -> Vec<String> {
+    let Some(rest) = url.strip_prefix("//") else {
+        return resolve_screen_path(from, url);
+    };
+    let names = resolve_screen_path(&[], rest);
+    let facade = ScreenFacade::of(factory);
+    let key = format!("{root_location}\u{1}{url}");
+    let found = facade.cached_find_path(&key).unwrap_or_else(|| {
+        let found = facade
+            .screen_def(factory, root_location)
+            .ok()
+            .and_then(|root| find_subscreen_path(&facade, factory, &root, &names));
+        facade.put_find_path(key, found.clone());
+        found
+    });
+    found.unwrap_or(names)
+}
+
+/// Java's `ScreenDefinition.findSubscreenPath`: the full path under `screen` for the sparse `names`. The first name
+/// is a subscreen of `screen`, a transition of it, a subscreen of one of its subscreens, or else is searched for
+/// depth first under each subscreen; the rest must follow it directly.
+fn find_subscreen_path(
+    facade: &ScreenFacade,
+    factory: &ExecutionContextFactory,
+    screen: &ScreenDef,
+    names: &[String],
+) -> Option<Vec<String>> {
+    let (first, rest) = names.split_first()?;
+    let child = |item: &super::definition::SubscreensItem| facade.screen_def(factory, &item.location).ok();
+    // The rest of the path under `item`, with `prefix` before it.
+    let below = |item: &super::definition::SubscreensItem, prefix: Vec<String>| {
+        if rest.is_empty() {
+            return Some(prefix);
+        }
+        let mut path = find_subscreen_path(facade, factory, &*child(item)?, rest)?;
+        path.splice(0..0, prefix);
+        Some(path)
+    };
+    if let Some(item) = screen.subscreens.get(first) {
+        return below(item, vec![first.clone()]);
+    }
+    if screen.has_transition(first) {
+        return Some(names.to_vec());
+    }
+    let children: Vec<_> = screen
+        .subscreens
+        .items
+        .iter()
+        .filter_map(|item| Some((item, child(item)?)))
+        .collect();
+    for (item, def) in &children {
+        if let Some(grandchild) = def.subscreens.get(first) {
+            return below(grandchild, vec![item.name.clone(), first.clone()]);
+        }
+    }
+    for (item, def) in &children {
+        if let Some(mut path) = find_subscreen_path(facade, factory, def, names) {
+            path.insert(0, item.name.clone());
+            return Some(path);
+        }
+    }
+    super::static_files::file_under(factory, facade, &screen.location, names).map(|_| names.to_vec())
+}
+
 /// The URL path for `names`, percent-encoding what a path name cannot hold.
 pub fn encode_path(names: &[String]) -> String {
     let mut out = String::new();

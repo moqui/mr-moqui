@@ -1,12 +1,14 @@
 <screen require-authentication="false">
     <transition name="detail"><default-response url="Detail"/></transition>
     <transition name="detailTab"><default-response url="Detail"><parameter name="tab" value="items"/></default-response></transition>
+    <transition name="fromRoot"><default-response url="//${detailScreen}"/></transition>
     <transition name="save"><actions><set field="x" value="1"/></actions><default-response url="Detail"/></transition>
-    <actions><set field="detailId" value="D9"/></actions>
+    <actions><set field="detailId" value="D9"/><set field="detailScreen" value="Leaf"/></actions>
     <widgets>
         <link url="detail" text="Alias" link-type="anchor"/>
         <link url="detailTab" text="Alias With Parameter" link-type="anchor"/>
         <link url="detail" text="Not Expanded" link-type="anchor" expand-transition-url="false"/>
+        <link url="fromRoot" text="From Root" link-type="anchor-button"/>
         <link url="save" text="Has Actions" link-type="anchor"/>
     </widgets>
 </screen>

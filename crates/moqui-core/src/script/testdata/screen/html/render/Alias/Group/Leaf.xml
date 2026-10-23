@@ -1,0 +1,3 @@
+<screen require-authentication="false">
+    <widgets><label text="leaf"/></widgets>
+</screen>

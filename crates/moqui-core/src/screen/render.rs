@@ -38,7 +38,7 @@ use super::definition::{
     CONDITION_FIELD,
 };
 use super::dispatch;
-use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
+use super::url::{encode_path, parse_last_standalone, resolve_screen_path, resolve_screen_path_at, ScreenUrlInfo};
 use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
 use crate::script::{self, ContextFrame};
 use crate::service::util::has_error;
@@ -1368,7 +1368,15 @@ fn respond(info: &ScreenUrlInfo, response: &ResponseDef, json: bool) -> Result<(
             }
             url = path.to_string();
         }
-        let names = resolve_screen_path(&info.pre_transition_path, &url);
+        let names = match (
+            info.path_defs.first(),
+            ExecutionContext::with_current(|ec| Arc::clone(ec.factory())),
+        ) {
+            (Some(root), Some(factory)) => {
+                resolve_screen_path_at(&factory, &root.location, &info.pre_transition_path, &url)
+            }
+            _ => resolve_screen_path(&info.pre_transition_path, &url),
+        };
         // The parameters of the screens on the target path from the context, as Java's `UrlInstance.getParameterMap`: a transition of
         // a screen with a required parameter redirects back with it.
         for (name, value) in path_parameters(info, &names)? {
