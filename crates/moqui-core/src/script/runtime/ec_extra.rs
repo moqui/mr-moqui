@@ -892,6 +892,9 @@ mod tests {
             r#"toDecimal("2.345").setScale(2, "HALF_UP").toString() === "2.35" && toDecimal("2.5").setScale(0, 6).toString() === "2""#,
         );
         holds(r#"toDecimal("2").setScale(2).toString() === "2.00""#);
+        // get#OrderItemTotal's quantity - 0.0 is 1.0 in Java, and the audit log records that text
+        holds(r#"toDecimal(1).subtract(toDecimal('0.0')).toString() === "1.0""#);
+        holds(r#"toDecimal('0.0').toString() === "0.0" && toDecimal(1).multiply('1.0').toString() === "1.0""#);
         holds(
             r#"toNumber(toDecimal("2.5")) * 2 === 5 && toNumber("3") === 3 && toNumber(null) === null && toNumber(4) === 4"#,
         );
