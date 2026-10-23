@@ -165,8 +165,10 @@ along with this software (see the LICENSE.md file). If not, see
 
         <!-- the account checks the sections show by, read here so the widgets read flags -->
         <set field="hasUserAccounts" from="ec.entity.find('moqui.security.UserAccount').disableAuthz().count() > 1"/>
-        <set field="hasTestLogin" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE')
-            .condition('currentPassword', '16ac58bbfa332c1c55bd98b53e60720bfa90d394').disableAuthz().count() > 0"/>
+        <!-- Java matches the SHA hash of 'moqui'; login re-hashes it to argon2 here, so verify the password instead -->
+        <set field="testUserAccount" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()"/>
+        <set field="hasTestLogin" from="testUserAccount != null &amp;&amp; ec.user.passwordsMatch('moqui', testUserAccount.get('currentPassword'),
+            testUserAccount.get('passwordHashType'), testUserAccount.get('passwordSalt'), testUserAccount.get('passwordBase64') == 'Y')"/>
     </actions>
     <widgets>
         <!-- NOTE: this screen is not under the apps screen, but uses similar header/footer/etc -->
