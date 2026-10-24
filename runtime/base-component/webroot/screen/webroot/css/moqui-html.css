@@ -279,7 +279,10 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 }
 .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 .field > .widget select { height: 34px; padding: 6px 12px; }
-.field > .widget textarea { min-height: 34px; padding: 6px 12px; }
+/* Java input-group/select2 offsets and textarea baseline spacing. */
+.field > .widget input:is([type="date"], [type="time"], [type="datetime-local"]),
+.field > .widget select { margin-top: -2px; }
+.field > .widget textarea { min-height: 34px; padding: 6px 12px; vertical-align: baseline; }
 .field > .widget > .display { min-height: 34px; padding: 7px 0; }
 .field > .widget > p, .field > .widget > span.text-inline,
 .field > .widget > a:not(.btn):not([data-btn]) { display: inline-block; min-height: 34px; padding: 7px 0; margin-bottom: 0; }
