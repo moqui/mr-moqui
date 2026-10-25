@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     through a header card (avatar, identity, group chips, key numbers), action buttons, the parts as boxes and a
     Chatter column. Every action posts to a no-op transition; nothing is written. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Record360" default-menu-index="4">
+        default-menu-title="Record360" default-menu-index="4" menu-image="sym_o_public" menu-image-type="icon">
 
     <parameter name="userId"/>
 

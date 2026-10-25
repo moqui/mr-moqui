@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     trusted parameter, as for a trusted sender) and its reply history collapsed; and a plain-text message with its links
     and quoted reply. Nothing is sent or written. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Message" default-menu-index="16">
+        default-menu-title="Message" default-menu-index="16" menu-image="sym_o_sms" menu-image-type="icon">
 
     <parameter name="trusted"/>
 

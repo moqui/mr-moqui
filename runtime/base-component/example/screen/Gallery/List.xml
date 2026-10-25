@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     moqui.basic.Enumeration joined to its type, with inline finds, Find Options, saved finds, column picker, paging,
     exports, row selection with a bulk action, row actions, a status-like chip and a New dialog. Nothing is written. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="List" default-menu-index="2">
+        default-menu-title="List" default-menu-index="2" menu-image="sym_o_view_list" menu-image-type="icon">
 
     <transition name="detail"><default-response url="../Detail"/></transition>
     <transition name="landing"><default-response url="../Landing"/></transition>

@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     hold a section (the cells after it stay in the list), chips whose btn-type is an expression, and a container-row of a
     section-iterate's columns. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Widgets" default-menu-index="14">
+        default-menu-title="Widgets" default-menu-index="14" menu-image="sym_o_widgets" menu-image-type="icon">
 
     <!-- nothing here writes: every action answers with a message -->
     <transition name="noop" method="post">

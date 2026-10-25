@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     the detail shows with a back button to the list. The side list is find-driven and limited to 30 rows because the
     paging row of a form-list does not fit in a 320 px pane. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Split" default-menu-index="8">
+        default-menu-title="Split" default-menu-index="8" menu-image="sym_o_splitscreen" menu-image-type="icon">
 
     <parameter name="geoId"/>
 

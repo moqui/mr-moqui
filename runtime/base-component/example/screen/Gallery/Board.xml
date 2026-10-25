@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     file; this screen serves it in the qvue render mode and answers the component's data and action requests with
     the transitions below. Nothing is written: moveCard answers with a message. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Board" default-menu-index="6" render-modes="vue,qvue,tui" server-static="vue,qvue">
+        default-menu-title="Board" default-menu-index="6" render-modes="vue,qvue,tui" server-static="vue,qvue" menu-image="sym_o_view_kanban" menu-image-type="icon">
 
     <!-- the stages and cards of the pipeline, an inline list: the gallery has no business entities -->
     <transition name="boardRows" method="get" read-only="true">

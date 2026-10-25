@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     the wizard's Next submits it and goes on when the answer has no errors. Back never loses what a step saved. Nothing is
     written. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Wizard" default-menu-index="10">
+        default-menu-title="Wizard" default-menu-index="10" menu-image="sym_o_auto_awesome" menu-image-type="icon">
 
     <subscreens default-item="Customer"/>
 

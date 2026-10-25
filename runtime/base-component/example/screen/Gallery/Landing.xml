@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     and a chart over framework data (enumerations by type stand in for orders by status). Every counter and list row
     links into the List screen with its filter. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Landing" default-menu-index="1">
+        default-menu-title="Landing" default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon">
 
     <transition name="list"><default-response url="../List"/></transition>
     <transition name="detail"><default-response url="../Detail"/></transition>

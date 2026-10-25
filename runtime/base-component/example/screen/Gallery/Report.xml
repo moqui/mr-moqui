@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (a form-single submitting to "."), number cards, two m-chart charts whose colors are read from the brand CSS
     variables in the browser, and a result table with the export menu and a totals row. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Report" default-menu-index="12">
+        default-menu-title="Report" default-menu-index="12" menu-image="sym_o_report" menu-image-type="icon">
 
     <actions>
         <!-- Two finds over the same filter: the paged one is the table (search-form-inputs sets the Count fields the

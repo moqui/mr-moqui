@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     that loads the Detail gallery screen. Nothing is written. The _openDialog URL parameter (read by the qvt macros)
     opens a dialog on load, which is how the dialogs are verified open. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Dialog" default-menu-index="11">
+        default-menu-title="Dialog" default-menu-index="11" menu-image="sym_o_open_in_full" menu-image-type="icon">
 
     <transition name="createEnum"><actions>
         <message type="success">Enumeration ${enumId || ''} created (gallery demo: nothing is written)</message>

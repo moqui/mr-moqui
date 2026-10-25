@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     and EXGIT (pages are files in the database git repository example-wiki, versions are commits), which the screen
     creates on request. Data: data/ExampleWikiData.xml. Guide: docs/Revision-Management.md. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Editor" default-menu-index="15">
+        default-menu-title="Editor" default-menu-index="15" menu-image="sym_o_text_fields" menu-image-type="icon">
 
     <parameter name="wikiSpaceId"/>
     <parameter name="pagePath"/>

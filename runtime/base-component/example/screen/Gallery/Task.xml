@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     names "." so the macro expands the container URL to it), which renders the step section alone; Confirm submits in
     the background and reloads the container. Nothing is written: the pick lines are an inline list in the actions. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Task" default-menu-index="5">
+        default-menu-title="Task" default-menu-index="5" menu-image="sym_o_task_alt" menu-image-type="icon">
 
     <parameter name="stepOnly"/>
     <parameter name="lineIndex"/>

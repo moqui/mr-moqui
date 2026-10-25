@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     normal screen in a 400 px column: groups with captions, dense list items with an icon by kind and two flat
     quick actions, the open approvals line, an empty group, and the quick-create dialog with its context chip. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Panel" default-menu-index="13">
+        default-menu-title="Panel" default-menu-index="13" menu-image="sym_o_right_panel_open" menu-image-type="icon">
 
     <!-- the quick actions and the quick create write nothing: a message comes back and the panel stays -->
     <transition name="markDone" method="post">
