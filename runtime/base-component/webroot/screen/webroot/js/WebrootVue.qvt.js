@@ -2440,7 +2440,7 @@
                     ' :input-debounce="serverSearch ? serverDelay : 100" @filter="filterFn" :clearable="allowEmpty||multiple" :disable="disable"' +
                     ' :multiple="multiple" :emit-value="!onSelectGoTo" map-options behavior="menu" :new-value-mode="combo ? \'add-unique\' : undefined"' +
                     ' :rules="[val => allowEmpty||multiple||combo||val===\'\'||(val&&val.length)||\'Please select an option\']"' +
-                    ' stack-label hide-bottom-space no-error-icon :label="label" :loading="loading" :bg-color="bg" :options="curOptions" v-bind="errorAttrs">' +
+                    ' stack-label hide-bottom-space no-error-icon :label="label || undefined" :loading="loading" :bg-color="bg" :options="curOptions" v-bind="errorAttrs">' +
                 '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip>' +
                 '<template v-slot:no-option><q-item><q-item-section class="text-grey">No results</q-item-section></q-item></template>' +
                 '<template v-if="$slots.after" v-slot:after><slot name="after"></slot></template>' +

@@ -153,6 +153,8 @@ form.q-form { width:100%; }
 .q-field--with-bottom { padding-bottom:0; }
 .q-field--with-bottom.q-field--error { padding-bottom:16px; }
 .q-field__bottom { padding-top:4px; }
+/* Java renders an empty append before the arrow, giving the arrow two-pixel padding. */
+.q-select.q-field--dense .q-field__append.q-anchor--skip { padding-left:2px; }
 /* a group of checkboxes or radios in a borderless field, and a toggle in the after slot of a drop-down (show-not) */
 .m-field-group .q-option-group { margin-left:-4px; }
 .q-field__after .q-toggle__label, .q-field__after .q-checkbox__label { font-size:12px; }
