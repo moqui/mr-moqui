@@ -148,3 +148,14 @@ test('order-by choices retain sortable header fields excluded from visible colum
     assert.match(html, /<option value="-\^customer">Customer \(Desc\)<\/option>/);
     assert.doesNotMatch(html, /data-ts="select"/);
 });
+
+// The submit field is deliberately absent from the displayed table columns.
+test('find dialog renders header-only submit and filter fields once in declaration order', () => {
+    const calls = [];
+    const field = name => ({name,title:()=>name,find:()=>{},dialogField:()=>calls.push(name)});
+    const name = field('name');
+    const find = field('searchButton');
+    const hiddenFilter = field('statusId');
+    renderList({fields:[name,hiddenFilter,find],columns:[[name]]});
+    assert.deepEqual(calls,['name','statusId','searchButton']);
+});

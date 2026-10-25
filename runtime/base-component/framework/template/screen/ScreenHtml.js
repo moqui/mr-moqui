@@ -1052,7 +1052,7 @@
                 }
                 st.owner = cfg.headerFormId;
                 st.fieldForm = cfg.headerFormId;
-                cols.flat().forEach((f) => { if (f.find) f.dialogField(); });
+                (cfg.summaryFields || cols.flat()).forEach((f) => { if (f.find) f.dialogField(); });
                 st.owner = "";
                 st.fieldForm = "";
                 w("</fieldset></form>");
