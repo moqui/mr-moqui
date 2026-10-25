@@ -190,11 +190,13 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         });
         </script>`;
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'moqui-html-css-'));
+    const fixture = path.join(profile, 'metrics.html');
+    fs.writeFileSync(fixture, html);
     let dom;
     try {
         dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
-            '--headless', '--disable-gpu', '--window-size=1440,1000', '--user-data-dir=' + profile,
-            '--dump-dom', 'data:text/html,' + encodeURIComponent(html)
+            '--headless', '--virtual-time-budget=2000', '--disable-extensions', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--window-size=1440,1000',
+            '--dump-dom', 'file://' + fixture
         ], { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     } finally {
         fs.rmSync(profile, { recursive: true, force: true });
@@ -252,7 +254,7 @@ test('Java CSS metrics and untitled big-row layout are preserved', () => {
         inlineStaticHeight: 34, linkHeight: 34,
         fieldGap: '15px', labelPadding: '7px', tableControlPadding: '4px 8px', tableControlHeight: 30,
         tableDisplayHeight: 20, tableFieldGap: '0px',
-        bigRowGap: '8px', bigItemGap: '0px'
+        bigRowGap: '15px', bigItemGap: '0px'
     });
     for (const status of [lightStatus, darkStatus]) {
         assert.equal(status.listStyle, 'none');

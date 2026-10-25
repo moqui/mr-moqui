@@ -493,7 +493,14 @@
     // ---------- dialogs, tabs, menus ----------
 
     const initDialog = (dialog) => {
-        dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+        dialog.addEventListener("click", (event) => {
+            if (event.target !== dialog) return;
+            const rect = dialog.getBoundingClientRect();
+            // A native dialog also receives clicks on its own padding. Only the
+            // backdrop outside its border should dismiss it, as Java does.
+            if (event.clientX < rect.left || event.clientX > rect.right ||
+                event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+        });
         if (dialog.dataset.load) {
             dialog.addEventListener("close", () => {
                 const body = $(".body", dialog);

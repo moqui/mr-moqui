@@ -236,11 +236,14 @@ html.js .tab-panels .tab-panel:not(.active) { display: none; }
 
 /* ---------- dialogs ---------- */
 
-dialog { padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); width: min(var(--w, 760px), 96vw); max-height: 92vh; overflow: auto; text-align: left; }
+dialog { inset: 30px 0 auto; margin: 0 auto; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); width: min(var(--w, 760px), 96vw); max-height: calc(100vh - 60px); overflow: auto; text-align: left; box-shadow: 0 5px 15px rgba(0, 0, 0, .5); }
 dialog::backdrop { background: rgba(0, 0, 0, .5); }
-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
-dialog > header h4 { margin: 0; }
-dialog > .body { padding: 12px 14px; }
+dialog > header { display: flex; align-items: flex-start; justify-content: space-between; padding: 15px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+dialog > header h4 { margin: 0; font-size: 18px; font-weight: 500; line-height: 1.42857143; }
+dialog > header .close { margin: -2px 0 0; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 21px; font-weight: 700; line-height: 1; color: inherit; opacity: .2; text-shadow: 0 1px 0 #fff; }
+dialog > header .close:hover, dialog > header .close:focus { opacity: .5; }
+dialog > .body { padding: 15px; }
+@media (max-width: 767px) { dialog { top: 10px; max-height: calc(100vh - 20px); } }
 .loading { color: var(--muted); }
 
 /* ---------- messages ---------- */
@@ -291,8 +294,8 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 @media (max-width: 639px) { .field { grid-template-columns: 1fr; } .field > label, .field > .label { text-align: left; padding-top: 0; } .field[data-submit] > .label { display: none; } }
 .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(22em, 100%), 1fr)); column-gap: 16px; }
 .field-row > div > .field { grid-template-columns: minmax(6em, 33%) minmax(0, 1fr); }
-.field.big-row { margin-bottom: 8px; }
-.big-row > .widget { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.field.big-row { margin-bottom: 15px; }
+.big-row > .widget { display: flex; flex-wrap: wrap; gap: 0 4px; }
 .field.big-row > .widget:first-child { grid-column: 1 / -1; }
 .big-item .field { grid-template-columns: 1fr; margin-bottom: 0; }
 .big-item .field > label { text-align: left; padding-top: 0; }
@@ -429,9 +432,9 @@ a[data-app-tile] > img { width: 32px; height: 32px; object-fit: contain; }
 
 /* Bootstrap's 30px gutters and form-group offsets, as used by Java's HTML macros. */
 @media (min-width: 768px) {
-    .field:not(.big-row) { margin-left: -15px; margin-right: -15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
-    .field:not(.big-row) > label, .field:not(.big-row) > .label { padding-left: 15px; padding-right: 15px; }
-    .field:not(.big-row) > .widget { padding-left: 15px; padding-right: 15px; }
+    .field { margin-left: -15px; margin-right: -15px; grid-template-columns: calc(var(--lc, 2) * 100% / 12) minmax(0, 1fr); column-gap: 0; }
+    .field > label, .field > .label { padding-left: 15px; padding-right: 15px; }
+    .field > .widget { padding-left: 15px; padding-right: 15px; }
     .field-row { margin: 0 -15px; column-gap: 0; }
     .field-row > div { padding: 0 15px; }
     .field-row > div > .field { grid-template-columns: calc(100% / 3) minmax(0, 1fr); }
