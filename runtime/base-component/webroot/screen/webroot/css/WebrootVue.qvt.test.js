@@ -63,7 +63,7 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
         const fixture = path.join(profile, 'fixture.html');
         fs.writeFileSync(fixture, html);
         dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
-            '--headless', '--disable-gpu', 
+            '--headless', '--disable-gpu',
             '--dump-dom', 'file://' + fixture
         ], { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     } finally {
