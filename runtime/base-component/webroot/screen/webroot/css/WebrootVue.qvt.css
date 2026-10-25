@@ -141,7 +141,7 @@ form.q-form { width:100%; }
 .q-field__after .q-toggle__label, .q-field__after .q-checkbox__label { font-size:12px; }
 .m-display-field .q-field__control { min-height:40px; }
 
-.big-row { display:flex; flex-wrap:wrap; justify-content:flex-start; align-items:center; gap:4px 8px; }
+.big-row { display:flex; flex-wrap:wrap; justify-content:flex-start; align-content:center; }
 .big-row.text-center { justify-content:center; }
 .big-row-item .q-field { display:inline-flex; }
 
@@ -303,7 +303,7 @@ ul.float-plain.condensed li { margin: 0 4px 0 0; padding: 4px; }
 .m-container-box.m-box-warning { border-left: 3px solid var(--q-warning); }
 .m-container-box.m-box-positive { border-left: 3px solid var(--q-positive); }
 .m-container-box.m-box-negative { border-left: 3px solid var(--q-negative); }
-.m-container-box .q-card__section--vert { padding:8px; } /* orig 16px */
+.q-card__section--vert { padding:8px; } /* orig 16px */
 .m-container-box > .m-box-head { min-height:36px; }
 div.container-panel-outer {  }
 div.container-panel-middle { display: table; table-layout: auto; width: 100%; height: 100%; }

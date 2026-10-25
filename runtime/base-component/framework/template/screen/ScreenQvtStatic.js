@@ -1172,7 +1172,7 @@
                 const value = at(when, "from") ? X(at(when, "from"), when, "from") : exp(at(when, "value"), when, "value", false);
                 style = "$mq.shown(" + value + "," + target + ")";
             }
-            const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
+            const box = big ? "q-mx-sm q-my-auto big-row-item" : cls("q-ma-sm", containerStyle || null);
             const attrs = { class: box, ":style": style };
             if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-ma-sm '+" + exp(containerStyle, null, "container-style", false); }
             w("<div" + A(attrs) + ">");
@@ -1520,7 +1520,7 @@
                         w("</div>\n");
                     } else if (name === "field-row-big") {
                         w('<div class="q-my-sm big-row"' + (at(kid, "justify") ? ' style="justify-content:' + e(at(kid, "justify")) + ';"' : "") + ">");
-                        if (at(kid, "title")) w('<div class="big-row-item"><span v-text="' + e(exp(at(kid, "title"), kid, "title", true)) + '"></span></div>');
+                        if (at(kid, "title")) w('<div class="q-mx-sm q-my-auto big-row-item"><span v-text="' + e(exp(at(kid, "title"), kid, "title", true)) + '"></span></div>');
                         layoutCode(kid, true);
                         w("</div>\n");
                     } else if (name === "field-group") {

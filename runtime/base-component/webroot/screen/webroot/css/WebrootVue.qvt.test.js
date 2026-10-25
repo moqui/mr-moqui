@@ -34,10 +34,14 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
             <div id="selHead" class="th m-sel">x</div><div class="th">Name</div><div class="th">Description</div>
         </div></div></div>
     </div>
+    <section id="plainCard" class="q-card__section q-card__section--vert"><div id="bigRow" class="big-row" style="height:60px"><div id="bigFirst" class="q-mx-sm q-my-auto big-row-item" style="width:50px;height:40px"></div><div id="bigSecond" class="q-mx-sm q-my-auto big-row-item" style="width:30px;height:20px"></div></div></section>
     <pre id="result"></pre>
     <script>
         const style = id => getComputedStyle(document.getElementById(id));
         document.getElementById('result').textContent = JSON.stringify({
+            cardPadding:style('plainCard').padding,
+            bigSpacing:document.getElementById('bigSecond').getBoundingClientRect().left - document.getElementById('bigFirst').getBoundingClientRect().right,
+            bigAligned:document.getElementById('bigFirst').getBoundingClientRect().top + 20 === document.getElementById('bigSecond').getBoundingClientRect().top + 10,
             link:style('link').color, success:style('success').color, danger:style('danger').color,
             active:style('active').color,
             menu:style('menu').color, toolbar:style('toolbar').color,
@@ -59,7 +63,7 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
         const fixture = path.join(profile, 'fixture.html');
         fs.writeFileSync(fixture, html);
         dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
-            '--headless', '--disable-gpu', '--user-data-dir=' + profile,
+            '--headless', '--disable-gpu', 
             '--dump-dom', 'file://' + fixture
         ], { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     } finally {
@@ -67,6 +71,7 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
     }
     const result = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     assert.deepEqual(result, {
+        cardPadding: '8px', bigSpacing: 16, bigAligned: true,
         link: 'rgb(1, 2, 3)', success: 'rgb(4, 5, 6)', danger: 'rgb(7, 8, 9)',
         active: 'rgb(1, 2, 3)',
         menu: 'rgb(10, 11, 12)', toolbar: 'rgb(10, 11, 12)',
@@ -112,7 +117,7 @@ function recordHeaderStyles(width) {
         const fixture = path.join(profile, 'fixture.html');
         fs.writeFileSync(fixture, html);
         dom = execFileSync(process.env.CHROMIUM_PATH || 'chromium', [
-            '--headless', '--disable-gpu', '--user-data-dir=' + profile, '--window-size=' + width + ',800',
+            '--headless', '--disable-gpu',  '--window-size=' + width + ',800',
             '--dump-dom', 'file://' + fixture
         ], { encoding: 'utf8', timeout: 20000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     } finally {

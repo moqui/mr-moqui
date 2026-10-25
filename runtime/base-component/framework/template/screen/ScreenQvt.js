@@ -1101,7 +1101,7 @@
 
         const fieldBox = (when, containerStyle, big) => {
             const style = visibleStyle(when);
-            const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
+            const box = big ? "q-mx-sm q-my-auto big-row-item" : cls("q-ma-sm", containerStyle || null);
             w("<div" + A({ class: box, ":style": style }) + ">");
         };
 
@@ -2188,7 +2188,7 @@
             const justify = attr(kid, "justify");
             return js`
                 sri.write("<div class=\\"q-my-sm big-row\\"" + ${justify ? lit(` style="justify-content:${justify};"`) : '""'} + ">");
-                ${title ? `sri.write("<div class=\\"big-row-item\\">" + $v.t(ec.resource.expand(${lit(title)}, "")) + "</div>");` : ""}
+                ${title ? `sri.write("<div class=\\"q-mx-sm q-my-auto big-row-item\\">" + $v.t(ec.resource.expand(${lit(title)}, "")) + "</div>");` : ""}
                 ${layoutCode(kid, fields, referenced, true)}
                 sri.write("</div>\\n");
             `;
