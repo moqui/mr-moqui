@@ -763,6 +763,17 @@
         open();
     };
 
+    // Inline screen templates call this helper for chart CSV exports.
+    const downloadData = (data, filename, type) => {
+        const url = root.URL.createObjectURL(new root.Blob([data], {type}));
+        const link = doc.createElement("a");
+        link.href = url;
+        link.download = filename;
+        doc.body.appendChild(link);
+        link.click();
+        root.setTimeout(() => {link.remove();root.URL.revokeObjectURL(url);},0);
+    };
+
     const start = () => {
         doc.documentElement.classList.add("js");
         delegate();
@@ -770,5 +781,5 @@
         connectNotifications();
     };
 
-    return { pure, client: { bind, notify, load, request, post, start } };
+    return { pure, client: { bind, notify, load, request, post, start, downloadData } };
 });
