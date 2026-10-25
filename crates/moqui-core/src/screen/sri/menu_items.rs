@@ -117,7 +117,18 @@ fn menu_entry(
         Some(expression) => script::eval_condition(expression)?,
         None => false,
     };
-    let image = ScreenUrlInfo::resolve(&state.factory, root, &url.names, 0)
+    // The image of the explicit path, resolved as the menu data does (last_standalone 0): the full path would include
+    // the item's default subscreen, which would then be explicit and override the item's own menu image (an app list
+    // would show each app's home screen icon instead of the app's, disagreeing with the shell drawer).
+    let image_names = match prefix {
+        Some(names) => {
+            let mut full = names.to_vec();
+            full.push(item.name.clone());
+            full
+        }
+        None => url.minimal_names.clone(),
+    };
+    let image = ScreenUrlInfo::resolve(&state.factory, root, &image_names, 0)
         .ok()
         .and_then(|info| info.menu_image.clone())
         .unwrap_or_default();
