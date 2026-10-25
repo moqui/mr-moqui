@@ -513,6 +513,20 @@ test("the open app's top-level screens are one level below the app, inside the a
     assert.equal(rows[3].to, "");
 });
 
+test("at the app's root the default subscreen's row takes its own image, not the app's from the target entry", () => {
+    // the target entry of /apps/Hub is the default subscreen Home and its image is the app's (a default subscreen cannot
+    // override the explicit path's menu image); the row shows Home's own
+    const app = { name: "Hub", title: "Hub", path: "/apps/Hub", pathWithParams: "/apps/Hub", image: "sym_o_hub", imageType: "icon",
+        subscreens: [{ name: "Home", title: "Home", path: "/apps/Hub/Home", pathWithParams: "/apps/Hub/Home", image: "sym_o_dashboard", imageType: "icon", active: true },
+            { name: "Tasks", title: "Tasks", path: "/apps/Hub/Tasks", pathWithParams: "/apps/Hub/Tasks" }] };
+    const home = { name: "Home", title: "Home", path: "/apps/Hub/Home", pathWithParams: "/apps/Hub/Home", image: "sym_o_hub", imageType: "icon" };
+    const rows = moqui.drawerRows([appsRoot("Hub"), app, home]);
+    assert.equal(rows[0].image, "sym_o_hub");
+    assert.equal(rows[1].title, "Home");
+    assert.equal(rows[1].image, "sym_o_dashboard");
+    assert.equal(rows[1].current, true);
+});
+
 test("a deeper path is a level more for each screen, the last one current, a screen with no subscreens shows its child", () => {
     const tasks = { name: "Tasks", title: "Tasks", path: "/apps/Hub/Tasks", pathWithParams: "/apps/Hub/Tasks",
         subscreens: [{ name: "Open", title: "Open", path: "/apps/Hub/Tasks/Open", active: true }, { name: "Done", title: "Done", path: "/apps/Hub/Tasks/Done" }] };

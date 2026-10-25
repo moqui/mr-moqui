@@ -4408,7 +4408,9 @@
     // menu data has the subscreens of the path's screens only. The subscreens of navMenuList[0], the apps root, are the apps,
     // without a row for the root itself; a root with no subscreens is the app itself. Under the open app its
     // subscreens are the top-level screens, level 0 like the apps; each deeper screen is a level more. A screen on the path with
-    // no subscreens and a screen after it has that one as its child; the last screen's saved finds are its children. Each row:
+    // no subscreens and a screen after it has that one as its child; the last screen's saved finds are its children. The active
+    // subscreen's row takes the subscreen's own image, because the target entry's is the app's when the subscreen is the app's
+    // default (a default subscreen cannot override the explicit path's menu image). Each row:
     // {key, kind (app, screen or find), level, title, image, imageType, to (none for a disabled link), onPath, current (the
     // screen shown, or its active saved find), inApp (a row of the open app, its own row too)}. Pure, for the node tests.
     moqui.drawerRows = (navMenuList) => {
@@ -4427,19 +4429,21 @@
             to: entry.disableLink ? "" : (entry.pathWithParams || entry.path || ""), onPath: !!onPath, current: !!current,
             inApp: !!onPath && index >= appIndex
         });
-        const walk = (index) => {
+        const walk = (index, image) => {
             const entry = list[index];
             if (!entry) return;
             const subscreens = Array.isArray(entry.subscreens) ? entry.subscreens.filter(Boolean) : [];
             const finds = Array.isArray(entry.savedFinds) ? entry.savedFinds.filter(Boolean) : [];
-            if (!(hasRoot && index === 0)) rows.push(row(entry, index, null, true, index === lastIndex && !findActive));
+            const shown = image ? Object.assign({}, entry, image) : entry;
+            if (!(hasRoot && index === 0)) rows.push(row(shown, index, null, true, index === lastIndex && !findActive));
             if (subscreens.length) {
                 subscreens.forEach((subscreen) => {
-                    if (subscreen.active && list[index + 1]) walk(index + 1);
+                    if (subscreen.active && list[index + 1])
+                        walk(index + 1, subscreen.image ? { image: subscreen.image, imageType: subscreen.imageType } : null);
                     else rows.push(Object.assign(row(subscreen, index + 1, null, false, false), { inApp: index >= appIndex }));
                 });
             } else if (finds.length) {
-                finds.forEach((find) => rows.push(Object.assign(row(find, index + 1, "find", false, !!find.active), { inApp: index >= appIndex })));
+                finds.forEach((find) => rows.push(Object.assign(row(Object.assign({}, find, image), index + 1, "find", false, !!find.active), { inApp: index >= appIndex })));
             } else if (index < lastIndex) {
                 walk(index + 1);
             }
