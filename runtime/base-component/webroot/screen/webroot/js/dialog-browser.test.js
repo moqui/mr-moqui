@@ -15,8 +15,8 @@ test('dialogs use Java top spacing and dismiss only on backdrop clicks', () => {
         const file = path.join(directory, 'dialog.html');
         fs.writeFileSync(file, `<!doctype html><html data-theme="light"><style>${css}</style>
             <button id="open" data-dialog="customer">New Customer</button>
-            <dialog id="customer"><header><h4>New Customer</h4><button class="close" data-close>×</button></header>
-                <div class="body"><div class="ts-wrapper"><div class="ts-control"><input name="generatedSearch"></div></div><input name="firstName">
+            <dialog id="customer" class="find-options"><header><h4>New Customer</h4><button class="close" data-close>×</button></header>
+                <div class="body"><h4 id="saved">Saved Finds</h4><p id="hint">No find parameters</p><h4 id="parameters">Find Parameters</h4><button id="clear" data-btn="primary">Clear Parameters</button><div class="ts-wrapper"><div class="ts-control"><input name="generatedSearch"></div></div><input name="firstName">
                 <div class="field big-row"><label>Name</label><div class="widget">
                 <div class="big-item"><div class="field"><div class="widget"><input id="first" size="30"></div></div></div>
                 <div class="big-item"><div class="field"><div class="widget"><input id="last" size="30"></div></div></div>
@@ -28,6 +28,8 @@ test('dialogs use Java top spacing and dismiss only on backdrop clicks', () => {
             const header = dialog.querySelector('header').getBoundingClientRect();
             const closeTop = dialog.querySelector('[data-close]').getBoundingClientRect().top;
             const focused = document.activeElement.name;
+            const heading=getComputedStyle(document.getElementById('saved')),next=getComputedStyle(document.getElementById('parameters'));
+            const clear=document.getElementById('clear').getBoundingClientRect();
             const first = document.getElementById('first').getBoundingClientRect();
             const last = document.getElementById('last').getBoundingClientRect();
             dialog.dispatchEvent(new MouseEvent('click', {bubbles:true,clientX:rect.left+2,clientY:rect.top+2}));
@@ -36,6 +38,7 @@ test('dialogs use Java top spacing and dismiss only on backdrop clicks', () => {
             document.getElementById('result').textContent = JSON.stringify({
                 top:rect.top,left:rect.left,width:rect.width,headerHeight:header.height,
                 focused,staysOpenInside,closesOutside:!dialog.open,
+                headingFont:heading.fontSize,headingMargin:heading.margin,nextMargin:next.margin,clearHeight:clear.height,
                 namesShareRow:Math.abs(first.top-last.top)<1,closeTop
             });</script>`);
         for (const width of [1440, 600]) {
@@ -48,6 +51,10 @@ test('dialogs use Java top spacing and dismiss only on backdrop clicks', () => {
             assert.ok(Math.abs(metrics.left - (width - metrics.width) / 2) < 1, 'dialog is horizontally centered');
             assert.ok(Math.abs(metrics.headerHeight - 56.7) < 1, `header preserves Java title and padding metrics: ${JSON.stringify(metrics)}`);
             assert.equal(metrics.focused, 'firstName');
+            assert.equal(metrics.headingFont,'18px');
+            assert.equal(metrics.headingMargin,'0px 0px 10px');
+            assert.equal(metrics.nextMargin,'10px 0px');
+            assert.equal(metrics.clearHeight,30);
             assert.equal(metrics.closeTop, metrics.top + 14, 'close control aligns with Java header');
             if (width >= 768) assert.equal(metrics.namesShareRow, true, 'customer first and last name fit on one desktop row');
             assert.equal(metrics.staysOpenInside, true, 'clicking dialog padding must not dismiss it');

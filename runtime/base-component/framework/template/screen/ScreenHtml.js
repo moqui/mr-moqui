@@ -1002,13 +1002,13 @@
             const formId = cfg.formId;
             const savedFinds = cfg.savedFinds;
             const hiddenMap = hiddenParams(n);
-            let out = '<dialog id="' + e(formId) + '_hdialog" style="--w:800px"><header><h4>' + e(L("Find Options")) + '</h4><button type="button" class="close" data-close aria-label="Close">&times;</button></header><div class="body">';
+            let out = '<dialog id="' + e(formId) + '_hdialog" class="find-options" style="--w:800px"><header><h4>' + e(L("Find Options")) + '</h4><button type="button" class="close" data-close aria-label="Close">&times;</button></header><div class="body">';
             w(out);
             if (savedFinds) {
                 const current = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("pageIndex").removeParameter("moquiFormName").removeParameter("moquiSessionToken").removeParameter("formListFindId");
                 const params = current.getParameterMap();
                 const saveUrl = sri.buildUrl("formSaveFind").url;
-                w("<h4>" + e(L("Saved Finds")) + "</h4>");
+                if (cfg.headerDialog) w("<h4>" + e(L("Saved Finds")) + "</h4>");
                 // The user's saved finds: a link that applies one, and a form that updates it to the current parameters,
                 // makes it the default of the screen or no longer, or deletes it.
                 const finds = sri.getUserFormListFinds(at(n, "name"));
@@ -1038,10 +1038,10 @@
                 } else w("<p>" + e(L("No find parameters, choose some to save a new find or update existing")) + "</p>");
             }
             if (cfg.headerDialog) {
-                w("<h4>" + e(L("Find Parameters")) + '</h4><form name="' + e(cfg.headerFormId) + '" id="' + e(cfg.headerFormId) + '" method="post" action="' + e(sri.getCurrentScreenUrl().url) + '">' +
+                w((savedFinds ? "<h4>" + e(L("Find Parameters")) + "</h4>" : "") + '<form name="' + e(cfg.headerFormId) + '" id="' + e(cfg.headerFormId) + '" method="post" action="' + e(sri.getCurrentScreenUrl().url) + '">' +
                     hiddenInput("moquiSessionToken", token()) + (ec.context.get("formListFindId") ? hiddenInput("formListFindId", ec.context.get("formListFindId")) : "") +
                     Object.keys(hiddenMap).map((key) => hiddenInput(key, hiddenMap[key])).join("") + "<fieldset>");
-                w('<div class="field"><span class="label"></span><div class="widget"><button type="button" data-clear="' + e(cfg.headerFormId) + '">' + e(L("Clear Parameters")) + "</button></div></div>");
+                w('<div class="field"><span class="label"></span><div class="widget"><button type="button" data-btn="primary" data-clear="' + e(cfg.headerFormId) + '">' + e(L("Clear Parameters")) + "</button></div></div>");
                 const orderable = (cfg.summaryFields || cols.flat()).filter((f) => f.orderBy);
                 if (orderable.length) {
                     w('<div class="field"><label for="' + e(cfg.headerFormId) + '_orderByField">' + e(L("Order By")) + '</label><div class="widget"><select name="orderBySelect" multiple id="' + e(cfg.headerFormId) + '_orderBySelect" style="width:100%" data-orderby="' + e(cfg.headerFormId) + '_orderByField">' +

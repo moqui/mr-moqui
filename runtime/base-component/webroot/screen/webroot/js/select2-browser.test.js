@@ -14,7 +14,7 @@ test('Java dropdown widget opens inside a native modal and submits native values
         const html = `<!doctype html><html data-theme="light"><style>${read('css/moqui-html.css')}
             ${read('libs/select2/select2.min.css')}${read('libs/select2/select2-bootstrap.min.css')}</style>
             <button data-dialog="customer" id="open">Customer</button><dialog id="customer"><header>Customer</header><div class="body">
-            <form id="form"><div class="field"><label>Role</label><div class="widget"><select id="role" name="role" data-dropdown="select2">
+            <form id="form"><div class="field"><label>Types</label><div class="widget"><select id="types" name="types" multiple data-dropdown="select2"><option value="a">A</option></select></div></div><div class="field"><label>Role</label><div class="widget"><select id="role" name="role" data-dropdown="select2">
             <option value="customer">Customer</option><option value="employee">Employee</option></select></div></div><select id="region" name="region" data-dropdown="select2" data-url="/regions"
             data-depends='[["role","role"]]' data-value="value" data-label="label"></select></form></div></dialog>
             <pre id="result"></pre><script>${read('libs/jquery/jquery.min.js')}</script><script>${read('libs/select2/select2.js')}</script>
@@ -32,7 +32,7 @@ test('Java dropdown widget opens inside a native modal and submits native values
                 const select = document.getElementById('role'), dialog = document.getElementById('customer');
                 let nativeChanges = 0;
                 select.addEventListener('change', () => nativeChanges++);
-                const combo = dialog.querySelector('[role=combobox]');
+                const combo = select.nextElementSibling.querySelector('[role=combobox]');
                 if (!combo) throw new Error('No dropdown initialized: ' + select.outerHTML + ' jQuery: ' + jQuery.fn.jquery);
                 jQuery(select).select2('open');
                 const popup = dialog.querySelector('.select2-dropdown');
@@ -41,7 +41,7 @@ test('Java dropdown widget opens inside a native modal and submits native values
                 const employee = rows.find(row => row.textContent === 'Employee');
                 if (employee) employee.dispatchEvent(new MouseEvent('mouseup', {bubbles:true}));
                 setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
-                    combo:!!combo,height:combo?.getBoundingClientRect().height,dropdownInsideDialog,
+                    multipleHeight:document.querySelector('#types + .select2-container .select2-selection').getBoundingClientRect().height,combo:!!combo,height:combo?.getBoundingClientRect().height,dropdownInsideDialog,
                     widthMatchesNative:combo?.getBoundingClientRect().width === initial,baseline:getComputedStyle(select.nextElementSibling).marginTop, selected:new FormData(document.getElementById('form')).get('role'),nativeChanges,
                     stillOpen:dialog.open,closedPopup:!dialog.querySelector('.select2-dropdown'),
                     region:new FormData(document.getElementById('form')).get('region'),requests
@@ -54,7 +54,7 @@ test('Java dropdown widget opens inside a native modal and submits native values
             '--virtual-time-budget=2000','--window-size=1440,1000','--dump-dom',file
         ], {encoding:'utf8',timeout:15000,maxBuffer:4*1024*1024,stdio:['ignore','pipe','ignore']});
         const result = JSON.parse(dom.match(/<pre id="result">(.*?)<\/pre>/s)[1]);
-        assert.deepEqual(result, {combo:true,height:34,dropdownInsideDialog:true,widthMatchesNative:true,baseline:'-2px',selected:'employee',nativeChanges:1,stillOpen:true,closedPopup:true,region:'employee-region',requests:['customer','employee']});
+        assert.deepEqual(result, {multipleHeight:34,combo:true,height:34,dropdownInsideDialog:true,widthMatchesNative:true,baseline:'-2px',selected:'employee',nativeChanges:1,stillOpen:true,closedPopup:true,region:'employee-region',requests:['customer','employee']});
     } finally {
         fs.rmSync(directory, {recursive:true,force:true});
     }

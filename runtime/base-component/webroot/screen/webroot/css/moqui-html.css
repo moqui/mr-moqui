@@ -283,7 +283,7 @@ label.inline { white-space: nowrap; margin: 0 6px; font-weight: normal; }
 :where(.field > .widget) select, :where(.field > .widget) textarea {
     color: var(--control-fg); border-color: var(--control-border); box-shadow: var(--control-shadow);
 }
-.field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:where(.selectivity-multiple-input)),
+.field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:where(.selectivity-multiple-input, .select2-search__field)),
 .field > .widget select { height: 34px; padding: 6px 12px; }
 .field > .widget textarea { min-height: 34px; padding: 6px 12px; }
 .field > .widget > .display { min-height: 34px; padding: 7px 0; }
@@ -332,7 +332,7 @@ table.form-list-sub { width: 100%; }
 table.form-list-sub th, table.form-list-sub td { padding: 2px 8px; text-align: left; vertical-align: top; }
 table.form-list tr[data-total] td { font-weight: bold; border-top: 2px solid var(--line); }
 table.form-list td > div { margin: 0; }
-table.form-list .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:where(.selectivity-multiple-input)),
+table.form-list .field > .widget input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:where(.selectivity-multiple-input, .select2-search__field)),
 table.form-list .field > .widget select { height: auto; padding: 4px 8px; }
 table.form-list .field > .widget textarea { min-height: 0; padding: 4px 8px; }
 table.form-list .field { margin-bottom: 0; }
@@ -460,3 +460,8 @@ dialog .select2-container { text-align: left; }
 
 /* Selectivity owns its search input dimensions, matching Java. */
 .selectivity-input input.selectivity-multiple-input { box-shadow:none;vertical-align:baseline; }
+
+/* Java Find Options uses Bootstrap body headings and paragraph spacing. */
+dialog.find-options > .body > h4 { margin:10px 0; font-size:18px; font-weight:500; line-height:1.1; }
+dialog.find-options > .body > h4:first-child { margin-top:0; }
+dialog.find-options > .body > p { margin-bottom:10px; }

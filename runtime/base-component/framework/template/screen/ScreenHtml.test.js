@@ -158,4 +158,7 @@ test('find dialog renders header-only submit and filter fields once in declarati
     const hiddenFilter = field('statusId');
     renderList({fields:[name,hiddenFilter,find],columns:[[name]]});
     assert.deepEqual(calls,['name','statusId','searchButton']);
+    const html=renderList();
+    assert.doesNotMatch(html,/<h4>Find Parameters<\/h4>/);
+    assert.match(html, /data-btn="primary" data-clear=/);
 });
