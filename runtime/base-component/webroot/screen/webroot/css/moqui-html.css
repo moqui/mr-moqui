@@ -266,6 +266,9 @@ input[type="checkbox"], input[type="radio"] { padding: 0; margin: 0 4px 0 0; ver
 input[type="file"] { border: 0; padding: 0; }
 input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 input:user-invalid, select:user-invalid, textarea:user-invalid { border-color: var(--danger); }
+/* Java webroot-theme.css shows validity before the first submission. */
+input:invalid, textarea:invalid { background-color: #fee; }
+input:focus:valid, textarea:focus:valid { background-color: #eee; }
 [data-wide] { width: 100%; }
 input[data-align="right"] { text-align: right; } input[data-align="center"] { text-align: center; }
 input[type="date"], input[type="time"], input[type="datetime-local"] { min-width: 9em; }
