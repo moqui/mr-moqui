@@ -1150,10 +1150,10 @@
         template:
             '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" :id="id" @show="onShow" @hide="onHide" :maximized="$q.screen.lt.sm">' +
                 '<q-card ref="dialogCard" flat bordered :style="{width:((width||760)+\'px\'),\'max-width\':($q.screen.lt.sm?\'100vw\':\'90vw\')}">' +
-                    '<q-card-section ref="dialogHeader" class="row items-center no-wrap q-py-xs q-pr-xs non-selectable" :style="{cursor:(draggable?\'move\':\'default\')}">' +
-                        '<div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div><q-space></q-space>' +
+                    '<q-card-actions ref="dialogHeader" :style="{cursor:(draggable?\'move\':\'default\')}">' +
+                        '<h5 class="q-pl-sm non-selectable">{{title}}</h5><q-space></q-space>' +
                         '<q-btn icon="close" flat round dense v-close-popup></q-btn>' +
-                    '</q-card-section><q-separator></q-separator>' +
+                    '</q-card-actions><q-separator></q-separator>' +
                     '<q-card-section ref="dialogBody" class="scroll" style="max-height:80vh;"><slot></slot></q-card-section>' +
                 '</q-card>' +
             '</q-dialog>',

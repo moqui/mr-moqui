@@ -132,6 +132,8 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:#fff; }
 
 form.q-form { width:100%; }
 
+.q-card__actions h5 { font-size:1.1rem; display:inline-block; margin-block-start:0; margin-block-end:0; }
+
 /* ====== fields ====== */
 
 /* Leave room for the label over the outline, as in the Java QVT theme. */
