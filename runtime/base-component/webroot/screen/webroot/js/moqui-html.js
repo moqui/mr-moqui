@@ -338,6 +338,30 @@
             .then(() => root.jQuery.fn.datetimepicker ? undefined : loadScript("/libs/datetimepicker/bootstrap-datetimepicker.js"))
             .then(() => root.jQuery);
     };
+    const initOrderBy = (select) => {
+        loadStyle("/libs/selectivity/selectivity-full.min.css");
+        const dialog = select.closest("dialog");
+        const initialize = () => {
+            if (dialog && !dialog.open) return;
+            (root.jQuery ? Promise.resolve() : loadScript("/libs/jquery/jquery.min.js"))
+                .then(() => root.jQuery.fn.selectivity ? undefined : loadScript("/libs/selectivity/selectivity-full.min.js"))
+                .then(() => {
+                    if (!select.isConnected || (dialog && !dialog.open)) return;
+                    const jq = root.jQuery, target = doc.getElementById(select.dataset.orderby);
+                    const instance = jq(select).selectivity({positionDropdown:dropdown=>dropdown.css("width","300px")})[0].selectivity;
+                    const control = instance.$el[0];
+                    instance.filterResults = function(results) {
+                        return results.filter(item=>!this._data.some(selected=>selected.id.substring(1)===item.id.substring(1)));
+                    };
+                    if (target.value) jq(control).selectivity("value",target.value.split(",").filter(Boolean));
+                    jq(control).on("change",event=>{
+                        if (event.value) {target.value=event.value.join(",");target.dispatchEvent(new Event("change",{bubbles:true}));}
+                    });
+                }).catch(error=>console.error("Could not initialize order by",select.id,error));
+        };
+        if (dialog) dialog.addEventListener("moqui:dialog-open",initialize);
+        initialize();
+    };
     const initDatePicker = (node) => {
         const nativeInput = node.querySelector("input");
         node.value = nativeInput.value;
@@ -620,7 +644,7 @@
         // unrelated controls. Choose an actual form input for initial focus.
         const focusFormField = (scope) => {
             const focus = $$("[autofocus], .default-focus, input:not([type=hidden]):not([type=checkbox]), select, textarea",scope)
-                .find(node=>node.getClientRects().length && !node.closest(".ts-wrapper,.select2-container") && !node.matches(".select2-hidden-accessible,.ts-hidden-accessible"));
+                .find(node=>node.getClientRects().length && !node.closest(".ts-wrapper,.select2-container,.selectivity-input") && !node.matches(".select2-hidden-accessible,.ts-hidden-accessible,select[data-orderby]"));
             if (focus) focus.focus();
         };
         if (dialog.dataset.load && !dialog.dataset.loaded) {
@@ -684,6 +708,7 @@
         each(scope, "dialog", initDialog);
         each(scope, "[data-load]:not(dialog)", (node) => load(node));
         each(scope, "[data-date-picker]", initDatePicker);
+        each(scope, "select[data-orderby]", initOrderBy);
         each(scope, "select[data-ts]", initSelect);
         each(scope, "select[data-dropdown=select2]", initSelect2);
         each(scope, "input[data-default]", initDefault);
