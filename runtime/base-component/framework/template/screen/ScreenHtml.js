@@ -321,35 +321,23 @@
         // ---- dates ----
 
         const dateDefault = (n) => (at(n, "type") === "time" ? "HH:mm" : at(n, "type") === "date" ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm");
-        // The native input type for a widget, or null when its format is not the default one.
-        const nativeType = (n) => {
-            if (at(n, "format") && at(n, "format") !== dateDefault(n)) return null;
-            return at(n, "type") === "time" ? "time" : at(n, "type") === "date" ? "date" : "datetime-local";
+        const dateInput = (n, name, id, value, check, find = false) => {
+            const format = at(n, "format") || dateDefault(n);
+            const timeOnly = at(n, "type") === "time";
+            const size = (!find && at(n, "size")) || (timeOnly ? 9 : at(n, "type") === "date" ? 10 : 16);
+            const maximum = (!find && at(n, "max-length")) || (timeOnly ? 13 : at(n, "type") === "date" ? 10 : 23);
+            const input = "<input" + A({type:"text", name, id:timeOnly ? id : id + "_input", value,
+                size, maxlength:maximum, required:check && check.required || null, title:tip(n), form:owner(),
+                pattern:timeOnly ? "^(?:(?:([01]?\\d|2[0-3]):)?([0-5]?\\d):)?([0-5]?\\d)$" : null}) + ">";
+            if (timeOnly) return input;
+            return '<div' + A({class:"input-group date",id,"data-date-picker":format.replace(/a/g,"A").replace(/d/g,"D").replace(/y/g,"Y"),
+                "data-date-step":find ? 5 : at(n,"minute-stepping") || 5,"data-date-kind":at(n,"type") || "date-time"}) + '>' + input +
+                '<span class="input-group-addon"><span class="fa fa-calendar"></span></span></div>';
         };
-        const nativeValue = (type, value) => (type === "datetime-local" && value ? value.replace(" ", "T") : value);
-        const dateInput = (n, name, id, value, check) => {
-            const kind = nativeType(n);
-            return "<input" + A({
-                type: kind || "text", name, id, value: nativeValue(kind, value), required: check && check.required ? true : null,
-                step: kind === "datetime-local" || kind === "time" ? String(Number(at(n, "minute-stepping") || 5) * 60) : null,
-                placeholder: kind ? null : at(n, "format"), "data-format": kind ? null : at(n, "format"), title: tip(n), form: owner()
-            }) + ">";
-        };
-
         const dateTime = (n) => {
             const format = at(n, "format") || dateDefault(n);
             const value = sri.getFieldValueString(fieldOf(n), at(n, "default-value"), format, at(n, "type") || "date-time");
-            const timeOnly = at(n, "type") === "time";
-            const size = at(n, "size") || (timeOnly ? 9 : at(n, "type") === "date" ? 10 : 16);
-            const maximum = at(n, "max-length") || (timeOnly ? 13 : at(n, "type") === "date" ? 10 : 23);
-            const check = validate(n.parent);
-            const input = "<input" + A({type:"text", name:fnm(n), id:timeOnly ? fid(n) : fid(n) + "_input", value,
-                size, maxlength:maximum, required:check.required || null, title:tip(n), form:owner(),
-                pattern:timeOnly ? "^(?:(?:([01]?\\d|2[0-3]):)?([0-5]?\\d):)?([0-5]?\\d)$" : null}) + ">";
-            if (timeOnly) { w(input); return; }
-            w('<div' + A({class:"input-group date",id:fid(n),"data-date-picker":format.replace(/a/g,"A").replace(/d/g,"D").replace(/y/g,"Y"),
-                "data-date-step":at(n,"minute-stepping") || 5,"data-date-kind":at(n,"type") || "date-time"}) + '>' + input +
-                '<span class="input-group-addon"><span class="fa fa-calendar"></span></span></div>');
+            w(dateInput(n, fnm(n), fid(n), value, validate(n.parent)));
         };
 
         const formatted = (value, format) => {
@@ -367,8 +355,10 @@
             const format = dateDefault(n);
             const from = formatted(ec.context.get(name + "_from") || at(n, "default-value-from"), format);
             const thru = formatted(ec.context.get(name + "_thru") || at(n, "default-value-thru"), format);
-            w('<span class="find date-find"><label><span>' + e(L("From")) + "</span> " + dateInput(n, name + "_from", id + "_from", from) +
-                "</label> <label><span>" + e(L("Thru")) + "</span> " + dateInput(n, name + "_thru", id + "_thru", thru) + "</label></span>");
+            w('<span class="form-date-find"><span>' + e(L("From")) + "&nbsp;</span> " +
+                dateInput(n, name + "_from", id + "_from", from, null, true) +
+                '</span> <span class="form-date-find"><span>' + e(L("Thru")) + "&nbsp;</span> " +
+                dateInput(n, name + "_thru", id + "_thru", thru, null, true) + "</span>");
         };
 
         const datePeriod = (n) => {
