@@ -783,7 +783,7 @@
             }
             w("<" + type + A({
                 id: nodeId(n) || null, class: cls("text-inline", xn(at(n, "style")) || null), title: at(n, "tooltip") ? x(at(n, "tooltip")) : null
-            }) + ">" + text + "</" + type + ">\n");
+            }) + ">" + text + "</" + type + "> ");
         };
 
         const linkParts = (n) => {
