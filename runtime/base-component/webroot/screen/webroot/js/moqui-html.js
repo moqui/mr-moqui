@@ -616,13 +616,19 @@
         if (dialog.open) return;
         dialog.showModal();
         dialog.dispatchEvent(new Event("moqui:dialog-open"));
+        // Generated search inputs open their dropdown on focus and can cover
+        // unrelated controls. Choose an actual form input for initial focus.
+        const focusFormField = (scope) => {
+            const focus = $$("[autofocus], .default-focus, input:not([type=hidden]):not([type=checkbox]), select, textarea",scope)
+                .find(node=>node.getClientRects().length && !node.closest(".ts-wrapper,.select2-container") && !node.matches(".select2-hidden-accessible,.ts-hidden-accessible"));
+            if (focus) focus.focus();
+        };
         if (dialog.dataset.load && !dialog.dataset.loaded) {
             dialog.dataset.loaded = "1";
             const body = $(".body", dialog);
-            load(body, dialog.dataset.load).then(() => { const focus = $("[autofocus], input:not([type=hidden]), select, textarea", body); if (focus) focus.focus(); });
+            load(body, dialog.dataset.load).then(() => focusFormField(body));
         } else {
-            const focus = $(".default-focus, input:not([type=hidden]):not([type=checkbox])", dialog);
-            if (focus) focus.focus();
+            focusFormField(dialog);
         }
     };
 

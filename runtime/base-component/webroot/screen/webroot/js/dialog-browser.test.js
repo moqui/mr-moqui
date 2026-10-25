@@ -16,7 +16,7 @@ test('dialogs use Java top spacing and dismiss only on backdrop clicks', () => {
         fs.writeFileSync(file, `<!doctype html><html data-theme="light"><style>${css}</style>
             <button id="open" data-dialog="customer">New Customer</button>
             <dialog id="customer"><header><h4>New Customer</h4><button class="close" data-close>×</button></header>
-                <div class="body"><input name="firstName">
+                <div class="body"><div class="ts-wrapper"><div class="ts-control"><input name="generatedSearch"></div></div><input name="firstName">
                 <div class="field big-row"><label>Name</label><div class="widget">
                 <div class="big-item"><div class="field"><div class="widget"><input id="first" size="30"></div></div></div>
                 <div class="big-item"><div class="field"><div class="widget"><input id="last" size="30"></div></div></div>
