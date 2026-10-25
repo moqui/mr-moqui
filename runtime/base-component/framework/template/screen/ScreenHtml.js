@@ -431,11 +431,9 @@
                 description = sri.getFieldTransitionValue(at(dyn, "transition"), dyn, current, at(dyn, "label-field") || "label", false);
             }
             const check = validate(n.parent);
-            const enhance = dyn || multiple || combo;
-            if (enhance) lib("tom-select");
             let attrs = {
                 name, id, class: xn(at(n, "style")) || null, multiple: multiple || null, size: at(n, "size") || null, required: check.required || null,
-                title: tip(n), form: owner(), "data-ts": enhance ? (dyn ? "remote" : "select") : null, "data-combo": combo ? true : null,
+                title: tip(n), form: owner(), "data-dropdown": "select2", "data-combo": combo ? true : null,
                 "data-search": serverSearch ? true : null
             };
             if (dyn) {

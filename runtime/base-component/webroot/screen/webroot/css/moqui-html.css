@@ -443,3 +443,7 @@ a[data-app-tile] > img { width: 32px; height: 32px; object-fit: contain; }
     .big-item .field, table.form-list .field { margin-left: 0; margin-right: 0; }
     .big-item .field > .widget, table.form-list .field > .widget { padding-left: 0; padding-right: 0; }
 }
+
+/* Java webroot-layout.css uses these Select2 bounds and baseline offset. */
+.select2-container.select2-container--bootstrap { display: inline-block; min-width: 60px; max-width: 100%; margin-top: -2px; }
+dialog .select2-container { text-align: left; }

@@ -321,6 +321,73 @@
     };
     const withSortable = () => (root.Sortable ? Promise.resolve(root.Sortable) : loadScript("/libs/sortablejs/Sortable.min.js").then(() => root.Sortable));
 
+    // The Java HTML renderer uses Select2's Bootstrap theme for drop-downs.
+    // Keep native selects as the form data source and fallback if assets fail.
+    const withSelect2 = () => {
+        loadStyle("/libs/select2/select2.min.css");
+        loadStyle("/libs/select2/select2-bootstrap.min.css");
+        return (root.jQuery ? Promise.resolve() : loadScript("/libs/jquery/jquery.min.js"))
+            .then(() => root.jQuery.fn.select2 ? undefined : loadScript("/libs/select2/select2.js"))
+            .then(() => root.jQuery);
+    };
+    const initSelect2 = (select) => {
+        const dialog = select.closest("dialog");
+        let generation = 0;
+        const initialize = () => {
+            if (dialog && !dialog.open) return;
+            withSelect2().then((jq) => {
+                if (!select.isConnected || (dialog && !dialog.open) || jq(select).data("select2")) return;
+                const settings = {
+                    theme: "bootstrap", dropdownParent: dialog ? jq(dialog) : jq(doc.body),
+                    closeOnSelect: !select.multiple,
+                    tags: select.hasAttribute("data-combo"),
+                    // jQuery outerWidth double-counts padding on intrinsic native
+                    // selects in Chromium; use the actual rendered width.
+                    width: select.multiple || select.hasAttribute("data-search") ? "100%" :
+                        select.getBoundingClientRect().width + "px"
+                };
+                if (select.hasAttribute("data-search")) {
+                    Object.assign(settings, {
+                        minimumInputLength: Number(select.dataset.min || 1),
+                        ajax: {
+                            delay: Number(select.dataset.delay || 300),
+                            transport: (params, success, failure) => {
+                                let cancelled = false;
+                                fetchOptions(select, params.data.term || "").then((options) => {
+                                    if (!cancelled) success({results:(options || []).map(o => ({id:o.value,text:o.text}))});
+                                }).catch(failure);
+                                return {abort:() => {cancelled = true;}};
+                            },
+                            processResults: answer => answer
+                        }
+                    });
+                }
+                jq(select).select2(settings);
+                // jQuery's synthetic change doesn't reach native dependency and
+                // auto-submit listeners; bridge actual user selection events.
+                jq(select).on("select2:select select2:unselect select2:clear", () =>
+                    select.dispatchEvent(new Event("change", {bubbles:true})));
+            }).catch(() => { /* the native select stays usable */ });
+        };
+        if (dialog) dialog.addEventListener("moqui:dialog-open", initialize);
+        if (select.dataset.url && !select.hasAttribute("data-search")) {
+            const populate = () => {
+                const requestGeneration = ++generation;
+                return fetchOptions(select).then(options => {
+                    if (requestGeneration !== generation) return;
+                    const jq = root.jQuery;
+                    if (jq?.fn.select2 && jq(select).data("select2")) jq(select).select2("destroy");
+                    setNativeOptions(select, options || [], select.value);
+                    initialize();
+                    select.dispatchEvent(new Event("change", {bubbles:true}));
+                });
+            };
+            onDepends(select, populate);
+            populate();
+        }
+        initialize();
+    };
+
     const initSelect = (select) => {
         const kind = select.dataset.ts;
         const search = select.hasAttribute("data-search");
@@ -513,6 +580,7 @@
     const openDialog = (dialog) => {
         if (dialog.open) return;
         dialog.showModal();
+        dialog.dispatchEvent(new Event("moqui:dialog-open"));
         if (dialog.dataset.load && !dialog.dataset.loaded) {
             dialog.dataset.loaded = "1";
             const body = $(".body", dialog);
@@ -575,6 +643,7 @@
         each(scope, "dialog", initDialog);
         each(scope, "[data-load]:not(dialog)", (node) => load(node));
         each(scope, "select[data-ts]", initSelect);
+        each(scope, "select[data-dropdown=select2]", initSelect2);
         each(scope, "input[data-default]", initDefault);
         each(scope, "[data-dynamic]:not(nav)", initDynamicDisplay);
         each(scope, ".tree", initTree);
