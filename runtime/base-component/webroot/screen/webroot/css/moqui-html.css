@@ -453,5 +453,5 @@ dialog .select2-container { text-align: left; }
 
 /* Java's inline Bootstrap calendar input and addon. Popup Bootstrap rules are scoped. */
 .input-group.date { display:inline-block;position:relative;white-space:nowrap;margin-top:-2px; }
-.input-group.date > input { display:inline;min-width:20px;width:auto;border-radius:4px 0 0 4px; }
+.input-group.date > input { float:left;position:relative;z-index:2;margin-bottom:0;display:inline;min-width:20px;width:auto;border-radius:4px 0 0 4px; }
 .input-group.date > .input-group-addon { display:inline;line-height:34px;padding:8px 12px;background:#eee;color:#555;border:1px solid #ccc;border-left:0;border-radius:0 4px 4px 0; }
