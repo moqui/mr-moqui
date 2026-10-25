@@ -34,11 +34,15 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
             <div id="selHead" class="th m-sel">x</div><div class="th">Name</div><div class="th">Description</div>
         </div></div></div>
     </div>
+    <div id="denseField" class="q-field q-field--dense q-field--labeled q-field--float"><span id="fieldLabel" class="q-field__label">Email</span><input id="fieldInput" class="q-field__native"></div><div class="row"><div id="rowField" class="q-field q-field--dense"></div></div>
     <section id="plainCard" class="q-card__section q-card__section--vert"><div id="bigRow" class="big-row" style="height:60px"><div id="bigFirst" class="q-mx-sm q-my-auto big-row-item" style="width:50px;height:40px"></div><div id="bigSecond" class="q-mx-sm q-my-auto big-row-item" style="width:30px;height:20px"></div></div></section>
     <pre id="result"></pre>
     <script>
         const style = id => getComputedStyle(document.getElementById(id));
         document.getElementById('result').textContent = JSON.stringify({
+            denseMargin:style('denseField').margin, rowFieldMargin:style('rowField').margin,
+            labelTop:style('fieldLabel').top, labelPadding:style('fieldLabel').paddingLeft,
+            inputPadding:style('fieldInput').paddingTop,
             cardPadding:style('plainCard').padding,
             bigSpacing:document.getElementById('bigSecond').getBoundingClientRect().left - document.getElementById('bigFirst').getBoundingClientRect().right,
             bigAligned:document.getElementById('bigFirst').getBoundingClientRect().top + 20 === document.getElementById('bigSecond').getBoundingClientRect().top + 10,
@@ -71,6 +75,7 @@ test('Quasar theme colors, labels and sort layout match Java', () => {
     }
     const result = JSON.parse(dom.match(/<pre id="result">([^<]+)<\/pre>/)[1]);
     assert.deepEqual(result, {
+        denseMargin: '6px 0px', rowFieldMargin: '0px', labelTop: '0px', labelPadding: '4px', inputPadding: '8px',
         cardPadding: '8px', bigSpacing: 16, bigAligned: true,
         link: 'rgb(1, 2, 3)', success: 'rgb(4, 5, 6)', danger: 'rgb(7, 8, 9)',
         active: 'rgb(1, 2, 3)',
