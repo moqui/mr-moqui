@@ -653,7 +653,8 @@
                     "depends-optional": at(dyn, "depends-optional") === "true" ? true : null, ":depends-on": js_(remoteInfo.dependsOn),
                     ":options-parameters": js_(remoteInfo.params), "server-search": at(dyn, "server-search") === "true" ? true : null,
                     ":server-delay": at(dyn, "delay") || null, ":server-min-length": at(dyn, "min-length") || null,
-                    "options-load-init": (dyn.children || []).length > 1 || undefined
+                    // A single dependency still needs its initial options before form validation.
+                    "options-load-init": remoteInfo.hasDepends || (dyn.children || []).length > 1 || undefined
                 });
                 if (!attrs["options-load-init"]) delete attrs["options-load-init"];
                 // the current value of a remote list shows its label when the page is written

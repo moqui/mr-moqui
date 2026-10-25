@@ -257,3 +257,24 @@ test('the filter summary shows a display header field by its value and a display
     assert.equal(calls[0][2], 'PMT_ID');
     assert.equal(context.$mqQvt.valueText(widget('hidden')), '');
 });
+
+test('dependent remote dropdowns load initial options with one dependency', () => {
+    const factory = vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'ScreenQvt.js'), 'utf8'));
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, { anyMacros: () => ({}), allElements: [], opaqueElements: [] });
+    let html = '';
+    const context = {
+        sri: {
+            write: text => { html += text; }, getFieldOptions: () => new Map(), getFieldValuePlainString: () => '',
+            makeUrlByType: () => ({ url: '/qapps/getGeoCountryStates', getParameterMap: () => ({}) })
+        },
+        ec: { context: { get: () => null }, resource: { expand: text => text }, l10n: { localize: text => text } }
+    };
+    vm.runInNewContext(module.runtime, context);
+    const field = { attrs: { name: 'stateProvinceGeoId' }, parent: { attrs: { name: 'CreatePersonForm' } } };
+    const sub = { attrs: { title: '' }, parent: field };
+    const widget = { attrs: {}, parent: sub, children: [{ name: 'dynamic-options', attrs: { transition: 'getGeoCountryStates', 'value-field': 'geoId' }, children: [{ name: 'depends-on', attrs: { field: 'countryGeoId' } }] }] };
+    context.$mqQvt.dropDown(widget);
+    assert.match(html, /options-load-init/);
+    assert.match(html, /countryGeoId/);
+    assert.match(html, /value-field="geoId"/);
+});
