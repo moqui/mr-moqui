@@ -339,7 +339,17 @@
         const dateTime = (n) => {
             const format = at(n, "format") || dateDefault(n);
             const value = sri.getFieldValueString(fieldOf(n), at(n, "default-value"), format, at(n, "type") || "date-time");
-            w(dateInput(n, fnm(n), fid(n), value, validate(n.parent)));
+            const timeOnly = at(n, "type") === "time";
+            const size = at(n, "size") || (timeOnly ? 9 : at(n, "type") === "date" ? 10 : 16);
+            const maximum = at(n, "max-length") || (timeOnly ? 13 : at(n, "type") === "date" ? 10 : 23);
+            const check = validate(n.parent);
+            const input = "<input" + A({type:"text", name:fnm(n), id:timeOnly ? fid(n) : fid(n) + "_input", value,
+                size, maxlength:maximum, required:check.required || null, title:tip(n), form:owner(),
+                pattern:timeOnly ? "^(?:(?:([01]?\\d|2[0-3]):)?([0-5]?\\d):)?([0-5]?\\d)$" : null}) + ">";
+            if (timeOnly) { w(input); return; }
+            w('<div' + A({class:"input-group date",id:fid(n),"data-date-picker":format.replace(/a/g,"A").replace(/d/g,"D").replace(/y/g,"Y"),
+                "data-date-step":at(n,"minute-stepping") || 5,"data-date-kind":at(n,"type") || "date-time"}) + '>' + input +
+                '<span class="input-group-addon"><span class="fa fa-calendar"></span></span></div>');
         };
 
         const formatted = (value, format) => {

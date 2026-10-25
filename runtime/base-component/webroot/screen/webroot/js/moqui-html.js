@@ -330,6 +330,41 @@
             .then(() => root.jQuery.fn.select2 ? undefined : loadScript("/libs/select2/select2.js"))
             .then(() => root.jQuery);
     };
+    const withDatePicker = () => {
+        loadStyle("/libs/datetimepicker/bootstrap-scoped.css");
+        loadStyle("/libs/datetimepicker/bootstrap-datetimepicker.min.css");
+        return (root.jQuery ? Promise.resolve() : loadScript("/libs/jquery/jquery.min.js"))
+            .then(() => root.moment ? undefined : loadScript("/libs/datetimepicker/moment-with-locales.min.js"))
+            .then(() => root.jQuery.fn.datetimepicker ? undefined : loadScript("/libs/datetimepicker/bootstrap-datetimepicker.js"))
+            .then(() => root.jQuery);
+    };
+    const initDatePicker = (node) => {
+        const nativeInput = node.querySelector("input");
+        node.value = nativeInput.value;
+        nativeInput.addEventListener("change", () => {node.value = nativeInput.value;}, {capture:true});
+        withDatePicker().then(jq => {
+            if (!node.isConnected || jq(node).data("DateTimePicker")) return;
+            const format = node.dataset.datePicker;
+            const input = node.querySelector("input");
+            const settings = {toolbarPlacement:"top",showClose:true,showClear:true,showTodayButton:true,
+                useStrict:true,format,stepping:Number(node.dataset.dateStep || 5),
+                locale:doc.documentElement.lang || "en",
+                extraFormats:node.dataset.dateKind === "date" ? ["l","L","YYYY-MM-DD"] :
+                    ["YYYY-MM-DD HH:mm","YYYY-MM-DD HH:mm:ss","MM/DD/YYYY HH:mm"],
+                keyBinds:{t:function(){this.date(root.moment());},
+                    up:function(){if(this.date())this.date(this.date().clone().add(1,"d"));},
+                    down:function(){if(this.date())this.date(this.date().clone().subtract(1,"d"));},
+                    "control up":function(){if(this.date())this.date(this.date().clone().add(1,"d"));},
+                    "control down":function(){if(this.date())this.date(this.date().clone().subtract(1,"d"));}}};
+            if (input.value) settings.defaultDate = root.moment(input.value,format);
+            jq(node).datetimepicker(settings);
+            node.value = input.value;
+            jq(node).on("dp.change", () => {
+                node.value = input.value;
+                node.dispatchEvent(new Event("change",{bubbles:true}));
+            });
+        }).catch(error => console.error("Could not initialize calendar",node.id,error));
+    };
     const initSelect2 = (select) => {
         const dialog = select.closest("dialog");
         let generation = 0;
@@ -642,6 +677,7 @@
         each(scope, "form", initForm);
         each(scope, "dialog", initDialog);
         each(scope, "[data-load]:not(dialog)", (node) => load(node));
+        each(scope, "[data-date-picker]", initDatePicker);
         each(scope, "select[data-ts]", initSelect);
         each(scope, "select[data-dropdown=select2]", initSelect2);
         each(scope, "input[data-default]", initDefault);
