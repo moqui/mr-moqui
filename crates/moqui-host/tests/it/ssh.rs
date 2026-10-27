@@ -495,6 +495,37 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
         sender.post(&base_url, "no-such-topic", payload).unwrap(),
         moqui_core::cluster::PostOutcome::Rejected(404)
     );
+    let cluster_key = Arc::new(moqui_host::ssh::cluster::cluster_login_key().unwrap());
+    moqui_host::edge::block_on(async move {
+        struct Accept;
+        impl russh::client::Handler for Accept {
+            type Error = russh::Error;
+            async fn check_server_key(&mut self, _: &russh::keys::PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+                Ok(true)
+            }
+        }
+        let mut handle = russh::client::connect(Arc::new(russh::client::Config::default()), address, Accept)
+            .await
+            .unwrap();
+        assert!(handle
+            .authenticate_publickey(
+                "moqui-cluster",
+                russh::keys::PrivateKeyWithHashAlg::new(cluster_key, None)
+            )
+            .await
+            .unwrap()
+            .success());
+        let mut channel = handle.channel_open_session().await.unwrap();
+        channel.request_shell(true).await.unwrap();
+        let answer = tokio::time::timeout(Duration::from_secs(5), channel.wait())
+            .await
+            .unwrap();
+        assert!(
+            matches!(answer, Some(russh::ChannelMsg::Failure)),
+            "cluster key opened a shell: {answer:?}"
+        );
+    })
+    .unwrap();
     let stranger = Arc::new(key(OTHER_SEED));
     let refused = moqui_host::edge::block_on(async move {
         struct Accept;

@@ -1032,7 +1032,7 @@ impl russh::server::Handler for Connection {
     /// The admin shell for a user with `SSH_SHELL` who logged in by key or password; for everyone else, `apps` is the
     /// whole session.
     async fn shell_request(&mut self, channel: ChannelId, session: &mut Session) -> Result<(), Self::Error> {
-        if !self.let_in() {
+        if self.cluster || !self.let_in() {
             return session.channel_failure(channel);
         }
         let username = self.username.clone().unwrap_or_default();
