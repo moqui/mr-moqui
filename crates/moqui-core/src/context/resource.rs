@@ -486,7 +486,7 @@ impl ResourceFacade {
                 }),
             }),
             "dbresource" => self.db_ref(strip_hash(location)),
-            "file" => Ok(self.file_ref(location)),
+            "file" => self.file_ref(location),
             "runtime" => Ok(self.runtime_ref(location)),
             "component" => self.component_ref(location),
             // Compatibility alias for a path in the framework component (`service/`, `entity/`,
@@ -991,12 +991,12 @@ impl ResourceFacade {
         })
     }
 
-    fn file_ref(&self, location: &str) -> ResourceRef {
-        let path = file_path(strip_hash(location));
-        ResourceRef {
+    fn file_ref(&self, location: &str) -> Result<ResourceRef, Error> {
+        let path = super::locate::file_path(strip_hash(location))?;
+        Ok(ResourceRef {
             location: location.to_string(),
             stored: Stored::File(FileResource::new(path.to_string_lossy())),
-        }
+        })
     }
 
     fn runtime_ref(&self, location: &str) -> ResourceRef {
@@ -1094,20 +1094,6 @@ fn strip_prefix<'a>(location: &'a str, prefixes: &[&str]) -> &'a str {
         }
     }
     location
-}
-
-fn file_path(location: &str) -> PathBuf {
-    let Some(rest) = location.strip_prefix("file:") else {
-        return PathBuf::from(location);
-    };
-    let rest = rest.strip_prefix("//").unwrap_or(rest);
-    if rest.starts_with('/') {
-        return PathBuf::from(rest);
-    }
-    match rest.find('/') {
-        Some(index) => PathBuf::from(&rest[index..]),
-        None => PathBuf::from(rest),
-    }
 }
 
 /// Refused when another user holds a WebDAV lock on the location ([`crate::resource::locks`]); with `tree` (a delete or
@@ -1249,6 +1235,22 @@ mod tests {
             HashMap::new(),
             Arc::new(RwLock::new(None)),
         )
+    }
+
+    #[test]
+    fn relative_file_children_are_read_and_written_under_the_relative_root() {
+        let root = format!("target/file-resource-{}", std::process::id());
+        let resources = empty_facade();
+        let location = format!("file:{root}/nested/value.txt");
+        resources.write_bytes(&location, b"local").unwrap();
+        let parent = resources.get(&format!("file:{root}/nested")).unwrap();
+        let children = parent.children().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].location(), location);
+        assert_eq!(resources.get(&location).unwrap().read_text().unwrap(), "local");
+        assert_eq!(resources.get(&location).unwrap().file_path().unwrap(), std::path::Path::new(&format!("{root}/nested/value.txt")));
+        assert!(resources.get("file://remote/tmp/a").is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

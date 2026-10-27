@@ -112,11 +112,28 @@ pub fn locate(location: &str) -> Result<PathBuf, Error> {
         let root = component_root(&roots, name).ok_or_else(|| Error::new(format!("component {name} was not found")))?;
         return Ok(if relative.is_empty() { root } else { root.join(relative) });
     }
-    if let Some(rest) = location.strip_prefix("file:") {
-        let rest = rest.strip_prefix("//").unwrap_or(rest);
-        return Ok(PathBuf::from(rest));
+    if location.starts_with("file:") {
+        return file_path(location);
     }
     Ok(PathBuf::from(location))
+}
+
+/// Resolve a local file location without turning a relative directory into an authority.
+pub(super) fn file_path(location: &str) -> Result<PathBuf, Error> {
+    let Some(rest) = location.strip_prefix("file:") else {
+        return Ok(PathBuf::from(location));
+    };
+    let path = match rest.strip_prefix("//") {
+        Some(rest) => {
+            let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+            if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+                return Err(Error::new(format!("file resource has a non-local authority: {location}")));
+            }
+            if path.is_empty() { "/".to_string() } else { format!("/{path}") }
+        }
+        None => rest.to_string(),
+    };
+    Ok(PathBuf::from(path))
 }
 
 fn component_root(roots: &Roots, name: &str) -> Option<PathBuf> {
@@ -140,6 +157,20 @@ fn strip_prefix<'a>(location: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_locations_preserve_relative_paths_and_only_accept_local_authorities() {
+        for (location, expected) in [
+            ("file:runtime/conf", "runtime/conf"),
+            ("file:runtime", "runtime"),
+            ("file:/tmp/a", "/tmp/a"),
+            ("file:///tmp/a", "/tmp/a"),
+            ("file://localhost/tmp/a", "/tmp/a"),
+            ("file://LOCALHOST/tmp/a", "/tmp/a"),
+        ] {
+            assert_eq!(super::locate(location).unwrap(), std::path::Path::new(expected));
+        }
+        assert!(super::locate("file://remote/tmp/a").is_err());
+    }
     #[test]
     fn email_template_seeds_keep_java_classpath_uris() {
         let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
