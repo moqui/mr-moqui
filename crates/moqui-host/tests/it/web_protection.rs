@@ -133,8 +133,17 @@ fn rejected_stream_login_keys_count_toward_the_client_ban() {
         moqui_core::user::get_login_key(None).unwrap()
     };
     for _ in 0..4 {
-        let request = http_request("GET", "/assist/runs/missing/events", &[("X-Forwarded-For", "203.0.113.60"), ("login_key", &key)], "");
-        assert_eq!(exchange(address, &request).0, 404, "valid keys must not contribute failures");
+        let request = http_request(
+            "GET",
+            "/assist/runs/missing/events",
+            &[("X-Forwarded-For", "203.0.113.60"), ("login_key", &key)],
+            "",
+        );
+        assert_eq!(
+            exchange(address, &request).0,
+            404,
+            "valid keys must not contribute failures"
+        );
     }
     for (client, path) in [
         ("203.0.113.61", "/notws"),

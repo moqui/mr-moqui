@@ -1066,11 +1066,18 @@ fn ending_a_visit_continues_after_one_session_delete_fails() {
     }
     let published = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = Arc::clone(&published);
-    let _subscription = crate::notify::subscribe(crate::notify::SESSION_END, Arc::new(move |message| {
-        if message.body["sessionIds"].as_array().is_some_and(|ids| ids.iter().any(|id| id == "a")) {
-            captured.lock().unwrap().push(message.body.clone());
-        }
-    })).unwrap();
+    let _subscription = crate::notify::subscribe(
+        crate::notify::SESSION_END,
+        Arc::new(move |message| {
+            if message.body["sessionIds"]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|id| id == "a"))
+            {
+                captured.lock().unwrap().push(message.body.clone());
+            }
+        }),
+    )
+    .unwrap();
     let attempted = std::cell::RefCell::new(Vec::new());
     let tx = facade.transactions_for(VISIT).unwrap();
     tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
@@ -1088,7 +1095,10 @@ fn ending_a_visit_continues_after_one_session_delete_fails() {
     })
     .unwrap();
     assert_eq!(*attempted.borrow(), ["a", "b", "c"]);
-    assert_eq!(published.lock().unwrap().as_slice(), &[serde_json::json!({"sessionIds":["a","c"]})]);
+    assert_eq!(
+        published.lock().unwrap().as_slice(),
+        &[serde_json::json!({"sessionIds":["a","c"]})]
+    );
     assert!(load_session_optional(&facade, "a").is_none());
     assert!(load_session_optional(&facade, "b").is_some());
     assert!(load_session_optional(&facade, "c").is_none());

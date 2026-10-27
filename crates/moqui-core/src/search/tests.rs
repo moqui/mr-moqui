@@ -307,6 +307,12 @@ fn attribute_pairs_keep_scalar_arrays_literal_dotted_keys_and_original_values() 
     };
     assert_eq!(pairs.len(), 4);
     let mapping = telemetry::telemetry_mapping("otel_logs").unwrap();
+    let dangerous_key = "x');DROP TABLE telemetry;--";
+    let query = Query::eq(format!("attributes.{dangerous_key}"), Value::string("x' OR TRUE"));
+    let sql = postgres::compile::Compiler::new(&mapping).where_sql(&query).unwrap();
+    assert!(!sql.text.contains(dangerous_key));
+    assert!(sql.params.contains(&Value::string(dangerous_key)));
+    assert!(sql.params.contains(&Value::string("x' OR TRUE")));
     for text in [
         "attributes.tenant.id:one",
         "attributes.tags:bl*",

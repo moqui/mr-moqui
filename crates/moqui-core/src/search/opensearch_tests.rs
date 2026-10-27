@@ -36,33 +36,75 @@ fn telemetry_deferred_refresh_keeps_stable_ids_and_ordinary_write_visibility() {
         url: std::env::var("MONITOR_OPENSEARCH_URL").expect("MONITOR_OPENSEARCH_URL"),
         user: std::env::var("MONITOR_OPENSEARCH_USER").ok(),
         password: std::env::var("MONITOR_OPENSEARCH_PASSWORD").ok(),
-        index_prefix: Some(format!("monitor-deferred-{}-{}-",std::process::id(),Timestamp::now().as_microsecond())),
+        index_prefix: Some(format!(
+            "monitor-deferred-{}-{}-",
+            std::process::id(),
+            Timestamp::now().as_microsecond()
+        )),
     });
     // A regression that waits for refresh after it is disabled must fail promptly.
     backend.client = RestClient::new().timeout(std::time::Duration::from_secs(5));
     let mapping = crate::search::telemetry::telemetry_mapping("otel_logs").unwrap();
     backend.ensure_index(&mapping).unwrap();
     let index = backend.index_name(&mapping);
-    let make = |body: &str| IndexMap::from_iter([
-        ("timestamp".into(),Value::string("2026-01-01T00:00:00Z")),
-        ("body".into(),Value::string(body)),
-    ]);
-    backend.index_documents(&mapping,&[("ordinary".into(),make("searchable immediately"))]).unwrap();
+    let make = |body: &str| {
+        IndexMap::from_iter([
+            ("timestamp".into(), Value::string("2026-01-01T00:00:00Z")),
+            ("body".into(), Value::string(body)),
+        ])
+    };
+    backend
+        .index_documents(&mapping, &[("ordinary".into(), make("searchable immediately"))])
+        .unwrap();
     let mappings = [Arc::new(mapping.clone())];
-    assert_eq!(backend.search(&mappings,&SearchRequest::new(Query::MatchAll)).unwrap().total,1,
-        "ordinary index_documents must still wait until searchable");
-    backend.checked("PUT",&format!("{index}/_settings"),Some(Body::Json(json!({"index":{"refresh_interval":"-1"}})))).unwrap();
-    assert_eq!(backend.index_telemetry_documents(&mapping,&[("retry-stable".into(),make("first attempt"))]).unwrap(),1);
-    assert_eq!(backend.index_telemetry_documents(&mapping,&[("retry-stable".into(),make("retried replacement"))]).unwrap(),1);
-    assert_eq!(backend.search(&mappings,&SearchRequest::new(Query::MatchAll)).unwrap().total,1,
-        "deferred writes acknowledge storage without forcing a refresh");
-    assert_eq!(backend.get_document(&mapping,"retry-stable").unwrap().unwrap()["body"],Value::string("retried replacement"));
-    backend.checked("POST",&format!("{index}/_refresh"),None).unwrap();
-    let page = backend.search(&mappings,&SearchRequest::new(Query::MatchAll)).unwrap();
-    assert_eq!(page.total,2,"retry must replace one stable id, not duplicate it");
-    assert_eq!(page.hits.iter().filter(|hit|hit.id=="retry-stable").count(),1);
-    assert!(backend.index_telemetry_documents(&sales(),&[]).is_err(),"business indexes may not opt into telemetry deferral");
-    backend.checked("DELETE",&index,None).unwrap();
+    assert_eq!(
+        backend
+            .search(&mappings, &SearchRequest::new(Query::MatchAll))
+            .unwrap()
+            .total,
+        1,
+        "ordinary index_documents must still wait until searchable"
+    );
+    backend
+        .checked(
+            "PUT",
+            &format!("{index}/_settings"),
+            Some(Body::Json(json!({"index":{"refresh_interval":"-1"}}))),
+        )
+        .unwrap();
+    assert_eq!(
+        backend
+            .index_telemetry_documents(&mapping, &[("retry-stable".into(), make("first attempt"))])
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        backend
+            .index_telemetry_documents(&mapping, &[("retry-stable".into(), make("retried replacement"))])
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        backend
+            .search(&mappings, &SearchRequest::new(Query::MatchAll))
+            .unwrap()
+            .total,
+        1,
+        "deferred writes acknowledge storage without forcing a refresh"
+    );
+    assert_eq!(
+        backend.get_document(&mapping, "retry-stable").unwrap().unwrap()["body"],
+        Value::string("retried replacement")
+    );
+    backend.checked("POST", &format!("{index}/_refresh"), None).unwrap();
+    let page = backend.search(&mappings, &SearchRequest::new(Query::MatchAll)).unwrap();
+    assert_eq!(page.total, 2, "retry must replace one stable id, not duplicate it");
+    assert_eq!(page.hits.iter().filter(|hit| hit.id == "retry-stable").count(), 1);
+    assert!(
+        backend.index_telemetry_documents(&sales(), &[]).is_err(),
+        "business indexes may not opt into telemetry deferral"
+    );
+    backend.checked("DELETE", &index, None).unwrap();
 }
 
 /// Live acceptance is opt-in; the ordinary suite keeps exercising serialization with mocks.
@@ -530,18 +572,31 @@ fn a_failing_manual_mapping_service_fails_the_ensure_and_is_tried_again() {
 #[test]
 fn telemetry_bulk_acknowledges_individual_inputs_and_rejects_incomplete_responses() {
     let (url, server) = serve(vec![
-        (200, json!({"errors":true,"items":[
-            {"index":{"status":201}},
-            {"index":{"status":429,"error":{"reason":"busy"}}},
-            {"index":{"status":400,"error":{"reason":"bad timestamp"}}}
-        ]})),
+        (
+            200,
+            json!({"errors":true,"items":[
+                {"index":{"status":201}},
+                {"index":{"status":429,"error":{"reason":"busy"}}},
+                {"index":{"status":400,"error":{"reason":"bad timestamp"}}}
+            ]}),
+        ),
         (200, json!({"errors":false,"items":[]})),
     ]);
     let backend = backend(&url);
     let mapping = crate::search::telemetry::telemetry_mapping("otel_logs").unwrap();
-    let documents: Vec<_> = ["good", "retry", "bad"].iter().map(|id| (id.to_string(), Document::new())).collect();
+    let documents: Vec<_> = ["good", "retry", "bad"]
+        .iter()
+        .map(|id| (id.to_string(), Document::new()))
+        .collect();
     let outcomes = backend.index_telemetry_batch(&mapping, &documents).unwrap();
-    assert!(matches!(outcomes.as_slice(), [super::super::TelemetryItem::Accepted, super::super::TelemetryItem::Retryable(_), super::super::TelemetryItem::Rejected(_)]));
+    assert!(matches!(
+        outcomes.as_slice(),
+        [
+            super::super::TelemetryItem::Accepted,
+            super::super::TelemetryItem::Retryable(_),
+            super::super::TelemetryItem::Rejected(_)
+        ]
+    ));
     assert!(backend.index_telemetry_batch(&mapping, &documents[..1]).is_err());
     assert_eq!(server.join().unwrap(), ["POST /_bulk HTTP/1.1", "POST /_bulk HTTP/1.1"]);
 }
