@@ -301,3 +301,83 @@ fn terms_order_by_metric_then_key_and_trim() {
         .collect();
     assert_eq!(keys, vec!["C", "A"]);
 }
+
+#[test]
+fn top_hits_under_buckets_are_one_ranked_statement() {
+    let aggs = tree(
+        r#"{"P":{"terms":{"field":"productId","size":10},"aggs":{"samples":{"top_hits":{"size":2,"sort":["-itemSaleTotal"]}}}}}"#,
+    );
+    let row = |columns: Vec<(&str, Value)>| DbRow {
+        columns: columns.into_iter().map(|(name, value)| (name.into(), value)).collect(),
+    };
+    let sample = |key: &str, id: &str| {
+        row(vec![
+            ("k0", Value::string(key)),
+            ("doc_id", Value::string(id)),
+            ("document_id", Value::string("D")),
+            ("body", Value::string("{}")),
+        ])
+    };
+    let mut statements = Vec::new();
+    let mut run = |sql: &Sql| -> Result<Vec<DbRow>, Error> {
+        statements.push(sql.clone());
+        Ok(if sql.text.contains("row_number()") {
+            vec![sample("a", "a1"), sample("a", "a2"), sample("b", "b1")]
+        } else if sql.text.contains("GROUP BY") {
+            ["a", "b", "c"]
+                .into_iter()
+                .map(|key| row(vec![("k0", Value::string(key)), ("dc", Value::I64(1))]))
+                .collect()
+        } else {
+            vec![row(vec![("dc", Value::I64(3))])]
+        })
+    };
+    let out = aggregate(
+        "\"search\".\"t\"",
+        &sales(),
+        &TextSetup::default(),
+        &Query::MatchAll,
+        &aggs,
+        &mut run,
+    )
+    .unwrap();
+    // The root, the terms level, and one statement for the samples of every bucket.
+    assert_eq!(statements.len(), 3, "{statements:?}");
+    let ranked = &statements[2].text;
+    assert!(
+        ranked.contains(
+            "row_number() OVER (PARTITION BY \"f_productId\" ORDER BY \"f_itemSaleTotal\" DESC NULLS LAST, doc_id ASC) AS rn"
+        ),
+        "{ranked}"
+    );
+    assert!(
+        ranked.ends_with(") AS ranked WHERE rn <= 2 ORDER BY k0, rn"),
+        "{ranked}"
+    );
+    let Value::Map(terms) = &out["P"] else {
+        panic!("{out:?}")
+    };
+    let Value::List(buckets) = &terms["buckets"] else {
+        panic!()
+    };
+    let by_key: HashMap<String, Vec<String>> = buckets
+        .iter()
+        .map(|bucket| {
+            let Value::Map(bucket) = bucket else { panic!() };
+            let Value::List(samples) = &bucket["samples"] else {
+                panic!("{bucket:?}")
+            };
+            let ids = samples
+                .iter()
+                .map(|sample| {
+                    let Value::Map(sample) = sample else { panic!() };
+                    to_plain_string(&sample["id"])
+                })
+                .collect();
+            (to_plain_string(&bucket["key"]), ids)
+        })
+        .collect();
+    assert_eq!(by_key["a"], vec!["a1", "a2"]);
+    assert_eq!(by_key["b"], vec!["b1"]);
+    assert!(by_key["c"].is_empty());
+}

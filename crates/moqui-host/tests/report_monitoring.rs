@@ -40,6 +40,87 @@ fn row(entity: &EntityFacade, name: &str, fields: Json) {
     row.create_or_update(entity).unwrap();
 }
 
+/// With `<report week-start="0">` week buckets and `now/w` both start on Sunday, and a rounded `thru` closes at the
+/// start of the next unit.
+#[test]
+fn postgres_sunday_weeks_align_buckets_and_rounding() {
+    moqui_host::logging::install();
+    let gate = common::start_with_conf("report-week", r#"<report week-start="0"/>"#, &[]);
+    let factory = gate.server.factory();
+    let facade = search::installed(factory).unwrap();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let at = |text: &str| text.parse::<jiff::Timestamp>().unwrap().as_millisecond();
+    // Rounding is in the viewer's zone, so the expected times are its local times.
+    let zone = moqui_core::l10n::time_zone();
+    let local = |text: &str| {
+        text.parse::<jiff::civil::DateTime>()
+            .unwrap()
+            .to_zoned(zone.clone())
+            .unwrap()
+            .timestamp()
+    };
+    let ms = |text: &str| local(text).as_millisecond();
+    let iso = |text: &str| local(text).to_string();
+    // 2026-01-07 is a Wednesday; its Sunday week starts 2026-01-04.
+    assert_eq!(
+        report::time::parse("now/w", ms("2026-01-07T15:00:00")).unwrap(),
+        ms("2026-01-04T00:00:00")
+    );
+    assert_eq!(
+        report::time::parse_thru("now/w", ms("2026-01-07T15:00:00")).unwrap(),
+        ms("2026-01-11T00:00:00")
+    );
+    let point = |id: &str, time: &str| {
+        document(json!({"_id":id,"timestamp":iso(time),"body":"sundayweekfixture","severity_number":9}))
+    };
+    facade
+        .index_entries(
+            "otel_logs",
+            vec![
+                point("sunday-1", "2026-01-04T01:00:00"),
+                point("sunday-2", "2026-01-10T23:00:00"),
+                point("sunday-3", "2026-01-11T00:30:00"),
+            ],
+        )
+        .unwrap();
+    // Aligned to Sunday weeks the range has no partial bucket; Monday weeks would cut both ends.
+    let weekly = report::execute_query(&context,&json!({"datasetId":"otel_logs","from":iso("2026-01-04T00:00:00"),"thru":iso("2026-01-18T00:00:00"),"queryString":"body:sundayweekfixture","aggs":{"time":{"date_histogram":{"field":"timestamp","calendar_interval":"week"},"aggs":{"value":{"value_count":{"field":"body"}}}}}})).unwrap();
+    let frame: report::frame::Frame = serde_json::from_value(weekly["frames"][0].clone()).unwrap();
+    let rows = frame.rows();
+    let keys: Vec<i64> = rows
+        .iter()
+        .map(|row| match &row["time"] {
+            Json::String(text) => text.parse().unwrap_or_else(|_| at(text)),
+            other => other.as_i64().unwrap(),
+        })
+        .collect();
+    assert_eq!(keys, [ms("2026-01-04T00:00:00"), ms("2026-01-11T00:00:00")], "{weekly}");
+    assert_eq!(rows[0]["value"].as_f64(), Some(2.0), "{weekly}");
+    assert_eq!(rows[1]["value"].as_f64(), Some(1.0), "{weekly}");
+    assert!(
+        !weekly["notices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|notice| notice["code"] == "partial_buckets_excluded"),
+        "{weekly}"
+    );
+    // A rounded `thru` is the end of its day, and math applies after rounding.
+    let noon = iso("2026-01-10T12:00:00");
+    let day = report::execute_query(&context,&json!({"datasetId":"otel_logs","from":format!("{noon}||/d"),"thru":format!("{noon}||/d"),"queryString":"body:sundayweekfixture","aggs":{"value":{"value_count":{"field":"body"}}}})).unwrap();
+    assert_eq!(day["range"]["thru"], iso("2026-01-11T00:00:00"), "{day}");
+    assert_eq!(day["frames"][0]["fields"][0]["values"][0].as_f64(), Some(1.0), "{day}");
+    let shifted = report::execute_query(&context,&json!({"datasetId":"otel_logs","from":format!("{noon}||/d"),"thru":format!("{noon}||/d+1h"),"queryString":"body:sundayweekfixture","aggs":{"value":{"value_count":{"field":"body"}}}})).unwrap();
+    assert_eq!(shifted["range"]["thru"], iso("2026-01-11T01:00:00"), "{shifted}");
+    assert_eq!(
+        shifted["frames"][0]["fields"][0]["values"][0].as_f64(),
+        Some(2.0),
+        "{shifted}"
+    );
+}
+
 #[test]
 fn postgres_report_authorization_cursor_counters_and_definitions() {
     moqui_host::logging::install();
