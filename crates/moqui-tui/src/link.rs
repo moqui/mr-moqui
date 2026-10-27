@@ -705,15 +705,31 @@ fn page_nodes(nodes: &mut [Node], index: usize) {
     }
 }
 
-/// The first followable link in a row: its id and url.
+/// The first navigation link in a row: its id and url. Row actions remain available through their own controls.
 pub fn row_link_target(row: &ListRow) -> Option<(&str, &str)> {
     row.cells.iter().flat_map(Cell::nodes).find_map(|node| match node {
-        Node::Link { id, url, disabled, .. } if !url.is_empty() && !disabled => Some((id.as_str(), url.as_str())),
+        Node::Link {
+            id,
+            url,
+            disabled,
+            writes,
+            kind,
+            method,
+            ..
+        } if !url.is_empty()
+            && !disabled
+            && !writes
+            && kind != "hidden-form"
+            && kind != "hidden-form-link"
+            && !method.eq_ignore_ascii_case("post") =>
+        {
+            Some((id.as_str(), url.as_str()))
+        }
         _ => None,
     })
 }
 
-/// First link url in a row, if the row has one.
+/// First navigation link url in a row, if the row has one.
 pub fn row_link(row: &ListRow) -> Option<&str> {
     row_link_target(row).map(|(_, url)| url)
 }

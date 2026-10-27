@@ -1510,8 +1510,8 @@ impl Session {
         self.follow_url(&link.url);
     }
 
-    /// Open a row by its first link, whether it had one: a known link goes through `follow_link`, which asks its
-    /// confirmation and posts a transition, as a click on it does; else the url is followed.
+    /// Open a row by its first navigation link, if any: a known link goes through `follow_link`, which asks its
+    /// confirmation as a click on it does; else the url is followed.
     fn follow_row_link(&mut self, list: &str, at: usize) -> bool {
         let Some((id, url)) = self
             .list_page(list)

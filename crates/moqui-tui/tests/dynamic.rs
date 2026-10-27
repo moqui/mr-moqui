@@ -291,6 +291,76 @@ fn a_row_form_posts_its_row_and_the_editor_closes() {
 }
 
 #[test]
+fn enter_and_right_open_the_highlighted_task_instead_of_its_leading_done_action() {
+    let rows: Vec<_> = ["R1", "R2"]
+        .into_iter()
+        .map(|id| {
+            serde_json::json!({
+                "id":id, "cells":[
+                    {"t":"link", "id":format!("done.{id}"), "text":"Done", "url":format!("/tasks/done?id={id}"),
+                     "kind":"hidden-form-link", "writes":true},
+                    [{"t":"link", "id":format!("detail.{id}"), "text":id, "url":format!("/item?itemId={id}")},
+                     {"t":"link", "id":format!("related.{id}"), "text":"Related", "url":"/related"}]
+                ]
+            })
+        })
+        .collect();
+    let tasks = serde_json::json!({
+        "v":1, "screen":{"path":"/tasks"}, "c":[
+            {"t":"link", "id":"heading", "text":"Heading", "url":"/heading"},
+            {"t":"formList", "id":"Tasks", "name":"Tasks", "columns":[{"title":"Done"},{"title":"Task"}], "rows":rows}
+        ]
+    })
+    .to_string();
+    let detail = r#"{"v":1,"screen":{"path":"/item"},"c":[]}"#;
+    for key in [Key::Enter, Key::Right] {
+        let (mut session, link) = started("/tasks", &[&tasks, detail]);
+        focus(&mut session, &link, "Tasks");
+        press(&mut session, &link, Key::Down);
+        press(&mut session, &link, Key::Up);
+        press(&mut session, &link, Key::Down);
+        assert_eq!(session.row_at("Tasks"), 1);
+        press(&mut session, &link, key);
+        assert_eq!(session.path(), "/item");
+        assert!(calls(&link).iter().any(|call| matches!(call,
+            LinkCall::Level { path, parameters } if path == "/item" && parameters.get("itemId").map(String::as_str) == Some("R2")
+        )));
+        assert!(transitions(&link).is_empty());
+    }
+}
+
+#[test]
+fn an_action_only_row_does_not_navigate_but_its_action_still_confirms_and_posts() {
+    let tasks = r#"{"v":1,"screen":{"path":"/tasks"},"c":[
+        {"t":"formList","id":"Tasks","name":"Tasks","columns":[{"title":"Done"}],"rows":[
+            {"cells":[{"t":"link","id":"done.R1","text":"Done","url":"/tasks/done?id=R1",
+                "kind":"hidden-form-link","writes":true,"confirm":"Complete task?"}]}
+        ]}
+    ]}"#;
+    let (mut session, link) = started("/tasks", &[tasks]);
+    focus(&mut session, &link, "Tasks");
+    let before = calls(&link);
+    for key in [Key::Enter, Key::Right] {
+        press(&mut session, &link, key);
+        assert!(session.top_overlay().is_none());
+        assert_eq!(calls(&link), before);
+    }
+    session.click(
+        &moqui_tui::Target::RowLink {
+            list: "Tasks".to_string(),
+            row: 0,
+            link: "done.R1".to_string(),
+        },
+        1,
+    );
+    assert!(matches!(session.top_overlay(), Some(Overlay::Confirm(_))));
+    assert!(transitions(&link).is_empty());
+    press(&mut session, &link, Key::Right);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(transitions(&link), [("/tasks/done".to_string(), map(&[("id", "R1")]))]);
+}
+
+#[test]
 fn a_stacked_cell_takes_its_lines_and_its_field_edits_in_the_row() {
     let (mut session, link) = started("/lists", &[LISTS_JSON]);
     focus(&mut session, &link, "Rows");

@@ -64,6 +64,28 @@ fn list_rows_carry_the_unicode_cells() {
 }
 
 #[test]
+fn row_navigation_skips_actions_and_uses_the_first_enabled_link_in_stacked_cells() {
+    let actions = serde_json::json!([
+        {"t":"link", "id":"done", "text":"Done", "url":"/done", "kind":"hidden-form-link"},
+        {"t":"link", "id":"hidden", "text":"Hidden", "url":"/hidden", "kind":"hidden-form"},
+        {"t":"link", "id":"post", "text":"Post", "url":"/post", "method":"POST"},
+        {"t":"link", "id":"write", "text":"Write", "url":"/write", "writes":true},
+        {"t":"link", "id":"disabled", "text":"Disabled", "url":"/disabled", "disabled":true},
+        {"t":"link", "id":"empty", "text":"Empty", "url":""}
+    ]);
+    let mut row: moqui_tui::ListRow = serde_json::from_value(serde_json::json!({"cells":actions})).unwrap();
+    assert_eq!(moqui_tui::row_link(&row), None);
+    row.cells.push(
+        serde_json::from_value(serde_json::json!([
+        "Task", [{"t":"link", "id":"detail", "text":"Detail", "url":"/detail?id=R2"}],
+        {"t":"link", "id":"related", "text":"Related", "url":"/related"}
+        ]))
+        .unwrap(),
+    );
+    assert_eq!(moqui_tui::row_link(&row), Some("/detail?id=R2"));
+}
+
+#[test]
 fn unknown_fields_are_ignored_and_a_new_version_is_refused() {
     let text = r#"{"v":1,"extra":true,"screen":{"path":"/t","title":"T","later":1},"c":[
         {"t":"field","id":"a","name":"a","title":"A","nope":2,"w":{"kind":"textLine","value":"v","extra":1}}

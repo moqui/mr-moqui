@@ -1691,6 +1691,52 @@ fn a_transition_asked_for_in_tui_answers_its_redirect_as_json() {
     assert!(body.contains("Ran it"), "{body}");
 }
 
+#[test]
+fn list_views_open_the_first_navigation_link_instead_of_a_leading_row_action() {
+    let output = render(
+        "view-navigation-link",
+        r#"<screen require-authentication="false">
+            <transition name="write"><actions><set field="ran" from="true"/></actions><default-response type="none"/></transition>
+            <transition name="disabled"><condition><expression>false</expression></condition><default-response type="none"/></transition>
+            <actions><set field="rows" from="[{id:'R1', name:'Task one', details:true, date:'2026-10-27'}, {id:'R2', name:'Task two', details:false, date:'2026-10-28'}]"/></actions>
+            <widgets><form-list name="Tasks" list="rows" skip-form="true" paginate="false" views="list,board,calendar">
+                <view-board key-fields="id" title-field="name" group-field="name"/>
+                <view-calendar key-fields="id" title-field="name" start-field="date"/>
+                <field name="done"><default-field>
+                    <link url="/done" url-type="plain" link-type="hidden-form-link" text="Done"/>
+                    <link url="/hidden" url-type="plain" link-type="hidden-form" text="Hidden"/>
+                    <link url="write" link-type="anchor" text="Write"/>
+                    <link url="write" text="Post"/>
+                    <link url="disabled" text="Disabled"/>
+                    <link url="" url-type="plain" text="Empty"/>
+                </default-field></field>
+                <field name="name"><conditional-field condition="details">
+                    <link url="/detail" url-type="plain" text="${name}"><parameter name="id"/></link>
+                    <link url="/related" url-type="plain" text="Related"/>
+                </conditional-field><default-field><display/></default-field></field>
+            </form-list></widgets>
+        </screen>"#,
+        BTreeMap::new(),
+    );
+    let doc = document(&output);
+    let list = list_named(&doc, "Tasks");
+    for view in ["board", "calendar"] {
+        let rows = &list["views"][view][if view == "calendar" { "events" } else { "rows" }];
+        assert_eq!(rows[0]["_open"], json!("/detail?id=R1"), "{doc}");
+        assert_eq!(rows[1]["_open"], json!(""), "{doc}");
+    }
+    let model = client_model(&output.body_text());
+    let row_list = client_nodes(&model)
+        .into_iter()
+        .find_map(|node| match node {
+            moqui_tui::Node::FormList { list } if list.name == "Tasks" => Some(list),
+            _ => None,
+        })
+        .expect("Tasks list");
+    assert_eq!(moqui_tui::row_link(&row_list.rows[0]), Some("/detail?id=R1"));
+    assert_eq!(moqui_tui::row_link(&row_list.rows[1]), None);
+}
+
 /// A list with a `view-tree` (style-guide §3.15) has the tree among its views: the page's rows with their key, parent, label, the
 /// other columns' text and the roll-ups, and the titles of each; the client swaps the list for the `tree` component when that
 /// view is chosen. A board of `group-fields` only groups by the first.

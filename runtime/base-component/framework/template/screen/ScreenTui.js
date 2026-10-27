@@ -1190,7 +1190,9 @@ try {
         const $firstLink = ($cells) => {
             for (const $cell of $cells || []) {
                 if (Array.isArray($cell)) { const $in = $firstLink($cell); if ($in) return $in; }
-                else if ($cell && typeof $cell === "object" && $cell.t === "link" && $cell.url && !$cell.disabled) return String($cell.url);
+                else if ($cell && typeof $cell === "object" && $cell.t === "link" && $cell.url && !$cell.disabled
+                    && !$cell.writes && $cell.kind !== "hidden-form" && $cell.kind !== "hidden-form-link"
+                    && String($cell.method || "").toLowerCase() !== "post") return String($cell.url);
             }
             return "";
         };
