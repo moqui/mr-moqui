@@ -84,15 +84,7 @@ pub fn open_entity_facade_for_factory(
     tx.configure_from_conf(&conf)?;
     let mut groups = vec![moqui_core::entity::EntityGroup::new("transactional", dialect, tx)];
     groups.extend(other_groups(&conf, &driver));
-    let facade = EntityFacade::open_components_with_conf(
-        factory.framework_dir(),
-        &component_entity_dirs(factory),
-        "transactional",
-        groups,
-        &conf,
-    )?;
-    facade.crypt_from_conf(&conf)?;
-    Ok(facade)
+    EntityFacade::open_for_factory(factory, "transactional", groups)
 }
 
 /// The entity groups of the conf's other `<datasource>` elements, each with a pool of its own, as Java opens each
@@ -146,17 +138,7 @@ fn other_groups(
     groups
 }
 
-/// The `entity` directory of each component the factory found, in its load order, the framework
-/// left out (its directory is always read).
-pub fn component_entity_dirs(factory: &ExecutionContextFactory) -> Vec<std::path::PathBuf> {
-    factory
-        .components()
-        .iter()
-        .filter(|info| !crate::same_dir(&info.location, factory.framework_dir()))
-        .map(|info| info.location.join("entity"))
-        .filter(|dir| dir.is_dir())
-        .collect()
-}
+pub use moqui_core::context::component_entity_dirs;
 
 /// Install the facade so `dbresource://` reads and writes through it, with the conf connection drivers scripts use for
 /// another database.

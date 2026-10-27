@@ -78,7 +78,7 @@ impl Browser {
         .map_err(|err| Error::new(format!("boot: {err}")))?;
         let sqlite = Arc::new(SqliteDriver::open(db_path)?);
         let driver: Arc<dyn DbDriver> = sqlite.clone();
-        let facade = open_entity_facade(factory.framework_dir(), driver)?;
+        let facade = open_entity_facade_for_factory(&factory, driver)?;
         factory.set_entity(facade.clone());
         factory
             .init_tools()
@@ -285,6 +285,21 @@ fn xml_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 /// Returns an error when the conf or the entity model cannot be read.
 pub fn open_entity_facade(framework_dir: &Path, driver: Arc<dyn DbDriver>) -> Result<EntityFacade, Error> {
     EntityFacade::open_with_driver(framework_dir, driver, pool(), DIALECT, &["transactional", "logging"])
+}
+
+/// Open a browser runtime's full entity model and merged configuration over its shared SQLite database.
+pub fn open_entity_facade_for_factory(
+    factory: &ExecutionContextFactory,
+    driver: Arc<dyn DbDriver>,
+) -> Result<EntityFacade, Error> {
+    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let transactions = moqui_core::transaction::TransactionManager::new(driver, pool())?;
+    transactions.configure_from_conf(&conf)?;
+    let groups = ["transactional", "logging"]
+        .into_iter()
+        .map(|name| moqui_core::entity::EntityGroup::new(name, DIALECT, transactions.clone()))
+        .collect();
+    EntityFacade::open_for_factory(factory, "transactional", groups)
 }
 
 #[cfg(test)]
