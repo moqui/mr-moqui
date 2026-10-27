@@ -2100,6 +2100,8 @@ pub(crate) fn status_for(err: &Error) -> u16 {
     match err.kind() {
         ErrorKind::General | ErrorKind::RollbackOnly if is_unavailable(err) => 503,
         ErrorKind::Validation | ErrorKind::BadRequest => 400,
+        ErrorKind::Conflict => 409,
+        ErrorKind::Unprocessable => 422,
         ErrorKind::AuthenticationRequired => 401,
         ErrorKind::Unauthorized => 403,
         ErrorKind::NotFound => 404,

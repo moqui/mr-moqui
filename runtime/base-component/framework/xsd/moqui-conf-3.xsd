@@ -236,6 +236,19 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="screen-path" type="xs:string" use="required">
                         <xs:annotation><xs:documentation>The path to the screen to render on error</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="public-site">
+                    <xs:complexType><xs:sequence>
+                        <xs:element name="mount" minOccurs="1" maxOccurs="unbounded"><xs:complexType>
+                            <xs:attribute name="path" type="xs:string" use="required"/>
+                            <xs:attribute name="screen" type="xs:string" use="required"/>
+                        </xs:complexType></xs:element>
+                    </xs:sequence>
+                    <xs:attribute name="host" type="xs:string" use="required"/>
+                    <xs:attribute name="site-id" type="xs:string" use="required"/>
+                    <xs:attribute name="screen-location" type="xs:string" use="required"/>
+                    <xs:attribute name="resolver-service" type="xs:string"/>
+                    </xs:complexType>
+                </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="token-route">
                     <xs:annotation><xs:documentation>An anonymous token route: /name/token renders the screen at
                         screen-location in the public shell (Vue, Quasar, the theme and the m-* components, with no header,

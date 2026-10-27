@@ -84,6 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="passwordBase64"/><exclude field-name="passwordSetDate"/><exclude field-name="hasLoggedOut"/>
                 <exclude field-name="disabledDateTime"/><exclude field-name="successiveFailedLogins"/>
             </auto-parameters>
+            <parameter name="deferIdentityLink" type="Boolean" default="false"><description>Public registration defers application identity provisioning until verified membership.</description></parameter>
             <parameter name="username" required="true"/>
             <parameter name="newPassword" required="true"/>
             <parameter name="newPasswordVerify" required="true"/>

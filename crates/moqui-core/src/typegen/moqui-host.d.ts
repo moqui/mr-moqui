@@ -298,6 +298,8 @@ type MoquiServiceName = keyof MoquiServiceIn | keyof MoquiAllEntityAutoIn | (str
 interface ServiceCallOptions<Self> {
     disableAuthz(): Self;
     multi(flag?: boolean): Self;
+    /** Protocol adapters may opt into typed exceptions instead of legacy error messages. */
+    throwOnError(flag: boolean): Self;
     ignoreTransaction(flag?: boolean): Self;
     requireNewTransaction(flag?: boolean): Self;
     transactionTimeout(seconds: number | null): Self;
@@ -418,6 +420,7 @@ interface MoquiResourceFacade {
     getVersionBytes(location: string, versionName: string): Uint8Array | null;
     contentTypeOf(filename: string): string | null;
     /** A PNG thumbnail of an image, no side over maxSize (256); null when the bytes are not an image. */
+    readonly imageAvailable: boolean;
     makeThumbnail(source: string, target: string, maxSize?: number | null): { width: number; height: number; contentType: string } | null;
     /** Page 1 of a PDF as a PNG at target, no side over maxSize (1024), with the page count; null when there is no PDF engine or the PDF does not open. */
     makePdfPreview(source: string, target: string, maxSize?: number | null): { width: number; height: number; pages: number; contentType: string } | null;
@@ -535,6 +538,8 @@ interface MoquiWebFacade {
     readonly multiPartParameters: MoquiMap;
     readonly sessionAttributes: MoquiMap;
     readonly sessionToken: string;
+    /** Rotate the browser session after authentication, preserving its server-side state. */
+    rotateSession(): void;
     readonly savedMessages: string[];
     readonly savedErrors: string[];
     readonly savedValidationErrors: unknown[];
@@ -779,6 +784,7 @@ interface MoquiServerEc {
     getTool(name: string, ...parameters: unknown[]): MoquiTool;
     readonly entity: MoquiEntityFacade;
     readonly service: {
+        readonly ssoAvailable: boolean;
         /** Expanded declarations, including auto-parameters; does not execute the service. */
         getServiceDefinition(name: string): (MoquiMap & {
             inParameterNames: string[];

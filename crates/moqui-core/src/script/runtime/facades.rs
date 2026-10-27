@@ -1078,6 +1078,13 @@ impl HostWeb {
         host_guard(&ctx, || super::user_host::session_attributes_js(&ctx))
     }
 
+    /// Rotate a frontend session after its authority verifies a delegated login.
+    fn rotate_session(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
+        host_guard(&ctx, || {
+            crate::user::session::rotate_on_password_login().map_err(|err| throw_context(&ctx, &err))
+        })
+    }
+
     #[qjs(get)]
     fn session_token(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
         host_guard(&ctx, || {

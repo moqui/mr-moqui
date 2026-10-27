@@ -1406,3 +1406,31 @@ fn write_fixture(name: &str, body: &str) -> PathBuf {
     std::fs::write(&path, body).unwrap();
     path
 }
+
+#[test]
+fn checked_calls_preserve_conflicts_while_legacy_calls_record_them() {
+    let path = write_fixture(
+        "checked-conflict",
+        r#"<services><service verb="guard" noun="Revision"><actions><script>
+            const error = new Error('Reload before editing'); error.moquiErrorKind = 'Conflict'; throw error
+        </script></actions></service></services>"#,
+    );
+    let facade = crate::testing::open();
+    let ctx = ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(facade);
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(sync("guard#Revision", &BTreeMap::new()).unwrap().is_empty());
+    ctx.message().clear_errors();
+    let error = super::sync_checked(
+        "guard#Revision",
+        &BTreeMap::new(),
+        &super::CallOptions {
+            throw_on_error: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), crate::context::ErrorKind::Conflict);
+}

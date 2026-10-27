@@ -493,6 +493,61 @@ fn header_pairs(value: &Value) -> Vec<(String, String)> {
 /// The largest body `text()` or `bytes()` reads from a response `send()` kept; `response.forward` has no limit.
 const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 
+/// A bounded multipart body rebuilt from spooled uploads. Raw multipart requests are not retained after parsing.
+fn multipart_body(ctx: &Ctx<'_>, parts: &indexmap::IndexMap<String, Value>) -> rquickjs::Result<(String, bytes::Bytes)> {
+    const LIMIT: usize = 64 * 1024 * 1024;
+    let boundary = crate::user::random_string(32).map_err(|error| Exception::throw_message(ctx, error.message()))?;
+    let mut body = Vec::new();
+    for (name, value) in parts {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err(Exception::throw_message(ctx, "invalid multipart field name"));
+        }
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"").as_bytes());
+        let upload = if let Value::Object(object) = value {
+            object.downcast::<crate::web::multipart::UploadedFile>()
+        } else {
+            None
+        };
+        if let Some(file) = upload {
+            if file.size() > (LIMIT.saturating_sub(body.len())) as u64 || file.content_type.contains(['\r', '\n']) {
+                return Err(Exception::throw_message(
+                    ctx,
+                    "multipart upload exceeds the transport limit",
+                ));
+            }
+            let filename = file.file_name.replace(['\"', '\\', '\r', '\n'], "_");
+            body.extend_from_slice(
+                format!(
+                    "; filename=\"{filename}\"\r\nContent-Type: {}\r\n\r\n",
+                    file.content_type
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(
+                &file
+                    .read_bytes()
+                    .map_err(|error| Exception::throw_message(ctx, error.message()))?,
+            );
+        } else {
+            let text = moqui_lib::object::to_plain_string(value);
+            if text.len() > LIMIT.saturating_sub(body.len()) {
+                return Err(Exception::throw_message(
+                    ctx,
+                    "multipart body exceeds the transport limit",
+                ));
+            }
+            body.extend_from_slice(b"\r\n\r\n");
+            body.extend_from_slice(text.as_bytes());
+        }
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Ok((
+        format!("multipart/form-data; boundary={boundary}"),
+        bytes::Bytes::from(body),
+    ))
+}
+
 /// `RestClient.send()`: the request sent, the status and headers back, the body kept on the server by its number.
 fn rest_open<'js>(ctx: Ctx<'js>, request: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
@@ -509,8 +564,15 @@ fn rest_open<'js>(ctx: Ctx<'js>, request: JsValue<'js>) -> rquickjs::Result<JsVa
         let url = text("uri")
             .filter(|url| !url.is_empty())
             .ok_or_else(|| Exception::throw_message(&ctx, "no URI specified for REST call"))?;
-        let headers = request.get("headers").map(header_pairs).unwrap_or_default();
-        let body = if matches!(request.get("bodyFromRequest"), Some(Value::Bool(true))) {
+        let mut headers = request.get("headers").map(header_pairs).unwrap_or_default();
+        let body = if let Some(Value::Map(parts)) = request.get("multipart") {
+            let (content_type, body) = multipart_body(&ctx, parts)?;
+            headers.retain(|(name, _)| {
+                !name.eq_ignore_ascii_case("content-type") && !name.eq_ignore_ascii_case("content-length")
+            });
+            headers.push(("Content-Type".to_string(), content_type));
+            Some(body)
+        } else if matches!(request.get("bodyFromRequest"), Some(Value::Bool(true))) {
             Some(crate::web::request_body()).filter(|body| !body.is_empty())
         } else {
             match request.get("bodyBytes") {

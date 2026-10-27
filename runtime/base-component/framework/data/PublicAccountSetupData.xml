@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-facade-xml type="seed-initial">
+  <moqui.service.job.ServiceJob jobName="public_account_cleanup" description="Remove expired public account challenges and rate buckets" serviceName="org.moqui.public.AccountServices.cleanup#ExpiredChallenges" cronExpression="0 0 * * * ?" paused="N" errorHistoryOnly="Y"/>
+</entity-facade-xml>

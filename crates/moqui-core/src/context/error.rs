@@ -38,6 +38,10 @@ pub enum ErrorKind {
     Validation,
     /// A request the client got wrong, such as a missing or ambiguous name in a REST path.
     BadRequest,
+    /// A revision or operation ID conflicts with durable state.
+    Conflict,
+    /// A typed public request has invalid fields (HTTP 422).
+    Unprocessable,
     /// The transaction was marked rollback-only, so it rolled back or takes no more statements.
     RollbackOnly,
 }

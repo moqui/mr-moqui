@@ -29,6 +29,7 @@ pub(crate) mod html_text;
 pub mod info;
 pub(crate) mod menu;
 mod pdf;
+mod public_site;
 mod render;
 pub(crate) mod saved_finds;
 mod schema;
@@ -423,6 +424,34 @@ fn dispatch_request(
                 login_error,
                 (header_authenticated, new_session),
                 found,
+            );
+        }
+    }
+    if let Some(route) = public_site::resolve(factory, request, root)? {
+        if route.root != root {
+            let mut routed = request.clone();
+            routed.path = route.path.clone();
+            let mut bound_parameters = public_site::parameters(&route, parameters);
+            bound_parameters.insert("publicPath".to_string(), Value::string(&request.path));
+            bound_parameters.insert(
+                "publicHost".to_string(),
+                Value::string(
+                    request
+                        .headers
+                        .get("host")
+                        .map(|h| h.split(':').next().unwrap_or(""))
+                        .unwrap_or(""),
+                ),
+            );
+            return dispatch_request(
+                factory,
+                &routed,
+                &route.root,
+                &bound_parameters,
+                json_list,
+                login_error,
+                (header_authenticated, new_session),
+                fop_path,
             );
         }
     }

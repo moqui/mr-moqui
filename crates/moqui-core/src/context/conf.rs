@@ -188,6 +188,7 @@ fn merge_webapp_children(base: &MNode, over: &MNode) {
     base.merge_children_by_keys(over, "error-screen", &["error"], None);
     // anonymous token routes (screen/token_route.rs): a component's route of the same name replaces the earlier one
     base.merge_children_by_keys(over, "token-route", &["name"], None);
+    base.merge_children_by_keys(over, "public-site", &["host"], None);
     for name in [
         "first-hit-in-visit",
         "after-request",

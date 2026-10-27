@@ -111,6 +111,15 @@ impl HostService {
         })
     }
 
+    /// Preserve typed errors for protocol adapters; legacy message/result behavior remains the default.
+    fn throw_on_error<'js>(
+        this: This<Class<'js, HostService>>,
+        ctx: Ctx<'js>,
+        flag: bool,
+    ) -> rquickjs::Result<Class<'js, HostService>> {
+        host_guard(&ctx, || changed(this, &ctx, |call| call.options.throw_on_error = flag))
+    }
+
     fn ignore_transaction<'js>(
         this: This<Class<'js, HostService>>,
         ctx: Ctx<'js>,
@@ -279,12 +288,16 @@ impl HostService {
             }
             let called = if call.options.multi {
                 crate::service::call::sync_multi(&call.name, &call.parameters, &call.options)
+            } else if call.options.throw_on_error {
+                crate::service::call::sync_checked(&call.name, &call.parameters, &call.options)
             } else {
                 crate::service::call::sync_with(&call.name, &call.parameters, &call.options)
             };
             match called {
                 Ok(results) => host_to_js(&ctx, Value::Map(results.into_iter().collect())),
-                Err(err) if err.kind() == ErrorKind::Unauthorized => Err(throw_context(&ctx, &err)),
+                Err(err) if call.options.throw_on_error || err.kind() == ErrorKind::Unauthorized => {
+                    Err(throw_context(&ctx, &err))
+                }
                 Err(err) => {
                     // the client sees the message; the server log has where it came from
                     tracing::error!("Service {} failed: {}", call.name, err.diagnostic());

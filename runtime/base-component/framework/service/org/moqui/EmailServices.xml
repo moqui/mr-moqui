@@ -47,6 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
             </parameter></parameter>
         </in-parameters>
         <out-parameters>
+            <parameter name="deliveryOutcome"><description>On an SMTP failure: retryable for an explicit temporary rejection, permanent for an explicit permanent rejection, uncertain when acceptance is unknown.</description></parameter>
             <parameter name="messageId"><description>From the Message-ID email header field.</description></parameter>
             <parameter name="emailMessageId"><description>If createEmailMessage=true the ID of the EmailMessage record.</description></parameter>
         </out-parameters>

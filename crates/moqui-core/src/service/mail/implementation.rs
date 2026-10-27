@@ -209,7 +209,9 @@ pub(super) fn send_template(
     }
     if let Err(err) = deliver(facade, &letter, &server) {
         note_message(format!("Error sending email: {err}"));
-        return Ok(ids(&email_message_id, ""));
+        let mut out = ids(&email_message_id, "");
+        out.insert("deliveryOutcome".into(), Value::string(smtp_delivery_outcome(&err)));
+        return Ok(out);
     }
     if !email_message_id.is_empty() {
         update_sent(facade, &email_message_id, &letter.message_id)?;
@@ -1344,13 +1346,32 @@ fn smtp_send_retry(
             };
             let fresh = smtp_auth(facade, server, Some(rejected))?;
             if matches!(&fresh, SmtpAuth::OAuth(_, token) if token == rejected) {
-                return Err(Error::new(err.to_string()));
+                return Err(Error::new(err.to_string()).with_source(err));
             }
             let transport = smtp_transport(server, &fresh, timeout)?;
-            send(&transport).map_err(|err| Error::new(err.to_string()))
+            send(&transport).map_err(|err| Error::new(err.to_string()).with_source(err))
         }
-        Err(err) => Err(Error::new(err.to_string())),
+        Err(err) => Err(Error::new(err.to_string()).with_source(err)),
     }
+}
+
+/// An explicit SMTP rejection may be retried or treated as permanent. A lost connection is ambiguous:
+/// the provider may already have accepted DATA, so a caller must not automatically send it again.
+fn smtp_delivery_outcome(error: &Error) -> &'static str {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(source) = current {
+        if let Some(smtp) = source.downcast_ref::<lettre::transport::smtp::Error>() {
+            return if smtp.is_transient() {
+                "retryable"
+            } else if smtp.is_permanent() {
+                "permanent"
+            } else {
+                "uncertain"
+            };
+        }
+        current = source.source();
+    }
+    "uncertain"
 }
 
 /// How SMTP signs in: not at all (no `mailUsername`), with the password, or for an EatOAuth2 server with XOAUTH2 and

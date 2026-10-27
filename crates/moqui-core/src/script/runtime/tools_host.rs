@@ -687,7 +687,7 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     function RestClient() {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
         this.bodyParameterList = []; this.contentTypeText = "application/json"; this.timeoutSeconds = 30;
-        this.bodyBinary = null; this.bodyFromRequest = false; this.followRedirectsFlag = true; this.denyInternalFlag = false;
+        this.bodyBinary = null; this.bodyMultipart = null; this.bodyFromRequest = false; this.followRedirectsFlag = true; this.denyInternalFlag = false;
     }
     RestClient.prototype.method = function (method) { this.methodName = String(method).toUpperCase(); return this; };
     RestClient.prototype.uri = function (uri) {
@@ -716,6 +716,8 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     RestClient.prototype.timeout = function (seconds) { this.timeoutSeconds = Number(seconds); return this; };
     // A binary body, a Uint8Array, sent as it is; the Content-Type is the caller's header.
     RestClient.prototype.bodyBytes = function (bytes) { this.bodyBinary = bytes == null ? null : bytes; this.bodyText = null; return this; };
+    // Rebuild multipart from server-owned uploads and allow-listed text fields. No browser/session headers are copied.
+    RestClient.prototype.multipart = function (parts) { this.bodyMultipart = parts; this.bodyFromRequest = false; this.bodyText = null; this.bodyBinary = null; return this; };
     // The body of the web request being handled, sent as it came without passing through the script (a proxy).
     RestClient.prototype.streamFrom = function () { this.bodyFromRequest = true; this.bodyText = null; this.bodyBinary = null; return this; };
     // false passes a redirect back as the 3xx response instead of following it; only send() reads it.
@@ -732,11 +734,12 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         const query = restQuery(this.bodyParameterList);
         if (query) uri += (uri.includes("?") ? "&" : "?") + query;
         const sent = host.restOpen({ method: this.methodName, uri: uri, headers: this.headerList.slice(), body: this.bodyText,
-            bodyBytes: this.bodyBinary, bodyFromRequest: this.bodyFromRequest, followRedirects: this.followRedirectsFlag,
+            bodyBytes: this.bodyBinary, multipart: this.bodyMultipart, bodyFromRequest: this.bodyFromRequest, followRedirects: this.followRedirectsFlag,
             timeoutSeconds: this.timeoutSeconds });
         return new RestResponse(this, sent);
     };
     RestClient.prototype.call = function () {
+        if (this.bodyMultipart) return this.send();
         let uri = this.uriString;
         if (!uri) throw new Error("No URI set in RestClient");
         const query = restQuery(this.bodyParameterList);

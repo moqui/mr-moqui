@@ -46,6 +46,8 @@ pub struct CallOptions {
     pub ignore_previous_error: bool,
     /// `noRememberParameters()`: the artifact hit does not keep the parameters.
     pub no_remember_parameters: bool,
+    /// Opt-in public/protocol boundary: retain typed failures instead of converting them to result messages.
+    pub throw_on_error: bool,
 }
 
 impl CallOptions {
@@ -199,7 +201,11 @@ pub fn sync_checked(
     if errors.is_empty() {
         Ok(results)
     } else {
-        Err(Error::new(errors.join("\n")))
+        Err(if options.throw_on_error {
+            Error::of_kind(crate::context::ErrorKind::Unprocessable, errors.join("\n"))
+        } else {
+            Error::new(errors.join("\n"))
+        })
     }
 }
 
@@ -528,7 +534,7 @@ pub fn sync_with(
             } else {
                 call_callbacks(&def.name, &cleaned, Err(err));
             }
-            if record_failure(&def.name, err) {
+            if record_failure(&def.name, err) && !options.throw_on_error {
                 failure = None;
             }
         }

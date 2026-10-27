@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="start" noun="Session" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("startSession", input || {})</script>
+    </actions>
+  </service>
+  <service verb="complete" noun="Session" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("completeSession", input || {})</script>
+    </actions>
+  </service>
+  <service verb="begin" noun="Registration" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("beginRegistration", input || {})</script>
+    </actions>
+  </service>
+  <service verb="verify" noun="Registration" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("verifyRegistration", input || {})</script>
+    </actions>
+  </service>
+  <service verb="request" noun="Recovery" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("requestRecovery", input || {})</script>
+    </actions>
+  </service>
+  <service verb="issue" noun="Delegation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("issueDelegation", input || {})</script>
+    </actions>
+  </service>
+  <service verb="end" noun="Session" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("endSession", input || {})</script>
+    </actions>
+  </service>
+  <service verb="manage" noun="Account" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('manageAccount',input || {})</script>
+    </actions>
+  </service>
+  <service verb="prepare" noun="Sso" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('prepareSso',input || {})</script>
+    </actions>
+  </service>
+  <service verb="start" noun="Sso" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('startSso',input || {})</script>
+    </actions>
+  </service>
+  <service verb="complete" noun="Sso" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('completeSso',input || {})</script>
+    </actions>
+  </service>
+  <service verb="exchange" noun="Sso" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('exchangeSso',input || {})</script>
+    </actions>
+  </service>
+  <service verb="record" noun="Attempt" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://framework/service/org/moqui/public/Account.js').execute('recordAttempt',input || {})</script>
+    </actions>
+  </service>
+  <service verb="cleanup" noun="ExpiredChallenges" authenticate="false" allow-remote="false">
+    <actions>
+      <script><![CDATA[
+            const old=ec.artifactExecution.disableAuthz()
+            try{for(const name of ['AccountAttempt','RegistrationChallenge','SsoHandoff','DelegatedSession']){
+                const entity='moqui.security.public.'+name
+                const keys={AccountAttempt:'bucketId',RegistrationChallenge:'challengeId',SsoHandoff:'handoffId',DelegatedSession:'delegationId'}
+                for(const row of ec.entity.find(entity).condition('expiresAt','less',ec.user.nowTimestamp).limit(100).list()){
+                    try{ec.service.sync().throwOnError(true).name('delete#'+entity).parameters({[keys[name]]:row[keys[name]]}).requireNewTransaction(true).call()}
+                    catch(error){ec.message.clearErrors();ec.logger.error('Public account cleanup failed for '+name+' '+row[keys[name]])}
+                }
+            }}finally{if(!old)ec.artifactExecution.enableAuthz()}
+        ]]></script>
+    </actions>
+  </service>
+</services>

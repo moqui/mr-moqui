@@ -84,6 +84,8 @@ const FILES_JS: &str = r#"(function (ec, host) {
     ec.resource.getChildChanges = (location) => host.filesChildChanges(String(location));
     ec.resource.getChangeLog = (location, limit) => host.filesChangeLog(String(location), limit == null ? 100 : Number(limit));
     ec.resource.getTreeSize = (location) => host.filesTreeSize(String(location));
+    ec.resource.imageAvailable = host.filesImageAvailable();
+    Object.defineProperty(ec.service, "ssoAvailable", {get: () => host.filesSsoAvailable()});
     ec.resource.makeThumbnail = (source, target, maxSize) =>
         host.filesThumbnail(String(source), String(target), maxSize == null ? 256 : Number(maxSize));
     ec.resource.makePdfPreview = (source, target, maxSize) =>
@@ -118,6 +120,8 @@ pub(super) fn install(ctx: &Ctx<'_>) -> Result<(), Error> {
     method!("filesChildChanges", files_child_changes);
     method!("filesChangeLog", files_change_log);
     method!("filesTreeSize", files_tree_size);
+    method!("filesImageAvailable", || cfg!(feature = "image"));
+    method!("filesSsoAvailable", || crate::sso::client().is_ok());
     method!("filesThumbnail", files_thumbnail);
     method!("filesPdfPreview", files_pdf_preview);
     method!("filesSheetPreview", files_sheet_preview);

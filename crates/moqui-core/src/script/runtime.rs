@@ -1616,10 +1616,15 @@ fn throw_diagnostic(
 const KIND_PROPERTY: &str = "moquiErrorKind";
 
 /// The kinds [`mark_kind`] carries on the error, by name.
-const CARRIED_KINDS: [(ErrorKind, &str); 3] = [
+const CARRIED_KINDS: [(ErrorKind, &str); 8] = [
     (ErrorKind::AuthenticationRequired, "AuthenticationRequired"),
     (ErrorKind::Unauthorized, "Unauthorized"),
     (ErrorKind::Tarpit, "Tarpit"),
+    (ErrorKind::NotFound, "NotFound"),
+    (ErrorKind::Conflict, "Conflict"),
+    (ErrorKind::Unprocessable, "Unprocessable"),
+    (ErrorKind::Unavailable, "Unavailable"),
+    (ErrorKind::MethodNotAllowed, "MethodNotAllowed"),
 ];
 
 /// Put `kind` on an error about to be thrown, when it is one of the [`CARRIED_KINDS`].
