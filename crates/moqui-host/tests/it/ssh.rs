@@ -491,7 +491,10 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     assert_eq!(posts.len(), before + 2, "{posts:?}");
     assert_eq!(posts.last().map(String::as_str), Some("entity-cache-invalidate"));
     // An unknown topic is refused by the peer, and a key that is not the cluster key cannot log in as the cluster.
-    assert!(sender.post(&base_url, "no-such-topic", payload).is_err());
+    assert_eq!(
+        sender.post(&base_url, "no-such-topic", payload).unwrap(),
+        moqui_core::cluster::PostOutcome::Rejected(404)
+    );
     let stranger = Arc::new(key(OTHER_SEED));
     let refused = moqui_host::edge::block_on(async move {
         struct Accept;

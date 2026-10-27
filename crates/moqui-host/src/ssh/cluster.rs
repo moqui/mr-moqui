@@ -38,7 +38,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 /// The user a cluster peer logs in as.
 pub const CLUSTER_USER: &str = "moqui-cluster";
 /// Largest frame accepted.
-const MAX_FRAME: usize = 16 * 1024 * 1024;
+const MAX_FRAME: usize = moqui_core::cluster::MAX_CLUSTER_BODY;
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a peer's session is kept with nothing sent on it.
 const PEER_IDLE: Duration = Duration::from_secs(600);
@@ -105,7 +105,7 @@ pub struct SshSender {
 }
 
 impl Sender for SshSender {
-    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<(), CoreError> {
+    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
         let Some(address) = base_url.strip_prefix("ssh://") else {
             return self.https.post(base_url, topic, payload);
         };
@@ -128,10 +128,7 @@ impl Sender for SshSender {
         })
         .map_err(|err| CoreError::new(err.to_string()))?
         .map_err(|err| CoreError::new(err.to_string()))?;
-        match status {
-            200..=299 => Ok(()),
-            other => Err(CoreError::new(format!("cluster peer {base_url} answered {other}"))),
-        }
+        moqui_core::cluster::PostOutcome::from_status(status)
     }
 }
 
@@ -341,7 +338,12 @@ mod tests {
     struct NoSender;
 
     impl Sender for NoSender {
-        fn post(&self, _base_url: &str, _topic: &str, _payload: &[u8]) -> Result<(), CoreError> {
+        fn post(
+            &self,
+            _base_url: &str,
+            _topic: &str,
+            _payload: &[u8],
+        ) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
             Err(CoreError::new("not in this test"))
         }
     }

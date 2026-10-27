@@ -81,7 +81,12 @@ struct NoSsh;
 
 #[cfg(not(feature = "ssh"))]
 impl Sender for NoSsh {
-    fn post(&self, base_url: &str, _topic: &str, _payload: &[u8]) -> Result<(), CoreError> {
+    fn post(
+        &self,
+        base_url: &str,
+        _topic: &str,
+        _payload: &[u8],
+    ) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
         Err(CoreError::new(format!(
             "cluster peer {base_url} is reached over SSH and ssh is not built into this host"
         )))
@@ -109,7 +114,7 @@ struct DispatchSender {
 }
 
 impl Sender for DispatchSender {
-    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<(), CoreError> {
+    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
         if base_url.starts_with(NOTIFY_BASE_URL) {
             return match &self.notify {
                 Some(notify) => notify.send(topic, payload),
@@ -130,7 +135,10 @@ struct NotifySender {
 }
 
 impl NotifySender {
-    fn send(&self, topic: &str, payload: &[u8]) -> Result<(), CoreError> {
+    fn send(&self, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
+        if payload.len() > moqui_core::cluster::MAX_CLUSTER_BODY {
+            return Ok(moqui_core::cluster::PostOutcome::Rejected(413));
+        }
         let factory = self
             .factory
             .upgrade()
@@ -152,8 +160,11 @@ impl NotifySender {
             moqui_lib::object::Value::string(CHANNEL),
             moqui_lib::object::Value::string(message),
         ];
-        tx.with_connection(|conn| conn.query_once("SELECT pg_notify(?, ?)", &params).map(|_| ()))
-            .map_err(CoreError::from)
+        tx.with_connection(|conn| {
+            conn.query_once("SELECT pg_notify(?, ?)", &params)
+                .map(|_| moqui_core::cluster::PostOutcome::Accepted)
+        })
+        .map_err(CoreError::from)
     }
 }
 
@@ -337,6 +348,19 @@ fn clear_entity_caches(factory: &ExecutionContextFactory) {
 #[cfg(test)]
 mod tests {
     use super::check_transport;
+
+    #[test]
+    fn notify_refuses_oversized_payloads_before_trying_to_store_them() {
+        let sender = super::NotifySender {
+            factory: std::sync::Weak::new(),
+        };
+        assert_eq!(
+            sender
+                .send("collab-update", &vec![b'x'; moqui_core::cluster::MAX_CLUSTER_BODY + 1])
+                .unwrap(),
+            moqui_core::cluster::PostOutcome::Rejected(413)
+        );
+    }
 
     #[test]
     fn notify_needs_a_postgres_entity_database() {

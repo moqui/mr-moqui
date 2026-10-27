@@ -39,6 +39,47 @@ const PROPS: &[&str] = &[
     "cluster_base_url",
 ];
 
+#[test]
+fn the_serialized_cluster_limit_includes_the_envelope_and_accepts_sixteen_mib() {
+    let mut message = TopicMessage {
+        origin_id: "peer".into(),
+        message_id: "message".into(),
+        body: serde_json::Value::String(String::new()),
+    };
+    let overhead = super::payload_bytes(&message).unwrap().len();
+    message.body = serde_json::Value::String("x".repeat(super::MAX_CLUSTER_BODY - overhead));
+    assert_eq!(super::payload_bytes(&message).unwrap().len(), super::MAX_CLUSTER_BODY);
+    message.body = serde_json::Value::String("x".repeat(super::MAX_CLUSTER_BODY - overhead + 1));
+    assert!(super::payload_bytes(&message).is_err());
+}
+
+#[test]
+fn permanent_rejections_are_not_retried_or_counted_as_a_down_peer() {
+    struct Refuse(AtomicUsize);
+    impl Sender for Refuse {
+        fn post(&self, _: &str, _: &str, _: &[u8]) -> Result<super::PostOutcome, Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(super::PostOutcome::Rejected(413))
+        }
+    }
+    let refuse = Arc::new(Refuse(AtomicUsize::new(0)));
+    let sender: Arc<dyn Sender> = refuse.clone();
+    assert!(super::post_with_retry(
+        &sender,
+        "https://peer",
+        "collab-update",
+        b"body"
+    ));
+    assert!(super::post_with_retry(
+        &sender,
+        "https://peer",
+        "entity-cache-invalidate",
+        b"next"
+    ));
+    assert_eq!(refuse.0.load(Ordering::SeqCst), 2);
+    assert!(super::PostOutcome::from_status(503).is_err());
+}
+
 struct Clean;
 
 impl Drop for Clean {
@@ -65,13 +106,13 @@ struct Posted {
 }
 
 impl Sender for Recording {
-    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<(), Error> {
+    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<super::PostOutcome, Error> {
         sync::lock(&self.calls).push(Posted {
             base: base_url.to_string(),
             topic: topic.to_string(),
             payload: payload.to_vec(),
         });
-        Ok(())
+        Ok(super::PostOutcome::Accepted)
     }
 }
 
@@ -91,9 +132,9 @@ struct Scripted {
 }
 
 impl Sender for Scripted {
-    fn post(&self, _base_url: &str, _topic: &str, payload: &[u8]) -> Result<(), Error> {
+    fn post(&self, _base_url: &str, _topic: &str, payload: &[u8]) -> Result<super::PostOutcome, Error> {
         if !String::from_utf8_lossy(payload).contains(self.only) {
-            return Ok(());
+            return Ok(super::PostOutcome::Accepted);
         }
         self.calls.fetch_add(1, Ordering::SeqCst);
         let left = self.fails_left.load(Ordering::SeqCst);
@@ -101,7 +142,7 @@ impl Sender for Scripted {
             self.fails_left.fetch_sub(1, Ordering::SeqCst);
             return Err(Error::new("post failed"));
         }
-        Ok(())
+        Ok(super::PostOutcome::Accepted)
     }
 }
 
@@ -516,10 +557,10 @@ fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_and_the_commit_does_
     // A peer that takes a while to answer: the commit returns long before the posts are done.
     struct Slow(Mutex<Vec<String>>);
     impl Sender for Slow {
-        fn post(&self, _base_url: &str, _topic: &str, payload: &[u8]) -> Result<(), Error> {
+        fn post(&self, _base_url: &str, _topic: &str, payload: &[u8]) -> Result<super::PostOutcome, Error> {
             std::thread::sleep(Duration::from_millis(200));
             sync::lock(&self.0).push(String::from_utf8_lossy(payload).to_string());
-            Ok(())
+            Ok(super::PostOutcome::Accepted)
         }
     }
     let slow = Arc::new(Slow(Mutex::new(Vec::new())));

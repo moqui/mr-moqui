@@ -53,6 +53,8 @@ const MEMBER: &str = "moqui.server.ClusterMember";
 const MESSAGE: &str = "moqui.server.ClusterMessage";
 /// The base URL every `cluster_transport=notify` member advertises. One post to it reaches all of them.
 pub const NOTIFY_BASE_URL: &str = "pg-notify:";
+/// Maximum serialized topic envelope, shared by every cluster transport.
+pub const MAX_CLUSTER_BODY: usize = 16 * 1024 * 1024;
 const MEMBER_COLUMNS: &[&str] = &[
     "instanceId",
     "clusterBaseUrl",
@@ -143,9 +145,26 @@ impl ClusterState {
 }
 
 /// Posts one topic message to a peer. The host installs the HTTPS client. Tests install a recorder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostOutcome {
+    Accepted,
+    Rejected(u16),
+}
+
+impl PostOutcome {
+    /// Classify a transport's response without treating a refused message as a failed peer.
+    pub fn from_status(status: u16) -> Result<Self, Error> {
+        match status {
+            200..=299 => Ok(Self::Accepted),
+            400..=499 => Ok(Self::Rejected(status)),
+            _ => Err(Error::new(format!("cluster peer returned {status}"))),
+        }
+    }
+}
+
 pub trait Sender: Send + Sync {
     /// `base_url` has no trailing slash. `topic` is the topic name, not a path.
-    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<(), Error>;
+    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<PostOutcome, Error>;
 }
 
 /// Replace `factory`'s sender. A later call replaces the previous one.
@@ -599,6 +618,14 @@ fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
                 continue;
             }
         };
+        if payload.len() > MAX_CLUSTER_BODY {
+            tracing::warn!(
+                topic,
+                size = payload.len(),
+                "cluster message exceeds the body limit; skipped"
+            );
+            continue;
+        }
         for base_url in &peers {
             if peer_down(state, base_url) {
                 continue;
@@ -702,20 +729,47 @@ fn live_peer_urls(
     Ok(bases)
 }
 
-fn payload_bytes(message: &TopicMessage) -> Result<Vec<u8>, Error> {
+pub fn prepare_message(body: serde_json::Value) -> Result<TopicMessage, Error> {
+    let message = TopicMessage {
+        origin_id: notify::origin_id().to_string(),
+        message_id: crate::entity::uuid_v4().map_err(Error::from)?,
+        body,
+    };
+    payload_bytes(&message)?;
+    Ok(message)
+}
+
+pub fn payload_bytes(message: &TopicMessage) -> Result<Vec<u8>, Error> {
     let value = serde_json::json!({
         "origin_id": message.origin_id,
         "message_id": message.message_id,
         "body": message.body,
     });
-    serde_json::to_vec(&value).map_err(|err| Error::new(format!("could not encode cluster message: {err}")))
+    let bytes =
+        serde_json::to_vec(&value).map_err(|err| Error::new(format!("could not encode cluster message: {err}")))?;
+    if bytes.len() > MAX_CLUSTER_BODY {
+        return Err(Error::new(format!(
+            "cluster message is {} bytes; maximum is {MAX_CLUSTER_BODY}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
 }
 
 /// Post, trying again after a short and then a longer wait. False when every try failed.
 fn post_with_retry(sender: &Arc<dyn Sender>, base_url: &str, topic: &str, payload: &[u8]) -> bool {
     for attempt in 0..RETRIES {
         match sender.post(base_url, topic, payload) {
-            Ok(()) => return true,
+            Ok(PostOutcome::Accepted) => return true,
+            Ok(PostOutcome::Rejected(status)) => {
+                tracing::warn!(
+                    base_url,
+                    topic,
+                    status,
+                    "cluster message rejected; peer remains available"
+                );
+                return true;
+            }
             Err(err) if attempt + 1 == RETRIES => {
                 tracing::warn!("cluster post to {base_url} failed for topic {topic}: {err}");
             }
@@ -923,6 +977,9 @@ fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<()
 ///
 /// Returns an error when the row cannot be written.
 pub fn store_message(facade: &EntityFacade, topic: &str, payload: &str) -> Result<String, Error> {
+    if payload.len() > MAX_CLUSTER_BODY {
+        return Err(Error::new("cluster message exceeds the body limit"));
+    }
     let _authz = entered_authz();
     let id = crate::entity::uuid_v4().map_err(Error::from)?;
     let sql = facade

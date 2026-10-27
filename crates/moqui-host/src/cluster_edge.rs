@@ -41,7 +41,7 @@ use rustls::DigitallySignedStruct;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_PORT: u16 = 8444;
-const BODY_LIMIT: usize = 1024 * 1024;
+const BODY_LIMIT: usize = moqui_core::cluster::MAX_CLUSTER_BODY;
 const HEADER_LIMIT: usize = 16 * 1024;
 /// How often a connection with nothing to read checks whether the listener is stopping.
 const READ_IDLE: Duration = Duration::from_millis(250);
@@ -315,6 +315,10 @@ fn serve_exchanges<S: Read + Write>(
                 }
             }
             Err(IoFail::Closed) => return Ok(()),
+            Err(IoFail::TooLarge) => {
+                let _ = write_status(&mut stream, 413);
+                return Err("cluster body is too large".to_string());
+            }
             Err(IoFail::Bad(message)) => {
                 let _ = write_status(&mut stream, 400);
                 return Err(message);
@@ -374,6 +378,9 @@ pub(crate) fn apply_topic_patiently(
 
 /// Check and count one topic message. The error is the HTTP status: 404 an unknown topic, 400 a bad body.
 fn accept_topic(posts: &Mutex<Vec<String>>, topic: &str, body: &[u8]) -> Result<TopicMessage, u16> {
+    if body.len() > moqui_core::cluster::MAX_CLUSTER_BODY {
+        return Err(413);
+    }
     if ![
         moqui_core::notify::ENTITY_CACHE_INVALIDATE,
         moqui_core::notify::NOTIFICATION_MESSAGE,
@@ -485,14 +492,14 @@ impl PeerSender {
 }
 
 impl Sender for PeerSender {
-    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<(), CoreError> {
+    fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
         if !topic_segment(topic) {
             return Err(CoreError::new("cluster topic is not a path segment"));
         }
         if let Some(mut stream) = self.take_live(base_url) {
-            if write_post(&mut stream, base_url, topic, payload).is_ok() {
+            if let Ok(outcome) = write_post(&mut stream, base_url, topic, payload) {
                 self.keep(base_url, stream);
-                return Ok(());
+                return Ok(outcome);
             }
             // The peer may close a connection early; a fresh one is tried once before the post fails.
         }
@@ -543,7 +550,7 @@ fn write_post(
     base_url: &str,
     topic: &str,
     payload: &[u8],
-) -> Result<(), CoreError> {
+) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
     let (host, port) = split_base(base_url)?;
     let head = format!(
         "POST /cluster/{topic} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
@@ -560,16 +567,13 @@ fn write_post(
         Ok(None) => return Err(CoreError::new(format!("cluster peer {base_url} closed the connection"))),
         Err(IoFail::Timeout) => return Err(CoreError::new(format!("cluster post to {base_url} timed out"))),
         Err(IoFail::Closed) => return Err(CoreError::new(format!("cluster peer {base_url} closed the connection"))),
+        Err(IoFail::TooLarge) => return Err(CoreError::new("cluster response is too large")),
         Err(IoFail::Bad(message)) => {
             return Err(CoreError::new(format!("cluster post to {base_url} failed: {message}")))
         }
     };
     let status = status_code(&exchange.start);
-    if (200..300).contains(&status) {
-        Ok(())
-    } else {
-        Err(CoreError::new(format!("cluster post to {base_url} returned {status}")))
-    }
+    moqui_core::cluster::PostOutcome::from_status(status)
 }
 
 fn split_base(base_url: &str) -> Result<(String, u16), CoreError> {
@@ -612,6 +616,7 @@ fn request_path(start: &str) -> &str {
 enum IoFail {
     Timeout,
     Closed,
+    TooLarge,
     Bad(String),
 }
 
@@ -634,7 +639,7 @@ fn take_exchange(stream: &mut impl Read, buf: &mut Vec<u8>, split: usize) -> Res
     let head = String::from_utf8_lossy(&buf[..split]).into_owned();
     let length = content_length(&head)?;
     if length > BODY_LIMIT {
-        return Err(IoFail::Bad("cluster body is too large".to_string()));
+        return Err(IoFail::TooLarge);
     }
     let total = split + 4 + length;
     while buf.len() < total {
@@ -710,6 +715,7 @@ fn write_status(stream: &mut impl Write, status: u16) -> std::io::Result<()> {
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        413 => "Payload Too Large",
         503 => "Service Unavailable",
         _ => "Error",
     };
@@ -910,6 +916,35 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{listen_port, serve_exchanges, ConnLimits, READ_IDLE};
+
+    #[test]
+    fn the_https_body_limit_is_shared_and_rejected_before_reading_an_oversized_body() {
+        let max = moqui_core::cluster::MAX_CLUSTER_BODY;
+        let head = format!(
+            "POST /cluster/collab-update HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            max + 1
+        );
+        let split = head.len() - 4;
+        let mut buf = head.into_bytes();
+        assert!(matches!(
+            super::take_exchange(&mut std::io::empty(), &mut buf, split),
+            Err(super::IoFail::TooLarge)
+        ));
+        let body = vec![b'x'; max];
+        let head = format!("POST /cluster/collab-update HTTP/1.1\r\nContent-Length: {max}\r\n\r\n");
+        let split = head.len() - 4;
+        let mut buf = head.into_bytes();
+        buf.extend_from_slice(&body);
+        assert_eq!(
+            super::take_exchange(&mut std::io::empty(), &mut buf, split)
+                .ok()
+                .flatten()
+                .unwrap()
+                .body
+                .len(),
+            max
+        );
+    }
 
     const SHORT: ConnLimits = ConnLimits {
         first: Duration::from_millis(300),

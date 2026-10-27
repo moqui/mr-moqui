@@ -33,6 +33,53 @@ use super::{Push, Slot};
 
 static REMOTE: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_update_is_refused_before_apply_ack_or_broadcast() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "editor".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let doc = "oversized-regression";
+        lock(members()).insert(
+            doc.into(),
+            vec![Member {
+                slot: Arc::downgrade(&slot),
+                slot_id: slot.id,
+                client: "client".into(),
+                user_id: "editor".into(),
+                name: "Editor".into(),
+                awareness: Json::Null,
+            }],
+        );
+        update(
+            &factory,
+            &slot,
+            doc,
+            "client",
+            &json!({"id":"ack", "update":"A".repeat(moqui_core::cluster::MAX_CLUSTER_BODY)}),
+        );
+        lock(members()).remove(doc);
+        let response: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(response["type"], "error");
+        assert_eq!(response["code"], 413);
+        assert!(rx.try_recv().is_err(), "no acknowledgement or update was broadcast");
+        let small = remote_message(json!({"doc":"document", "frame":{"type":"update", "update":"AAAA"}})).unwrap();
+        assert!(small.body.get("update").is_none(), "the update is carried once");
+        assert_eq!(small.body["frame"]["update"], "AAAA");
+    }
+}
+
 /// An editor on this server: its socket, its client id, user and presence id.
 #[derive(Clone)]
 struct Member {
@@ -87,13 +134,19 @@ fn broadcast(doc: &str, except: Option<&str>, message: &Json) {
 
 /// Publish to the other servers of the cluster; a single server has no peers and it is a local no-op.
 fn publish_remote(factory: &ExecutionContextFactory, body: Json) {
+    match remote_message(body) {
+        Ok(message) => publish_message(factory, &message),
+        Err(err) => tracing::warn!("co-editing: not published to the cluster: {}", err.message()),
+    }
+}
+
+fn remote_message(body: Json) -> Result<TopicMessage, moqui_core::context::Error> {
+    moqui_core::cluster::prepare_message(body)
+}
+
+fn publish_message(factory: &ExecutionContextFactory, message: &TopicMessage) {
     let Some(facade) = factory.entity() else { return };
-    let message = TopicMessage {
-        origin_id: moqui_core::notify::origin_id().to_string(),
-        message_id: String::new(),
-        body,
-    };
-    if let Err(err) = moqui_core::cluster::publish(&facade, COLLAB_UPDATE, &message) {
+    if let Err(err) = moqui_core::cluster::publish(&facade, COLLAB_UPDATE, message) {
         tracing::warn!("co-editing: not published to the cluster: {}", err.message());
     }
 }
@@ -202,6 +255,11 @@ fn update(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, c
         return error(slot, doc, client, 409, "join the document first");
     }
     let encoded = message.get("update").and_then(Json::as_str).unwrap_or_default();
+    let frame = json!({"topic": topic(doc), "type": "update", "client": client, "update": encoded});
+    let remote = match remote_message(json!({"doc": doc, "frame": frame})) {
+        Ok(message) => message,
+        Err(err) => return error(slot, doc, client, 413, err.message()),
+    };
     let Ok(update) = b64().decode(encoded) else {
         return error(slot, doc, client, 400, "update is not base64");
     };
@@ -214,9 +272,8 @@ fn update(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, c
             &json!({"topic": topic(doc), "type": "ack", "client": client, "id": id}),
         );
     }
-    let frame = json!({"topic": topic(doc), "type": "update", "client": client, "update": encoded});
     broadcast(doc, Some(client), &frame);
-    publish_remote(factory, json!({"doc": doc, "update": encoded, "frame": frame}));
+    publish_message(factory, &remote);
 }
 
 fn awareness(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, client: &str, message: &Json) {
@@ -274,7 +331,9 @@ fn deliver_remote(message: &TopicMessage) {
     };
     if let Some(update) = message
         .body
-        .get("update")
+        .get("frame")
+        .filter(|frame| frame.get("type").and_then(Json::as_str) == Some("update"))
+        .and_then(|frame| frame.get("update"))
         .and_then(Json::as_str)
         .and_then(|text| b64().decode(text).ok())
     {

@@ -73,9 +73,9 @@ impl Credential {
             Self::LoginKeyHash(hash) => {
                 let hash = hash.clone();
                 let owner = Arc::clone(&factory);
-                let rx = factory.request_pool().try_submit(owner, move || {
-                    moqui_core::user::login_key_user_by_hash(&hash)
-                })?;
+                let rx = factory
+                    .request_pool()
+                    .try_submit(owner, move || moqui_core::user::login_key_user_by_hash(&hash))?;
                 rx.recv().map_err(|_| CoreError::new("request worker stopped"))?
             }
         }
@@ -175,7 +175,9 @@ pub(crate) async fn upgrade(
     };
     let shutdown = state.shutdown.clone();
     let factory = Arc::clone(&state.factory);
-    ws.on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, credential, shutdown))
+    ws.max_message_size(moqui_core::cluster::MAX_CLUSTER_BODY)
+        .max_frame_size(moqui_core::cluster::MAX_CLUSTER_BODY)
+        .on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, credential, shutdown))
 }
 
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out
