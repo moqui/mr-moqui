@@ -286,6 +286,286 @@ pub(crate) fn reduce(values: &[Value], calculation: &str) -> Value {
     }
 }
 
+/// The calculations of a reduce or group-by step: `calculations: ["last", "max"]`, or the one `calculation`
+/// (a name, or a list of names) older definitions have.
+fn calculation_names(step: &Value, default: &str) -> Vec<String> {
+    let names = |value: &Value| -> Option<Vec<String>> {
+        match value {
+            Value::String(name) => Some(vec![name.clone()]),
+            Value::Array(names) => Some(names.iter().filter_map(Value::as_str).map(str::to_owned).collect()),
+            _ => None,
+        }
+    };
+    names(&step["calculations"])
+        .or_else(|| names(&step["calculation"]))
+        .filter(|names| !names.is_empty())
+        .unwrap_or_else(|| vec![default.to_owned()])
+}
+
+/// Grafana's "series to rows": a row for each number field, with its name in `field`, a column for each calculation,
+/// and the field's labels.
+fn series_to_rows(frame: &Frame, calculations: &[String]) -> Frame {
+    let series: Vec<&Field> = frame.fields.iter().filter(|field| field.kind == "number").collect();
+    let label_names: BTreeSet<&String> = series.iter().flat_map(|field| field.labels.keys()).collect();
+    let column = |name: &str, kind: &str, values: Vec<Value>| Field {
+        name: name.into(),
+        kind: kind.into(),
+        unit: None,
+        labels: BTreeMap::new(),
+        config: BTreeMap::new(),
+        values,
+    };
+    let mut fields = vec![column(
+        "field",
+        "string",
+        series.iter().map(|field| json!(field.name)).collect(),
+    )];
+    for calculation in calculations {
+        let mut out = column(
+            calculation,
+            "number",
+            series.iter().map(|field| reduce(&field.values, calculation)).collect(),
+        );
+        // The unit carries over when every series has the same one, and is not a count.
+        let units: BTreeSet<_> = series.iter().map(|field| &field.unit).collect();
+        if calculation != "count" && units.len() == 1 {
+            out.unit = units.into_iter().next().cloned().flatten();
+        }
+        fields.push(out);
+    }
+    for label in label_names {
+        fields.push(column(
+            label,
+            "string",
+            series
+                .iter()
+                .map(|field| field.labels.get(label).map_or(Value::Null, |value| json!(value)))
+                .collect(),
+        ));
+    }
+    Frame { fields }
+}
+
+/// One added field: binary math (`left` with `right` or a constant `value`, by `operator`), or a running total,
+/// moving average, delta or percent of total of `field`. In a `calculate` step an item picks the running kinds with
+/// `mode`. `listed` is an item of `calculations`, whose default name says which field it came from.
+fn calculate_field(frame: &Frame, kind: &str, item: &Value, listed: bool) -> Result<Field, Error> {
+    let kind = if kind == "calculate" {
+        match text(item, "mode", "binary") {
+            "binary" => "calculate",
+            mode @ ("runningTotal" | "movingAverage" | "delta" | "percentOfTotal") => mode,
+            mode => return Err(Error::new(format!("calculation mode {mode} is not known"))),
+        }
+    } else {
+        kind
+    };
+    let field = |name: String, values: Vec<Value>| Field {
+        name,
+        kind: "number".into(),
+        unit: None,
+        labels: BTreeMap::new(),
+        config: BTreeMap::new(),
+        values,
+    };
+    if kind == "calculate" {
+        let left = text(item, "left", "");
+        let right = text(item, "right", "");
+        let op = text(item, "operator", "+");
+        let left_field = frame
+            .fields
+            .iter()
+            .find(|f| f.name == left)
+            .ok_or_else(|| Error::new(format!("calculation left field {left} is missing")))?;
+        let right_field = frame.fields.iter().find(|f| f.name == right);
+        let constant = number(&item["value"]);
+        let values = left_field
+            .values
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let b = right_field.and_then(|f| f.values.get(i)).and_then(number).or(constant);
+                match (number(a), b) {
+                    (Some(a), Some(b)) => match op {
+                        "+" => numeric(a + b),
+                        "-" => numeric(a - b),
+                        "*" => numeric(a * b),
+                        "/" | "ratio" if b != 0.0 => numeric(a / b),
+                        _ => Value::Null,
+                    },
+                    _ => Value::Null,
+                }
+            })
+            .collect();
+        let name = match item["name"].as_str() {
+            Some(name) => name.to_owned(),
+            None if listed => {
+                let other = if right_field.is_some() {
+                    right.to_owned()
+                } else {
+                    item["value"].to_string()
+                };
+                format!("{left} {op} {other}")
+            }
+            None => "calculated".to_owned(),
+        };
+        return Ok(field(name, values));
+    }
+    let name = text(item, "field", "");
+    let source = frame
+        .fields
+        .iter()
+        .find(|f| f.name == name)
+        .ok_or_else(|| Error::new(format!("transform field {name} is missing")))?;
+    let total = source.values.iter().filter_map(number).sum::<f64>();
+    let mut sum = 0.0;
+    let mut previous = None;
+    let window = item["window"].as_u64().unwrap_or(5).max(1) as usize;
+    let values = source
+        .values
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            let Some(value) = number(value) else {
+                return Value::Null;
+            };
+            match kind {
+                "runningTotal" => {
+                    sum += value;
+                    numeric(sum)
+                }
+                "movingAverage" => reduce(&source.values[i.saturating_add(1).saturating_sub(window)..=i], "mean"),
+                "delta" => {
+                    let result = previous.map(|p| numeric(value - p)).unwrap_or(Value::Null);
+                    previous = Some(value);
+                    result
+                }
+                _ if total != 0.0 => numeric(value / total * 100.0),
+                _ => Value::Null,
+            }
+        })
+        .collect();
+    let name = match item["name"].as_str() {
+        Some(name) => name.to_owned(),
+        None if listed => format!("{name}.{kind}"),
+        None => kind.to_owned(),
+    };
+    Ok(field(name, values))
+}
+
+/// Order two values: numbers by value, times by instant, other text as text.
+fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
+        return a.partial_cmp(&b);
+    }
+    match (a, b) {
+        (Value::String(a), Value::String(b)) => match (a.parse::<jiff::Timestamp>(), b.parse::<jiff::Timestamp>()) {
+            (Ok(a), Ok(b)) => Some(a.cmp(&b)),
+            _ => match (a.parse::<f64>(), b.parse::<f64>()) {
+                (Ok(a), Ok(b)) => a.partial_cmp(&b),
+                _ => Some(a.cmp(b)),
+            },
+        },
+        _ => number(a).zip(number(b)).and_then(|(a, b)| a.partial_cmp(&b)),
+    }
+}
+
+/// The rows a filter-by-value step keeps. A step is one condition (`field`, `operator`, `value`, and `from`/`to`
+/// for `range`), or several in `conditions` joined by `match` (`all`, the default, or `any`); `exclude` drops the
+/// matching rows instead.
+fn filter_rows(frame: &Frame, step: &Value) -> Result<Vec<usize>, Error> {
+    struct Condition<'s> {
+        field: &'s Field,
+        operator: &'s str,
+        spec: &'s Value,
+        pattern: Option<regex::Regex>,
+    }
+    let specs: Vec<&Value> = match step["conditions"].as_array() {
+        Some(conditions) => conditions.iter().collect(),
+        None => vec![step],
+    };
+    let mut conditions = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let name = text(spec, "field", "");
+        let field = frame
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .ok_or_else(|| Error::new(format!("filter field {name} is missing")))?;
+        let operator = text(spec, "operator", "eq");
+        if !matches!(
+            operator,
+            "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "range" | "regex" | "exists" | "missing"
+        ) {
+            return Err(Error::new(format!("filter operator {operator} is not known")));
+        }
+        let pattern = if operator == "regex" {
+            let source = spec["value"]
+                .as_str()
+                .ok_or_else(|| Error::new("a regex filter needs a pattern in value"))?;
+            Some(
+                regex::RegexBuilder::new(source)
+                    .size_limit(1 << 20)
+                    .build()
+                    .map_err(|e| Error::new(format!("filter regex {source} is not valid: {e}")))?,
+            )
+        } else {
+            None
+        };
+        conditions.push(Condition {
+            field,
+            operator,
+            spec,
+            pattern,
+        });
+    }
+    let any = match text(step, "match", "all") {
+        "all" => false,
+        "any" => true,
+        other => return Err(Error::new(format!("filter match {other} is not all or any"))),
+    };
+    let exclude = step["exclude"] == true;
+    let holds = |condition: &Condition<'_>, row: usize| -> bool {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let value = condition.field.values.get(row).unwrap_or(&Value::Null);
+        let expected = &condition.spec["value"];
+        let order = |bound: &Value| compare_values(value, bound);
+        match condition.operator {
+            "eq" => value == expected,
+            "ne" => value != expected,
+            _ if value.is_null() => condition.operator == "missing",
+            "gt" => order(expected) == Some(Greater),
+            "gte" => matches!(order(expected), Some(Greater | Equal)),
+            "lt" => order(expected) == Some(Less),
+            "lte" => matches!(order(expected), Some(Less | Equal)),
+            "range" => {
+                let from = &condition.spec["from"];
+                let to = &condition.spec["to"];
+                (from.is_null() || matches!(order(from), Some(Greater | Equal)))
+                    && (to.is_null() || matches!(order(to), Some(Less | Equal)))
+            }
+            "regex" => {
+                let text = value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+                condition
+                    .pattern
+                    .as_ref()
+                    .is_some_and(|pattern| pattern.is_match(&text))
+            }
+            "exists" => true,
+            _ => false,
+        }
+    };
+    Ok((0..frame.len())
+        .filter(|row| {
+            let matched = if any {
+                conditions.iter().any(|condition| holds(condition, *row))
+            } else {
+                conditions.iter().all(|condition| holds(condition, *row))
+            };
+            matched != exclude
+        })
+        .collect())
+}
+
 pub fn transform(mut frame: Frame, steps: &[Value]) -> Result<Frame, Error> {
     for (i, step) in steps.iter().enumerate().filter(|(_, s)| s["disabled"] != true) {
         let kind = text(step, "type", "");
@@ -354,128 +634,55 @@ pub fn transform(mut frame: Frame, steps: &[Value]) -> Result<Frame, Error> {
                 frame.select_rows(&indices);
             }
             "reduce" => {
-                let calculation = text(step, "calculation", "last");
-                for field in &mut frame.fields {
-                    field.values = vec![reduce(&field.values, calculation)];
-                    if calculation != "last" && calculation != "first" {
-                        field.kind = "number".into();
-                    }
+                let calculations = calculation_names(step, "last");
+                if step["mode"] == "rows" {
+                    frame = series_to_rows(&frame, &calculations);
+                } else {
+                    let several = calculations.len() > 1;
+                    frame.fields = frame
+                        .fields
+                        .into_iter()
+                        .flat_map(|field| {
+                            calculations.iter().map(move |calculation| {
+                                let mut out = field.clone();
+                                out.values = vec![reduce(&field.values, calculation)];
+                                if several {
+                                    out.name = format!("{}.{calculation}", field.name);
+                                }
+                                if calculation != "last" && calculation != "first" {
+                                    out.kind = "number".into();
+                                }
+                                out
+                            })
+                        })
+                        .collect();
                 }
             }
             "filter" => {
-                let name = text(step, "field", "");
-                let field = frame
-                    .fields
-                    .iter()
-                    .find(|f| f.name == name)
-                    .ok_or_else(|| Error::new(format!("filter field {name} is missing")))?;
-                let indices: Vec<usize> = field
-                    .values
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, value)| {
-                        let yes = match text(step, "operator", "eq") {
-                            "eq" => value == &step["value"],
-                            "ne" => value != &step["value"],
-                            "gt" => number(value).zip(number(&step["value"])).is_some_and(|(a, b)| a > b),
-                            "lt" => number(value).zip(number(&step["value"])).is_some_and(|(a, b)| a < b),
-                            "exists" => !value.is_null(),
-                            _ => false,
-                        };
-                        yes.then_some(i)
-                    })
-                    .collect();
+                let indices = filter_rows(&frame, step)?;
                 frame.select_rows(&indices);
             }
-            "calculate" => {
-                let left = text(step, "left", "");
-                let right = text(step, "right", "");
-                let op = text(step, "operator", "+");
-                let left = frame
-                    .fields
-                    .iter()
-                    .find(|f| f.name == left)
-                    .ok_or_else(|| Error::new("calculation left field is missing"))?;
-                let right_field = frame.fields.iter().find(|f| f.name == right);
-                let constant = number(&step["value"]);
-                let values = left
-                    .values
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| {
-                        let b = right_field.and_then(|f| f.values.get(i)).and_then(number).or(constant);
-                        match (number(a), b) {
-                            (Some(a), Some(b)) => match op {
-                                "+" => numeric(a + b),
-                                "-" => numeric(a - b),
-                                "*" => numeric(a * b),
-                                "/" | "ratio" if b != 0.0 => numeric(a / b),
-                                _ => Value::Null,
-                            },
-                            _ => Value::Null,
-                        }
-                    })
-                    .collect();
-                frame.fields.push(Field {
-                    name: text(step, "name", "calculated").into(),
-                    kind: "number".into(),
-                    unit: None,
-                    labels: BTreeMap::new(),
-                    config: BTreeMap::new(),
-                    values,
+            "calculate" | "runningTotal" | "movingAverage" | "delta" | "percentOfTotal" => {
+                // One calculation as the step itself, or several in `calculations` (and for the running kinds,
+                // `fields`), each able to use the fields the ones before it added.
+                let listed = step["calculations"].as_array().cloned().or_else(|| {
+                    (kind != "calculate")
+                        .then(|| step["fields"].as_array())
+                        .flatten()
+                        .map(|fields| fields.iter().map(|field| json!({"field":field})).collect())
                 });
-            }
-            "runningTotal" | "movingAverage" | "delta" | "percentOfTotal" => {
-                let name = text(step, "field", "");
-                let field = frame
-                    .fields
-                    .iter()
-                    .find(|f| f.name == name)
-                    .ok_or_else(|| Error::new(format!("transform field {name} is missing")))?;
-                let total = field.values.iter().filter_map(number).sum::<f64>();
-                let mut sum = 0.0;
-                let mut previous = None;
-                let window = step["window"].as_u64().unwrap_or(5).max(1) as usize;
-                let values = field
-                    .values
-                    .iter()
-                    .enumerate()
-                    .map(|(i, value)| {
-                        let Some(value) = number(value) else {
-                            return Value::Null;
-                        };
-                        match kind {
-                            "runningTotal" => {
-                                sum += value;
-                                numeric(sum)
-                            }
-                            "movingAverage" => {
-                                reduce(&field.values[i.saturating_add(1).saturating_sub(window)..=i], "mean")
-                            }
-                            "delta" => {
-                                let result = previous.map(|p| numeric(value - p)).unwrap_or(Value::Null);
-                                previous = Some(value);
-                                result
-                            }
-                            _ if total != 0.0 => numeric(value / total * 100.0),
-                            _ => Value::Null,
-                        }
-                    })
-                    .collect();
-                frame.fields.push(Field {
-                    name: text(step, "name", kind).into(),
-                    kind: "number".into(),
-                    unit: None,
-                    labels: BTreeMap::new(),
-                    config: BTreeMap::new(),
-                    values,
-                });
+                let several = listed.is_some();
+                for item in listed.unwrap_or_else(|| vec![step.clone()]) {
+                    let field = calculate_field(&frame, kind, &item, several)?;
+                    frame.fields.push(field);
+                }
             }
             "groupBy" => {
                 let keys: Vec<&str> = step["fields"]
                     .as_array()
                     .map(|v| v.iter().filter_map(Value::as_str).collect())
                     .unwrap_or_default();
+                let calculations = calculation_names(step, "sum");
                 let mut groups: BTreeMap<String, Vec<BTreeMap<String, Value>>> = BTreeMap::new();
                 for row in frame.rows() {
                     let key = serde_json::to_string(&keys.iter().map(|k| row.get(*k)).collect::<Vec<_>>()).unwrap();
@@ -486,15 +693,22 @@ pub fn transform(mut frame: Frame, steps: &[Value]) -> Result<Frame, Error> {
                     .map(|rows| {
                         let mut out = BTreeMap::new();
                         for field in &frame.fields {
-                            let value = if keys.contains(&field.name.as_str()) {
-                                rows[0].get(&field.name).cloned().unwrap_or(Value::Null)
-                            } else {
-                                reduce(
-                                    &rows.iter().map(|r| r[&field.name].clone()).collect::<Vec<_>>(),
-                                    text(step, "calculation", "sum"),
-                                )
-                            };
-                            out.insert(field.name.clone(), value);
+                            if keys.contains(&field.name.as_str()) {
+                                out.insert(
+                                    field.name.clone(),
+                                    rows[0].get(&field.name).cloned().unwrap_or(Value::Null),
+                                );
+                                continue;
+                            }
+                            let values = rows.iter().map(|r| r[&field.name].clone()).collect::<Vec<_>>();
+                            for calculation in &calculations {
+                                let name = if calculations.len() > 1 {
+                                    format!("{}.{calculation}", field.name)
+                                } else {
+                                    field.name.clone()
+                                };
+                                out.insert(name, reduce(&values, calculation));
+                            }
                         }
                         out
                     })
@@ -1087,5 +1301,165 @@ mod tests {
         assert_eq!(inspection.len(), 2);
         assert_eq!(inspection[0]["input"]["truncated"], true);
         assert_eq!(inspection[1]["disabled"], true);
+    }
+
+    fn series() -> Frame {
+        Frame::from_rows(&[
+            BTreeMap::from([
+                ("time".into(), json!("2026-01-01T00:00:00Z")),
+                ("a".into(), json!(1)),
+                ("b".into(), json!(10)),
+                ("name".into(), json!("alpha")),
+            ]),
+            BTreeMap::from([
+                ("time".into(), json!("2026-01-02T00:00:00Z")),
+                ("a".into(), json!(5)),
+                ("b".into(), json!(20)),
+                ("name".into(), json!("beta")),
+            ]),
+            BTreeMap::from([
+                ("time".into(), json!("2026-01-03T00:00:00Z")),
+                ("a".into(), json!(3)),
+                ("b".into(), Value::Null),
+                ("name".into(), json!("gamma")),
+            ]),
+        ])
+    }
+
+    #[test]
+    fn reduce_takes_several_calculations() {
+        // The one-calculation form keeps each field's name.
+        let one = transform(series(), &[json!({"type":"reduce","calculation":"max"})]).unwrap();
+        assert_eq!(one.rows()[0]["a"], 5.0);
+        let same = transform(series(), &[json!({"type":"reduce","calculations":["max"]})]).unwrap();
+        assert_eq!(one, same);
+        // Several give a field per calculation, `<field>.<calculation>`.
+        let several = transform(
+            series(),
+            &[json!({"type":"reduce","calculations":["last","max","mean"]})],
+        )
+        .unwrap();
+        let row = &several.rows()[0];
+        assert_eq!(row["a.last"], 3);
+        assert_eq!(row["a.max"], 5.0);
+        assert_eq!(row["a.mean"], 3.0);
+        assert_eq!(row["b.last"], 20);
+        assert_eq!(row["time.last"], "2026-01-03T00:00:00Z");
+        assert_eq!(several.fields.len(), 12);
+        // Series to rows: a row per number field, a column per calculation in the order given.
+        let rows = transform(
+            series(),
+            &[json!({"type":"reduce","mode":"rows","calculations":["last","max","mean"]})],
+        )
+        .unwrap();
+        let names: Vec<_> = rows.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["field", "last", "max", "mean"]);
+        assert_eq!(rows.fields[0].values, vec![json!("a"), json!("b")]);
+        assert_eq!(rows.fields[2].values, vec![json!(5.0), json!(20.0)]);
+        assert_eq!(rows.fields[3].values, vec![json!(3.0), json!(15.0)]);
+        // A group-by with several calculations.
+        let grouped = transform(
+            series(),
+            &[
+                json!({"type":"organize","hide":["time","name"]}),
+                json!({"type":"calculate","left":"a","value":0,"operator":"*","name":"k"}),
+                json!({"type":"groupBy","fields":["k"],"calculations":["sum","max"]}),
+            ],
+        )
+        .unwrap();
+        assert_eq!(grouped.rows()[0]["a.sum"], 9.0);
+        assert_eq!(grouped.rows()[0]["b.max"], 20.0);
+    }
+
+    #[test]
+    fn calculate_takes_several_calculations() {
+        let frame = transform(
+            series(),
+            &[json!({"type":"calculate","calculations":[
+                {"left":"b","right":"a","operator":"/","name":"ratio"},
+                {"left":"ratio","value":2,"operator":"*"},
+                {"mode":"runningTotal","field":"a"},
+                {"mode":"percentOfTotal","field":"a","name":"share"}
+            ]})],
+        )
+        .unwrap();
+        let rows = frame.rows();
+        assert_eq!(rows[1]["ratio"], 4.0);
+        assert_eq!(rows[1]["ratio * 2"], 8.0);
+        assert_eq!(rows[2]["a.runningTotal"], 9.0);
+        assert_eq!(rows[0]["share"].as_f64().unwrap().round(), 11.0);
+        assert!(rows[2]["ratio"].is_null());
+        // The running kinds take a list of fields too.
+        let frame = transform(series(), &[json!({"type":"runningTotal","fields":["a","b"]})]).unwrap();
+        assert_eq!(frame.rows()[1]["a.runningTotal"], 6.0);
+        assert_eq!(frame.rows()[1]["b.runningTotal"], 30.0);
+        assert!(transform(
+            series(),
+            &[json!({"type":"calculate","calculations":[{"mode":"bogus","field":"a"}]})]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn filter_by_value_compares_ranges_and_patterns() {
+        let names = |step: Value| -> Vec<Value> {
+            let frame = transform(series(), &[step]).unwrap();
+            frame.fields.iter().find(|f| f.name == "name").unwrap().values.clone()
+        };
+        assert_eq!(
+            names(json!({"type":"filter","field":"a","operator":"gte","value":3})),
+            [json!("beta"), json!("gamma")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"a","operator":"lte","value":3})),
+            [json!("alpha"), json!("gamma")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"a","operator":"gt","value":3})),
+            [json!("beta")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"a","operator":"range","from":2,"to":5})),
+            [json!("beta"), json!("gamma")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"a","operator":"range","to":3})),
+            [json!("alpha"), json!("gamma")]
+        );
+        assert_eq!(
+            names(
+                json!({"type":"filter","field":"time","operator":"range","from":"2026-01-02T00:00:00Z","to":"2026-01-02T12:00:00Z"})
+            ),
+            [json!("beta")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"name","operator":"regex","value":"^(al|ga)"})),
+            [json!("alpha"), json!("gamma")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","field":"b","operator":"missing"})),
+            [json!("gamma")]
+        );
+        // Several conditions, any or all, and exclude.
+        assert_eq!(
+            names(json!({"type":"filter","match":"any","conditions":[
+                {"field":"a","operator":"eq","value":1},{"field":"name","operator":"regex","value":"mm"}]})),
+            [json!("alpha"), json!("gamma")]
+        );
+        assert_eq!(
+            names(json!({"type":"filter","exclude":true,"conditions":[
+                {"field":"a","operator":"gte","value":3},{"field":"b","operator":"exists"}]})),
+            [json!("alpha"), json!("gamma")]
+        );
+        assert!(transform(
+            series(),
+            &[json!({"type":"filter","field":"name","operator":"regex","value":"("})]
+        )
+        .is_err());
+        assert!(transform(
+            series(),
+            &[json!({"type":"filter","field":"a","operator":"near","value":1})]
+        )
+        .is_err());
     }
 }

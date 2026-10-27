@@ -1172,14 +1172,10 @@ const NEAR_PHRASE_LIMIT: u32 = 64;
 /// time is then the last millisecond of its unit, as Elastic date math has it.
 fn relative_bound(text: &str, round_up: bool) -> Option<Timestamp> {
     let now = Timestamp::now().as_millisecond();
-    let at = match text.rsplit_once('/') {
-        Some((base, unit)) if round_up => {
-            let step = if unit == "fy" { "y" } else { unit };
-            crate::report::time::parse(&format!("{base}+1{step}/{unit}"), now)
-                .ok()?
-                .checked_sub(1)?
-        }
-        _ => crate::report::time::parse(text, now).ok()?,
+    let at = if round_up {
+        crate::report::time::parse_up(text, now).ok()?
+    } else {
+        crate::report::time::parse(text, now).ok()?
     };
     Timestamp::from_millisecond(at).ok()
 }

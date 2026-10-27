@@ -400,59 +400,80 @@ fn attach_children(
     out: &mut [Row],
 ) -> Result<(), Error> {
     if let Agg::TopHits { size, sort } = child.agg {
-        for (tuple, content) in out {
-            let identity = if ctx.documents.is_some() {
-                "__document".into()
-            } else {
-                literal(&ctx.mapping.document_id)
+        // One statement for every parent bucket: rank the documents within each parent key tuple and keep the first
+        // `size` of each.
+        if out.is_empty() {
+            return Ok(());
+        }
+        let identity = if ctx.documents.is_some() {
+            "__document".into()
+        } else {
+            literal(&ctx.mapping.document_id)
+        };
+        let mut order = Vec::new();
+        for sort in sort {
+            let expr = match compiler.locate_root(&sort.field) {
+                Located::Field { expr, arrays, .. } if arrays.is_empty() => expr,
+                Located::Missing => "NULL".into(),
+                _ => return Err(Error::new("top_hits can sort only root fields")),
             };
-            let mut sql = Sql::new(format!(
-                "SELECT doc_id, {identity} AS document_id, body::text AS body FROM {}",
-                ctx.table
+            order.push(format!(
+                "{expr} {} NULLS LAST",
+                if sort.descending { "DESC" } else { "ASC" }
             ));
-            for key in keys {
-                if let Some(lateral) = &key.lateral {
-                    sql.push(" ");
-                    sql.push(lateral);
-                }
+        }
+        order.push("doc_id ASC".into());
+        if ctx.documents.is_some() {
+            order.push("__document ASC".into());
+        }
+        let mut sql = Sql::new("SELECT * FROM (SELECT ");
+        for (index, key) in keys.iter().enumerate() {
+            sql.push(&format!("{} AS k{index}, ", key.select));
+        }
+        sql.push(&format!(
+            "doc_id, {identity} AS document_id, body::text AS body, row_number() OVER ("
+        ));
+        if !keys.is_empty() {
+            let partition: Vec<&str> = keys.iter().map(|key| key.select.as_str()).collect();
+            sql.push(&format!("PARTITION BY {} ", partition.join(", ")));
+        }
+        sql.push(&format!("ORDER BY {}) AS rn FROM {}", order.join(", "), ctx.table));
+        for key in keys {
+            if let Some(lateral) = &key.lateral {
+                sql.push(" ");
+                sql.push(lateral);
             }
-            sql.push(" WHERE ");
-            sql.append(ctx.base.clone());
-            for condition in conds.iter().chain(&child.conds) {
-                sql.push(" AND ");
-                sql.append(condition.clone());
-            }
-            for (key, value) in keys.iter().zip(tuple) {
-                sql.push(&format!(" AND {} IS NOT DISTINCT FROM ", key.select));
-                sql.param(value.clone());
-            }
-            let mut order = Vec::new();
-            for sort in sort {
-                let expr = match compiler.locate_root(&sort.field) {
-                    Located::Field { expr, arrays, .. } if arrays.is_empty() => expr,
-                    Located::Missing => "NULL".into(),
-                    _ => return Err(Error::new("top_hits can sort only root fields")),
-                };
-                order.push(format!(
-                    "{expr} {} NULLS LAST",
-                    if sort.descending { "DESC" } else { "ASC" }
-                ));
-            }
-            order.push("doc_id ASC".into());
-            if ctx.documents.is_some() {
-                order.push("__document ASC".into());
-            }
-            sql.push(&format!(" ORDER BY {} LIMIT {size}", order.join(", ")));
-            let rows = (ctx.run)(&sql)?;
-            let mut samples = Vec::new();
-            for row in rows {
-                let body = row
-                    .get("body")
-                    .and_then(Value::as_str)
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .map(|v| moqui_lib::json::from_json(&v))
-                    .unwrap_or(Value::Null);
-                samples.push(Value::Map(IndexMap::from([
+        }
+        sql.push(" WHERE ");
+        sql.append(ctx.base.clone());
+        for condition in conds.iter().chain(&child.conds) {
+            sql.push(" AND ");
+            sql.append(condition.clone());
+        }
+        for key in keys {
+            sql.push(&format!(" AND {} IS NOT NULL", key.select));
+        }
+        sql.push(&format!(") AS ranked WHERE rn <= {size} ORDER BY "));
+        for index in 0..keys.len() {
+            sql.push(&format!("k{index}, "));
+        }
+        sql.push("rn");
+        let rows = (ctx.run)(&sql)?;
+        let mut samples: HashMap<String, Vec<Value>> = HashMap::new();
+        for row in rows {
+            let tuple: Vec<Value> = (0..keys.len())
+                .map(|index| row.get(&format!("k{index}")).cloned().unwrap_or(Value::Null))
+                .collect();
+            let body = row
+                .get("body")
+                .and_then(Value::as_str)
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .map(|v| moqui_lib::json::from_json(&v))
+                .unwrap_or(Value::Null);
+            samples
+                .entry(tuple_key(&tuple))
+                .or_default()
+                .push(Value::Map(IndexMap::from([
                     ("id".into(), row.get("doc_id").cloned().unwrap_or(Value::Null)),
                     ("body".into(), body),
                     (
@@ -460,8 +481,10 @@ fn attach_children(
                         row.get("document_id").cloned().unwrap_or(Value::Null),
                     ),
                 ])));
-            }
-            set_path(content, &child.path, Value::List(samples));
+        }
+        for (tuple, content) in out {
+            let found = samples.remove(&tuple_key(tuple)).unwrap_or_default();
+            set_path(content, &child.path, Value::List(found));
         }
         return Ok(());
     }

@@ -302,7 +302,7 @@ fn identity_filter_value(ec: &ExecutionContext, key: &str) -> Result<Value, Erro
 
 fn constraints(ec: &ExecutionContext, options: &Json, dataset: &Dataset, now: i64) -> Result<Query, Error> {
     let from = time::parse(text(options, "from", "now-7d"), now)?;
-    let thru = time::parse(text(options, "thru", "now"), now)?;
+    let thru = time::parse_thru(text(options, "thru", "now"), now)?;
     if from >= thru {
         return Err(fail("report time range must end after it starts"));
     }
@@ -605,7 +605,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     }
     *budget -= 1;
     let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
-    let range = json!({"from":jiff::Timestamp::from_millisecond(time::parse(text(options,"from","now-7d"),now)?).map_err(fail)?.to_string(),"thru":jiff::Timestamp::from_millisecond(time::parse(text(options,"thru","now"),now)?).map_err(fail)?.to_string()});
+    let range = json!({"from":jiff::Timestamp::from_millisecond(time::parse(text(options,"from","now-7d"),now)?).map_err(fail)?.to_string(),"thru":jiff::Timestamp::from_millisecond(time::parse_thru(text(options,"thru","now"),now)?).map_err(fail)?.to_string()});
     if options["comparePrevious"] == true {
         return execute_comparison(ec, options, budget, &range);
     }
@@ -1307,9 +1307,13 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
                 for key in ["from", "thru"] {
                     if let Some(value) = query[key].as_str() {
                         query[key] = json!(jiff::Timestamp::from_millisecond(
-                            time::parse(value, anchor)?
-                                .checked_add(shift)
-                                .ok_or_else(|| fail("comparison time overflow"))?
+                            if key == "thru" {
+                                time::parse_thru(value, anchor)?
+                            } else {
+                                time::parse(value, anchor)?
+                            }
+                            .checked_add(shift)
+                            .ok_or_else(|| fail("comparison time overflow"))?
                         )
                         .map_err(fail)?
                         .to_string());
@@ -1717,11 +1721,35 @@ fn normalize_intervals(options: &mut Json, range: &Json, notices: &mut Vec<Json>
             if requested.is_some() {
                 notices.push(json!({"code":"interval_scaled","message":"Requested interval increased to keep the query bounded","intervalMillis":chosen}));
             }
-            params["fixed_interval"] = json!(format!("{chosen}ms"));
             if let Some(map) = params.as_object_mut() {
                 map.remove("interval");
                 map.remove("unit");
                 map.remove("calendar_interval");
+                map.remove("fixed_interval");
+            }
+            // A week is a calendar week, so it starts on the configured day rather than the epoch's Thursday.
+            if chosen == 604_800_000 {
+                params["calendar_interval"] = json!("week");
+            } else {
+                params["fixed_interval"] = json!(format!("{chosen}ms"));
+            }
+        }
+        // Calendar buckets follow the viewer's zone and week start, as `now/d` and `now/w` do.
+        if params.get("fixed_interval").is_none() {
+            let unit = ["unit", "calendar_interval", "interval"]
+                .iter()
+                .find_map(|key| params[*key].as_str())
+                .map(search::agg::CalendarUnit::parse)
+                .transpose()?;
+            if unit == Some(search::agg::CalendarUnit::Week) && params.get("offset").is_none() {
+                if let Some(offset) = time::week_offset(time::week_start()) {
+                    params["offset"] = json!(offset);
+                }
+            }
+            if params.get("time_zone").is_none() {
+                if let Some(zone) = crate::l10n::time_zone().iana_name() {
+                    params["time_zone"] = json!(zone);
+                }
             }
         }
         if params["min_doc_count"].as_i64().unwrap_or(0) == 0 && params.get("extended_bounds").is_none() {
@@ -2006,7 +2034,7 @@ pub fn dashboard_frames_filtered(
     let from = jiff::Timestamp::from_millisecond(time::parse(from, now)?)
         .map_err(fail)?
         .to_string();
-    let thru = jiff::Timestamp::from_millisecond(time::parse(thru, now)?)
+    let thru = jiff::Timestamp::from_millisecond(time::parse_thru(thru, now)?)
         .map_err(fail)?
         .to_string();
     let mut resolved = vars.as_object().cloned().unwrap_or_default();
@@ -2201,7 +2229,7 @@ pub fn dashboard_frames_filtered(
                     .unwrap_or(&from);
                 let panel_thru = panel["time"]["thru"].as_str().unwrap_or(&thru);
                 let mut panel_from = time::parse(panel_from, now)?;
-                let mut panel_thru = time::parse(panel_thru, now)?;
+                let mut panel_thru = time::parse_thru(panel_thru, now)?;
                 if let Some(shift) = panel["time"]["shift"].as_str().or_else(|| panel["timeShift"].as_str()) {
                     let shift = if shift.starts_with("now") {
                         shift.to_owned()

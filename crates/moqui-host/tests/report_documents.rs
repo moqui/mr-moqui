@@ -293,6 +293,29 @@ fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
         let sample: Json = serde_json::from_str(value("samples").as_str().unwrap()).unwrap();
         assert_eq!(sample[0]["id"], "PRODUCT_A");
         assert_eq!(sample[0]["documentId"], "ReportProduct");
+        // Samples per bucket: Postgres ranks them for every bucket in one statement.
+        let bucketed=report::execute_query(ec,&json!({"datasetId":"scoped-mixed","from":"now-1h","thru":"now+1h","aggs":{"category":{"terms":{"field":"category","size":10},"aggs":{"samples":{"top_hits":{"size":2,"sort":["-measure"]}}}}}})).unwrap();
+        let frame: report::frame::Frame = serde_json::from_value(bucketed["frames"][0].clone()).unwrap();
+        let samples: std::collections::BTreeMap<String, Vec<String>> = frame
+            .rows()
+            .iter()
+            .map(|row| {
+                let list: Json = match &row["samples"] {
+                    Json::String(text) => serde_json::from_str(text).unwrap(),
+                    other => other.clone(),
+                };
+                (
+                    row["category"].as_str().unwrap_or_default().to_owned(),
+                    list.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|hit| hit["id"].as_str().unwrap().to_owned())
+                        .collect(),
+                )
+            })
+            .collect();
+        assert_eq!(samples["A"], ["PRODUCT_A"], "{bucketed}");
+        assert_eq!(samples["Other"], ["PARTY_A"], "{bucketed}");
         for (size, order, missing) in [(10, "asc", "A"), (2, "desc", "Missing")] {
             let grouped=report::execute_query(ec,&json!({"datasetId":"scoped-mixed","from":"now-1h","thru":"now+1h","aggs":{"category":{"terms":{"field":"category","size":size,"order":{"_key":order},"missing":missing,"other_bucket":"Other"},"aggs":{"average":{"avg":{"field":"measure"}}}}}})).unwrap();
             let frame: report::frame::Frame = serde_json::from_value(grouped["frames"][0].clone()).unwrap();
