@@ -646,6 +646,12 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     }
     let dataset = dataset(ec, text(options, "datasetId", "otel_metrics"))?;
     if let Some(service) = &dataset.service {
+        if options["filters"]
+            .as_array()
+            .is_some_and(|filters| filters.iter().any(|filter| filter["disabled"] != true))
+        {
+            return Err(fail("document filter pills cannot be applied to a service dataset; define authorized service parameters instead"));
+        }
         let mut parameters = match moqui_lib::json::from_json(&options["parameters"]) {
             Value::Map(map) => map.into_iter().collect(),
             _ => Parameters::new(),
@@ -692,28 +698,6 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     let mut notices = Vec::new();
     normalize_intervals(&mut normalized, &range, &mut notices)?;
     let mut aggs = compile_aggregations(&normalized)?;
-    let partials = partial_histograms(&aggs)?;
-    for (index, partial) in partials.iter().enumerate() {
-        aggs.insert(
-            format!("__report_partial_{index}"),
-            search::Agg::Filter {
-                query: Query::any(
-                    partial
-                        .ranges
-                        .iter()
-                        .map(|(from, thru)| {
-                            Query::range(
-                                &partial.field,
-                                Some(Value::Timestamp(*from)),
-                                Some(Value::Timestamp(*thru)),
-                            )
-                        })
-                        .collect(),
-                ),
-                aggs: IndexMap::new(),
-            },
-        );
-    }
     fn aggregation_count(aggs: &IndexMap<String, search::Agg>) -> usize {
         aggs.len()
             + aggs
@@ -756,22 +740,81 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             .unwrap_or(0),
         _ => 0,
     };
+    let mut partials = Vec::new();
+    enrich_buckets(&dataset.id, &aggs, &mut result, &Query::MatchAll, true, &mut partials)?;
     let mut only_partial = false;
-    for (index, partial) in partials.iter().enumerate() {
-        let count = match result.shift_remove(&format!("__report_partial_{index}")) {
-            Some(Value::Map(map)) => map
-                .get("doc_count")
-                .map(moqui_lib::object::to_plain_string)
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0),
-            _ => 0,
+    if !partials.is_empty() {
+        let filters = partials
+            .iter()
+            .enumerate()
+            .map(|(index, partial)| {
+                (
+                    index.to_string(),
+                    Query::all(vec![
+                        partial.scope.clone(),
+                        Query::any(
+                            partial
+                                .spec
+                                .ranges
+                                .iter()
+                                .map(|(from, thru)| {
+                                    Query::range(
+                                        &partial.spec.field,
+                                        Some(Value::Timestamp(*from)),
+                                        Some(Value::Timestamp(*thru)),
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    ]),
+                )
+            })
+            .collect();
+        let counted = facade.aggregate(
+            &dataset.target,
+            &filter,
+            &IndexMap::from([(
+                "excluded".into(),
+                search::Agg::NamedFilters {
+                    filters,
+                    aggs: IndexMap::new(),
+                },
+            )]),
+        )?;
+        let counts = match counted.get("excluded") {
+            Some(Value::Map(map)) => match map.get("buckets") {
+                Some(Value::List(buckets)) => buckets
+                    .iter()
+                    .filter_map(|bucket| {
+                        if let Value::Map(map) = bucket {
+                            Some((
+                                map.get("key")
+                                    .map(moqui_lib::object::to_plain_string)
+                                    .unwrap_or_default(),
+                                map.get("doc_count")
+                                    .map(moqui_lib::object::to_plain_string)
+                                    .and_then(|count| count.parse::<u64>().ok())
+                                    .unwrap_or(0),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+                _ => BTreeMap::new(),
+            },
+            _ => BTreeMap::new(),
         };
-        if count > 0 {
-            if partial.drop && count >= population {
+        for (index, partial) in partials.iter().enumerate() {
+            let count = counts.get(&index.to_string()).copied().unwrap_or(0);
+            if count == 0 {
+                continue;
+            }
+            if partial.root && partial.spec.drop && count >= population {
                 only_partial = true;
             }
-            let mut notice = json!({"level":if partial.drop{"warning"}else{"info"},"code":if partial.drop{"partial_buckets_excluded"}else{"partial_buckets_retained"},"aggregation":partial.id,"observations":count,"ranges":partial.ranges.iter().map(|(from,thru)|json!({"from":from.to_string(),"thru":thru.to_string()})).collect::<Vec<_>>(),"message":if partial.drop{"Observations in partial time buckets were excluded; completed bucket values do not cover the entire selected range"}else{"The first or last time bucket covers only part of its interval"}});
-            if partial.drop {
+            let mut notice = json!({"level":if partial.spec.drop{"warning"}else{"info"},"code":if partial.spec.drop{"partial_buckets_excluded"}else{"partial_buckets_retained"},"aggregation":partial.spec.id,"observations":count,"ranges":partial.spec.ranges.iter().map(|(from,thru)|json!({"from":from.to_string(),"thru":thru.to_string()})).collect::<Vec<_>>(),"message":if partial.spec.drop{"Observations in partial time buckets were excluded within this bucket's filters"}else{"The first or last time bucket covers only part of its interval"}});
+            if partial.spec.drop {
                 notice["complete"] = json!(false);
             }
             notices.push(notice);
@@ -827,6 +870,17 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
 }
 
 fn apply_transformations(frames: Vec<frame::Frame>, options: &Json) -> Result<(Vec<frame::Frame>, Vec<Json>), Error> {
+    let bucket_sources = frames
+        .iter()
+        .map(|frame| frame::Frame {
+            fields: frame
+                .fields
+                .iter()
+                .filter(|field| field.config.contains_key("bucket"))
+                .cloned()
+                .collect(),
+        })
+        .collect::<Vec<_>>();
     let steps = options["transformations"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     if steps.len() > 64 {
         return Err(fail("report exceeds 64 transformation steps"));
@@ -884,6 +938,17 @@ fn apply_transformations(frames: Vec<frame::Frame>, options: &Json) -> Result<(V
     });
     let separate = !combines && frames.len() == per_frame.len();
     for (index, frame) in frames.iter_mut().enumerate() {
+        let rebuild = frame
+            .fields
+            .iter()
+            .map(|field| {
+                field
+                    .config
+                    .get("bucket")
+                    .and_then(|bucket| bucket["filters"].as_array())
+                    .is_none_or(|filters| filters.len() != field.values.len())
+            })
+            .collect::<Vec<_>>();
         for field in &mut frame.fields {
             let config = if separate {
                 per_frame[index].get(&field.name).or_else(|| metadata.get(&field.name))
@@ -899,8 +964,121 @@ fn apply_transformations(frames: Vec<frame::Frame>, options: &Json) -> Result<(V
                 }
             }
         }
+        restore_bucket_filters(frame, index, separate, &bucket_sources, steps, &rebuild)?;
     }
     Ok((frames, inspection))
+}
+
+fn restore_bucket_filters(
+    output: &mut frame::Frame,
+    output_index: usize,
+    separate: bool,
+    sources: &[frame::Frame],
+    steps: &[Json],
+    rebuild: &[bool],
+) -> Result<(), Error> {
+    let output_names = output
+        .fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let name = |source_index: usize, original: &str| {
+        let duplicate = !separate
+            && sources
+                .iter()
+                .take(source_index)
+                .any(|source| source.fields.iter().any(|field| field.name == original));
+        let mut name = if duplicate {
+            format!("{original}.{}", source_index + 1)
+        } else {
+            original.into()
+        };
+        for step in steps
+            .iter()
+            .filter(|step| step["disabled"] != true && step["type"] == "organize")
+        {
+            if let Some(renamed) = step["rename"][&name].as_str() {
+                name = renamed.into();
+            }
+        }
+        name
+    };
+    let rows = output.rows();
+    for (field_index, field) in output.fields.iter_mut().enumerate() {
+        if !rebuild[field_index] || !field.config.contains_key("bucket") {
+            continue;
+        }
+        let mut grouped = BTreeMap::<String, Vec<Json>>::new();
+        let mut labels = BTreeMap::<String, Json>::new();
+        let mut key_fields = Vec::new();
+        for (source_index, source) in sources.iter().enumerate() {
+            if separate && source_index != output_index {
+                continue;
+            }
+            let Some(origin) = source
+                .fields
+                .iter()
+                .find(|origin| name(source_index, &origin.name) == field.name)
+            else {
+                continue;
+            };
+            let dimensions = source
+                .fields
+                .iter()
+                .filter_map(|source| {
+                    let target = name(source_index, &source.name);
+                    output_names.contains(&target).then_some((source, target))
+                })
+                .collect::<Vec<_>>();
+            key_fields = dimensions.iter().map(|(_, target)| target.clone()).collect();
+            for index in 0..origin.values.len() {
+                let key = serde_json::to_string(
+                    &dimensions
+                        .iter()
+                        .map(|(field, _)| field.values.get(index).cloned().unwrap_or(Json::Null))
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(fail)?;
+                if let Some(query) = origin.config["bucket"]["filters"]
+                    .get(index)
+                    .filter(|query| !query.is_null())
+                {
+                    grouped.entry(key.clone()).or_default().push(query.clone());
+                }
+                if let Some(label) = origin.config["bucket"]["labels"].get(index) {
+                    labels.entry(key).or_insert_with(|| label.clone());
+                }
+            }
+        }
+        let mut filters = Vec::new();
+        let mut display = Vec::new();
+        for row in &rows {
+            let key = serde_json::to_string(
+                &key_fields
+                    .iter()
+                    .map(|field| row.get(field).cloned().unwrap_or(Json::Null))
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(fail)?;
+            let mut unique = std::collections::BTreeSet::new();
+            let queries = grouped
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .filter(|query| unique.insert(query.to_string()))
+                .map(|query| Query::from_value(&moqui_lib::json::from_json(query)))
+                .collect::<Result<Vec<_>, _>>()?;
+            filters.push(if queries.is_empty() {
+                Json::Null
+            } else {
+                moqui_lib::json::to_json(&Query::any(queries).to_value())
+            });
+            display.push(labels.get(&key).cloned().unwrap_or(Json::Null));
+        }
+        field.config.get_mut("bucket").unwrap()["filters"] = json!(filters);
+        field.config.get_mut("bucket").unwrap()["labels"] = json!(display);
+    }
+    Ok(())
 }
 
 fn append_inspection(output: &mut Vec<Json>, mut step: Json, remaining: &mut usize) {
@@ -1224,6 +1402,164 @@ struct PartialHistogram {
     drop: bool,
     ranges: Vec<(jiff::Timestamp, jiff::Timestamp)>,
 }
+struct ScopedPartial {
+    spec: PartialHistogram,
+    scope: Query,
+    root: bool,
+}
+
+fn bucket_predicate(
+    agg: &search::Agg,
+    bucket: &IndexMap<String, Value>,
+    siblings: &[Value],
+) -> Result<Option<Query>, Error> {
+    let key = bucket.get("key").cloned().unwrap_or(Value::Null);
+    let exists = |field: &str| {
+        Query::from_value(&moqui_lib::json::from_json(
+            &json!({"field":{"name":field,"op":"exists"}}),
+        ))
+    };
+    Ok(Some(match agg {
+        search::Agg::Terms(terms) => {
+            if bucket.get("missing") == Some(&Value::Bool(true)) {
+                Query::exclude(exists(&terms.field)?)
+            } else if bucket.get("other") == Some(&Value::Bool(true)) {
+                let mut excluded = Vec::new();
+                let mut keys = Vec::new();
+                for other in siblings {
+                    if let Value::Map(other) = other {
+                        if other.get("other") == Some(&Value::Bool(true)) {
+                            continue;
+                        }
+                        if other.get("missing") == Some(&Value::Bool(true)) {
+                            excluded.push(Query::exclude(exists(&terms.field)?));
+                        } else if let Some(key) = other.get("key") {
+                            keys.push(key.clone());
+                        }
+                    }
+                }
+                if !keys.is_empty() {
+                    excluded.push(Query::is_in(&terms.field, keys));
+                }
+                if excluded.is_empty() {
+                    Query::MatchAll
+                } else {
+                    Query::exclude(Query::any(excluded))
+                }
+            } else {
+                Query::eq(&terms.field, key)
+            }
+        }
+        search::Agg::DateHistogram(histogram) => {
+            let from = match key {
+                Value::Timestamp(time) => time,
+                value => {
+                    let value = moqui_lib::object::to_plain_string(&value);
+                    if let Ok(millis) = value.parse::<i64>() {
+                        jiff::Timestamp::from_millisecond(millis).map_err(fail)?
+                    } else {
+                        value.parse::<jiff::Timestamp>().map_err(fail)?
+                    }
+                }
+            };
+            let thru = if let Some(millis) = histogram.fixed_millis {
+                jiff::Timestamp::from_millisecond(
+                    from.as_millisecond()
+                        .checked_add(millis)
+                        .ok_or_else(|| fail("bucket time overflow"))?,
+                )
+                .map_err(fail)?
+            } else {
+                search::agg::next_bucket(
+                    from,
+                    histogram.unit,
+                    &search::agg::histogram_zone(histogram.time_zone.as_deref())?,
+                    histogram.offset,
+                )?
+            };
+            Query::range(
+                &histogram.field,
+                Some(Value::Timestamp(from)),
+                Some(Value::Timestamp(thru)),
+            )
+        }
+        search::Agg::Histogram { field, interval, .. } => {
+            let from = moqui_lib::object::to_plain_string(&key).parse::<f64>().map_err(fail)?;
+            Query::range(field, Some(Value::F64(from)), Some(Value::F64(from + interval)))
+        }
+        search::Agg::NamedFilters { filters, .. } => match filters.get(&moqui_lib::object::to_plain_string(&key)) {
+            Some(filter) => filter.clone(),
+            None => return Ok(None),
+        },
+        _ => return Ok(None),
+    }))
+}
+
+fn enrich_buckets(
+    dataset: &str,
+    aggs: &IndexMap<String, search::Agg>,
+    results: &mut IndexMap<String, Value>,
+    scope: &Query,
+    root: bool,
+    partials: &mut Vec<ScopedPartial>,
+) -> Result<(), Error> {
+    for (name, agg) in aggs {
+        let Some(Value::Map(result)) = results.get_mut(name) else {
+            continue;
+        };
+        if let search::Agg::Filter { query, aggs } = agg {
+            enrich_buckets(
+                dataset,
+                aggs,
+                result,
+                &Query::all(vec![scope.clone(), query.clone()]),
+                false,
+                partials,
+            )?;
+            continue;
+        }
+        if let search::Agg::DateHistogram(histogram) = agg {
+            let mut histogram = histogram.clone();
+            histogram.aggs.clear();
+            for spec in partial_histograms(&IndexMap::from([(name.clone(), search::Agg::DateHistogram(histogram))]))? {
+                partials.push(ScopedPartial {
+                    spec,
+                    scope: scope.clone(),
+                    root,
+                });
+            }
+        }
+        let Some(Value::List(buckets)) = result.get_mut("buckets") else {
+            continue;
+        };
+        let siblings = buckets.clone();
+        for bucket in buckets {
+            let Value::Map(bucket) = bucket else { continue };
+            let Some(predicate) = bucket_predicate(agg, bucket, &siblings)? else {
+                continue;
+            };
+            let query = Query::all(vec![scope.clone(), predicate]);
+            let (kind, field) = match agg {
+                search::Agg::Terms(terms) => ("terms", terms.field.as_str()),
+                search::Agg::DateHistogram(histogram) => ("date_histogram", histogram.field.as_str()),
+                search::Agg::Histogram { field, .. } => ("histogram", field.as_str()),
+                search::Agg::NamedFilters { .. } => ("filters", ""),
+                _ => ("", ""),
+            };
+            let label = bucket
+                .get("key_display")
+                .or_else(|| bucket.get("key"))
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default();
+            bucket.insert("__bucket".into(),moqui_lib::json::from_json(&json!({"datasetId":dataset,"kind":kind,"field":field,"query":moqui_lib::json::to_json(&query.to_value()),"label":label})));
+            if let Some(nested) = agg.sub_aggs() {
+                enrich_buckets(dataset, nested, bucket, &query, false, partials)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn partial_histograms(aggs: &IndexMap<String, search::Agg>) -> Result<Vec<PartialHistogram>, Error> {
     let mut out = Vec::new();
     for (id, agg) in aggs {
@@ -1536,6 +1872,54 @@ pub fn dashboard_frames(
     from: &str,
     thru: &str,
 ) -> Result<Json, Error> {
+    dashboard_frames_filtered(ec, definition, vars, from, thru, &json!([]))
+}
+
+pub fn dashboard_frames_filtered(
+    ec: &ExecutionContext,
+    definition: &Json,
+    vars: &Json,
+    from: &str,
+    thru: &str,
+    filters: &Json,
+) -> Result<Json, Error> {
+    let filters = filters
+        .as_array()
+        .ok_or_else(|| fail("dashboard filters must be a list"))?;
+    if filters.len() > 64 {
+        return Err(fail("dashboard exceeds 64 filter pills"));
+    }
+    fn filter_queries(query: &mut Json, filters: &[Json]) -> Result<(), Error> {
+        if let Some(queries) = query["queries"].as_array_mut() {
+            for query in queries {
+                filter_queries(query, filters)?;
+            }
+            return Ok(());
+        }
+        for pill in filters {
+            if pill["datasetId"]
+                .as_str()
+                .is_some_and(|dataset| dataset != text(query, "datasetId", "otel_metrics"))
+            {
+                continue;
+            }
+            let mut predicate = pill.get("query").cloned().unwrap_or_else(|| pill.clone());
+            if let Some(map) = predicate.as_object_mut() {
+                for name in ["datasetId", "label", "pinned", "disabled", "negated"] {
+                    map.remove(name);
+                }
+            }
+            let predicate = Query::from_value(&moqui_lib::json::from_json(&predicate))?;
+            if query["filters"].is_null() {
+                query["filters"] = json!([]);
+            }
+            let list = query["filters"]
+                .as_array_mut()
+                .ok_or_else(|| fail("query filters must be a list"))?;
+            list.push(json!({"query":moqui_lib::json::to_json(&predicate.to_value()),"disabled":pill["disabled"]==true,"negated":pill["negated"]==true,"label":pill["label"],"pinned":pill["pinned"]}));
+        }
+        Ok(())
+    }
     fn variables(value: &mut Json, vars: &Json) {
         match value {
             Json::String(text) => {
@@ -1561,6 +1945,11 @@ pub fn dashboard_frames(
         }
     }
     let body = definition.get("body").unwrap_or(definition);
+    let mut all_filters = body["filters"].as_array().cloned().unwrap_or_default();
+    all_filters.extend_from_slice(filters);
+    if all_filters.len() > 64 {
+        return Err(fail("dashboard exceeds 64 saved and runtime filter pills"));
+    }
     let panels = body["panels"]
         .as_object()
         .ok_or_else(|| fail("dashboard requires a panel map"))?;
@@ -1754,6 +2143,7 @@ pub fn dashboard_frames(
             query["inspect"] = json!(panel["inspect"] == true || body["inspect"] == true);
             variables(&mut query, &resolved);
             apply_variables(&mut query, &variable_definitions, resolved.as_object().unwrap());
+            filter_queries(&mut query, &all_filters)?;
             match execute_query(ec, &query) {
                 Ok(result) => {
                     frames.extend(result["frames"].as_array().into_iter().flatten().cloned());
@@ -1776,7 +2166,7 @@ pub fn dashboard_frames(
         results.insert(id.clone(), rendered);
     }
     Ok(
-        json!({"title":definition["title"],"layout":body["layout"],"panels":results,"annotations":annotations,"notices":annotation_notices,"variableValues":resolved,"range":{"from":from,"thru":thru}}),
+        json!({"title":definition["title"],"layout":body["layout"],"panels":results,"annotations":annotations,"notices":annotation_notices,"variableValues":resolved,"filters":filters,"range":{"from":from,"thru":thru}}),
     )
 }
 
@@ -1797,12 +2187,13 @@ pub fn render_dashboard(
             .ok_or_else(|| fail("dashboard panel does not exist"))?;
         definition["body"]["panels"] = json!({panel:selected});
     }
-    dashboard_frames(
+    dashboard_frames_filtered(
         ec,
         &definition,
         &params["variables"],
         text(&params, "from", "now-7d"),
         text(&params, "thru", "now"),
+        params.get("filters").unwrap_or(&json!([])),
     )
     .map(|dashboard| output(json!({"dashboard":dashboard})))
 }

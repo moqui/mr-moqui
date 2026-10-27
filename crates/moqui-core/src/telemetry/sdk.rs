@@ -11,7 +11,7 @@ use opentelemetry::{Context, KeyValue};
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, SpanData, SpanExporter};
 
-use super::{LogRecord, Shared, Span, SpanKind, TraceContext, lock};
+use super::{lock, LogRecord, Shared, Span, SpanKind, TraceContext};
 use crate::entity::document::Document;
 use moqui_lib::object::Value;
 
@@ -464,7 +464,55 @@ pub(super) enum ExportBatch {
         )>,
     ),
 }
+fn mandatory_root(span: &SpanData) -> bool {
+    span.span_kind == opentelemetry::trace::SpanKind::Server
+        || span.attributes.iter().any(|attribute| {
+            attribute.key.as_str() == "moqui.job.root"
+                && (attribute.value == opentelemetry::Value::Bool(true)
+                    || matches!(&attribute.value, opentelemetry::Value::String(value) if value.as_str() == "true"))
+        })
+}
+
 impl ExportBatch {
+    /// The common one-span path keeps its owned SDK vector without allocating.
+    pub(super) fn uniform_root_priority(&self) -> Option<bool> {
+        match self {
+            Self::Spans(spans) => {
+                let first = spans.first().is_some_and(mandatory_root);
+                spans
+                    .iter()
+                    .skip(1)
+                    .all(|span| mandatory_root(span) == first)
+                    .then_some(first)
+            }
+            Self::Logs(_) => Some(false),
+        }
+    }
+
+    /// Preserve span completion order: error children must reach the worker before
+    /// their root computes its tail decision. Mixed classes use contiguous runs.
+    pub(super) fn into_priority_runs(self) -> Vec<(Self, bool)> {
+        let spans = match self {
+            Self::Spans(spans) => spans,
+            other => return vec![(other, false)],
+        };
+        let mut result = Vec::new();
+        let mut run = Vec::new();
+        let mut root = spans.first().is_some_and(mandatory_root);
+        for span in spans {
+            let next = mandatory_root(&span);
+            if next != root {
+                result.push((Self::Spans(std::mem::take(&mut run)), root));
+                root = next;
+            }
+            run.push(span);
+        }
+        if !run.is_empty() {
+            result.push((Self::Spans(run), root));
+        }
+        result
+    }
+
     pub(super) fn len(&self) -> usize {
         match self {
             Self::Spans(values) => values.len(),

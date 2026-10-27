@@ -218,11 +218,101 @@ test("dashboard keyboard prefixes shift exact ranges and inspect the selected pa
     app.unmount();target.remove();
 });
 test("retained partial buckets use the typed time axis and exclude metadata series", () => {
-    const frame={fields:[{name:'partial',type:'boolean',values:[true,false]},{name:'__level',type:'number',values:[0,0]},{name:'__subtotal',type:'number',values:[1,0]},{name:'time',type:'time',values:[1000,2000]},{name:'requests',type:'number',values:[3,4]}]};
+    const frame={fields:[{name:'partial',type:'boolean',values:[true,false]},{name:'__level',type:'number',values:[0,0]},{name:'__subtotal',type:'number',values:[1,0]},{name:'time',type:'time',values:[1000,2000]},{name:'requests',type:'number',values:[3,4]},{name:'missing',type:'boolean',values:[true,null]},{name:'other.2',type:'boolean',values:[null,true]}]};
     const config=report.chart(frame,{visualization:'timeSeries'});
     assert.deepEqual(config.data.labels,[report.format(1000,{type:'time'}),report.format(2000,{type:'time'})]);
     assert.deepEqual(config.data.datasets.map(dataset=>dataset.label),['requests']);
     assert.deepEqual(config.data.datasets[0].data,[3,4]);
     const textAxis=report.chart({fields:[frame.fields[0],{name:'category',type:'string',values:['A','B']},frame.fields[4]]},{});
     assert.deepEqual(textAxis.data.labels,['A','B']);
+});
+function reportBoundComponent(name,value,props) {
+    const target=document.createElement('div');document.body.appendChild(target);const model=Vue.reactive({value});let child;
+    const app=Vue.createApp({render(){return Vue.h(moqui.qvtComponents[name],Object.assign({},props || {},{value:model.value,onChange:value=>{model.value=value;},ref:value=>{child=value;}}));}});app.mount(target);
+    return {target,model,get child(){return child;},close(){app.unmount();target.remove();}};
+}
+function reportControl(target,label,value) {
+    const node=Array.from(target.querySelectorAll('label')).find(node=>node.querySelector('span') && node.querySelector('span').textContent===label);
+    if(!node)throw new Error('Missing control '+label);const input=node.querySelector('input,select,textarea');
+    if(input.type==='checkbox')input.checked=!!value;else input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));
+}
+test('multi-query editing updates the selected query and keeps compound transformations',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);const form={fields:Vue.reactive({definitionJson:JSON.stringify({panels:{one:{title:'Multi',queries:[{datasetId:'otel_logs',mode:'documents'}]}}})})};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-definition-editor'],{datasets:[{id:'otel_logs'},{id:'otel_metrics'}]});app.provide('mForm',form);const editor=app.mount(target);
+    editor.queries('add');await Vue.nextTick();reportControl(target,'Dataset','otel_metrics');await Vue.nextTick();editor.aggregation(true);await Vue.nextTick();
+    let body=JSON.parse(form.fields.definitionJson);assert.equal(body.panels.one.queries.length,2);assert.equal(body.panels.one.queries[0].datasetId,'otel_logs');assert.equal(body.panels.one.queries[1].datasetId,'otel_metrics');assert.equal(body.panels.one.queries[1].aggregations[0].type,'sum');
+    editor.update('transformations',[{type:'join',fields:['service']},{type:'calculate',left:'total',right:'count',operator:'/',name:'average'}]);editor.queries('up');await Vue.nextTick();
+    body=JSON.parse(form.fields.definitionJson);assert.equal(body.panels.one.queries[0].datasetId,'otel_metrics');assert.deepEqual(body.panels.one.transformations[0].fields,['service']);
+    app.unmount();target.remove();
+});
+test('structured join pivot and organize controls preserve canonical transform arguments',async()=>{
+    const view=reportBoundComponent('m-report-transform-editor',[{type:'join',fields:['service']},{type:'pivot',row:'day',column:'region',cell:'amount'},{type:'organize',rename:{'service.name':'Service'}}]);
+    let groups=view.target.querySelectorAll('fieldset');reportControl(groups[0],'Key fields (comma separated)','service,region');await Vue.nextTick();groups=view.target.querySelectorAll('fieldset');reportControl(groups[1],'Row totals',true);await Vue.nextTick();groups=view.target.querySelectorAll('fieldset');reportControl(groups[1],'Value field','sales');await Vue.nextTick();
+    let organize=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Transformation 3');reportControl(organize,'Rename to','Service title');await Vue.nextTick();organize=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Transformation 3');reportControl(organize,'Hidden fields','internal,count');await Vue.nextTick();
+    assert.deepEqual(view.model.value[0].fields,['service','region']);assert.equal(view.model.value[1].cell,'sales');assert.equal(view.model.value[1].rowTotals,true);assert.deepEqual(view.model.value[2].rename,{'service.name':'Service title'});assert.deepEqual(view.model.value[2].hide,['internal','count']);view.close();
+});
+test('structured field overrides mappings thresholds and data links affect displayed values',async()=>{
+    const view=reportBoundComponent('m-report-field-editor',{defaults:{},overrides:[]});
+    Array.from(view.target.querySelectorAll('button')).find(button=>button.textContent==='Add field override').click();await Vue.nextTick();
+    const override=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Field override 1');reportControl(override,'Match field name','duration');await Vue.nextTick();
+    let config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');reportControl(config,'Field unit','s');await Vue.nextTick();config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');reportControl(config,'Decimal places','1');await Vue.nextTick();
+    config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');Array.from(config.querySelectorAll('button')).find(button=>button.textContent==='Add threshold').click();await Vue.nextTick();
+    config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');reportControl(config,'Threshold value','2');await Vue.nextTick();config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');reportControl(config,'Threshold color','negative');await Vue.nextTick();
+    config=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Override values');Array.from(config.querySelectorAll('button')).find(button=>button.textContent==='Add value mapping').click();await Vue.nextTick();
+    let mapping=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Value mapping 1');reportControl(mapping,'Exact value','0');await Vue.nextTick();mapping=Array.from(view.target.querySelectorAll('fieldset')).find(node=>node.querySelector('legend').textContent==='Value mapping 1');reportControl(mapping,'Display text','Idle');await Vue.nextTick();
+    const field=report.configuredFields({fields:[{name:'duration',type:'number',values:[0,3]}]},{fieldConfig:view.model.value})[0];assert.equal(report.format(0,field),'Idle');assert.equal(report.format(3,field),'3.0 s');assert.equal(report.thresholdColor(3,field),'var(--q-negative)');view.close();
+});
+test('variable and recursive layout editors support ordered options and nested placements',async()=>{
+    const vars=reportBoundComponent('m-report-variable-editor',[{name:'region',kind:'custom',options:['EU'],default:'EU'}],{datasets:[{id:'orders'}]});reportControl(vars.target,'Multiple values',true);await Vue.nextTick();reportControl(vars.target,'Default value','EU,US');await Vue.nextTick();reportControl(vars.target,'Include All',true);await Vue.nextTick();assert.deepEqual(vars.model.value[0].default,['EU','US']);assert.equal(vars.model.value[0].includeAll,true);vars.close();
+    const layout=reportBoundComponent('m-report-layout-editor',{type:'tabs',items:[{title:'Sales',layout:{type:'grid',items:[{panelId:'sales',x:0,y:0,w:12,h:1}]}}]},{panelIds:['sales','orders']});
+    reportControl(layout.target,'Column (0–23)','6');await Vue.nextTick();assert.equal(layout.model.value.items[0].layout.items[0].x,6);
+    Array.from(layout.target.querySelectorAll('button')).find(button=>button.textContent==='Add tab').click();await Vue.nextTick();assert.equal(layout.model.value.items.length,2);assert.deepEqual(report.editor.panelIds(layout.model.value),['sales']);layout.close();
+});
+test('report composition writes ordered dashboard references and per-entry variables',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);const form={fields:Vue.reactive({definitionJson:JSON.stringify({dashboards:[],orientation:'portrait',layout:'grid',appendix:true})})};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-composition-editor'],{dashboards:[{id:'sales',title:'Sales'},{id:'orders',title:'Orders'}]});app.provide('mForm',form);const editor=app.mount(target);
+    editor.change('dashboards',[{dashboardRef:'sales',from:'now-7d',thru:'now',variables:{region:'EU'}},{dashboardRef:'orders',from:'now-1d',thru:'now',variables:{}}]);await Vue.nextTick();reportControl(target,'Orientation','landscape');await Vue.nextTick();
+    const body=JSON.parse(form.fields.definitionJson);assert.deepEqual(body.dashboards.map(entry=>entry.dashboardRef),['sales','orders']);assert.equal(body.dashboards[0].variables.region,'EU');assert.equal(body.orientation,'landscape');assert.equal(target.textContent.includes('Add dashboard to report'),true);app.unmount();target.remove();
+});
+test('bucket clicks use exact server predicates for normal Missing and Other rows',()=>{
+    const filters=[{field:{name:'region',op:'eq',value:'(Missing)'}},{bool:{none:[{field:{name:'region',op:'exists'}}]}},{bool:{all:[{field:{name:'region',op:'exists'}}],none:[{field:{name:'region',op:'in',values:['EU','US','(Missing)']}}]}}];
+    const frame={fields:[{name:'region',type:'string',values:['(Missing)',null,'Other'],config:{bucket:{datasetId:'orders',field:'region',kind:'terms',filters,labels:['(Missing)','Missing','Other']}}},{name:'sales',type:'number',values:[5,2,9]}]};
+    const clicks=[],config=report.chart(frame,{visualization:'bar'},pill=>clicks.push(pill));config.options.onClick({type:'click'},[{index:1}],{});config.options.onClick({type:'click',shiftKey:true},[{index:2}],{});
+    assert.deepEqual(clicks[0].query,filters[1]);assert.equal(clicks[0].negated,false);assert.deepEqual(clicks[1].query,filters[2]);assert.equal(clicks[1].negated,true);assert.equal(report.bucketPill(frame,{},0,0,false).query.field.value,'(Missing)');
+    const url=new URL(report.filterUrl(clicks[0],{dashboardId:'sales',filters:[],range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}},'https://example.test/apps/dashboards/Dashboard?definitionId=sales&cursor=old'));
+    assert.equal(url.searchParams.has('cursor'),false);assert.equal(JSON.parse(url.searchParams.get('filtersJson'))[0].datasetId,'orders');assert.equal(url.searchParams.get('from'),'2026-01-01T00:00:00Z');
+});
+test('sorting table rows retains the original bucket predicate when clicking values',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);const clicks=[];
+    const frame={fields:[{name:'region',type:'string',values:['EU','US'],config:{bucket:{datasetId:'orders',labels:['EU','US'],filters:[{field:{name:'region',op:'eq',value:'EU'}},{field:{name:'region',op:'eq',value:'US'}}]}}},{name:'sales',type:'number',values:[9,1]}]};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'table'},dashboardId:'sales',onFilter:pill=>clicks.push(pill)});app.mount(target);
+    target.querySelectorAll('thead button')[1].click();await Vue.nextTick();target.querySelector('tbody button').click();assert.equal(clicks[0].query.field.value,'US');app.unmount();target.remove();
+});
+test('split series align time and numeric dimensions with gaps and exact point predicates',()=>{
+    const predicates=['EU','EU','US'].map((value,at)=>({bool:{all:[{field:{name:'service',op:'eq',value}},{field:{name:'time',op:'range',gte:at===1?2000:1000,lt:at===1?3000:2000}}]}}));
+    const frame={fields:[{name:'time',type:'time',values:[1000,2000,1000]},{name:'service',type:'string',values:['EU','EU','US'],config:{bucket:{datasetId:'requests',filters:predicates,labels:['EU','EU','US']}}},{name:'latency',type:'number',values:[1,2,3]}]};
+    const clicks=[],chart=report.chart(frame,{queries:[{aggregations:[{id:'service',role:'series'}]}],fieldConfig:{defaults:{unit:'s',decimals:1}}},pill=>clicks.push(pill));
+    assert.equal(chart.data.labels.length,2);assert.equal(chart.data.datasets.length,2);assert.deepEqual(chart.data.datasets[0].data,[1,2]);assert.deepEqual(chart.data.datasets[1].data,[3,null]);
+    chart.options.onClick({type:'click'},[{datasetIndex:1,index:0}],{});assert.deepEqual(clicks[0].query,predicates[2]);assert.equal(chart.options.plugins.tooltip.callbacks.label({dataset:chart.data.datasets[0],raw:2}),'latency · service=EU: 2.0 s');
+    const numeric=report.chart({fields:[{name:'time',type:'time',values:[1000,1000]},{name:'status',type:'number',values:[200,500],config:{bucket:{datasetId:'requests',filters:[{field:{name:'status',op:'eq',value:200}},{field:{name:'status',op:'eq',value:500}}],labels:['200','500']}}},{name:'count',type:'number',values:[2,1]}]},{queries:[{aggregations:[{id:'status',role:'series'}]}]});
+    assert.deepEqual(numeric.data.datasets.map(dataset=>dataset.data),[[2],[1]]);
+    const declared=report.chart({fields:[{name:'time',type:'time',values:[1000,1000]},{name:'missing',type:'boolean',values:[true,false]},{name:'count',type:'number',values:[2,1]}]},{queries:[{aggregations:[{id:'missing',role:'series'}]}]});
+    assert.equal(declared.data.datasets.length,2);assert.deepEqual(declared.data.datasets.map(dataset=>dataset.data),[[2],[1]]);
+});
+test('numeric-only aggregate frames retain every metric without inventing an axis field',()=>{
+    const config=report.chart({fields:[{name:'count',type:'integer',values:[2]},{name:'total',type:'number',values:[7]}]},{visualization:'bar'});
+    assert.deepEqual(config.data.labels,['1']);assert.deepEqual(config.data.datasets.map(dataset=>dataset.label),['count','total']);assert.deepEqual(config.data.datasets.map(dataset=>dataset.data),[[2],[7]]);
+});
+test('stat and gauge cards resolve integer metrics per numeric bucket series without joining gaps or replacing nulls with zero',async()=>{
+    const frame={fields:[{name:'time',type:'time',values:[1000,3000,1000,2000,3000]},{name:'status',type:'number',values:[200,200,500,500,500],config:{bucket:{datasetId:'requests'}}},{name:'requests',type:'integer',unit:'ms',noValue:'Unknown',values:[1,0,3,null,null]},{name:'previous',type:'number',hidden:true,values:[1,0,1,0,0]}]};
+    for(const visualization of ['stat','gauge','barGauge']){
+        const target=document.createElement('div');document.body.appendChild(target);const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization,compareField:'previous',queries:[{aggregations:[{id:'status',role:'series'},{id:'requests',role:'metric'}]}]}});
+        app.mount(target);await Vue.nextTick();
+        const cards=Array.from(target.querySelectorAll('.m-report-stat-series'));assert.equal(cards.length,2);assert.equal(cards[0].getAttribute('data-report-series'),'requests · status=200');assert.equal(cards[1].getAttribute('data-report-series'),'requests · status=500');
+        assert.equal(cards[0].querySelector('.text-h4').textContent,'0 ms');assert.equal(cards[1].querySelector('.text-h4').textContent,'Unknown');assert.equal(target.textContent.includes('Infinity'),false);assert.equal(target.textContent.includes('from previous period'),false);
+        if(visualization==='stat'){const path=cards[0].querySelector('path').getAttribute('d');assert.equal((path.match(/M/g) || []).length,2);assert.equal(path.includes('L'),false);}
+        else {assert.equal(target.querySelectorAll('meter').length,1);assert.equal(cards[0].querySelector('meter').getAttribute('value'),'0');assert.equal(cards[1].querySelector('meter'),null);}
+        app.unmount();target.remove();
+    }
+    const target=document.createElement('div');document.body.appendChild(target);const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame:{fields:Array.from({length:51},(_,at)=>({name:'metric'+at,type:'integer',values:[at]}))},panel:{visualization:'stat'}});app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('.m-report-stat-series').length,50);assert.equal(target.textContent.includes('Showing 50 of 51 series.'),true);app.unmount();target.remove();
 });

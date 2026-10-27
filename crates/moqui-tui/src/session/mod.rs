@@ -633,7 +633,7 @@ impl Session {
             Timer::Assist => self.assist_poll(false),
             Timer::Component(id) => {
                 if self.component_poll_enabled(&id) {
-                    self.request_component(&id);
+                    self.component_tick(&id);
                 }
             }
         }

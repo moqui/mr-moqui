@@ -184,6 +184,8 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
         true
     );
 
+    verify_nested_partial_filter_scope(&context, &facade);
+
     let counter = document(
         json!({"fingerprint":"concurrent","first_seen":same,"last_seen":same,"count":1,"message":"fixture","service.name":"report-fixture"}),
     );
@@ -355,6 +357,8 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
     facade.index_entries("otel_logs",vec![document(json!({"_id":"scope-mine","timestamp":same,"source.id":"trusted-fixture","user.id":"REPORT_OTHER","body":"scope fixture"})),document(json!({"_id":"scope-other-user","timestamp":same,"source.id":"trusted-fixture","user.id":"EX_JOHN_DOE","body":"scope fixture"})),document(json!({"_id":"scope-other-source","timestamp":same,"source.id":"other-source","user.id":"REPORT_OTHER","body":"scope fixture"}))]).unwrap();
     let sums=result(report::run_query(&context,&service(),&parameters(json!({"query":{"datasetId":"report-fixture-dataset","from":"now-1h","thru":"now+1h","aggs":{"amount":{"sum":{"field":"sequenceNum"}}}}}))).unwrap());
     assert_eq!(sums["frames"][0]["fields"][0]["values"][0], 7);
+    verify_saved_runtime_pills_and_csv(&context, &facade, &entity);
+
     // Restore creates a new version; imports remap named references and never steal ownership.
     let saved = parameters(
         json!({"definition":{"id":"fixture-panel","type":"panel","title":"Private panel","body":{"queries":[{"datasetId":"report-fixture-dataset"}]}}}),
@@ -666,4 +670,303 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
         .unwrap();
     assert!(!result(copied).to_string().contains("legacy-fixture-secret"));
     other.pop().unwrap();
+}
+
+/// Partial observations in another Filter bucket do not make the selected parent
+/// incomplete. Once A has partial observations, its exact population is reported.
+fn verify_nested_partial_filter_scope(context: &moqui_core::context::ExecutionContext, facade: &search::SearchFacade) {
+    let point = |id: &str, service: &str, time: &str| {
+        document(
+            json!({"_id":id,"timestamp":format!("2026-02-02T{time}:00Z"),"body":"nested-partial-scope-fixture","service.name":service,"severity_number":17}),
+        )
+    };
+    facade
+        .index_entries(
+            "otel_logs",
+            vec![
+                point("nested-a-complete-1", "A", "00:06"),
+                point("nested-a-complete-2", "A", "00:07"),
+                point("nested-b-partial-1", "B", "00:03"),
+                point("nested-b-partial-2", "B", "00:12"),
+            ],
+        )
+        .unwrap();
+    let query = json!({"datasetId":"otel_logs","from":"2026-02-02T00:02:00Z","thru":"2026-02-02T00:13:00Z","queryString":"body:nested-partial-scope-fixture","aggs":{"selected":{"filter":{"term":{"service.name":"A"}},"aggs":{"time":{"date_histogram":{"field":"timestamp","fixed_interval":"5m"},"aggs":{"observations":{"value_count":{"field":"body"}}}}}}}});
+    let complete = report::execute_query(context, &query).unwrap();
+    assert!(
+        !complete["frames"].as_array().unwrap().is_empty(),
+        "selected A has completed observations: {complete}"
+    );
+    assert!(
+        !complete["notices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|notice| notice["complete"] == false || notice["code"] == "partial_buckets_excluded"),
+        "unrelated B partial observations must not contaminate selected A completeness: {complete}"
+    );
+    let fields = complete["frames"][0]["fields"].as_array().unwrap();
+    let observations = fields.iter().find(|field| field["name"] == "observations").unwrap()["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Json::as_f64)
+        .sum::<f64>();
+    assert_eq!(observations, 2.0, "both complete A observations remain visible");
+    facade
+        .index_entries(
+            "otel_logs",
+            vec![
+                point("nested-a-partial-1", "A", "00:03"),
+                point("nested-a-partial-2", "A", "00:12"),
+            ],
+        )
+        .unwrap();
+    let partial = report::execute_query(context, &query).unwrap();
+    let excluded = partial["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|notice| notice["code"] == "partial_buckets_excluded")
+        .collect::<Vec<_>>();
+    assert_eq!(excluded.len(), 1, "one nested partial histogram notice: {partial}");
+    assert_eq!(
+        excluded[0]["observations"], 2,
+        "only A's two partial observations count, not B's two: {partial}"
+    );
+    assert_eq!(excluded[0]["complete"], false);
+    assert!(
+        !partial["frames"].as_array().unwrap().is_empty(),
+        "completed selected-parent buckets are retained while incompleteness is explicit"
+    );
+    let kept = partial["frames"][0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "observations")
+        .unwrap()["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Json::as_f64)
+        .sum::<f64>();
+    assert_eq!(
+        kept, 2.0,
+        "partial A rows are excluded from the completed bucket's values"
+    );
+}
+
+fn numeric_field(frame: &Json, name: &str) -> f64 {
+    frame["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == name)
+        .unwrap_or_else(|| panic!("missing {name} in {frame}"))["values"][0]
+        .as_f64()
+        .unwrap()
+}
+fn preview_csv(definition_id: &str, filters: &Json) -> Json {
+    result(moqui_core::service::sync("org.moqui.report.ReportServices.preview#Report",&parameters(json!({"definitionId":definition_id,"panelId":"business","renderMode":"csv","from":"now-1h","thru":"now+1h","filters":filters}))).unwrap())
+}
+fn verify_saved_runtime_pills_and_csv(
+    context: &moqui_core::context::ExecutionContext,
+    facade: &search::SearchFacade,
+    entity: &EntityFacade,
+) {
+    use base64::Engine as _;
+    {
+        let _fixture = context.disable_authz();
+        facade.index_documents(&[
+            document(json!({"_type":"ReportFixture","_id":"pill-A","enumId":"pill-A","enumTypeId":"EX_JOHN_DOE","sequenceNum":7})),
+            document(json!({"_type":"ReportFixture","_id":"pill-B","enumId":"pill-B","enumTypeId":"EX_JOHN_DOE","sequenceNum":11})),
+            document(json!({"_type":"ReportFixture","_id":"pill-Missing","enumId":"pill-Missing","enumTypeId":"EX_JOHN_DOE"})),
+            document(json!({"_type":"ReportFixture","_id":"pill-hidden","enumId":"pill-hidden","enumTypeId":"HIDDEN","sequenceNum":1000})),
+        ]).unwrap();
+    }
+    let saved_filter = json!({"datasetId":"report-fixture-dataset","query":{"field":{"name":"enumId","op":"prefix","value":"pill-"}},"label":"Saved constraint","pinned":true});
+    let definition = json!({"id":"scoped-pills-dashboard","type":"dashboard","title":"Saved/runtime filter acceptance","userGroupId":"REPORT_VIEW","body":{"filters":[saved_filter],"panels":{
+        "business":{"title":"Authorized business totals","visualization":"table","queries":[{"datasetId":"report-fixture-dataset","aggs":{"amount":{"sum":{"field":"sequenceNum"}},"records":{"value_count":{"field":"enumId"}}}}]},
+        "logs":{"title":"Raw telemetry","visualization":"stat","time":{"from":"2026-01-01T00:00:00Z","thru":"2027-01-01T00:00:00Z"},"queries":[{"datasetId":"otel_logs","queryString":"body:\"scope fixture\"","query":{"field":{"name":"source.id","op":"in","values":["trusted-fixture","other-source"]}},"aggs":{"rows":{"value_count":{"field":"body"}}}}]},
+        "alias":{"title":"Scoped telemetry alias","visualization":"stat","time":{"from":"2026-01-01T00:00:00Z","thru":"2027-01-01T00:00:00Z"},"queries":[{"datasetId":"scoped-telemetry-fixture","queryString":"body:\"scope fixture\"","aggs":{"rows":{"value_count":{"field":"body"}}}}]}
+    },"layout":{"type":"autoGrid"}}});
+    let saved = entity
+        .transactions_for("moqui.report.Definition")
+        .unwrap()
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            report::save_definition(context, &service(), &parameters(json!({"definition":definition})))
+        })
+        .unwrap();
+    let stored = result(saved)["definition"].clone();
+    let scenarios = [
+        ("saved only", json!([]), 18.0, 3.0, 3.0),
+        (
+            "Other",
+            json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"enumId","op":"in","values":["pill-A"]}},"negated":true,"label":"Other"}]),
+            11.0,
+            2.0,
+            3.0,
+        ),
+        (
+            "Missing",
+            json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"sequenceNum","op":"exists","negate":true}},"label":"Missing"}]),
+            0.0,
+            1.0,
+            3.0,
+        ),
+        (
+            "typed numeric",
+            json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"sequenceNum","op":"eq","value":11}},"pinned":true,"label":"Numeric eleven"}]),
+            11.0,
+            1.0,
+            3.0,
+        ),
+        (
+            "runtime cannot widen identity",
+            json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"enumTypeId","op":"in","values":["EX_JOHN_DOE","HIDDEN"]}},"label":"Attempted wider identity"}]),
+            18.0,
+            3.0,
+            3.0,
+        ),
+        (
+            "dataset scope excludes alias",
+            json!([{"datasetId":"otel_logs","query":{"field":{"name":"user.id","op":"eq","value":"REPORT_OTHER"}},"label":"Raw logs only"}]),
+            18.0,
+            3.0,
+            2.0,
+        ),
+        (
+            "disabled filter",
+            json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"enumTypeId","op":"eq","value":"HIDDEN"}},"disabled":true}]),
+            18.0,
+            3.0,
+            3.0,
+        ),
+    ];
+    for (label, filters, amount, count, logs) in scenarios {
+        let rendered =
+            report::dashboard_frames_filtered(context, &stored, &json!({}), "now-1h", "now+1h", &filters).unwrap();
+        assert_eq!(
+            rendered["filters"], filters,
+            "runtime pills remain typed and scoped in URL/inspector state: {label}"
+        );
+        for (panel, expected) in [("business", count), ("logs", logs), ("alias", 1.0)] {
+            assert!(
+                !rendered["panels"][panel]["notices"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|notice| notice["complete"] == false || notice["level"] == "error"),
+                "{label}/{panel}: {rendered}"
+            );
+            let metric = if panel == "business" { "records" } else { "rows" };
+            assert_eq!(
+                numeric_field(&rendered["panels"][panel]["frames"][0], metric),
+                expected,
+                "dataset-scoped predicates and alias row policy: {label}/{panel}"
+            );
+        }
+        let business = &rendered["panels"]["business"]["frames"][0];
+        assert_eq!(
+            numeric_field(business, "amount"),
+            amount,
+            "saved constraint AND runtime predicate AND authenticated row policy: {label}"
+        );
+        let served = result(
+            moqui_core::service::sync(
+                "org.moqui.report.ReportServices.render#Dashboard",
+                &parameters(
+                    json!({"definitionId":"scoped-pills-dashboard","from":"now-1h","thru":"now+1h","filters":filters}),
+                ),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            served["dashboard"]["panels"]["business"]["frames"], rendered["panels"]["business"]["frames"],
+            "service metadata must preserve filters unchanged: {label}"
+        );
+        let output = preview_csv("scoped-pills-dashboard", &filters);
+        assert_eq!(output["contentType"], "text/csv");
+        assert_eq!(output["empty"], false);
+        let csv = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(output["contentBase64"].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        let lines = csv.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
+        assert_eq!(
+            lines.len(),
+            2,
+            "CSV contains exactly the selected authorized aggregate frame: {label}: {csv}"
+        );
+        let columns = lines[0]
+            .split(',')
+            .map(|cell| cell.trim_matches('"'))
+            .collect::<Vec<_>>();
+        let values = lines[1]
+            .split(',')
+            .map(|cell| cell.trim_matches('"').parse::<f64>().unwrap())
+            .collect::<Vec<_>>();
+        for (name, expected) in [("amount", amount), ("records", count)] {
+            let at = columns.iter().position(|column| *column == name).unwrap();
+            assert_eq!(values[at], expected, "CSV matches panel data: {label}/{name}");
+        }
+    }
+    let hidden = json!([{"datasetId":"report-fixture-dataset","query":{"field":{"name":"enumTypeId","op":"eq","value":"HIDDEN"}}}]);
+    let denied = report::dashboard_frames_filtered(context, &stored, &json!({}), "now-1h", "now+1h", &hidden).unwrap();
+    // A business scalar count over an empty authorized population remains a zero,
+    // preserving the SearchFacade meaning; it must never expose HIDDEN's 1,000.
+    let denied_frame = &denied["panels"]["business"]["frames"][0];
+    assert_eq!(numeric_field(denied_frame, "amount"), 0.0);
+    assert_eq!(
+        numeric_field(denied_frame, "records"),
+        0.0,
+        "a filter cannot replace the server identity policy"
+    );
+    let output = preview_csv("scoped-pills-dashboard", &hidden);
+    let csv = base64::engine::general_purpose::STANDARD
+        .decode(output["contentBase64"].as_str().unwrap())
+        .unwrap();
+    let csv = String::from_utf8(csv).unwrap();
+    let data = csv
+        .lines()
+        .filter(|line| !line.is_empty())
+        .nth(1)
+        .expect("authorized zero aggregate row");
+    assert!(
+        data.split(',')
+            .all(|value| value.trim_matches('"').parse::<f64>() == Ok(0.0)),
+        "unauthorized hidden rows cannot enter exports: {csv}"
+    );
+
+    // Provenance follows a sorted, filtered and renamed Other row, rather than
+    // remaining attached to its old ordinal position in the aggregation result.
+    let transformed=report::execute_query(context,&json!({"datasetId":"report-fixture-dataset","from":"now-1h","thru":"now+1h","query":{"field":{"name":"enumId","op":"prefix","value":"pill-"}},"aggs":{"category":{"terms":{"field":"enumId","size":1,"other_bucket":"Other"},"aggs":{"records":{"value_count":{"field":"enumId"}}}}},"transformations":[{"type":"sort","field":"records","descending":true},{"type":"filter","field":"records","operator":"gt","value":1},{"type":"organize","rename":{"category":"status"}}]})).unwrap();
+    let status = transformed["frames"][0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "status")
+        .unwrap();
+    assert_eq!(status["values"], json!(["Other"]));
+    assert_eq!(status["config"]["bucket"]["datasetId"], "report-fixture-dataset");
+    let selected = &status["config"]["bucket"]["filters"][0];
+    assert!(
+        !selected.is_null(),
+        "transforms retain the exact selected bucket predicate: {transformed}"
+    );
+    let replay = report::documents(
+        context,
+        &json!({"datasetId":"report-fixture-dataset","from":"now-1h","thru":"now+1h","query":{"field":{"name":"enumId","op":"prefix","value":"pill-"}},"filters":[{"query":selected}]}),
+    )
+    .unwrap();
+    assert_eq!(replay["total"], 2);
+    let ids = replay["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["id"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(ids, BTreeSet::from(["pill-B", "pill-Missing"]));
 }

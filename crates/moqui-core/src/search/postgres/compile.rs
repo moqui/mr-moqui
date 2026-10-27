@@ -173,6 +173,7 @@ pub struct Compiler<'a> {
     pub mapping: &'a DocumentMapping,
     counter: Cell<usize>,
     text: TextSetup,
+    documents: Option<&'a [std::sync::Arc<DocumentMapping>]>,
 }
 
 impl<'a> Compiler<'a> {
@@ -186,7 +187,13 @@ impl<'a> Compiler<'a> {
             mapping,
             counter: Cell::new(0),
             text: text.clone(),
+            documents: None,
         }
+    }
+
+    pub fn with_documents(mut self, documents: Option<&'a [std::sync::Arc<DocumentMapping>]>) -> Self {
+        self.documents = documents;
+        self
     }
 
     /// The root `title` field, when it has a typed text column the derived title is made from.
@@ -208,6 +215,19 @@ impl<'a> Compiler<'a> {
     ///
     /// Returns an error when a value cannot be read for its field, or a child path is not an array.
     pub fn where_sql(&self, query: &Query) -> Result<Sql, Error> {
+        if let Some(documents) = self.documents {
+            let mut sql = Sql::new("(");
+            for (index, mapping) in documents.iter().enumerate() {
+                if index > 0 {
+                    sql.push(" OR ");
+                }
+                sql.push(&format!("(__document = {} AND (", literal(&mapping.document_id)));
+                sql.append(Compiler::with_text(mapping, &self.text).where_sql(query)?);
+                sql.push("))");
+            }
+            sql.push(")");
+            return Ok(sql);
+        }
         self.compile(query, &Scope::Root)
     }
 
@@ -340,6 +360,16 @@ impl<'a> Compiler<'a> {
         let (base_expr, object, prefix, root) = match scope {
             Scope::Root => {
                 match name {
+                    "_document" if self.documents.is_some() => {
+                        return Located::Field {
+                            arrays: Vec::new(),
+                            expr: "__document".into(),
+                            field: FieldMapping {
+                                kind: FieldKind::Keyword,
+                                sortable: true,
+                            },
+                        }
+                    }
                     "_id" => {
                         return Located::Field {
                             arrays: Vec::new(),

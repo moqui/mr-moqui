@@ -28,6 +28,7 @@ mod board;
 mod calendar;
 mod chart;
 mod report;
+mod report_editor;
 mod timeline;
 mod tree;
 
@@ -98,8 +99,12 @@ pub struct ComponentState {
     pub parameters: BTreeMap<String, String>,
     /// The data was asked for and has not come.
     pub loading: bool,
+    /// The current source changed while its earlier read was in flight.
+    pub reload_pending: bool,
     /// The rows a tree has closed, by key.
     pub closed: BTreeSet<String>,
+    /// Client-only structured widget state; never sent as an authorization context.
+    pub local: Value,
 }
 
 /// What a key asks of the session.
@@ -111,6 +116,10 @@ pub enum Act {
     ReloadScreen,
     /// Save an authorized report response {contentBase64,contentType,filename}.
     DownloadReport(String),
+    /// Read an authorized component endpoint without replacing the screen.
+    Read(String),
+    /// Edit an existing field in the named form, just as typing does.
+    SetFormField { form: String, field: String, value: String },
     /// Post to a transition of the screen (a name under its path, or a path), then ask for the data again.
     Post {
         url: String,
@@ -146,6 +155,11 @@ pub trait Component: Sync {
         None
     }
 
+    /// A scheduled component tick. Most polling widgets simply read their source again.
+    fn tick(&self, _props: &Value, _state: &mut ComponentState) -> Vec<Act> {
+        vec![Act::Reload]
+    }
+
     /// The component's keys for the help: key, then what it does.
     fn help(&self) -> &'static [(&'static str, &'static str)];
 }
@@ -162,6 +176,9 @@ inventory::submit! { Registered(&report::ReportPanel) }
 inventory::submit! { Registered(&report::ReportDashboard) }
 inventory::submit! { Registered(&report::TraceWaterfall) }
 inventory::submit! { Registered(&report::LogTail) }
+inventory::submit! { Registered(&report::ReportPlaylist) }
+inventory::submit! { Registered(&report_editor::ReportDefinitionEditor) }
+inventory::submit! { Registered(&report_editor::ReportQueryEditor) }
 inventory::submit! { Registered(&timeline::Timeline) }
 inventory::submit! { Registered(&tree::Tree) }
 
@@ -263,7 +280,10 @@ mod tests {
                 "chart",
                 "log-tail",
                 "report-dashboard",
+                "report-definition-editor",
                 "report-panel",
+                "report-playlist",
+                "report-query-editor",
                 "timeline",
                 "trace-waterfall",
                 "tree"

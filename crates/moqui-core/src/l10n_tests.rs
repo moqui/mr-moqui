@@ -360,7 +360,7 @@ fn spanish_catalog_files_match_the_message_keys() {
         Some("Móvil")
     );
     // es_MX falls back to es, so a copy of the es text is not stored.
-    assert!(seen.get(&("File".to_string(), "es_MX".to_string())).is_none());
+    assert!(!seen.contains_key(&("File".to_string(), "es_MX".to_string())));
     for ((original, locale), localized) in &seen {
         if locale == "es_MX" {
             assert_ne!(

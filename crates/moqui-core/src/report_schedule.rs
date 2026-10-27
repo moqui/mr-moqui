@@ -5,7 +5,7 @@ use crate::{
 };
 use base64::Engine;
 use moqui_lib::{error::Error, object::Value};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
 const SCHEDULE: &str = "moqui.screen.ScreenScheduled";
 const LOCK: &str = "moqui.screen.ScreenScheduledLock";
@@ -201,6 +201,12 @@ fn render(
     for spec in specs {
         let mut dashboard =
             crate::report::definitions::read(ec, jtext(&spec, "dashboardRef", jtext(&spec, "definitionId", "")))?;
+        if let Some(layout) = spec.get("layout").filter(|value| !value.is_null()) {
+            if !layout.is_array() && !layout.is_object() {
+                return Err(fail("report selection layout must be an object or list"));
+            }
+            dashboard["body"]["layout"] = layout.clone();
+        }
         if !panel_id.is_empty() {
             select_panel(&mut dashboard, panel_id)?;
         }
@@ -217,7 +223,25 @@ fn render(
             .map(moqui_lib::json::to_json)
             .filter(Json::is_object)
             .unwrap_or_else(|| spec["variables"].clone());
-        let rendered = crate::report::dashboard_frames(ec, &dashboard, &variables, from, thru)?;
+        let mut filters = match spec.get("filters") {
+            None | Some(Json::Null) => Vec::new(),
+            Some(Json::Array(filters)) => filters.clone(),
+            _ => return Err(fail("report selection filters must be a list")),
+        };
+        if let Some(selected) = selection.and_then(|parameters| parameters.get("filters")) {
+            let selected = moqui_lib::json::to_json(selected);
+            if !selected.is_null() {
+                filters.extend(
+                    selected
+                        .as_array()
+                        .ok_or_else(|| fail("report filters must be a list"))?
+                        .iter()
+                        .cloned(),
+                );
+            }
+        }
+        let rendered =
+            crate::report::dashboard_frames_filtered(ec, &dashboard, &variables, from, thru, &Json::Array(filters))?;
         if link.is_empty() {
             link = live_link(jtext(&dashboard, "id", id), &rendered);
         }
@@ -340,6 +364,12 @@ fn live_link(id: &str, dashboard: &Json) -> String {
                 ));
             }
         }
+    }
+    if let Some(filters) = dashboard["filters"].as_array().filter(|filters| !filters.is_empty()) {
+        link.push_str(&format!(
+            "&filtersJson={}",
+            component(&Json::Array(filters.clone()).to_string())
+        ));
     }
     let root = crate::web::webapp_root_url("webroot", true, None);
     format!("{}{link}", root.trim_end_matches('/'))
@@ -1086,13 +1116,15 @@ mod tests {
         assert!(dashboard["body"]["panels"].get("other").is_none());
         let link = live_link(
             "id with%value",
-            &json!({"range":{"from":"2026-10-26T00:00:00Z","thru":"2026-10-27T00:00:00Z"},"variableValues":{"status":["Approved","Held"],"literal":"%26"}}),
+            &json!({"range":{"from":"2026-10-26T00:00:00Z","thru":"2026-10-27T00:00:00Z"},"variableValues":{"status":["Approved","Held"],"literal":"%26"},"filters":[{"datasetId":"visible","query":{"field":{"name":"status","op":"eq","value":"Approved"}}}]}),
         );
         assert!(link.contains("definitionId=id%20with%25value"));
         assert!(link.contains("from=2026-10-26T00%3A00%3A00Z"));
         assert!(link.contains("var-literal=%2526"));
         assert!(link.contains("var-status=Approved"));
         assert!(link.contains("var-status=Held"));
+        assert!(link.contains("filtersJson=%5B%7B"));
+        assert!(link.contains("%22datasetId%22%3A%22visible%22"));
     }
 
     #[test]

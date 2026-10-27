@@ -11,7 +11,7 @@ use moqui_core::{
 use moqui_host::tui::HostLink;
 use moqui_lib::object::Value;
 use moqui_tui::{AppView, Key, KeyPress, Node, ScreenModel, Session};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 use std::collections::BTreeSet;
 
 const TRACE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -122,11 +122,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         for definition in [
             json!({"id":"tui-dataset","type":"dataset","title":"TUI scoped logs","body":{"documentType":"otel_logs","timeField":"timestamp","rowFilter":{"field":{"name":"service.name","op":"eq","value":"monitor-tui"}}}}),
             json!({"id":"tui-panel","type":"panel","title":"TUI library logs","body":{"title":"TUI library logs","visualization":"table","queries":[{"datasetId":"tui-dataset","mode":"documents","queryString":"body:tui-marker","pageSize":50}]}}),
-            json!({"id":"tui-dashboard","type":"dashboard","title":"TUI acceptance dashboard","body":{"variables":[{"name":"service","kind":"custom","label":"Service","datasetId":"tui-dataset","field":"service.name","options":["monitor-tui"],"default":"monitor-tui"}],"panels":{"a-total":{"title":"TUI severity total","visualization":"stat","queries":[aggregate.clone()]},"b-library":{"panelRef":"tui-panel"},"c-notes":{"title":"TUI notes","visualization":"text","text":"TUI offline instructions"}},"layout":{"type":"autoGrid"}}}),
+            json!({"id":"tui-dashboard","type":"dashboard","title":"TUI acceptance dashboard","body":{"variables":[{"name":"service","kind":"custom","label":"Service","datasetId":"tui-dataset","field":"service.name","options":["monitor-tui"],"default":"monitor-tui"}],"panels":{"a-total":{"title":"TUI severity total","visualization":"stat","queries":[aggregate.clone()],"transformations":[{"type":"organize","order":["severity_total"]}]},"b-library":{"panelRef":"tui-panel"},"c-notes":{"title":"TUI notes","visualization":"text","text":"TUI offline instructions"}},"layout":{"type":"autoGrid"}}}),
+            json!({"id":"tui-dashboard-second","type":"dashboard","title":"TUI second dashboard","body":{"panels":{"notes":{"title":"Second dashboard notes","visualization":"text","text":"Rotation reached this dashboard"}},"layout":{"type":"autoGrid"}}}),
             json!({"id":"tui-search","type":"search","title":"TUI saved search","body":{"datasetId":"tui-dataset","queryString":"body:tui-marker","from":"now-1h","thru":"now"}}),
             json!({"id":"tui-alert","type":"alert","title":"TUI paused alert","body":{"query":aggregate,"field":"severity_total","reduce":"last","condition":{"type":"above","threshold":0},"intervalSeconds":60,"paused":true}}),
             json!({"id":"tui-report","type":"report","title":"TUI report","body":{"dashboards":[{"definitionId":"tui-dashboard"}]}}),
-            json!({"id":"tui-playlist","type":"report","title":"TUI playlist","body":{"kind":"playlist","seconds":30,"playlist":[{"definitionId":"tui-dashboard"}]}}),
+            json!({"id":"tui-playlist","type":"report","title":"TUI playlist","body":{"kind":"playlist","seconds":5,"playlist":[{"definitionId":"tui-dashboard"},{"definitionId":"tui-dashboard-second"}]}}),
         ] {
             let parameters: Parameters = document(json!({"definition":definition})).into_iter().collect();
             tx.run(TransactionAttribute::UseOrBegin, None, || {
@@ -234,7 +235,15 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    for name in ["report-dashboard", "report-panel", "trace-waterfall", "log-tail"] {
+    for name in [
+        "report-dashboard",
+        "report-panel",
+        "trace-waterfall",
+        "log-tail",
+        "report-definition-editor",
+        "report-query-editor",
+        "report-playlist",
+    ] {
         assert!(seen.contains(name), "specialized twin {name} was not reachable");
     }
     let mut dashboard = open(
@@ -248,6 +257,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         dashboard.screen_text(180, 100).contains("severity_total"),
         "selected panel inspector"
     );
+    let inspector = &dashboard.session().component_state(&id).unwrap().local["inspection"];
+    assert_eq!(
+        inspector["dashboard"]["panels"]["a-total"]["inspection"][0]["type"], "organize",
+        "native inspector must load authorized per-step snapshots: {inspector}"
+    );
+    assert!(inspector["dashboard"]["panels"]["a-total"]["inspection"][0]["input"]["frames"].is_array());
     press(&mut dashboard, Key::Char('c'));
     let csv = dashboard.session_mut().take_downloads();
     assert_eq!(csv.len(), 1, "{}", dashboard.session().message());
@@ -263,6 +278,44 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         dashboard.session().parameters().get("panelId").map(String::as_str),
         Some("a-total")
     );
+    let mut editor = open(&link, "/apps/dashboards/Definition?definitionId=tui-dashboard");
+    let id = component(&editor, "report-definition-editor");
+    focus(&mut editor, &id);
+    press(&mut editor, Key::Char('a'));
+    press(&mut editor, Key::Enter);
+    let field = editor
+        .session()
+        .index()
+        .fields
+        .values()
+        .find(|field| field.name == "definitionJson")
+        .unwrap()
+        .id
+        .clone();
+    let body: Json = serde_json::from_str(editor.session().buffer(&field)).unwrap();
+    assert_eq!(
+        body["refreshSeconds"], 0,
+        "structured editing changes the real definition form buffer"
+    );
+    assert!(editor.session().is_dirty(&field));
+    let mut playlist = open(&link, "/apps/dashboards/Playlist?definitionId=tui-playlist");
+    let id = component(&playlist, "report-playlist");
+    focus(&mut playlist, &id);
+    let deadline = playlist
+        .session()
+        .timer(&moqui_tui::Timer::Component(id.clone()))
+        .expect("automatic playlist rotation");
+    playlist.session_mut().on_time(deadline);
+    playlist.run_requests();
+    assert_eq!(
+        playlist.session().component_state(&id).unwrap().data.as_ref().unwrap()["dashboard"]["definitionId"],
+        "tui-dashboard-second"
+    );
+    assert!(playlist
+        .screen_text(180, 80)
+        .contains("Rotation reached this dashboard"));
+    press(&mut playlist, Key::Char('p'));
+    assert!(playlist.session().timer(&moqui_tui::Timer::Component(id)).is_none());
     let mut trace = open(
         &link,
         "/apps/monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",

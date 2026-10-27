@@ -857,3 +857,9 @@ body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__
 /* Report frames and telemetry preserve full export text while folding long visible log lines. */
 .m-report-log-message { display: block; max-width: 40rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-report-export-only { display: none; }
+
+.m-report-editor-control { display: inline-flex; vertical-align: top; flex-direction: column; gap: .25rem; padding: .35rem; max-width: 100%; }
+.m-report-editor-control input:not([type=checkbox]), .m-report-editor-control select, .m-report-editor-control textarea { color: inherit; background: transparent; border: 1px solid var(--q-secondary); border-radius: 3px; padding: .35rem; max-width: 100%; }
+.m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
+.m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }
+.m-report-cell-filter { border: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; text-align: inherit; text-decoration: underline dotted; }

@@ -47,7 +47,9 @@ struct Previous {
     time: i64,
     count: u64,
     sum: Option<f64>,
+    integer_sum: Option<i64>,
     buckets: Vec<u64>,
+    exponential: Option<super::exponential::Histogram>,
     received: Instant,
 }
 
@@ -140,36 +142,120 @@ impl Decoder {
                     continue;
                 };
                 let attrs = attributes(field(point, "attributes"));
+                let fingerprint = series_fingerprint(&format!("{name}\n{unit}\nexponential"), resource, &attrs, source);
+                let parsed = (|| -> Result<_, Error> {
+                    let histogram = super::exponential::Histogram::parse(&Json::Object(safe))?;
+                    let start = if field(point, "startTimeUnixNano").is_null() {
+                        0
+                    } else {
+                        checked_integer(field(point, "startTimeUnixNano"))
+                            .ok_or_else(|| Error::new("invalid exponential histogram start"))?
+                    };
+                    if start < 0 || start > time {
+                        return Err(Error::new("invalid exponential histogram interval"));
+                    }
+                    Ok((histogram, start))
+                })();
+                let Ok((mut histogram, mut interval_start)) = parsed else {
+                    decoded.rejected += 1;
+                    continue;
+                };
+                let cumulative = matches!(
+                    string(field(field(metric, "exponentialHistogram"), "aggregationTemporality")).as_str(),
+                    "2" | "AGGREGATION_TEMPORALITY_CUMULATIVE"
+                );
+                if cumulative {
+                    let mut state = super::lock(&self.cumulative);
+                    if state.swept.elapsed() > Duration::from_secs(60) {
+                        state
+                            .points
+                            .retain(|_, point| point.received.elapsed() < Duration::from_secs(3600));
+                        state.swept = Instant::now();
+                    }
+                    if state.points.len() >= 20_000 && !state.points.contains_key(&fingerprint) {
+                        decoded.rejected += 1;
+                        decoded.message = "cumulative series limit reached".into();
+                        continue;
+                    }
+                    let next = Previous {
+                        start: interval_start.to_string(),
+                        time,
+                        count: 0,
+                        sum: None,
+                        integer_sum: None,
+                        buckets: Vec::new(),
+                        exponential: Some(histogram.clone()),
+                        received: Instant::now(),
+                    };
+                    if state
+                        .points
+                        .get(&fingerprint)
+                        .is_some_and(|previous| time <= previous.time)
+                    {
+                        decoded.rejected += 1;
+                        continue;
+                    }
+                    if interval_start == time {
+                        state.points.insert(fingerprint.clone(), next);
+                        decoded.rejected += 1;
+                        decoded.message = "zero-duration cumulative point established an unknown-start baseline".into();
+                        continue;
+                    }
+                    if let Some(previous) = state.points.get(&fingerprint) {
+                        if previous.start != next.start
+                            && (interval_start <= 0 || time.saturating_sub(interval_start) > 60_000_000_000)
+                        {
+                            state.points.insert(fingerprint.clone(), next);
+                            decoded.rejected += 1;
+                            decoded.message =
+                                "cumulative reset established a baseline; interval data is unavailable".into();
+                            continue;
+                        }
+                        if previous.start == next.start {
+                            let Some(previous_histogram) = &previous.exponential else {
+                                decoded.rejected += 1;
+                                continue;
+                            };
+                            match histogram.delta(previous_histogram) {
+                                Ok(Some(delta)) => {
+                                    histogram = delta;
+                                    interval_start = previous.time;
+                                }
+                                Ok(None) => {
+                                    state.points.insert(fingerprint.clone(), next);
+                                    decoded.rejected += 1;
+                                    decoded.message = "cumulative population decreased without a new start; reset baseline established".into();
+                                    continue;
+                                }
+                                Err(error) => {
+                                    decoded.rejected += 1;
+                                    decoded.message = error.message().to_string();
+                                    continue;
+                                }
+                            }
+                        }
+                    } else if interval_start <= 0 || time.saturating_sub(interval_start) > 60_000_000_000 {
+                        state.points.insert(fingerprint.clone(), next);
+                        decoded.rejected += 1;
+                        decoded.message =
+                            "initial cumulative point established a baseline; interval data is unavailable".into();
+                        continue;
+                    }
+                    state.points.insert(fingerprint.clone(), next);
+                }
                 let mut document = Document::new();
                 document.insert("name".into(), Value::string(&name));
                 document.insert("unit".into(), Value::string(&unit));
-                document.insert(
-                    "series_fingerprint".into(),
-                    Value::String(series_fingerprint(
-                        &format!("{name}\n{unit}\nexponential"),
-                        resource,
-                        &attrs,
-                        source,
-                    )),
-                );
+                document.insert("series_fingerprint".into(), Value::String(fingerprint));
+                let start = if interval_start > 0 { interval_start } else { time };
                 document.insert(
                     "bucket_start".into(),
-                    Value::I64((time / 1_000_000).div_euclid(60_000) * 60_000),
+                    Value::I64((start / 1_000_000).div_euclid(60_000) * 60_000),
                 );
                 document.insert("bucket_end".into(), Value::I64(time / 1_000_000));
                 document.insert("granularity".into(), Value::string("minute"));
                 document.insert("aggregation".into(), Value::string("exponential_histogram"));
-                document.insert(
-                    "exponential_histogram".into(),
-                    moqui_lib::json::from_json(&Json::Object(safe)),
-                );
-                document.insert(
-                    "aggregation_temporality".into(),
-                    Value::String(string(field(
-                        field(metric, "exponentialHistogram"),
-                        "aggregationTemporality",
-                    ))),
-                );
+                histogram.store(&mut document);
                 flatten_attributes(&mut document, attrs, "otel_metrics");
                 enrich(&mut document, resource, source, "otel_metrics");
                 decoded.documents.push(document);
@@ -211,19 +297,20 @@ impl Decoder {
                 } else {
                     1
                 };
-                let sum = if histogram {
-                    optional_float(field(point, "sum"))?
+                let (sum, integer_sum) = if histogram {
+                    (optional_float(field(point, "sum"))?, None)
                 } else {
                     let double = field(point, "asDouble");
                     let int = field(point, "asInt");
                     if double.is_null() == int.is_null() {
                         return None;
                     }
-                    Some(if !double.is_null() {
-                        checked_float(double)?
+                    if !double.is_null() {
+                        (Some(checked_float(double)?), None)
                     } else {
-                        checked_integer(int)? as f64
-                    })
+                        let value = checked_integer(int)?;
+                        (Some(value as f64), Some(value))
+                    }
                 };
                 let bounds = array(field(point, "explicitBounds"))
                     .iter()
@@ -248,9 +335,19 @@ impl Decoder {
                 if minimum.zip(maximum).is_some_and(|(minimum, maximum)| minimum > maximum) {
                     return None;
                 }
-                Some((time, start, count, sum, bounds, buckets, minimum, maximum))
+                Some((time, start, count, sum, integer_sum, bounds, buckets, minimum, maximum))
             })();
-            let Some((time, mut interval_start, mut count, mut sum, bounds, mut buckets, minimum, maximum)) = parsed
+            let Some((
+                time,
+                mut interval_start,
+                mut count,
+                mut sum,
+                integer_sum,
+                bounds,
+                mut buckets,
+                minimum,
+                maximum,
+            )) = parsed
             else {
                 decoded.rejected += 1;
                 continue;
@@ -285,9 +382,21 @@ impl Decoder {
                     time,
                     count,
                     sum,
+                    integer_sum,
                     buckets: buckets.clone(),
+                    exponential: None,
                     received: Instant::now(),
                 };
+                if cache.get(&fingerprint).is_some_and(|previous| time <= previous.time) {
+                    decoded.rejected += 1;
+                    continue;
+                }
+                if interval_start == time {
+                    cache.insert(fingerprint.clone(), previous);
+                    decoded.rejected += 1;
+                    decoded.message = "zero-duration cumulative point established an unknown-start baseline".into();
+                    continue;
+                }
                 if !cache.contains_key(&fingerprint)
                     && (interval_start <= 0 || time.saturating_sub(interval_start) > 60_000_000_000)
                 {
@@ -304,18 +413,51 @@ impl Decoder {
                         decoded.rejected += 1;
                         continue;
                     }
+                    // A double cannot carry the low bits of a large integer snapshot. A
+                    // representation switch there provides no exact common baseline.
+                    if start == old.start
+                        && integer_sum.is_some() != old.integer_sum.is_some()
+                        && integer_sum
+                            .or(old.integer_sum)
+                            .is_some_and(|value| value.unsigned_abs() > 9_007_199_254_740_991)
+                    {
+                        cache.insert(fingerprint.clone(), previous);
+                        decoded.rejected += 1;
+                        decoded.message = "cumulative numeric representation changed outside the exact double range; baseline established".into();
+                        continue;
+                    }
+                    let decreased = match integer_sum.zip(old.integer_sum) {
+                        Some((new, old)) => new < old,
+                        None => sum.zip(old.sum).is_some_and(|(new, old)| new < old),
+                    };
                     let reset = start != old.start
                         || (histogram
                             && (count < old.count || buckets.iter().zip(&old.buckets).any(|(new, old)| new < old)))
-                        || (!histogram && monotonic && sum.zip(old.sum).is_some_and(|(new, old)| new < old));
+                        || (!histogram && monotonic && decreased);
+                    if reset
+                        && (start == old.start
+                            || interval_start <= 0
+                            || time.saturating_sub(interval_start) > 60_000_000_000)
+                    {
+                        cache.insert(fingerprint.clone(), previous);
+                        decoded.rejected += 1;
+                        decoded.message =
+                            "cumulative reset established a baseline; interval data is unavailable".into();
+                        continue;
+                    }
                     if !reset {
                         interval_extrema = false;
                         interval_start = old.time;
                         count -= if histogram { old.count } else { 0 };
-                        sum = sum.zip(old.sum).and_then(|(new, old)| {
-                            let value = new - old;
-                            value.is_finite().then_some(value)
-                        });
+                        sum = match integer_sum.zip(old.integer_sum) {
+                            // i128 also handles a valid nonmonotonic signed span whose
+                            // difference exceeds i64, without overflowing the snapshots.
+                            Some((new, old)) => Some((i128::from(new) - i128::from(old)) as f64),
+                            None => sum.zip(old.sum).and_then(|(new, old)| {
+                                let value = new - old;
+                                value.is_finite().then_some(value)
+                            }),
+                        };
                         if buckets.len() == old.buckets.len() {
                             for (bucket, old) in buckets.iter_mut().zip(&old.buckets) {
                                 *bucket -= old;
@@ -570,16 +712,20 @@ fn exponential_point(point: &Json) -> Option<(i64, serde_json::Map<String, Json>
         if values.is_null() {
             continue;
         }
+        if !values.is_object() {
+            return None;
+        }
         let offset = if field(values, "offset").is_null() {
             0
         } else {
             checked_integer(field(values, "offset"))?
         };
         i32::try_from(offset).ok()?;
-        let buckets = array(field(values, "bucketCounts"))
-            .iter()
-            .map(count_value)
-            .collect::<Option<Vec<_>>>()?;
+        let raw = field(values, "bucketCounts");
+        if (!raw.is_null() && !raw.is_array()) || array(raw).len() > super::exponential::MAX_BUCKETS {
+            return None;
+        }
+        let buckets = array(raw).iter().map(count_value).collect::<Option<Vec<_>>>()?;
         total = buckets
             .iter()
             .try_fold(total, |total, value| total.checked_add(*value))?;
@@ -734,4 +880,77 @@ fn series_fingerprint(name: &str, resource: &Document, attributes: &Document, so
         "{:x}",
         Sha256::digest(format!("{source}\n{name}\n{}", fields.join("\n")).as_bytes())
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn cumulative_sum(decoder: &Decoder, time: i64, integer: Option<i64>, double: Option<f64>) -> Decoded {
+        let mut point = json!({"startTimeUnixNano":"1000000000","timeUnixNano":time.to_string()});
+        if let Some(value) = integer {
+            point["asInt"] = json!(value.to_string());
+        }
+        if let Some(value) = double {
+            point["asDouble"] = json!(value);
+        }
+        let body = json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"exact-cumulative",
+            "sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[point]}}]}]}]});
+        decoder
+            .decode(
+                Signal::Metrics,
+                "application/json",
+                body.to_string().as_bytes(),
+                "exact-fixture",
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn cumulative_integer_sum_preserves_adjacent_large_values_and_detects_reset() {
+        let decoder = Decoder::default();
+        let large = 9_007_199_254_740_992_i64;
+        assert_eq!(cumulative_sum(&decoder, 60_000_000_000, Some(large), None).rejected, 0);
+        let increment = cumulative_sum(&decoder, 120_000_000_000, Some(large + 1), None);
+        assert_eq!(increment.documents[0]["sum"], Value::F64(1.0));
+        let decrease = cumulative_sum(&decoder, 180_000_000_000, Some(large), None);
+        assert_eq!(
+            decrease.rejected, 1,
+            "a one-unit decrease must reset even when float snapshots compare equal"
+        );
+        assert!(decrease.documents.is_empty());
+        let next = cumulative_sum(&decoder, 240_000_000_000, Some(large + 1), None);
+        assert_eq!(next.documents[0]["sum"], Value::F64(1.0));
+        assert_eq!(next.documents[0]["bucket_start"], Value::I64(180_000));
+    }
+
+    #[test]
+    fn cumulative_doubles_and_safe_mixed_values_keep_deltas_while_unsafe_switch_rebaselines() {
+        let decoder = Decoder::default();
+        assert_eq!(cumulative_sum(&decoder, 60_000_000_000, Some(9), None).rejected, 0);
+        assert_eq!(
+            cumulative_sum(&decoder, 120_000_000_000, None, Some(11.5)).documents[0]["sum"],
+            Value::F64(2.5)
+        );
+        assert_eq!(
+            cumulative_sum(&decoder, 180_000_000_000, None, Some(12.0)).documents[0]["sum"],
+            Value::F64(0.5)
+        );
+        assert_eq!(
+            cumulative_sum(&decoder, 240_000_000_000, Some(14), None).documents[0]["sum"],
+            Value::F64(2.0)
+        );
+        let large = 9_007_199_254_740_992_i64;
+        let decoder = Decoder::default();
+        cumulative_sum(&decoder, 60_000_000_000, Some(large + 1), None);
+        let switched = cumulative_sum(&decoder, 120_000_000_000, None, Some(large as f64));
+        assert_eq!(switched.rejected, 1);
+        assert!(switched.documents.is_empty());
+        assert!(switched.message.contains("representation"));
+        assert_eq!(
+            cumulative_sum(&decoder, 180_000_000_000, None, Some(large as f64 + 2.0)).documents[0]["sum"],
+            Value::F64(2.0)
+        );
+    }
 }

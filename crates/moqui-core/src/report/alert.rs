@@ -489,7 +489,7 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
                 ("toAddresses".into(), Value::string(text(contact, "toAddresses", ""))),
                 ("bodyParameters".into(), moqui_lib::json::from_json(payload)),
             ]);
-            crate::service::call::sync_checked(
+            let sent = crate::service::call::sync_checked(
                 "org.moqui.impl.EmailServices.send#EmailTemplate",
                 &params,
                 &crate::service::call::CallOptions {
@@ -498,6 +498,14 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
                 },
             )
             .map_err(fail)?;
+            if sent
+                .get("sendError")
+                .and_then(Value::as_str)
+                .is_some_and(|message| !message.is_empty())
+                || sent.get("messageId").and_then(Value::as_str).is_none_or(str::is_empty)
+            {
+                return Err(fail("alert email delivery failed; contact remains pending for retry"));
+            }
             Ok(())
         }
         "webhook" => {

@@ -120,6 +120,62 @@ pub struct DocumentMapping {
     pub display: DisplayFields,
 }
 
+/// One typed view of an authorized multi-store population. Conflicting declarations are
+/// refused rather than silently coercing distinct identifiers or dropping a store.
+pub(crate) fn combined_mapping(
+    mappings: &[std::sync::Arc<DocumentMapping>],
+) -> Result<DocumentMapping, moqui_lib::error::Error> {
+    fn merge(target: &mut ObjectMapping, source: &ObjectMapping, prefix: &str) -> Result<(), moqui_lib::error::Error> {
+        for (name, field) in &source.fields {
+            if target.children.contains_key(name) {
+                return Err(moqui_lib::error::Error::new(format!(
+                    "incompatible object/field mappings for {prefix}{name}"
+                )));
+            }
+            if let Some(existing) = target.fields.get_mut(name) {
+                if existing.kind != field.kind {
+                    if matches!(
+                        (existing.kind, field.kind),
+                        (FieldKind::Long, FieldKind::Double) | (FieldKind::Double, FieldKind::Long)
+                    ) {
+                        existing.kind = FieldKind::Double;
+                    } else {
+                        return Err(moqui_lib::error::Error::new(format!("incompatible aggregation mappings for {prefix}{name}: {} and {}; align the DataDocument field types",existing.kind.search_type(),field.kind.search_type())));
+                    }
+                }
+                existing.sortable &= field.sortable;
+            } else {
+                target.fields.insert(name.clone(), *field);
+            }
+        }
+        for (name, child) in &source.children {
+            if target.fields.contains_key(name) {
+                return Err(moqui_lib::error::Error::new(format!(
+                    "incompatible field/object mappings for {prefix}{name}"
+                )));
+            }
+            merge(
+                target.children.entry(name.clone()).or_default(),
+                child,
+                &format!("{prefix}{name}."),
+            )?;
+        }
+        Ok(())
+    }
+    let mut root = ObjectMapping::default();
+    for mapping in mappings {
+        merge(&mut root, &mapping.root, "")?;
+    }
+    Ok(DocumentMapping {
+        document_id: "__combined_population".into(),
+        index_name: None,
+        physical_name: "__combined_population".into(),
+        root,
+        manual_mapping_service: None,
+        display: Default::default(),
+    })
+}
+
 /// What a search result shows and how its text is weighted: `DataDocumentField.searchRole` and
 /// `searchWeight`, on root fields.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

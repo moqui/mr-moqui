@@ -113,11 +113,38 @@ thread_local! {
 // retained memory. Separate cache lines avoid adding producer/exporter contention
 // to the very workload this allocation-free counter measures.
 #[repr(align(128))]
-struct LiveShard(std::sync::atomic::AtomicI64);
-static LIVE_SHARDS: [LiveShard; 128] = [const { LiveShard(std::sync::atomic::AtomicI64::new(0)) }; 128];
+struct LiveShard(
+    std::sync::atomic::AtomicI64,
+    std::sync::atomic::AtomicU64,
+    std::sync::atomic::AtomicU64,
+);
+static LIVE_SHARDS: [LiveShard; 128] = [const {
+    LiveShard(
+        std::sync::atomic::AtomicI64::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+    )
+}; 128];
+static PROCESS_ALLOCS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Count cross-thread allocations only in a separate allocation pass. Timed passes
+/// retain the existing live-byte accounting without the additional counters.
+pub fn record_process_allocations(enabled: bool) {
+    PROCESS_ALLOCS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn process_counts() -> Counts {
+    let mut counts = Counts::default();
+    for shard in &LIVE_SHARDS {
+        counts.live += shard.0.load(std::sync::atomic::Ordering::Relaxed);
+        counts.allocs += shard.1.load(std::sync::atomic::Ordering::Relaxed);
+        counts.bytes += shard.2.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    counts
+}
 static NEXT_LIVE_SHARD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn note_process_live(delta: i64) {
+fn note_process_live(delta: i64, allocation: bool) {
     let _ = LIVE_SHARD.try_with(|slot| {
         let mut index = slot.get();
         if index == usize::MAX {
@@ -129,6 +156,12 @@ fn note_process_live(delta: i64) {
         LIVE_SHARDS[index]
             .0
             .fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+        if allocation && PROCESS_ALLOCS.load(std::sync::atomic::Ordering::Relaxed) {
+            LIVE_SHARDS[index].1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            LIVE_SHARDS[index]
+                .2
+                .fetch_add(delta.unsigned_abs(), std::sync::atomic::Ordering::Relaxed);
+        }
     });
 }
 
@@ -141,7 +174,7 @@ fn process_live() -> i64 {
 
 fn note_alloc(size: usize) {
     let size = i64::try_from(size).unwrap_or(i64::MAX);
-    note_process_live(size);
+    note_process_live(size, true);
     let _ = ALLOCS.try_with(|count| count.set(count.get() + 1));
     let _ = BYTES.try_with(|bytes| bytes.set(bytes.get() + size.unsigned_abs()));
     let _ = LIVE.try_with(|live| live.set(live.get() + size));
@@ -149,7 +182,7 @@ fn note_alloc(size: usize) {
 
 fn note_free(size: usize) {
     let size = i64::try_from(size).unwrap_or(i64::MAX);
-    note_process_live(-size);
+    note_process_live(-size, false);
     let _ = LIVE.try_with(|live| live.set(live.get() - size));
 }
 

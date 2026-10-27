@@ -63,6 +63,26 @@ fn verify(url: Option<&str>) {
         })
         .collect();
     assert_eq!(facade.index_entries("otel_metrics", documents).unwrap(), 1005);
+    // Real normalized OTLP populations exercise the same exponential hour/day
+    // persistence path on PostgreSQL and OpenSearch, across differing scales.
+    let decoder = moqui_core::telemetry::ingest::Decoder::default();
+    for (at, scale, count, zero, buckets, sum) in [(1, 1, 4, 1, vec![1, 2], 3.0), (2, 0, 8, 2, vec![6], 8.0)] {
+        let body = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"rollup.exponential",
+        "exponentialHistogram":{"aggregationTemporality":1,"dataPoints":[{
+            "startTimeUnixNano":(hour+(at-1)*60_000)*1_000_000,"timeUnixNano":(hour+at*60_000)*1_000_000,
+            "scale":scale,"count":count,"zeroCount":zero,"sum":sum,"positive":{"offset":0,"bucketCounts":buckets}
+        }]}}]}]}]});
+        let decoded = decoder
+            .decode(
+                moqui_core::telemetry::ingest::Signal::Metrics,
+                "application/json",
+                body.to_string().as_bytes(),
+                "rollup-fixture",
+            )
+            .unwrap();
+        assert_eq!(decoded.rejected, 0);
+        assert_eq!(facade.index_entries("otel_metrics", decoded.documents).unwrap(), 1);
+    }
     for _ in 0..2 {
         let status = maintenance::rollup_metrics(factory).unwrap();
         assert_eq!(status["failed"], Value::I64(0), "{status:?}");
@@ -83,6 +103,21 @@ fn verify(url: Option<&str>) {
                 stored["buckets"],
                 Value::List(vec![Value::I64(0), Value::I64(1005), Value::I64(0)])
             );
+            let mut request = search::SearchRequest::new(search::Query::all(vec![
+                search::Query::eq("name", Value::string("rollup.exponential")),
+                search::Query::eq("granularity", Value::string(granularity)),
+            ]));
+            request.limit = 2;
+            let page = facade
+                .search(&search::Target::Index("otel_metrics".into()), &request)
+                .unwrap();
+            assert_eq!(page.total, 1, "one deterministic exponential rollup per period");
+            let raw = moqui_lib::json::to_json(&page.hits[0].body["exponential_histogram"]);
+            assert_eq!(raw["scale"], 0);
+            assert_eq!(raw["count"], 12);
+            assert_eq!(raw["zeroCount"], 3);
+            assert_eq!(raw["positive"]["bucketCounts"], serde_json::json!([9]));
+            assert_eq!(page.hits[0].body["count"], Value::I64(12));
         }
     }
     let now = jiff::Timestamp::now().as_millisecond();

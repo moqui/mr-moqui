@@ -2,6 +2,19 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlist">
     <parameter name="definitionId" required="true"/><parameter name="from"/><parameter name="thru"/>
+    <transition name="data" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
+            if (definition.type!=='report' || definition.body.kind!=='playlist') throw new Error('Choose a dashboard playlist')
+            const at=Number(index || 0),items=definition.body.playlist || []
+            if (!Number.isInteger(at) || at<0 || at>=items.length) throw new Error('Choose a playlist item')
+            const id=items[at].definitionId
+            const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId:id,from:from || 'now-7d',thru:thru || 'now'}).call().dashboard
+            output.definitionId=id;output.absoluteTime=output.range
+            const frames={};for (const [panelId,panel] of Object.entries(output.panels || {})) frames[panelId]=panel.frames || []
+            ec.web.sendJsonResponse({dashboard:output,frames})
+        ]]></script></actions><default-response type="none"/>
+    </transition>
     <actions><script><![CDATA[
         const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
         if (definition.type!=='report' || definition.body.kind!=='playlist') throw new Error('Choose a dashboard playlist')
@@ -17,7 +30,7 @@
         <label text="${playlistTitle}" type="h4"/>
         <render-mode>
             <text type="qvt"><![CDATA[<m-report-playlist :items="${WebUtilities.encodeHtml(JSON.stringify(playlistEntries))}" :seconds="${playlistSeconds}"></m-report-playlist>]]></text>
-            <text type="tui"><![CDATA[${JSON.stringify({t:'text',text:'Open a dashboard below. Automatic rotation is available in the browser.'})}]]></text>
+            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-playlist',props:{source:sri.buildUrl('//apps/dashboards/Playlist/data').getUrlWithParams(),definitionId:definitionId,from:from || 'now-7d',thru:thru || 'now',items:playlistEntries,seconds:playlistSeconds}})}]]></text>
             <text type="html,html-print,text"><![CDATA[<p>Open a dashboard below.</p>]]></text>
         </render-mode>
         <form-list name="PlaylistDashboards" list="playlistEntries" skip-form="true">

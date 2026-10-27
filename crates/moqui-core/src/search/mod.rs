@@ -269,6 +269,15 @@ pub trait SearchBackend: Send + Sync {
     fn index_exists(&self, mapping: &DocumentMapping) -> Result<bool, Error>;
     /// Insert or replace documents. Control fields are already removed from each body.
     fn index_documents(&self, mapping: &DocumentMapping, documents: &[(String, Document)]) -> Result<usize, Error>;
+    /// Telemetry exporter writes may acknowledge durable indexing before a search refresh.
+    /// Backends with committed read visibility keep their ordinary write semantics.
+    fn index_telemetry_documents(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+    ) -> Result<usize, Error> {
+        self.index_documents(mapping, documents)
+    }
     /// Atomically add a nonnegative counter while retaining the earliest/latest observation.
     /// A backend must not implement this with a read-modify-write pair.
     fn upsert_counter(
@@ -304,6 +313,20 @@ pub trait SearchBackend: Send + Sync {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
     ) -> Result<IndexMap<String, Value>, Error>;
+    /// Execute against the union of these already-authorized stores before calculating
+    /// metrics. Backends must never approximate this by merging local percentiles/top-Ns.
+    fn aggregate_many(
+        &self,
+        mappings: &[Arc<DocumentMapping>],
+        filter: &Query,
+        aggs: &IndexMap<String, Agg>,
+        fresh_by: Option<std::time::Instant>,
+    ) -> Result<IndexMap<String, Value>, Error> {
+        let _ = (mappings, filter, aggs, fresh_by);
+        Err(Error::new(
+            "this backend does not support combined-population aggregations",
+        ))
+    }
     fn drop_index(&self, mapping: &DocumentMapping) -> Result<(), Error>;
     /// [`Self::aggregate`] for read-your-writes, as [`SearchRequest::fresh_by`] describes. A backend
     /// with no read replica reads its one store.
@@ -554,6 +577,17 @@ impl SearchFacade {
     /// Flat framework-owned documents share the same stores on both backends. Caller-supplied
     /// ids make interval rollups idempotent; otherwise the backend generates an id.
     pub fn index_entries(&self, index: &str, entries: Vec<Document>) -> Result<usize, Error> {
+        self.index_entries_inner(index, entries, false)
+    }
+
+    /// Queue-worker telemetry ingestion. OpenSearch acknowledges a bulk write before its
+    /// normal index refresh; stable ids keep retries idempotent. Other backends retain
+    /// committed visibility. Use `index_entries` when the caller needs searchable writes.
+    pub fn index_entries_deferred_refresh(&self, index: &str, entries: Vec<Document>) -> Result<usize, Error> {
+        self.index_entries_inner(index, entries, true)
+    }
+
+    fn index_entries_inner(&self, index: &str, entries: Vec<Document>, deferred_refresh: bool) -> Result<usize, Error> {
         if !telemetry::is_telemetry_index(index) {
             return Err(Error::new(format!("unknown telemetry index {index}")));
         }
@@ -572,7 +606,14 @@ impl SearchFacade {
                 (id, body)
             })
             .collect();
-        match self.backend.index_documents(&mapping, &documents) {
+        let index_documents = |documents: &[(String, Document)]| {
+            if deferred_refresh {
+                self.backend.index_telemetry_documents(&mapping, documents)
+            } else {
+                self.backend.index_documents(&mapping, documents)
+            }
+        };
+        match index_documents(&documents) {
             Ok(count) => Ok(count),
             Err(error) => {
                 let record_failure = [
@@ -593,7 +634,7 @@ impl SearchFacade {
                 let mut indexed = 0;
                 let mut failed = 0;
                 for document in &documents {
-                    match self.backend.index_documents(&mapping, std::slice::from_ref(document)) {
+                    match index_documents(std::slice::from_ref(document)) {
                         Ok(count) => indexed += count,
                         Err(error) => {
                             failed += 1;
@@ -832,17 +873,21 @@ impl SearchFacade {
             return Ok(results);
         }
         let [id] = ids.as_slice() else {
-            // Collect complete bounded per-type groups, merge globally, and only then apply
-            // Terms ordering/size. Merging local top-N lists would silently lose global winners.
-            let expanded = mergeable_aggs(aggs)?;
-            let mut collected = Vec::new();
+            self.require(&filter.capabilities())?;
+            if let Some(deadline) = fresh_by {
+                fresh::wait_for_pending(deadline)?;
+            }
+            let mut mappings = Vec::new();
             for id in ids {
                 let mapping = self.mapping(&id)?;
                 if self.backend.index_exists(&mapping)? {
-                    collected.push(self.aggregate_mapping(&mapping, filter, &expanded, fresh_by)?);
+                    mappings.push(mapping);
                 }
             }
-            return merge_results(aggs, &collected);
+            if mappings.is_empty() {
+                return Ok(agg_empty_results(aggs));
+            }
+            return self.backend.aggregate_many(&mappings, filter, aggs, fresh_by);
         };
         let mapping = self.mapping(id)?;
         if !self.backend.index_exists(&mapping)? {
@@ -1029,152 +1074,6 @@ fn restore_document_terms(aggs: &IndexMap<String, Agg>, results: &mut IndexMap<S
             }
         }
     }
-}
-
-fn mergeable_aggs(aggs: &IndexMap<String, Agg>) -> Result<IndexMap<String, Agg>, Error> {
-    let mut result = aggs.clone();
-    for agg in result.values_mut() {
-        match agg {
-            Agg::Terms(terms) => {
-                if terms.other.is_some() {
-                    return Err(Error::new("Other buckets across document types are not supported"));
-                }
-                terms.size = limits::buckets();
-                terms.aggs = mergeable_aggs(&terms.aggs)?;
-            }
-            Agg::DateHistogram(histogram) => histogram.aggs = mergeable_aggs(&histogram.aggs)?,
-            Agg::Filter { aggs, .. } | Agg::NamedFilters { aggs, .. } | Agg::Histogram { aggs, .. } => {
-                *aggs = mergeable_aggs(aggs)?
-            }
-            Agg::Sum { .. }
-            | Agg::Extreme { .. }
-            | Agg::Metric {
-                kind: agg::Metric::ValueCount,
-                ..
-            } => {}
-            _ => return Err(Error::new("this aggregation cannot be merged across document types")),
-        }
-    }
-    Ok(result)
-}
-
-fn merge_results(
-    aggs: &IndexMap<String, Agg>,
-    results: &[IndexMap<String, Value>],
-) -> Result<IndexMap<String, Value>, Error> {
-    fn numeric_sum(values: &[Value]) -> Value {
-        let total = values
-            .iter()
-            .filter_map(|v| {
-                moqui_lib::object::to_plain_string(v)
-                    .parse::<moqui_lib::format::Decimal>()
-                    .ok()
-            })
-            .sum::<moqui_lib::format::Decimal>();
-        Value::Decimal(total)
-    }
-    let mut output = IndexMap::new();
-    for (name, agg) in aggs {
-        let values: Vec<_> = results.iter().filter_map(|r| r.get(name).cloned()).collect();
-        let merged = match agg {
-            Agg::Sum { .. }
-            | Agg::Metric {
-                kind: agg::Metric::ValueCount,
-                ..
-            } => numeric_sum(&values),
-            Agg::Extreme { max, .. } => values
-                .into_iter()
-                .filter(|v| !v.is_null())
-                .reduce(|a, b| {
-                    let greater = moqui_lib::object::compare_obj(&a, &b).is_ok_and(|o| o.is_gt());
-                    if greater == *max {
-                        a
-                    } else {
-                        b
-                    }
-                })
-                .unwrap_or(Value::Null),
-            Agg::Filter { aggs, .. } => {
-                let maps: Vec<_> = values
-                    .iter()
-                    .filter_map(|v| if let Value::Map(m) = v { Some(m.clone()) } else { None })
-                    .collect();
-                let mut merged = merge_results(aggs, &maps)?;
-                let count: Vec<_> = maps.iter().filter_map(|m| m.get("doc_count").cloned()).collect();
-                merged.insert("doc_count".into(), numeric_sum(&count));
-                Value::Map(merged)
-            }
-            _ => {
-                let nested = agg.sub_aggs().ok_or_else(|| Error::new("nonmergeable aggregation"))?;
-                let mut groups: std::collections::BTreeMap<String, (Value, Vec<IndexMap<String, Value>>)> =
-                    std::collections::BTreeMap::new();
-                for value in values {
-                    if let Value::Map(holder) = value {
-                        if let Some(Value::List(buckets)) = holder.get("buckets") {
-                            for bucket in buckets {
-                                if let Value::Map(map) = bucket {
-                                    let key = map.get("key").cloned().unwrap_or(Value::Null);
-                                    let token = moqui_lib::json::canonical(&moqui_lib::json::to_json(&key));
-                                    groups
-                                        .entry(token)
-                                        .or_insert_with(|| (key, Vec::new()))
-                                        .1
-                                        .push(map.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                if groups.len() > limits::buckets() {
-                    return Err(Error::new("index aggregation has too many groups"));
-                }
-                let mut buckets = Vec::new();
-                for (key, maps) in groups.into_values() {
-                    let mut bucket = merge_results(nested, &maps)?;
-                    let counts: Vec<_> = maps.iter().filter_map(|m| m.get("doc_count").cloned()).collect();
-                    bucket.insert("doc_count".into(), numeric_sum(&counts));
-                    bucket.insert("key".into(), key);
-                    if let Some(display) = maps.first().and_then(|m| m.get("key_display")) {
-                        bucket.insert("key_display".into(), display.clone());
-                    }
-                    buckets.push(bucket);
-                }
-                if let Agg::Terms(terms) = agg {
-                    buckets.sort_by(|a, b| {
-                        let (key, desc) = match &terms.order {
-                            agg::TermsOrder::Key { descending } => ("key", *descending),
-                            agg::TermsOrder::Count { descending } => ("doc_count", *descending),
-                            agg::TermsOrder::Metric { name, descending } => (name.as_str(), *descending),
-                        };
-                        let order = moqui_lib::object::compare_obj(
-                            a.get(key).unwrap_or(&Value::Null),
-                            b.get(key).unwrap_or(&Value::Null),
-                        )
-                        .unwrap_or(std::cmp::Ordering::Equal);
-                        let order = if desc { order.reverse() } else { order };
-                        order.then_with(|| {
-                            moqui_lib::object::to_plain_string(&a["key"])
-                                .cmp(&moqui_lib::object::to_plain_string(&b["key"]))
-                        })
-                    });
-                    buckets.truncate(terms.size);
-                } else {
-                    buckets.sort_by(|a, b| {
-                        moqui_lib::object::compare_obj(&a["key"], &b["key"]).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    if matches!(agg,Agg::DateHistogram(h)if h.descending) {
-                        buckets.reverse();
-                    }
-                }
-                Value::Map(IndexMap::from([(
-                    "buckets".into(),
-                    Value::List(buckets.into_iter().map(Value::Map).collect()),
-                )]))
-            }
-        };
-        output.insert(name.clone(), merged);
-    }
-    Ok(output)
 }
 
 /// Results for a store that does not exist yet: empty buckets and zero metrics.

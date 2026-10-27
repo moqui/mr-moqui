@@ -43,6 +43,7 @@ struct State {
     stream: ResponseStream,
     sent: u64,
     factory: Arc<ExecutionContextFactory>,
+    trace: Option<moqui_core::telemetry::TraceContext>,
 }
 
 /// The body that reads `stream` a window at a time.
@@ -51,6 +52,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         stream,
         sent: 0,
         factory,
+        trace: moqui_core::telemetry::capture(),
     };
     let windows = futures_util::stream::unfold(Some(state), |state| async move {
         let state = state?;
@@ -64,6 +66,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         let source = Arc::clone(&state.stream.source);
         let factory = Arc::clone(&state.factory);
         let needs_context = source.needs_context();
+        let trace = state.trace.clone();
         let permit = if needs_context {
             readers(&factory).acquire_owned().await.ok()
         } else {
@@ -71,6 +74,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         };
         let read = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            let _trace = moqui_core::telemetry::attach(trace);
             if needs_context {
                 let context = factory.new_context();
                 let _entered = context.enter();
@@ -105,4 +109,61 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
     });
     // hyper may poll a body once more after its end, which an `unfold` must not be
     axum::body::Body::from_stream(futures_util::StreamExt::fuse(windows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moqui_core::{
+        context::ExecutionContext,
+        resource::source::ByteSource,
+        telemetry::{attach, capture, TraceContext},
+    };
+    use moqui_lib::error::Error;
+
+    struct ObservedSource(Option<TraceContext>);
+    impl ByteSource for ObservedSource {
+        fn len(&self) -> u64 {
+            2
+        }
+        fn needs_context(&self) -> bool {
+            true
+        }
+        fn read_at(&self, _: u64, _: usize) -> Result<Vec<u8>, Error> {
+            assert!(
+                ExecutionContext::with_current(|_| ()).is_some(),
+                "database source requires an entered worker context"
+            );
+            assert_eq!(
+                capture(),
+                self.0,
+                "transfer worker must restore the captured request context, including anonymous reads"
+            );
+            Ok(b"ok".to_vec())
+        }
+    }
+
+    #[tokio::test]
+    async fn source_reads_restore_request_context_without_holding_a_guard_across_await() {
+        let context = ExecutionContextFactory::test_context();
+        let marker = TraceContext::extract("00-11111111111111111111111111111111-2222222222222222-01", "").unwrap();
+        for trace in [Some(marker), None] {
+            let body = {
+                let _trace = attach(trace.clone());
+                body(
+                    Arc::clone(context.factory()),
+                    ResponseStream {
+                        source: Arc::new(ObservedSource(trace)),
+                        offset: 0,
+                        length: 2,
+                    },
+                )
+            };
+            assert!(
+                capture().is_none(),
+                "caller context is restored before async consumption"
+            );
+            assert_eq!(&axum::body::to_bytes(body, 16).await.unwrap()[..], b"ok");
+        }
+    }
 }

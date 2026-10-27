@@ -812,15 +812,221 @@ fn sdk_processors_expose_every_record_to_the_core_queue_and_account_for_overload
         "transport must not block span/log producers"
     );
     let counters = telemetry.counters();
-    assert_eq!(counters.queued, (MAX_QUEUE + 1) as u64);
-    assert_eq!(
-        counters.dropped, 32,
-        "all overload drops are visible, with no hidden SDK queue"
-    );
+    assert!(counters.queued <= (MAX_QUEUE + 1) as u64);
+    assert!(counters.dropped >= 32);
+    assert_eq!(counters.queued + counters.dropped, (MAX_QUEUE + 33) as u64,
+        "reserved root capacity can reject ordinary logs earlier; every SDK record is accounted for");
     release.send(()).unwrap();
     telemetry.shutdown();
     assert_eq!(exporter.records.load(Ordering::Relaxed), counters.queued);
-    assert_eq!(telemetry.counters().dropped, 32);
+    assert_eq!(telemetry.counters().dropped, counters.dropped);
+}
+
+fn admission_shared() -> (Shared, mpsc::Receiver<Command>) {
+    let (sender, receiver) = mpsc::sync_channel(MAX_QUEUE);
+    (
+        Shared {
+            sender,
+            counters: Arc::default(),
+            queued_records: AtomicUsize::new(0),
+            queued_bytes: AtomicUsize::new(0),
+            config: Config::from_conf("<moqui-conf><telemetry/></moqui-conf>"),
+            resource: Mutex::new(Resource::default()),
+            stopped: AtomicBool::new(false),
+            drained: AtomicBool::new(false),
+            warned_legacy: AtomicBool::new(false),
+            gauges_registered: AtomicBool::new(false),
+            slow: Mutex::default(),
+        },
+        receiver,
+    )
+}
+
+fn admission_root(job: bool) -> Document {
+    Document::from_iter(if job {
+        vec![("moqui.job.root".into(), Value::Bool(true))]
+    } else {
+        vec![("kind".into(), Value::string("SERVER"))]
+    })
+}
+
+#[test]
+fn queue_reserves_capacity_for_local_roots_and_bounds_total_records_and_bytes() {
+    let (shared, _receiver) = admission_shared();
+    shared
+        .try_enqueue(
+            "otel_logs",
+            vec![Document::new(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
+            true,
+        )
+        .unwrap();
+    assert!(shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err());
+    assert!(
+        shared
+            .try_enqueue("otel_spans", vec![admission_root(false)], false)
+            .is_err(),
+        "received roots use ordinary capacity"
+    );
+    shared
+        .try_enqueue("otel_spans", vec![admission_root(true); ROOT_RESERVED_RECORDS], true)
+        .unwrap();
+    assert_eq!(shared.queued_records.load(Ordering::Relaxed), MAX_QUEUE);
+    assert!(shared
+        .try_enqueue("otel_spans", vec![admission_root(false)], true)
+        .is_err());
+    assert_eq!(shared.counters.dropped.load(Ordering::Relaxed), 3);
+    assert!(shared.queued_bytes.load(Ordering::Relaxed) <= MAX_BUFFER_BYTES);
+
+    let (shared, _receiver) = admission_shared();
+    shared
+        .queued_bytes
+        .store(MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES, Ordering::Relaxed);
+    assert!(shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err());
+    assert_eq!(
+        shared.queued_records.load(Ordering::Relaxed),
+        0,
+        "failed byte reservation releases record capacity"
+    );
+    shared
+        .try_enqueue("otel_spans", vec![admission_root(false)], true)
+        .unwrap();
+    shared.queued_bytes.store(MAX_BUFFER_BYTES, Ordering::Relaxed);
+    assert!(shared
+        .try_enqueue("otel_spans", vec![admission_root(false)], true)
+        .is_err());
+    assert_eq!(shared.queued_records.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot_drop_root() {
+    let (shared, receiver) = admission_shared();
+    let child = Document::from_iter([("name".into(), Value::string("error child"))]);
+    shared
+        .try_enqueue(
+            "otel_spans",
+            vec![
+                child.clone(),
+                admission_root(false),
+                child.clone(),
+                admission_root(true),
+            ],
+            true,
+        )
+        .unwrap();
+    for expected in [false, true, false, true] {
+        let Command::Documents(_, documents, _, _, _) = receiver.try_recv().unwrap() else {
+            panic!("documents")
+        };
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            mandatory_root(&documents[0]),
+            expected,
+            "child evidence must precede root tail decision"
+        );
+    }
+    let mut ready = vec![child.clone(); MAX_QUEUE];
+    ready.push(admission_root(false));
+    let (mut count, mut bytes) = (0, 0);
+    let dropped = admit_ready(&mut ready, true, &mut count, &mut bytes);
+    assert!(dropped > 0);
+    assert_eq!(ready.iter().filter(|document| mandatory_root(document)).count(), 1);
+    assert_eq!(ready.len(), count);
+    assert!(count <= MAX_QUEUE && bytes <= MAX_BUFFER_BYTES);
+    assert_eq!(dropped + ready.len(), MAX_QUEUE + 1);
+    let mut ready = vec![child, admission_root(true)];
+    let (mut count, mut bytes) = (0, MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES);
+    assert_eq!(admit_ready(&mut ready, true, &mut count, &mut bytes), 1);
+    assert_eq!(ready.len(), 1);
+    assert!(
+        mandatory_root(&ready[0]),
+        "byte-limited promotion retains root rather than rejecting the whole batch"
+    );
+}
+
+#[cfg(feature = "telemetry")]
+#[test]
+fn raw_sdk_server_and_job_roots_use_reserve_without_reordering_error_evidence() {
+    use opentelemetry::{
+        trace::{SpanContext, SpanId, TraceFlags, TraceId, TraceState},
+        KeyValue,
+    };
+    use opentelemetry_sdk::trace::SpanData;
+    let span = |kind, job, name: &'static str| SpanData {
+        span_context: SpanContext::new(
+            TraceId::from_bytes([1; 16]),
+            SpanId::from_bytes([2; 8]),
+            TraceFlags::SAMPLED,
+            false,
+            TraceState::default(),
+        ),
+        parent_span_id: SpanId::INVALID,
+        parent_span_is_remote: false,
+        span_kind: kind,
+        name: name.into(),
+        start_time: SystemTime::UNIX_EPOCH,
+        end_time: SystemTime::UNIX_EPOCH,
+        attributes: if job {
+            vec![KeyValue::new("moqui.job.root", true)]
+        } else {
+            Vec::new()
+        },
+        dropped_attributes_count: 0,
+        events: Default::default(),
+        links: Default::default(),
+        status: opentelemetry::trace::Status::Unset,
+        instrumentation_scope: Default::default(),
+    };
+    use opentelemetry::trace::SpanKind::{Internal, Server};
+    assert_eq!(
+        sdk::ExportBatch::Spans(vec![span(Server, false, "server")]).uniform_root_priority(),
+        Some(true)
+    );
+    assert_eq!(
+        sdk::ExportBatch::Spans(vec![span(Internal, true, "job")]).uniform_root_priority(),
+        Some(true)
+    );
+    assert_eq!(
+        sdk::ExportBatch::Spans(vec![span(Internal, false, "child")]).uniform_root_priority(),
+        Some(false)
+    );
+    let mut string_job = span(Internal, false, "string job");
+    string_job.attributes.push(KeyValue::new("moqui.job.root", "true"));
+    assert_eq!(
+        sdk::ExportBatch::Spans(vec![string_job]).uniform_root_priority(),
+        Some(true)
+    );
+    let (shared, receiver) = admission_shared();
+    shared.enqueue_sdk(sdk::ExportBatch::Spans(vec![
+        span(Internal, false, "error-child"),
+        span(Server, false, "server"),
+        span(Internal, false, "later-child"),
+        span(Internal, true, "job"),
+    ]));
+    for expected in ["error-child", "server", "later-child", "job"] {
+        let Command::Sdk(sdk::ExportBatch::Spans(spans), _) = receiver.try_recv().unwrap() else {
+            panic!("SDK spans")
+        };
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].name, expected);
+    }
+    let (shared, _receiver) = admission_shared();
+    shared
+        .try_enqueue(
+            "otel_logs",
+            vec![Document::new(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
+            true,
+        )
+        .unwrap();
+    shared.enqueue_sdk(sdk::ExportBatch::Spans(vec![
+        span(Internal, false, "rejected child"),
+        span(Server, false, "server"),
+        span(Internal, true, "job"),
+    ]));
+    assert_eq!(shared.counters.dropped.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        shared.queued_records.load(Ordering::Relaxed),
+        MAX_QUEUE - ROOT_RESERVED_RECORDS + 2
+    );
 }
 
 #[test]
@@ -870,4 +1076,22 @@ fn histogram_merging_keeps_exact_large_counts_and_rejects_overflow() {
         maintenance::histogram_percentile(&[-1e308, 1e308], &[0, 1, 0], 0.5),
         Some(0.0)
     );
+}
+
+#[test]
+fn flush_barrier_waits_for_full_queue_capacity_and_bounds_its_deadline() {
+    let (queue, receiver) = std::sync::mpsc::sync_channel(1);
+    queue.send(super::Command::Stop).unwrap();
+    assert!(!super::flush_barrier(&queue, std::time::Duration::from_millis(2)));
+    let worker = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(matches!(receiver.recv().unwrap(), super::Command::Stop));
+        let super::Command::Flush(reply) = receiver.recv().unwrap() else {
+            panic!("expected flush");
+        };
+        reply.send(()).unwrap();
+    });
+    assert!(super::flush_barrier(&queue, std::time::Duration::from_secs(1)));
+    worker.join().unwrap();
+    assert!(!super::flush_barrier(&queue, std::time::Duration::from_millis(2)));
 }

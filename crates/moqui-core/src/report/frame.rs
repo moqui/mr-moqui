@@ -77,6 +77,16 @@ impl Frame {
     fn select_rows(&mut self, indices: &[usize]) {
         for field in &mut self.fields {
             field.values = indices.iter().map(|i| field.values[*i].clone()).collect();
+            if let Some(bucket) = field.config.get_mut("bucket").and_then(Value::as_object_mut) {
+                for key in ["filters", "labels"] {
+                    if let Some(values) = bucket.get_mut(key).and_then(Value::as_array_mut) {
+                        *values = indices
+                            .iter()
+                            .map(|index| values.get(*index).cloned().unwrap_or(Value::Null))
+                            .collect();
+                    }
+                }
+            }
         }
     }
 }
@@ -103,6 +113,9 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
         let mut row = base.clone();
         let mut branches = Vec::new();
         for (name, value) in map {
+            if matches!(name.as_str(), "__bucket" | "__provenance") {
+                continue;
+            }
             let name = if prefix.is_empty() {
                 name.clone()
             } else {
@@ -183,6 +196,10 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
                 for bucket in buckets {
                     let mut next = row.clone();
                     next.insert(name.clone(), bucket["key"].clone());
+                    if bucket["__bucket"].is_object() {
+                        let provenance = next.entry("__provenance".into()).or_insert_with(|| json!({}));
+                        provenance[&name] = bucket["__bucket"].clone();
+                    }
                     if let Some(count) = bucket.get("doc_count") {
                         next.insert("count".into(), count.clone());
                     }
@@ -190,6 +207,7 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
                     child.remove("key");
                     child.remove("key_display");
                     child.remove("doc_count");
+                    child.remove("__bucket");
                     walk(&Value::Object(child), "", &next, out, subtotals, depth + 1);
                 }
             } else {
@@ -205,7 +223,24 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
     }
     let mut rows = Vec::new();
     walk(result, "", &BTreeMap::new(), &mut rows, subtotals, 0);
-    Frame::from_rows(&rows)
+    let mut frame = Frame::from_rows(&rows);
+    let provenance = frame
+        .fields
+        .iter()
+        .position(|field| field.name == "__provenance")
+        .map(|index| frame.fields.remove(index).values);
+    if let Some(provenance) = provenance {
+        for field in &mut frame.fields {
+            let values = provenance
+                .iter()
+                .map(|row| row.get(&field.name).cloned().unwrap_or(Value::Null))
+                .collect::<Vec<_>>();
+            if let Some(first) = values.iter().find(|value| value.is_object()) {
+                field.config.insert("bucket".into(),json!({"datasetId":first["datasetId"],"field":first["field"],"kind":first["kind"],"filters":values.iter().map(|value|value["query"].clone()).collect::<Vec<_>>(),"labels":values.iter().map(|value|value["label"].clone()).collect::<Vec<_>>() }));
+            }
+        }
+    }
+    frame
 }
 
 fn number(value: &Value) -> Option<f64> {

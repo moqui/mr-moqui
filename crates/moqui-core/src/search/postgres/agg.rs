@@ -107,12 +107,27 @@ pub fn aggregate(
     aggs: &IndexMap<String, Agg>,
     run: &mut Runner<'_>,
 ) -> Result<IndexMap<String, Value>, Error> {
-    let base = Compiler::with_text(mapping, text).where_sql(filter)?;
+    aggregate_population(table, mapping, text, filter, aggs, None, run)
+}
+
+pub fn aggregate_population(
+    table: &str,
+    mapping: &DocumentMapping,
+    text: &TextSetup,
+    filter: &Query,
+    aggs: &IndexMap<String, Agg>,
+    documents: Option<&[std::sync::Arc<DocumentMapping>]>,
+    run: &mut Runner<'_>,
+) -> Result<IndexMap<String, Value>, Error> {
+    let base = Compiler::with_text(mapping, text)
+        .with_documents(documents)
+        .where_sql(filter)?;
     let mut ctx = LevelCtx {
         table,
         mapping,
         text,
         base,
+        documents,
         run,
     };
     let rows = run_level(&mut ctx, &[], &[], aggs)?;
@@ -131,6 +146,7 @@ struct LevelCtx<'a, 'r> {
     mapping: &'a DocumentMapping,
     text: &'a TextSetup,
     base: Sql,
+    documents: Option<&'a [std::sync::Arc<DocumentMapping>]>,
     run: &'a mut Runner<'r>,
 }
 
@@ -141,7 +157,7 @@ fn run_level(
     conds: &[Sql],
     aggs: &IndexMap<String, Agg>,
 ) -> Result<Vec<Row>, Error> {
-    let compiler = Compiler::with_text(ctx.mapping, ctx.text);
+    let compiler = Compiler::with_text(ctx.mapping, ctx.text).with_documents(ctx.documents);
     let mut items = Vec::new();
     let mut children = Vec::new();
     collect(&compiler, aggs, &[], &[], &mut items, &mut children)?;
@@ -384,7 +400,15 @@ fn attach_children(
 ) -> Result<(), Error> {
     if let Agg::TopHits { size, sort } = child.agg {
         for (tuple, content) in out {
-            let mut sql = Sql::new(format!("SELECT doc_id, body::text AS body FROM {}", ctx.table));
+            let identity = if ctx.documents.is_some() {
+                "__document".into()
+            } else {
+                literal(&ctx.mapping.document_id)
+            };
+            let mut sql = Sql::new(format!(
+                "SELECT doc_id, {identity} AS document_id, body::text AS body FROM {}",
+                ctx.table
+            ));
             for key in keys {
                 if let Some(lateral) = &key.lateral {
                     sql.push(" ");
@@ -414,6 +438,9 @@ fn attach_children(
                 ));
             }
             order.push("doc_id ASC".into());
+            if ctx.documents.is_some() {
+                order.push("__document ASC".into());
+            }
             sql.push(&format!(" ORDER BY {} LIMIT {size}", order.join(", ")));
             let rows = (ctx.run)(&sql)?;
             let mut samples = Vec::new();
@@ -427,6 +454,10 @@ fn attach_children(
                 samples.push(Value::Map(IndexMap::from([
                     ("id".into(), row.get("doc_id").cloned().unwrap_or(Value::Null)),
                     ("body".into(), body),
+                    (
+                        "documentId".into(),
+                        row.get("document_id").cloned().unwrap_or(Value::Null),
+                    ),
                 ])));
             }
             set_path(content, &child.path, Value::List(samples));
@@ -689,10 +720,7 @@ fn date_value(compiler: &Compiler<'_>, field: &str, depth: usize) -> Result<(Str
 fn terms_key(compiler: &Compiler<'_>, terms: &Terms, depth: usize) -> Result<KeyDef, Error> {
     match compiler.locate_root(&terms.field) {
         Located::Missing => Ok(KeyDef {
-            select: terms
-                .missing
-                .as_ref()
-                .map_or_else(|| "NULL::text".into(), |s| literal(s)),
+            select: "NULL::text".into(),
             lateral: None,
         }),
         Located::Field { arrays, expr, field } => {
@@ -704,10 +732,7 @@ fn terms_key(compiler: &Compiler<'_>, terms: &Terms, depth: usize) -> Result<Key
             }
             if arrays.is_empty() {
                 Ok(KeyDef {
-                    select: terms.missing.as_ref().map_or_else(
-                        || expr.clone(),
-                        |missing| format!("COALESCE(({expr})::text, {})", literal(missing)),
-                    ),
+                    select: expr,
                     lateral: None,
                 })
             } else {

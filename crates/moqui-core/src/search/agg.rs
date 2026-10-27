@@ -636,9 +636,23 @@ pub(crate) fn fill_other_buckets(
     aggs: &IndexMap<String, Agg>,
     results: &mut IndexMap<String, Value>,
 ) -> Result<(), Error> {
+    let mut aggregate = |filter: &Query, aggs: &IndexMap<String, Agg>| backend.aggregate(mapping, filter, aggs);
+    fill_other_buckets_with(&mut aggregate, filter, aggs, results)
+}
+
+type AggregateCallback<'a> = dyn FnMut(&Query, &IndexMap<String, Agg>) -> Result<IndexMap<String, Value>, Error> + 'a;
+
+pub(crate) fn fill_other_buckets_with(
+    aggregate: &mut AggregateCallback<'_>,
+    filter: &Query,
+    aggs: &IndexMap<String, Agg>,
+    results: &mut IndexMap<String, Value>,
+) -> Result<(), Error> {
     fn has_other(aggs: &IndexMap<String, Agg>) -> bool {
-        aggs.values()
-            .any(|agg| matches!(agg,Agg::Terms(terms)if terms.other.is_some()) || agg.sub_aggs().is_some_and(has_other))
+        aggs.values().any(|agg| {
+            matches!(agg,Agg::Terms(terms)if terms.other.is_some()||terms.missing.is_some())
+                || agg.sub_aggs().is_some_and(has_other)
+        })
     }
     if !has_other(aggs) {
         return Ok(());
@@ -666,31 +680,94 @@ pub(crate) fn fill_other_buckets(
         };
         if let Agg::Filter { query, aggs } = agg {
             if let Value::Map(map) = value {
-                fill_other_buckets(
-                    backend,
-                    mapping,
-                    &Query::all(vec![filter.clone(), query.clone()]),
-                    aggs,
-                    map,
-                )?;
+                fill_other_buckets_with(aggregate, &Query::all(vec![filter.clone(), query.clone()]), aggs, map)?;
             }
             continue;
         }
         let Some(buckets) = bucket_map(value) else {
             continue;
         };
+        if let Agg::Terms(terms) = agg {
+            if let Some(label) = &terms.missing {
+                let missing = Query::all(vec![
+                    filter.clone(),
+                    negated(Query::Field(Box::new(FieldQuery {
+                        name: terms.field.clone(),
+                        op: FieldOp::Exists,
+                        value: Value::Null,
+                        values: Vec::new(),
+                        gt: None,
+                        gte: None,
+                        lt: None,
+                        lte: None,
+                        negate: false,
+                    }))),
+                ]);
+                let counts = aggregate(
+                    &missing,
+                    &IndexMap::from([(
+                        "population".into(),
+                        Agg::Filter {
+                            query: Query::MatchAll,
+                            aggs: IndexMap::new(),
+                        },
+                    )]),
+                )?;
+                let count = match counts.get("population") {
+                    Some(Value::Map(map)) => map
+                        .get("doc_count")
+                        .map(to_plain_string)
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                if count > 0 && count >= terms.min_doc_count {
+                    let mut bucket = aggregate(&missing, &terms.aggs)?;
+                    bucket.insert("key".into(), Value::Null);
+                    bucket.insert("key_display".into(), Value::string(label));
+                    bucket.insert("missing".into(), Value::Bool(true));
+                    bucket.insert("doc_count".into(), Value::I64(count.min(i64::MAX as u64) as i64));
+                    buckets.push(Value::Map(bucket));
+                }
+                fn at<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+                    match value {
+                        Value::Map(map) => map.get(path).or_else(|| {
+                            path.split_once('.')
+                                .and_then(|(key, rest)| map.get(key).and_then(|value| at(value, rest)))
+                        }),
+                        _ => None,
+                    }
+                }
+                buckets.sort_by(|left, right| {
+                    let (path, desc) = match &terms.order {
+                        TermsOrder::Count { descending } => ("doc_count", *descending),
+                        TermsOrder::Key { descending } => ("key", *descending),
+                        TermsOrder::Metric { name, descending } => (name.as_str(), *descending),
+                    };
+                    let order = moqui_lib::object::compare_obj(
+                        at(left, path).unwrap_or(&Value::Null),
+                        at(right, path).unwrap_or(&Value::Null),
+                    )
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                    (if desc { order.reverse() } else { order }).then_with(|| {
+                        to_plain_string(at(left, "key").unwrap_or(&Value::Null))
+                            .cmp(&to_plain_string(at(right, "key").unwrap_or(&Value::Null)))
+                    })
+                });
+                buckets.truncate(terms.size);
+            }
+        }
         for bucket in buckets.iter_mut() {
             let Value::Map(map) = bucket else {
                 continue;
             };
+            if map.get("missing") == Some(&Value::Bool(true)) {
+                continue;
+            }
             let key = map.get("key").cloned().unwrap_or(Value::Null);
             let predicate = match agg {
                 Agg::Terms(terms) => {
-                    if terms
-                        .missing
-                        .as_ref()
-                        .is_some_and(|missing| to_plain_string(&key) == *missing)
-                    {
+                    if map.get("missing") == Some(&Value::Bool(true)) {
                         negated(Query::Field(Box::new(FieldQuery {
                             name: terms.field.clone(),
                             op: FieldOp::Exists,
@@ -748,13 +825,7 @@ pub(crate) fn fill_other_buckets(
                 _ => continue,
             };
             if let Some(nested) = agg.sub_aggs() {
-                fill_other_buckets(
-                    backend,
-                    mapping,
-                    &Query::all(vec![filter.clone(), predicate]),
-                    nested,
-                    map,
-                )?;
+                fill_other_buckets_with(aggregate, &Query::all(vec![filter.clone(), predicate]), nested, map)?;
             }
         }
         if let Agg::Terms(terms) = agg {
@@ -764,11 +835,7 @@ pub(crate) fn fill_other_buckets(
                 for bucket in buckets.iter() {
                     if let Value::Map(map) = bucket {
                         if let Some(key) = map.get("key") {
-                            if terms
-                                .missing
-                                .as_ref()
-                                .is_some_and(|missing| to_plain_string(key) == *missing)
-                            {
+                            if map.get("missing") == Some(&Value::Bool(true)) {
                                 include_missing = true;
                             } else {
                                 selected.push(key.clone());
@@ -798,10 +865,25 @@ pub(crate) fn fill_other_buckets(
                 } else {
                     Query::all(vec![filter.clone(), negated(Query::any(excluded))])
                 };
-                let mut request = super::SearchRequest::new(other.clone());
-                request.limit = 0;
-                let count = backend.search(&[std::sync::Arc::new(mapping.clone())], &request)?.total;
-                let mut bucket = backend.aggregate(mapping, &other, &terms.aggs)?;
+                let counted = aggregate(
+                    &other,
+                    &IndexMap::from([(
+                        "population".into(),
+                        Agg::Filter {
+                            query: Query::MatchAll,
+                            aggs: IndexMap::new(),
+                        },
+                    )]),
+                )?;
+                let count = match counted.get("population") {
+                    Some(Value::Map(map)) => map
+                        .get("doc_count")
+                        .map(to_plain_string)
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                let mut bucket = aggregate(&other, &terms.aggs)?;
                 bucket.insert("key".into(), Value::string(label));
                 bucket.insert("doc_count".into(), Value::I64(count.min(i64::MAX as u64) as i64));
                 bucket.insert("other".into(), Value::Bool(true));

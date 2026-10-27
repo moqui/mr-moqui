@@ -374,7 +374,13 @@ fn an_idle_connection_the_server_closed_reads_as_closed() {
     go.send(()).unwrap();
     sent_rx.recv().unwrap();
     server.join().unwrap();
-    assert!(wire.closed_while_idle(), "closed by the server");
+    // A completed send does not mean the peer's TCP stack has delivered the
+    // final packet yet. Give the nonblocking probe a bounded delivery window.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !wire.closed_while_idle() {
+        assert!(std::time::Instant::now() < deadline, "closed by the server");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 #[test]

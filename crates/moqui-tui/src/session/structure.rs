@@ -233,6 +233,7 @@ impl Session {
                 self.components.insert(id.clone(), ComponentState::default());
             }
             self.request_component(&id);
+            self.schedule_component(&id);
         }
     }
 
@@ -450,6 +451,7 @@ impl Session {
             return;
         };
         if state.loading {
+            state.reload_pending = true;
             return;
         }
         state.loading = true;
@@ -488,6 +490,10 @@ impl Session {
                 state.error.clear();
             }
             Err(err) => state.error = err.to_string(),
+        }
+        let pending = std::mem::take(&mut state.reload_pending);
+        if pending {
+            self.request_component(id);
         }
         self.schedule_component(id);
     }
@@ -542,10 +548,62 @@ impl Session {
         let Some(component) = crate::components::find(&info.name) else {
             return false;
         };
+        // The optional JSON textarea and structured controls edit the same form value.
+        // Rehydrate before a key so returning from a manual edit cannot overwrite it
+        // with the component's older snapshot.
+        let bound = self
+            .component_form_field(
+                info.props["form"].as_str().unwrap_or(""),
+                info.props["field"].as_str().unwrap_or(""),
+            )
+            .map(|key| self.buffer(&key).to_string());
+        let filters = self
+            .component_form_field(
+                info.props["form"].as_str().unwrap_or(""),
+                info.props["filtersField"].as_str().unwrap_or(""),
+            )
+            .and_then(|key| serde_json::from_str::<serde_json::Value>(self.buffer(&key)).ok());
         let wide = self.columns >= 180;
         let state = self.components.entry(id.clone()).or_default();
+        if let Some(bound) = bound {
+            if info.name == "report-definition-editor" {
+                match serde_json::from_str::<serde_json::Value>(&bound) {
+                    Ok(document) => state.local["document"] = document,
+                    Err(_) => {
+                        state.error =
+                            "The definition JSON contains an error; correct it before using structured controls".into();
+                        return !matches!(press.key, Key::Tab | Key::BackTab | Key::Escape);
+                    }
+                }
+            } else if info.name == "report-query-editor" {
+                state.local["query"] = serde_json::Value::String(bound);
+                if let Some(filters) = filters {
+                    state.local["filters"] = filters;
+                }
+            }
+        }
         let Some(acts) = component.key(&info.props, state, press, wide) else {
             return false;
+        };
+        self.component_actions(&id, acts);
+        true
+    }
+
+    pub(super) fn component_tick(&mut self, id: &str) {
+        let Some(info) = self.index.components.get(id).cloned() else {
+            return;
+        };
+        let Some(component) = crate::components::find(&info.name) else {
+            return;
+        };
+        let state = self.components.entry(id.to_string()).or_default();
+        let acts = component.tick(&info.props, state);
+        self.component_actions(id, acts);
+    }
+
+    fn component_actions(&mut self, id: &str, acts: Vec<Act>) {
+        let Some(info) = self.index.components.get(id).cloned() else {
+            return;
         };
         let base = if info.base.is_empty() {
             self.path().to_string()
@@ -554,7 +612,7 @@ impl Session {
         };
         for act in acts {
             match act {
-                Act::Reload => self.request_component(&id),
+                Act::Reload => self.request_component(id),
                 Act::ReloadScreen => self.reload(),
                 Act::DownloadReport(url) => {
                     let location = Location::of_url(&Self::component_url(&base, &url));
@@ -567,13 +625,47 @@ impl Session {
                         },
                     );
                 }
+                Act::Read(url) => {
+                    let location = Location::of_url(&Self::component_url(&base, &url));
+                    self.components.entry(id.to_string()).or_default().loading = true;
+                    self.lanes.push(
+                        Purpose::Component(id.to_string()),
+                        LinkCall::Json {
+                            url: location.path,
+                            method: "get".into(),
+                            parameters: location.parameters,
+                        },
+                    );
+                }
+                Act::SetFormField { form, field, value } => {
+                    let key = self.component_form_field(&form, &field);
+                    if let Some(key) = key {
+                        self.set_buffer(&key, value);
+                    } else {
+                        self.set_message(format!("The form field {form}.{field} is unavailable"), true);
+                    }
+                }
                 Act::Post { url, fields } => self.post_simple(&Self::component_url(&base, &url), fields),
                 Act::Follow(url) => self.follow_url(&url),
                 Act::Message(text) => self.set_message(text, false),
             }
         }
-        self.schedule_component(&id);
-        true
+        self.schedule_component(id);
+    }
+
+    fn component_form_field(&self, form: &str, field: &str) -> Option<String> {
+        self.index
+            .fields
+            .values()
+            .find(|item| {
+                item.name == field
+                    && item
+                        .form
+                        .as_ref()
+                        .and_then(|id| self.index.forms.get(id))
+                        .is_some_and(|item| item.name == form)
+            })
+            .map(|item| item.id.clone())
     }
 
     // ---- a wizard ----

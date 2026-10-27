@@ -228,10 +228,7 @@ struct RollupAccumulator {
 }
 
 impl RollupAccumulator {
-    fn push(&mut self, document: Document, granularity: &str, width: i64) -> Result<(), Error> {
-        if super::text(&document, "aggregation") == "exponential_histogram" {
-            return Ok(());
-        }
+    fn push(&mut self, mut document: Document, granularity: &str, width: i64) -> Result<(), Error> {
         let bucket = bucket_time(&document)?.div_euclid(width) * width;
         let series = super::text(&document, "series_fingerprint");
         if series.is_empty() {
@@ -240,6 +237,29 @@ impl RollupAccumulator {
         let key = format!("{series}:{granularity}:{bucket}");
         if self.bad.contains(&key) {
             return Ok(());
+        }
+        if super::text(&document, "aggregation") == "exponential_histogram" {
+            let normalized = (|| {
+                if matches!(
+                    super::text(&document, "aggregation_temporality").as_str(),
+                    "2" | "AGGREGATION_TEMPORALITY_CUMULATIVE"
+                ) {
+                    return Err(Error::new(
+                        "raw cumulative exponential histogram cannot be rolled up without interval data",
+                    ));
+                }
+                let point = document
+                    .get("exponential_histogram")
+                    .ok_or_else(|| Error::new("exponential histogram population missing"))?;
+                let histogram = super::exponential::Histogram::parse(&moqui_lib::json::to_json(point))?;
+                histogram.store(&mut document);
+                Ok(())
+            })();
+            if let Err(error) = normalized {
+                self.groups.remove(&key);
+                self.bad.insert(key);
+                return Err(error);
+            }
         }
         if let Some(group) = self.groups.get_mut(&key) {
             if let Err(error) = merge(group, &document) {
@@ -275,6 +295,19 @@ fn bucket_time(document: &Document) -> Result<i64, Error> {
 }
 
 fn merge(group: &mut Document, document: &Document) -> Result<(), Error> {
+    if group.get("aggregation") != document.get("aggregation") {
+        return Err(Error::new("cannot merge different metric aggregations"));
+    }
+    if super::text(group, "aggregation") == "exponential_histogram" {
+        let point = |document: &Document| {
+            let value = document
+                .get("exponential_histogram")
+                .ok_or_else(|| Error::new("exponential histogram population missing"))?;
+            super::exponential::Histogram::parse(&moqui_lib::json::to_json(value))
+        };
+        point(group)?.merge(&point(document)?)?.store(group);
+        return Ok(());
+    }
     if metric_time(document, "last_time") >= metric_time(group, "last_time") {
         for key in ["last", "last_time"] {
             if let Some(value) = document.get(key) {

@@ -1,6 +1,6 @@
 # Monitoring
 
-M1–M7 implementation results and completed acceptance checks are recorded below (Oct 26–27, 2026), including measured overhead, upgrade instructions and remaining gaps. **Final M1–M7 acceptance is incomplete:** UI/native parity work, backend/report limits and some validation evidence remain outstanding. The later capabilities remain deferred. A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
+M1–M7 implementation results and completed acceptance checks are recorded below (Oct 26–27, 2026), including measured overhead, upgrade instructions and remaining gaps. **The remaining functional M1–M7 gaps are closed.** Final acceptance results, real-store/transport overhead and operational limits are recorded below. The original per-milestone overhead evidence remains incomplete because historical intermediate baselines were not captured. The later capabilities remain deferred. A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
 
 ## Objective and scope
 
@@ -766,7 +766,7 @@ Completion of the later stages is gated on: correlated failures, tenant and priv
 
 ## Implementation verification log
 
-Implementation and deterministic acceptance checks ran Oct 26–27, 2026. The table below records tested functionality for M1–M7, rather than declaring every milestone gate complete. Performance measurements exercise the final implementation; isolated historical milestone baselines were not captured. This distinction limits the original per-milestone acceptance claim, as detailed under remaining work.
+Implementation and deterministic acceptance checks ran Oct 26–27, 2026. The table below records tested functionality for M1–M7, rather than declaring every milestone gate complete. Performance measurements cover the committed first-pass and final completion-wave snapshots; isolated historical milestone baselines were not captured. This distinction limits the original per-milestone acceptance claim, as detailed under remaining work.
 
 Work was delegated with one owner per shared lane, at most three subagents plus the primary:
 
@@ -777,7 +777,7 @@ Work was delegated with one owner per shared lane, at most three subagents plus 
 | Query/report | Search backends, authorized datasets/queries, frames/transforms, saved definitions/references, alerts and business/document acceptance |
 | Web/UI, then TUI | Monitor/Dashboards screens, browser widgets, shipped dashboards, reader migration, client specs, native components and screen traversal |
 
-Replacement readers passed PostgreSQL and live OpenSearch acceptance before legacy reader/persistence removal. Browser and TUI consumers share the authorized reporting engine. Every new qvt view has native traversal coverage; specialized waterfalls, live logs, panels and dashboards use compiler-free registered components. Traversal proves screen availability, not full interaction parity; outstanding native controls are listed below.
+Replacement readers passed PostgreSQL and live OpenSearch acceptance before legacy reader/persistence removal. Browser and TUI consumers share the authorized reporting engine. Every new qvt view has native traversal coverage; specialized waterfalls, live logs, panels and dashboards use compiler-free registered components. Completion-wave native acceptance below also verifies editing, query/filter controls, inspector steps, playlists and bucket interactions.
 
 ### Functional acceptance
 
@@ -835,7 +835,7 @@ Evidence logs live under `target/monitoring/` (local build artifacts, not commit
 
 Results: `target/monitoring/benchmark-summary.json`, sixteen per-run logs, and `benchmark-runs.json` (all exit 0). Compiler: rustc 1.99.1 (58cf8f9c3, 2026-10-13), optimized incremental `develop` profile.
 
-**M1–M7 below are seven paired repeats of the final implementation, not isolated staged baselines or incremental milestone costs.** Runs were serialized, alternating off/on order. Telemetry-on uses full sampling (1.0); its overhead remains substantial for small operations.
+**The M1–M7 labels below are seven paired repeats of the committed first-pass implementation, before the completion wave; they are not isolated staged baselines or incremental milestone costs.** Runs were serialized, alternating off/on order. Telemetry-on uses full sampling (1.0); its overhead remains substantial for small operations.
 
 The service fixture uses embedded PostgreSQL over a Unix socket, an entered context with authorization disabled, one ordinary plus one reserve connection, warmup 32, and 1,000 calls × 5 batches. The table selects the “one transaction” rows; values are median microseconds per call. “DB read” is the complete uncached entity PK lookup, including its instrumentation, with exactly one SQL statement per call. Echo executes no SQL.
 
@@ -882,27 +882,145 @@ telemetry_enabled=true telemetry_sample_ratio=1.0 MONITOR_SPEED_EXPORT=true SERV
 telemetry_enabled=false MONITOR_SPEED_EXPORT=true JS_SPEED_CALLS=1000 JS_SPEED_BATCHES=3 JS_SPEED_ONLY=service,screen /usr/bin/time -l target/develop/deps/js_speed-HASH --ignored --nocapture --test-threads=1
 ```
 
+### Gap completion wave after the committed baseline
+
+The Oct 27 completion wave starts from commit `d6dc52b2` (implementation commit `735b3860`). Browser, native and query/backend work have separate subagents; the primary owns telemetry, shared contracts/configuration, scheduling integration, performance measurements and this acceptance log. Later features remain deferred.
+
+| Gap | Current result / evidence |
+| --- | --- |
+| Native controls and authoring | Implemented; **176 native tests pass**, including query/filter editing, nested layouts, table sorting/links, authorized step snapshots, structured authoring/JSON preservation and playlist rotation/pause. Focused native Clippy passes. **Real HostLink acceptance passes** (9.43 s): 23 screens, all seven component types and actual snapshot/editor/playlist interactions. Five additional canonical Missing/Other/sorted-filter control tests pass; native Clippy passes. Split-series sparklines preserve numeric/hidden groups, missing time coordinates and original row indices, with separately labelled duplicate coordinates. Logs: `gap-tui-metadata-final.log`, `native-host-gap-final.log`, `native-bucket-gap-tests.log`, `native-gap-clippy.log`. |
+| Exponential histograms | **46 telemetry tests pass**, including exact large counts and cumulative integer sums above 2⁵³, bounded scale downconversion, signed buckets, zero-threshold reconciliation, retry-safe hour/day populations and cumulative delta/reset/replay handling, zero-duration unknown-start baselines and same-start decreases across hour boundaries. Final PostgreSQL/OpenSearch hour/day, retention and retry acceptance passes **2/2** (16.45 s), including exponential populations and 1,005-observation source paging. Logs: `gap-priority-tests-final.log`, `gap-refresh-readers-final.log`. |
+| Streaming request duration | **Passed real middleware acceptance** (0.08 s): root absent at headers, full delayed-body duration, exact bytes, error/cancellation status and exactly one retained root per request with zero child sampling. Log: `http-stream-gap-tests.log`. Transfer-worker context propagation also passes (0.02 s), including Some/None restoration and no guard across async suspension. Final full host suite **217/217 passes** (56.03 s); log `gap-host-completion-final.log`. Final streaming regression passes separately (0.13 s), `gap-http-priority-final.log`. |
+| Browser authoring/filter clicks and OTLP specs | **Closed: 28 component specs and eight served workflows pass** (1.44 s / 23.14 s). Real multi-query/join authoring saves/renders, document and canonical Missing/Other/literal-label chart clicks create typed pills, filtered CSV matches, and two-dashboard report composition saves/previews. Source keys ingest JSON/raw protobuf for all three signals. Split-series plots align time/gaps and source rows; generated boolean bucket flags do not become series, while explicit user roles are preserved. Stat/gauge/barGauge cards use the same resolved integer metrics and split groups, preserving null/zero values and bounded per-series display. Logs: `report-gap-browser-final3.log`, `tools-gap-browser-final5.log`. |
+| Exact cross-type aggregation | **Passed PostgreSQL and live OpenSearch** mixed-document acceptance (2.14 s / 14.14 s), covering global Avg/Stats/Median/Percentiles/Cardinality/TopHits/histogram populations, exact Other requery and collision-safe Missing/Other bucket predicates, with type/group/row policy applied before totals. Logs: `backend-gap-pg.log`, `backend-gap-os.log`. |
+| Nested partial populations / filtered exports | **Closed: real PostgreSQL acceptance passes**, 3.23 s. Partial observations outside a selected parent no longer mark it incomplete; selected partial observations produce exact counts. Saved/runtime/dataset-scoped/disabled/negated/identity-widening pills match render/preview CSV under row policy, and sorted/filter/renamed bucket provenance replays the same authorized rows. Log: `gap-report-filter-final.log`. |
+| Alert transport | **Closed: real SMTP/webhook acceptance 2/2 passes**, 4.43 s. Authenticated SMTP has a 451 failure followed by MIME delivery; real HTTP covers 503/success and independent contacts. Missing credentials, per-delivery URL/header rotation, persisted retry/repeat state across restart and revoked-owner blocking pass. Fixed email success-ledger handling: a saved email row without a delivery message ID remains retryable. Logs: `alert-wire-gap-tests.log`, `alert-m6-gap-final.log`. |
+| Semantic row-policy acceptance | **Closed: configured pgvector positive-ranking test passes**, 2.20 s. The unfiltered nearest document is denied; authorized semantic ranking returns only the permitted population. Uses isolated PG17/pgvector schema, cleaned after the test. Log: `gap-vector-final.log`. |
+| Request-root retention under overload | The real full-sampling PostgreSQL burst exposed **321/416** roots retained with 3,646 observable drops. Bounded flush enqueue/ack now shares a five-second deadline. **46 telemetry tests pass**, including hard record/byte bounds, external records excluded from the reserve, order-preserving mixed batches and mandatory-root protection during oversized tail promotion. **Final load rerun passes: 416/416 roots in every enabled configuration**, separately from observable child/metric drops. The performance fixture asserts this rather than inferring root retention from total exports. Diagnostic: `pre-priority-postgres-full.log`. |
+| OpenSearch telemetry export throughput | Real-store probe exposed ~1 s refresh waits for each stable-ID bulk (3.89 s drain for 1,248 records). Added explicit telemetry-only deferred-refresh writes; ordinary SearchFacade writes/rollups retain their original visibility contract. **73 search tests pass**, including both live OpenSearch fixtures; replacement readers, both-store rollups and all six edge/Collector/print tests pass after this change. Final 1,248-record probe drain is 15.06 ms. Logs: `gap-refresh-core-final.log`, `gap-refresh-edge-final.log`, `gap-refresh-readers-final.log`. |
+| Real-store/transport overhead | **Closed: all 19 frozen-source optimized runs pass**, including both stores, authenticated one/four-worker HTTP, disabled/roots/full sampling, local persistence with/without OTLP, all three transport signals and current Profiling off/on pairs. Full results and the measured PostgreSQL full-sampling capacity limit follow. |
+
+Final completion-wave Rust validation: core **2,021 passed, zero failed, three ignored** (52.26 s), host **217 passed** (56.03 s), native **176 passed, one ignored documentation example**. Full workspace `cargo --offline lint` and `cargo --offline lint-min` pass (14.37 s / 6.22 s). The three ignored core cases are a manual benchmark and the two opt-in live OpenSearch regressions; both live cases pass within the 73-test search rerun. The core catalog test requires the declared optional `mr-l10n` component: acceptance used upstream commit `a546b63` from an ignored scratch checkout through a temporary component symlink, removed after testing; no addon was permanently installed. Logs: `gap-core-priority-final.log`, `gap-host-completion-final.log`, `gap-tui-metadata-final.log`, `gap-priority-lint-final.log`, `gap-priority-lint-min-final.log`.
+
+Final all-inclusive `monitor_edge` acceptance passes **6/6** (13.74 s, 46.61 s including compilation), including Collector forwarding and outbound transport for all three signals, request/ingest boundaries, network-isolated Chromium PDF/PNG and scheduled export/owner checks. The subsequent **73/73 search tests** include both live OpenSearch fixtures (5.47 s), covering aggregation/cursor/atomic-update/schema preservation with 10,025 equal-timestamp rows and deferred-refresh stable-ID replacement/visibility. Replacement readers plus both-backend rollups also pass **5/5** (8.01 s + 16.45 s). Logs: `gap-refresh-core-final.log`, `gap-refresh-edge-final.log`, `gap-refresh-readers-final.log`. Server JS passes **29/29** screen specs (0.50 s) and **1/1** DataView spec (11.31 s) through `moqui test`; logs `gap-server-js-final.log`, `gap-tools-js-final.log`.
+
+The first serial rerun exposed test-environment issues, retained in diagnostic logs: exhausted macOS shared-memory slots from dead PostgreSQL processes, a missing optional translation fixture, a TCP delivery timing assertion, and overlapping phrase-search fixtures. Only verified dead, unattached PostgreSQL shared-memory headers owned by the current user were removed; no active database or data files were changed. The TCP probe now allows a bounded delivery window. An overbroad `--ignored` invocation also selected the vector case without its required environment; the explicitly configured positive pgvector rerun passed (2.20 s, `gap-vector-final.log`). No failing case is silently counted as acceptance.
+
+### Final completion-wave performance (Oct 27)
+
+All **19 optimized runs pass**: two setup probes, twelve HTTP/store configurations, one nine-case transport run and four Profiling off/on runs. Source was frozen; builds, other tests and subagent runtimes were stopped. Compiler: rustc 1.99.1 (58cf8f9c3); profile: `develop`, optimized/incremental, caches preserved. Host: Apple M1 Pro, eight logical CPUs, 32 GiB RAM, macOS 27.0.1. The earlier repeat is diagnostic corroboration (`completion-repeat1-results.json`), not a historical milestone baseline. Final raw data: `target/monitoring/completion-benchmark-results.json` and `completion-*.log`.
+
+The HTTP fixture signs in as the seeded administrator with authorization enabled. A saved index-wide dataset spans two DataDocument types and applies a server-owned `scope=ALLOWED` row policy: **32 of 128 rows** are visible, with 96 denied rows excluded before totals. Each configuration warms eight requests, then runs **200 sequential requests followed by 200 requests with four workers**, without an intermediate drain, plus a separate 16-request allocation pass. Every request uses a fresh loopback TCP connection and consumes the authorized dashboard HTML. This measures server/render/query cost; it does not measure browser chart painting. The demo screen quota is raised to 100,000 only in the disposable fixture database; authorization and row policy are never disabled during HTTP timing.
+
+PG is embedded PostgreSQL over its normal Unix socket. OS is disposable OpenSearch 3.0.0 (512 MiB JVM heap). Both local OpenSearch and Collector services remain running consistently for paired runs and receive only fixture traffic; the unused vector container is stopped. `tee` adds the production outbound OTLP path to Collector 0.130.0 with the committed `fixtures/monitoring/collector-performance.yaml` nop pipelines. Fresh prefixed OS indices are removed after each final run. Measurements exclude startup latency; peak RSS includes startup. C allocations, database/JVM/Collector memory and storage amplification are not captured by Rust allocation counts.
+
+Latency below is **p50 / p95 / p99 in ms** (200 observations per worker scenario). The four-worker phase includes backlog left by the sequential phase. These short-run quantiles do not establish a production tail-latency guarantee.
+
+| Store/output | Mode | One worker | Four workers |
+| --- | --- | ---: | ---: |
+| PG/local | off | 3.196 / 3.836 / 15.679 | 4.807 / 7.260 / 12.947 |
+| PG/local | roots | 3.701 / 4.051 / 12.478 | 5.616 / 6.712 / 12.901 |
+| PG/local | full | 3.860 / 4.534 / 5.992 | 5.597 / 7.058 / 17.984 |
+| PG/tee | full | 3.895 / 4.670 / 6.140 | 5.437 / 6.705 / 17.246 |
+| PG/tee | roots | 3.657 / 4.069 / 15.728 | 5.824 / 12.001 / 15.580 |
+| PG/tee | off | 3.140 / 3.557 / 12.473 | 4.774 / 5.635 / 11.835 |
+| OS/local | off | 5.475 / 6.788 / 10.436 | 7.396 / 8.770 / 15.734 |
+| OS/local | roots | 6.787 / 7.696 / 17.583 | 8.873 / 11.252 / 15.061 |
+| OS/local | full | 7.135 / 10.004 / 19.544 | 9.828 / 15.823 / 19.652 |
+| OS/tee | full | 6.907 / 10.448 / 12.759 | 9.161 / 14.020 / 16.191 |
+| OS/tee | roots | 6.557 / 7.353 / 15.976 | 8.810 / 9.981 / 17.143 |
+| OS/tee | off | 7.085 / 8.909 / 21.478 | 7.350 / 12.920 / 18.439 |
+
+Process-wide allocations below come from the separate pass, including exporter-thread allocations/frees; timed passes leave those allocation totals disabled. Retained growth is net live Rust bytes after the timed drain, including caches and tail decisions, not a per-request leak or steady-state bound. Acknowledged span/metric counts include the 400 timed and 16 allocation requests; deterministic metric IDs may be overwritten, so these are write records, not unique physical rows.
+
+| Case | Allocations/request | KiB/request | Retained Δ MiB | Peak RSS MiB | Spans / metrics acked | Core drops |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| PG/local/off | 21390 | 1803.6 | 0.486 | 95.73 | 0 / 0 | 0 |
+| PG/local/roots | 28256 | 2491.7 | 2.072 | 99.44 | 416 / 38 | 0 |
+| PG/local/full | 36177 | 3599.5 | 14.954 | 131.30 | 10,824 / 38 | 4,984 |
+| PG/tee/full | 53472 | 6464.9 | 8.349 | 131.83 | 10,580 / 16 | 5,250 |
+| PG/tee/roots | 30044 | 2782.2 | 2.326 | 101.95 | 416 / 38 | 0 |
+| PG/tee/off | 21390 | 1803.6 | 0.482 | 95.16 | 0 / 0 | 0 |
+| OS/local/off | 21858 | 1943.4 | 0.337 | 96.23 | 0 / 0 | 0 |
+| OS/local/roots | 27942 | 2630.5 | 1.592 | 100.56 | 416 / 38 | 0 |
+| OS/local/full | 35490 | 3769.3 | 1.812 | 111.16 | 15,808 / 38 | 0 |
+| OS/tee/full | 53114 | 6706.1 | 1.707 | 123.95 | 15,808 / 43 | 0 |
+| OS/tee/roots | 29713 | 2921.3 | 1.587 | 101.48 | 416 / 38 | 0 |
+| OS/tee/off | 21858 | 1943.4 | 0.377 | 96.52 | 0 / 0 | 0 |
+
+**Every enabled configuration preserves all 416 HTTP roots**; disabled configurations export none. All local export-failure and remote drop/failure counters are zero. Tee remote acknowledgements match local exported counts. In roots mode, queued child records intentionally omitted by sampling are not loss; `queued` therefore exceeds `exported` without incrementing drops.
+
+**Capacity limit:** full sampling overloads this PostgreSQL persistence fixture: 4,984 records drop locally and 5,250 with the tee, while all request roots survive. These are excess child/ordinary telemetry records; the tee case also loses one metric collection under pressure. Collection/minute boundaries account for some metric write-count variation between cases. The lower full-sampling request median does not mean that recording every child is cheaper: bounded admission is discarding work. Root reservation fixes the prior 321/416-root failure without expanding the hard queue bounds. Roots mode has zero drops on both stores; full sampling has zero drops on OpenSearch in this run. This is measured saturation, not a lossless-throughput claim. Configure child sampling and capacity for the installation.
+
+| Enabled case | Timed drain ms | Local write-batch p50 / p95 ms |
+| --- | ---: | ---: |
+| PG/local/roots | 3.76 | 0.623 / 1.535 |
+| PG/local/full | 2675.05 | 131.684 / 243.095 |
+| PG/tee/full | 2957.96 | 135.264 / 249.618 |
+| PG/tee/roots | 6.56 | 0.623 / 1.790 |
+| OS/local/roots | 4.57 | 1.904 / 2.895 |
+| OS/local/full | 164.37 | 2.980 / 6.954 |
+| OS/tee/full | 540.75 | 4.710 / 38.313 |
+| OS/tee/roots | 7.68 | 1.815 / 2.906 |
+
+The original stable-ID OpenSearch probe required 3.89 s to drain 1,248 records, with roughly one-second refresh waits. The telemetry-only deferred-refresh probe drains the same population in 15.06 ms. Ordinary write visibility and stable-ID retries pass the live regression; telemetry ACK is explicitly distinct from search refresh.
+
+Outbound transport includes production normalization-to-protobuf and HTTP/Collector acknowledgement; fixture document cloning is outside timing. Each signal/size has one warmup and ten samples. With ten observations, p95/p99 are the observed maximum.
+
+| Signal | Batch | p50 ms | p95/p99 ms |
+| --- | ---: | ---: | ---: |
+| spans | 1 | 0.602 | 0.680 |
+| spans | 64 | 1.492 | 2.070 |
+| spans | 512 | 6.897 | 9.911 |
+| logs | 1 | 0.479 | 0.547 |
+| logs | 64 | 1.153 | 4.203 |
+| logs | 512 | 5.855 | 6.348 |
+| metrics | 1 | 0.526 | 0.571 |
+| metrics | 64 | 1.471 | 2.402 |
+| metrics | 512 | 9.200 | 10.610 |
+
+Final Profiling fixture reruns use the recording/normalization sink, keeping their CPU costs separate from the real stores above. Service rows are the one-transaction medians (1,000 calls × five batches, warmup 32); JS/screen rows use three batches of 500 service calls or 100 renders.
+
+| Operation | Off → full, µs/call | Ratio | Allocations off → full |
+| --- | ---: | ---: | ---: |
+| service echo | 8.93 → 17.40 | 1.95× | 94.0 → 127.2 |
+| uncached entity PK read | 17.77 → 38.98 | 2.19× | 38.0 → 56.1 |
+| cached entity PK read | 1.65 → 1.72 | 1.04× | 19.0 → 19.0 |
+| noop inline JS | 3.61 → 10.28 | 2.85× | 33.0 → 66.4 |
+| script service | 8.17 → 16.90 | 2.07× | 88.0 → 121.2 |
+| nested service | 11.89 → 27.04 | 2.27× | 97.0 → 166.3 |
+| plain HTML label | 17.66 → 38.75 | 2.19× | 122.0 → 216.5 |
+| form-single QVT, 11 fields | 436.13 → 471.46 | 1.08× | 1,494.0 → 1,626.5 |
+| HTML list, 100 rows | 5,971.67 → 6,054.18 | 1.014× | 28,542.0 → 28,639.4 |
+| QVT list, 100 rows | 9,462.78 → 9,498.40 | 1.004× | 25,192.0 → 25,309.8 |
+
+The service pair retains 1.036 → 4.697 MiB net Rust bytes and has 48.77 → 52.58 MiB peak RSS. Its enabled run exports **110,919 records**, zero dropped/failed: 110,907 spans, nine metric records and three logs, 132,881,056 normalized JSON bytes. The JS/screen pair retains 2.875 → 6.540 MiB and has 55.72 → 59.86 MiB peak RSS; enabled exports **23,090 records**, zero dropped/failed: 23,057 spans, 30 metrics and three logs, 27,796,738 normalized bytes. Disabled runs export none; all remote counters are zero for these recording-sink fixtures. Logs are `completion-service_speed-{off,on}.log` and `completion-js_speed-{off,on}.log`. These final pairs do not substitute for missing historical milestone measurements.
+
+Reproduction (substitute executable hashes printed by Cargo; run configurations serially with the same compiler/profile and preserved caches):
+
+```sh
+cargo test -p moqui-host --profile develop --test monitor_performance --test service_speed --test js_speed --no-run --offline
+# Repeat MODE=off, roots, full; then add MONITOR_PERF_COLLECTOR_URL=http://127.0.0.1:14318.
+MONITOR_PERF_MODE=roots MONITOR_PERF_CALLS=200 /usr/bin/time -l target/develop/deps/monitor_performance-HASH authorized_http_with_real_store_and_optional_collector --ignored --nocapture --test-threads=1
+# Repeat that matrix with MONITOR_PERF_OPENSEARCH_URL=http://127.0.0.1:19200.
+MONITOR_PERF_COLLECTOR_URL=http://127.0.0.1:14318 /usr/bin/time -l target/develop/deps/monitor_performance-HASH collector_transport_batch_latency --ignored --nocapture --test-threads=1
+```
+
+Use the committed Collector configuration at `crates/moqui-host/tests/fixtures/monitoring/collector-performance.yaml` mounted read-only in the pinned image, with local port 14318 mapped to 4318. The scratch OpenSearch server disables security and binds only loopback port 19200. Do not target an application database or production cluster.
+
 ### Remaining work and validation limits
 
-Full M1–M7 final acceptance is **not complete**. The following in-scope gaps remain; they are distinct from the features explicitly deferred under Later:
+The identified functional M1–M7 gaps, backend/browser/native acceptance checks and final real-store/transport measurements are complete. The following evidence and capacity limits remain explicit:
 
-- **M3 browser interactions:** clicking chart/bar/slice/table cells does not yet create filter pills, including correct Missing/Other bucket behavior.
-- **M3/M7 authoring UX:** multiple queries, joins/pivots/organize, field overrides/mappings/thresholds, variable definitions, nested layouts and multi-dashboard report composition currently require JSON editing. Engine support and stored definitions do not prove completion of the intended editor workflows.
-- **Native parity:** the inspector exposes queries and frames but does not fetch per-step transformation snapshots. Generic panel-table sorting/data-link activation, query autocomplete, nested tab/row controls and automatic playlist rotation remain incomplete. Native tables/sparklines are intentional terminal renderings; these missing controls are separate functional gaps.
-- **M5 client-spec gap:** no browser `moqui test-client` spec posts OTLP protobuf and JSON. Both formats/all three signals have real host HTTP and Collector fixture coverage; the six served browser specs exercise dashboard/Explore/definition/navigation workflows.
-
-- **Index-wide query limits:** cross-DataDocument queries reject Other buckets and nonmergeable metrics (`Avg`, `Stats`, `Median`, `Percentiles`, `Cardinality`, `TopHits`, `histogram_merge`). Basic cross-type totals/terms/date histograms work. The single-dataset aggregation tests do not prove these richer cross-type combinations.
-- **Nested partial buckets:** exclusion counting currently uses the top-level authorized population. Nested filtered histograms can conservatively overstate excluded observations and mark a valid panel incomplete/No Data. This may suppress reports or produce alert Error; it must be corrected before claiming complete nested-query acceptance.
-- **Delivery/retrieval coverage:** alert tests prove header NotificationMessage delivery/grouping/repeat/suppression, not end-to-end alert email/webhook credential resolution, failure and retry. Report email MIME/CID tests are separate. Successful configured pgvector semantic retrieval under row policies was not demonstrated; lexical/hybrid and unavailable-mode rejection were tested.
-- **Telemetry limits:** exponential histograms are retained raw at minute granularity but are not rolled into hour/day documents. Request-root duration for a streaming response currently ends when headers/body object are ready, rather than after stream consumption; ordinary buffered rendering is included. Arbitrary attributes/resources are stored as opaque payloads, with only declared typed fields queryable. Some process gauges are Linux-only.
-- **Historical milestone overhead is incomplete.** The seven M1–M7-labelled pairs revalidate the final build. They cannot establish the incremental cost at each original milestone, whose intermediate baselines were not captured. No historical figures have been inferred or invented.
-- **Production datastore/transport performance is unmeasured.** The counting sink serializes normalized documents but excludes datastore indexing, storage amplification and remote transport latency. Live PostgreSQL/OpenSearch/Collector tests establish functional correctness. They do not replace these missing performance measurements.
-- Measurements cover one macOS host, warmed short synthetic workloads and full sampling, with benchmark authorization disabled. Production concurrency, long-running retention/rollup load, tenant policy cost and request p95/p99 remain unmeasured. Rust allocation accounting excludes QuickJS C allocations and the PostgreSQL child process; peak RSS is reported separately. No production-scale soak or numerical overhead budget is claimed.
-- **Full child sampling retains a substantial cost on tiny calls** (roughly 2.1–2.3× echo/uncached lookup latency). Larger screens dilute the fixed cost. Queue overload remains bounded and observable, rather than guaranteed lossless; mandatory request roots do not depend on child sampling. Choose operational sampling/metric settings against the installation's workload and budget.
-- Features explicitly listed under **Later** remain deferred, including server-JS block profiling, RUM/replay, operation/incident/recovery state machines, gRPC/day partitions, repeating panels, specialized later visualizations and public links. These deferrals do not waive the in-scope UI/parity gaps above.
+- **Historical milestone overhead remains incomplete.** The seven M1–M7-labelled pairs above measured the committed first-pass build, and the completion wave measures the final build. Neither establishes the incremental cost of the original milestones: intermediate baselines were not captured. No historical figures have been inferred or invented, so the original stage-by-stage measurement gate cannot be claimed complete.
+- **PostgreSQL full-sampling saturation remains an operational limit.** The measured burst drops 4,984 ordinary records locally or 5,250 with outbound OTLP, while preserving every request root. Roots-only sampling has zero drops on both stores; this OpenSearch full-sampling run also has zero drops. Hard queue bounds and visible losses are intentional. No lossless unlimited-throughput claim or numerical overhead budget is made.
+- Measurements cover one macOS host and short warmed synthetic workloads. Authenticated HTTP, an enforced mixed-type row policy, four-worker concurrency and request p95/p99 are measured; the older service/JS fixtures deliberately disable authorization. Production-scale concurrency, long-running retention/rollup load, tenant-specific policy complexity, storage amplification, WAN/TLS Collector transport and multi-host soak remain unmeasured. Rust allocation accounting excludes QuickJS C allocations and database/JVM/Collector memory; peak RSS is reported separately.
+- Full child sampling retains substantial cost on tiny operations: the final echo pair is 1.95× and the uncached lookup is 2.19×. Larger screens dilute the fixed cost. Root reservation protects the tested burst, while overload consisting of roots alone or backend failure remains subject to the same bounded storage/queue limits and observable losses.
+- Features explicitly listed under **Later** remain deferred, including server-JS block profiling, RUM/replay, operation/incident/recovery state machines, gRPC/day partitions, repeating panels, specialized later visualizations and public links. They remain outside this implementation wave.
 
 Deployment defaults and compatibility:
 
+- Arbitrary attributes/resources remain opaque payloads, with declared typed fields queryable; this preserves bounded mappings. Some runtime process gauges are Linux-specific and unavailable gauges remain missing data.
 - New runtime records use `moqui.report` and `moqui.monitor`; component definitions live in `report/` and are read-only until copied.
 - Organization restrictions are explicit administrator-authored dataset `rowFilter`/`contextFilters`, added by the server before documents, ranking, totals, aggregations or exports. Automatic translation of existing entity-filter definitions is not assumed. Grant only the intended dataset artifact permissions to business roles.
 - Ingestion credentials are source-scoped hashes, separate from ordinary login credentials. Source owners require `MONITOR_INGEST` on every request. Local report file delivery requires `REPORT_SAVE_LOCATION`, granted to ADMIN by default; report recipients do not set execution authority.
@@ -911,6 +1029,7 @@ Deployment defaults and compatibility:
 
 ### Upgrade notes
 
+- Move any custom component `report-definitions/` directory to `report/`; component loaders now read definitions from `component://NAME/report/`. Shipped definitions remain read-only until copied.
 - Back up first and deploy the Rust code together with the framework/tools component changes. The Mantle sales definition/grants are changes in the separate `runtime/component/mr-mantle` repository; the BOSS Insights route is a change in `runtime/component/mr-boss`. Include those component changes when installed.
 - Allow the normal entity schema check to create the new `moqui.report`/`moqui.monitor` tables. `ScreenScheduled` gains report definition, execution owner and pause fields; `ScreenScheduledLock` gains the renewable lease expiry/token fields. New installations load the component seed files normally. For an existing installation, review same-ID customizations and load only the new files, using the CLI's `name=value` syntax:
 
@@ -928,8 +1047,11 @@ Deployment defaults and compatibility:
 - Startup retires `clean_ArtifactData_daily`, `clean_ElasticSearchLogMessages_daily` and `clean_ElasticSearchHttpLogMessages_daily` independently. Their parameters are removed; registrations referenced by historical runs are paused with no cron expression, preserving those runs. Unreferenced registrations may be deleted. New telemetry retention and rollup jobs replace them.
 - No historical hit/log data is migrated, and no historical table or index is automatically dropped. After backup and an administrator's explicit retention decision, default PostgreSQL deployments may run `DROP TABLE IF EXISTS public.artifact_hit;` and `DROP TABLE IF EXISTS public.artifact_hit_bin;`. Adjust schema/table names to the installation; these statements are optional and are never executed by startup.
 - Telemetry mapping signature changes fail closed before rebuilding an existing telemetry index/table. Back up and explicitly migrate or create a fresh prefixed telemetry store before changing incompatible mappings. Business DataDocument rebuild semantics remain unchanged.
-- The server's SDK span/log processors try to enqueue owned records into the factory's bounded worker; normalization, transport and persistence stay off business threads. This avoids an unobservable SDK export queue. Core limits are 8,192 records and 32 MiB, with bounded tail evidence and transport batches of at most 512. Queue, tail, persistence and remote losses are counted. Shutdown drains before SearchFacade closes, within bounded transport/shutdown deadlines.
+- OpenSearch telemetry ingestion acknowledges durable bulk indexing before the configured automatic search refresh; flush/shutdown guarantees backend acknowledgement rather than immediate search visibility. Ordinary SearchFacade writes and report/rollup writes keep their existing refresh behavior. PostgreSQL retains committed visibility.
+- The server's SDK span/log processors try to enqueue owned records into the factory's bounded worker; normalization, transport and persistence stay off business threads. This avoids an unobservable SDK export queue. Core limits are 8,192 records and 32 MiB, reserving 512 records and 2 MiB within those limits for local request/job roots; external records and ordinary telemetry cannot consume that reserve. Large tail promotions admit roots before excess children without reordering tail decisions. Flush capacity acquisition and acknowledgement share a bounded five-second deadline. Core queues have bounded tail evidence and transport batches of at most 512. Queue, tail, persistence and remote losses are counted. Shutdown drains before SearchFacade closes, within bounded transport/shutdown deadlines.
 - Ingest tokens are separate from login keys. They cannot sign in. Revocation, expiry, enabled owner and current ingestion permission are checked on each request; source identity comes from the verified key. Literal webhook credentials are rejected: dedicated server properties supply secrets. Shared legacy definitions redact credentials.
 - Dataset context values come from authenticated identity (`userId`, `username`, `userGroupIds`, nonsecret `userAccount` fields). Organization-specific policy services receive the authenticated user ID and must return a filter. Saved definitions, exports, embeds and scheduled owner execution use the same authorized executor.
 - Saved report definitions accept `orientation: "portrait"|"landscape"`, `layout: "grid"|"rows"`, and `appendix: true` in their body. Each dashboard selection carries its own variables and range. Offline print uses the same browser panel renderer, formatting and Chart.js; all row/tab sections are included in print.
 - Deprecated `artifact-stats` configuration still applies with warnings, including bin-only slow evidence after warmup when hit persistence was disabled. Explicit new telemetry settings take precedence. `track-artifact-hit` descendant suppression remains effective; explicit span disabling suppresses artifact spans without dropping mandatory HTTP request history.
+- Cumulative integer Sum snapshots retain exact signed integer state; integer intervals are subtracted before floating-point frame encoding. A switch between integer and double snapshots outside the exact double range establishes an explicit baseline and partial-success notice.
+- Cumulative points with unknown/zero-duration starts and unannounced same-start resets establish a visible baseline rather than contributing an overlapping interval. New exponential histogram points are normalized to delta populations before minute/hour/day aggregation; old raw cumulative exponential records cannot be losslessly reinterpreted and remain retained as source evidence.

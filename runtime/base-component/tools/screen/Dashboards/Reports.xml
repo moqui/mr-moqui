@@ -48,6 +48,7 @@
     ]]></script></actions>
     <widgets>
         <label text="Dashboard reports" type="h4"/>
+        <link url="//apps/dashboards/Definition" text="Compose a multi-dashboard report" parameter-map="{definitionType:'report'}"/>
         <label text="Reports run with their owner's current dataset access. Empty reports are skipped." type="p"/>
         <container-dialog id="CreatePlaylist" button-text="New dashboard playlist">
             <label text="Enter dashboard IDs in playback order. Each dashboard is checked with your current access when opened." type="p"/>

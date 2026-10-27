@@ -18,16 +18,16 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::get;
+use axum::Router;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use moqui_core::context::ErrorKind;
 use moqui_core::context::ExecutionContextFactory;
@@ -37,7 +37,7 @@ use moqui_lib::error::Error;
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
-use crate::guard::{Event, Guard, GuardConf, setting};
+use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
 pub(crate) struct HttpState {
@@ -794,11 +794,12 @@ async fn dispatch_screen(
     let guard = Arc::clone(&state.guard);
     let queued = std::time::Instant::now();
     let queue_timeout = state.guard.conf.queue_timeout;
+    let worker_trace = trace_context.clone();
     // The job owns `done`. A worker that panics or a pool that stops drops it, which ends the wait. A job nobody waits
     // for any more (the deadline passed, the client went away) is not run, and one that waited past the queue timeout
     // is answered `None`, a 503, instead.
     let submitted = factory.request_pool().try_submit(job_factory, move || {
-        let _trace = moqui_core::telemetry::attach(trace_context);
+        let _trace = moqui_core::telemetry::attach(worker_trace);
         if done.is_closed() {
             guard.counts.abandoned.fetch_add(1, Ordering::Relaxed);
             return Ok(());
@@ -831,7 +832,12 @@ async fn dispatch_screen(
         None => result.await,
     };
     match result {
-        Ok(Some(response)) => from_web(&state.factory, response),
+        Ok(Some(response)) => {
+            // Only the synchronous body construction uses this guard; the stream
+            // captures an owned handle for its transfer workers before it returns.
+            let _trace = moqui_core::telemetry::attach(trace_context);
+            from_web(&state.factory, response)
+        }
         Ok(None) => state.guard.unavailable("the server is busy; try again"),
         Err(_) => plain(500, "request worker stopped"),
     }
@@ -1052,22 +1058,123 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
     if response.status().is_server_error() {
         span.set_error("HTTP server error");
     }
-    telemetry.record_duration(
-        "http.server.request.duration",
-        started.elapsed().as_secs_f64(),
-        [
-            ("http.request.method".into(), Value::string(&method)),
-            ("http.route".into(), Value::string(route)),
-            (
-                "http.response.status_code".into(),
-                Value::I64(i64::from(response.status().as_u16())),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-    );
-    span.finish();
-    response
+    // A response head is ready before a streamed body has been consumed. Keep the
+    // owned root on the body, without holding a request worker or thread context.
+    if !span.is_recording() {
+        return response;
+    }
+    let completion = RequestCompletion {
+        span: Some(span),
+        telemetry: Arc::clone(telemetry),
+        started,
+        method,
+        route: route.to_owned(),
+        status: response.status().as_u16(),
+        bytes: 0,
+    };
+    let bodyless = completion.method == "HEAD"
+        || response.status().is_informational()
+        || matches!(response.status().as_u16(), 204 | 304);
+    response.map(|body| {
+        let mut body = TelemetryBody {
+            inner: body,
+            completion,
+        };
+        if bodyless || hyper::body::Body::is_end_stream(&body.inner) {
+            body.completion.finish(None);
+        }
+        axum::body::Body::new(body)
+    })
+}
+
+struct RequestCompletion {
+    span: Option<moqui_core::telemetry::Span>,
+    telemetry: Arc<moqui_core::telemetry::Telemetry>,
+    started: std::time::Instant,
+    method: String,
+    route: String,
+    status: u16,
+    bytes: u64,
+}
+
+impl RequestCompletion {
+    fn finish(&mut self, error: Option<&str>) {
+        use moqui_lib::object::Value;
+        let Some(mut span) = self.span.take() else {
+            return;
+        };
+        span.set_attribute(
+            "http.response.body.size",
+            Value::I64(self.bytes.min(i64::MAX as u64) as i64),
+        );
+        span.set_attribute("moqui.http.response.completed", Value::Bool(error.is_none()));
+        if let Some(error) = error {
+            span.set_error(error);
+        }
+        self.telemetry.record_duration(
+            "http.server.request.duration",
+            self.started.elapsed().as_secs_f64(),
+            [
+                ("http.request.method".into(), Value::string(&self.method)),
+                ("http.route".into(), Value::string(&self.route)),
+                ("http.response.status_code".into(), Value::I64(i64::from(self.status))),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        span.finish();
+    }
+}
+
+struct TelemetryBody {
+    inner: axum::body::Body,
+    completion: RequestCompletion,
+}
+
+impl hyper::body::Body for TelemetryBody {
+    type Data = bytes::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        use std::task::Poll;
+        let this = self.get_mut();
+        let next = std::pin::Pin::new(&mut this.inner).poll_frame(context);
+        match &next {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(data) = frame.data_ref() {
+                    this.completion.bytes = this.completion.bytes.saturating_add(data.len() as u64);
+                }
+                if this.inner.is_end_stream() {
+                    this.completion.finish(None);
+                }
+            }
+            Poll::Ready(None) => this.completion.finish(None),
+            Poll::Ready(Some(Err(error))) => this.completion.finish(Some(&error.to_string())),
+            Poll::Pending => {}
+        }
+        next
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for TelemetryBody {
+    fn drop(&mut self) {
+        if hyper::body::Body::is_end_stream(&self.inner) {
+            self.completion.finish(None);
+        } else {
+            self.completion.finish(Some("response body dropped before completion"));
+        }
+    }
 }
 
 fn redacted_query(query: &str) -> String {
@@ -1302,11 +1409,9 @@ mod signal_tests {
                 let shutdown = super::shutdown(receiver, notify);
                 tokio::pin!(shutdown);
                 // Poll shutdown to register the signal handlers before telling the parent to send a signal.
-                assert!(
-                    tokio::time::timeout(Duration::from_millis(50), &mut shutdown)
-                        .await
-                        .is_err()
-                );
+                assert!(tokio::time::timeout(Duration::from_millis(50), &mut shutdown)
+                    .await
+                    .is_err());
                 println!("signal handlers ready");
                 shutdown.await;
                 notified.changed().await.unwrap();
@@ -1336,13 +1441,11 @@ mod signal_tests {
             });
             let registered = receiver.recv_timeout(Duration::from_secs(10)).is_ok();
             if registered {
-                assert!(
-                    Command::new("kill")
-                        .args([signal, &child.id().to_string()])
-                        .status()
-                        .unwrap()
-                        .success()
-                );
+                assert!(Command::new("kill")
+                    .args([signal, &child.id().to_string()])
+                    .status()
+                    .unwrap()
+                    .success());
             }
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             let status = loop {

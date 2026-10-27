@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use moqui_tui::{Breakpoints, FakeLink, Key, KeyPress, LinkCall, Overlay, Session, layout_levels, outline_of};
+use moqui_tui::{layout_levels, outline_of, Breakpoints, FakeLink, Key, KeyPress, LinkCall, Overlay, Session};
 
 const TREE_JSON: &str = r#"{
   "v": 1,
@@ -171,11 +171,10 @@ fn a_button_menu_opens_its_items_and_one_posts() {
     let labels: Vec<&str> = menu.items.iter().map(|item| item.label.as_str()).collect();
     assert_eq!(labels, ["Approve", "Print", "Add Thing"]);
     press(&mut session, &link, Key::Enter);
-    assert!(
-        link.calls()
-            .iter()
-            .any(|call| matches!(call, LinkCall::Transition { url, .. } if url == "/tree/approve"))
-    );
+    assert!(link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Transition { url, .. } if url == "/tree/approve")));
 }
 
 #[test]
@@ -232,11 +231,10 @@ fn references_of_html_and_markdown_a_card_and_an_image_are_links() {
     }
     focus(&mut session, &link, "Md#ref1");
     press(&mut session, &link, Key::Enter);
-    assert!(
-        link.calls()
-            .iter()
-            .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/wiki/Page"))
-    );
+    assert!(link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/wiki/Page")));
     let (mut session, link) = tree_session();
     focus(&mut session, &link, "Logo");
     press(&mut session, &link, Key::Enter);
@@ -374,4 +372,68 @@ fn report_tail_timer_pauses_does_not_block_settle_and_exports_real_bytes() {
     assert_eq!(downloads.len(), 1);
     assert_eq!(downloads[0].bytes, vec![80, 75, 3, 4]);
     assert_eq!(downloads[0].file_name, "first.xlsx");
+}
+
+#[test]
+fn report_structured_editors_update_normal_form_buffers_without_posting() {
+    let screen = r#"{"v":1,"screen":{"path":"/editor","title":"Editor"},"c":[{"t":"form","id":"EditDefinition","name":"EditDefinition","transitionUrl":"/editor/save","c":[{"t":"field","id":"EditDefinition.definitionJson","name":"definitionJson","w":{"kind":"textArea","value":"{}"}},{"t":"component","id":"Editor","name":"report-definition-editor","props":{"form":"EditDefinition","field":"definitionJson","kind":"dashboard","value":{}}}]}]}"#;
+    let link = FakeLink::from_json(&[screen]).unwrap();
+    let mut session = Session::start("/editor");
+    session.run_now(&link);
+    focus(&mut session, &link, "Editor");
+    press(&mut session, &link, Key::Char('a'));
+    press(&mut session, &link, Key::Enter);
+    let body: serde_json::Value = serde_json::from_str(session.buffer("EditDefinition.definitionJson")).unwrap();
+    assert!(body.get("layout").is_some());
+    assert!(session.form_dirty("EditDefinition"));
+    assert!(
+        session.take_requests().is_empty(),
+        "authoring changes buffers, not persistent data"
+    );
+    session.set_buffer(
+        "EditDefinition.definitionJson",
+        r#"{"custom":"manual edit","panels":{}}"#.into(),
+    );
+    press(&mut session, &link, Key::Char('a'));
+    press(&mut session, &link, Key::Enter);
+    let body: serde_json::Value = serde_json::from_str(session.buffer("EditDefinition.definitionJson")).unwrap();
+    assert_eq!(
+        body["custom"], "manual edit",
+        "returning to structured controls preserves manual JSON edits"
+    );
+    assert!(body.get("layout").is_some());
+}
+
+#[test]
+fn report_playlist_timer_loads_next_authorized_dashboard_and_pauses() {
+    use moqui_tui::Timer;
+    let screen = r#"{"v":1,"screen":{"path":"/playlist","title":"Playlist"},"c":[{"t":"component","id":"Playlist","name":"report-playlist","props":{"source":"data","definitionId":"list","from":"now-1h","thru":"now","seconds":5,"items":[{"title":"One"},{"title":"Two"}]}}]}"#;
+    let link = FakeLink::from_json(&[screen]).unwrap();
+    for (index, title) in [("0", "First dashboard"), ("1", "Second dashboard")] {
+        link.answer_json(
+            "/playlist/data",
+            map(&[
+                ("definitionId", "list"),
+                ("from", "now-1h"),
+                ("thru", "now"),
+                ("index", index),
+            ]),
+            serde_json::json!({"dashboard":{"definitionId":index,"panels":{"p":{"title":title}}},"frames":{}}),
+        );
+    }
+    let mut session = Session::start("/playlist");
+    session.run_now(&link);
+    focus(&mut session, &link, "Playlist");
+    let deadline = session
+        .timer(&Timer::Component("Playlist".into()))
+        .expect("playlist deadline");
+    assert!(!session.fire_waits(), "settling never advances scheduled playlists");
+    session.on_time(deadline);
+    session.run_now(&link);
+    assert_eq!(
+        session.component_state("Playlist").unwrap().data.as_ref().unwrap()["dashboard"]["definitionId"],
+        "1"
+    );
+    press(&mut session, &link, Key::Char('p'));
+    assert!(session.timer(&Timer::Component("Playlist".into())).is_none());
 }

@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
-    <parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
+    <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
             if (!['csv','xlsx'].includes(String(renderMode))) throw new Error('Choose CSV or XLSX')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,panelId,
-                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {}}).call()
+                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -15,7 +15,7 @@
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,panelId,inspect:true,
-                from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {}}).call()
+                from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -26,7 +26,7 @@
             if (!variable || variable.kind==='constant') throw new Error('Choose an editable variable')
             const values=JSON.parse(variableValuesJson || '{}')
             values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
-            variableParameters={definitionId,from,thru}
+            variableParameters={definitionId,from,thru,filtersJson}
             for (const [name,value] of Object.entries(values)) variableParameters['var-'+name]=value
         ]]></script></actions><default-response url="//apps/dashboards/Dashboard" parameter-map="variableParameters"/>
     </transition>
@@ -36,13 +36,13 @@
         const definition = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
         dashboardTitle = definition.title
         dashboardDefinition = JSON.parse(JSON.stringify(definition.body || {}))
-        const activeFilters = []
+        const activeFilters = [...(dashboardDefinition.filters || []),...JSON.parse(filtersJson || '[]')]
         dashboardDefinition.variableValues = {}
         for (const variable of dashboardDefinition.variables || []) {
             if (variable.kind === 'query') {
                 try {
                     const found = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{
-                        datasetId:variable.datasetId,from,thru,filters:activeFilters,
+                        datasetId:variable.datasetId,from,thru,filters:activeFilters.filter(pill=>!pill.datasetId || pill.datasetId===variable.datasetId),
                         aggregations:[{id:'value',type:'terms',role:'x-axis',params:{field:variable.field,size:1000}}]
                     }}).call()
                     const frame = (found.frames || [])[0] || {fields:[]}
@@ -60,12 +60,19 @@
             const values = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value])
             dashboardDefinition.variableValues[variable.name] = variable.multi ? values : values[0]
             if (variable.field && variable.kind !== 'groupBy' && values.length && !values.includes('$__all')) {
-                activeFilters.push({field:{name:variable.field,op:'in',values}})
+                activeFilters.push({datasetId:variable.datasetId,query:{field:{name:variable.field,op:'in',values}}})
             }
         }
         const rendered = ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,
-            variables:dashboardDefinition.variableValues,from,thru,panelId:panelId || undefined}).call().dashboard
+            variables:dashboardDefinition.variableValues,filters:JSON.parse(filtersJson || '[]'),from,thru,panelId:panelId || undefined}).call().dashboard
         dashboardFrames = {};dashboardNotices = []
+        dashboardDefinition.filters=rendered.filters || JSON.parse(filtersJson || '[]')
+        dashboardDefinition.viewerId=ec.user.userId
+        dashboardDefinition.datasetFields={}
+        const datasetIds=new Set()
+        const collect=query=>{if(query.datasetId)datasetIds.add(query.datasetId);for(const child of query.queries || [])collect(child)}
+        for(const panel of Object.values(rendered.panels || {}))for(const query of panel.queries || [])collect(query)
+        for(const id of datasetIds){try{const dataset=ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:id}).call().dataset;dashboardDefinition.datasetFields[id]=dataset.fields || []}catch(error){ec.logger.error('Dashboard filter fields '+id+' failed: '+String(error))}}
         dashboardDefinition.layout = rendered.layout || dashboardDefinition.layout
         dashboardDefinition.absoluteTime = rendered.range
         dashboardDefinition.definitionId = definitionId
@@ -85,6 +92,7 @@
         <label text="${dashboardTitle}" type="h4"/>
         <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}"/>
         <form-single name="DashboardTime" transition=".">
+            <field name="filtersJson"><default-field><hidden/></default-field></field>
             <field name="definitionId"><default-field><hidden/></default-field></field>
             <field name="from"><default-field title="From"><text-line/></default-field></field>
             <field name="thru"><default-field title="Through"><text-line/></default-field></field>
@@ -93,6 +101,7 @@
         <section name="DashboardAccessibleVariables" condition="sri.getRenderMode() !== 'qvt'"><widgets>
             <section-iterate name="DashboardVariables" list="dashboardVariables" entry="variable"><widgets>
                 <form-single name="SetDashboardVariable" transition="setVariable">
+                    <field name="filtersJson"><default-field><hidden/></default-field></field>
                     <field name="definitionId"><default-field><hidden/></default-field></field>
                     <field name="from"><default-field><hidden/></default-field></field>
                     <field name="thru"><default-field><hidden/></default-field></field>

@@ -1113,6 +1113,78 @@ impl SearchBackend for PostgresBackend {
         Ok(result)
     }
 
+    fn aggregate_many(
+        &self,
+        mappings: &[Arc<DocumentMapping>],
+        filter: &Query,
+        aggs: &IndexMap<String, Agg>,
+        fresh_by: Option<Instant>,
+    ) -> Result<IndexMap<String, Value>, Error> {
+        let mapping = super::mapping::combined_mapping(mappings)?;
+        let mut population = Sql::new("");
+        for (index, source) in mappings.iter().enumerate() {
+            if index > 0 {
+                population.push(" UNION ALL ");
+            }
+            population.push(&format!(
+                "SELECT doc_id, indexed_at, body, {}::text AS __document, all_text, ",
+                literal(&source.document_id)
+            ));
+            population.push(if !source.display.weights.is_empty() {
+                RANKED_TEXT
+            } else {
+                "all_text"
+            });
+            population.push(&format!(" AS {RANKED_TEXT}, "));
+            population.push(if Compiler::with_text(source, &self.text).title_field().is_some() {
+                NORM_TITLE
+            } else {
+                "NULL::text"
+            });
+            population.push(&format!(" AS {NORM_TITLE}"));
+            for (name, field) in &mapping.root.fields {
+                if let Some(kind) = column_type(field.kind) {
+                    let column = column(name);
+                    population.push(", ");
+                    if source
+                        .root
+                        .fields
+                        .get(name)
+                        .is_some_and(|field| column_type(field.kind).is_some())
+                    {
+                        population.push(&format!("{column}::{kind}"));
+                    } else {
+                        population.push(&format!("NULL::{kind}"));
+                    }
+                    population.push(&format!(" AS {column}"));
+                }
+            }
+            population.push(&format!(" FROM {} WHERE ", self.table(source)));
+            population.append(Compiler::with_text(source, &self.text).where_sql(filter)?);
+        }
+        let route = self.read_route(fresh_by);
+        let mut run = |sql: &Sql| {
+            let mut combined = Sql::new("WITH moqui_population AS MATERIALIZED (");
+            combined.append(population.clone());
+            combined.push(") ");
+            combined.append(sql.clone());
+            self.query_on(route, &combined)
+        };
+        let mut result = agg::aggregate_population(
+            "moqui_population",
+            &mapping,
+            &self.text,
+            &Query::MatchAll,
+            aggs,
+            Some(mappings),
+            &mut run,
+        )?;
+        let mut again =
+            |filter: &Query, aggs: &IndexMap<String, Agg>| self.aggregate_many(mappings, filter, aggs, fresh_by);
+        super::agg::fill_other_buckets_with(&mut again, filter, aggs, &mut result)?;
+        Ok(result)
+    }
+
     fn replica_status(&self) -> Option<ReplicaStatus> {
         let read = self.read.as_ref()?;
         let lag_seconds = read

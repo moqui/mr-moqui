@@ -11,7 +11,7 @@ struct SearchExporter(Arc<moqui_core::search::SearchFacade>);
 
 impl Exporter for SearchExporter {
     fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
-        self.0.index_entries(index, documents)
+        self.0.index_entries_deferred_refresh(index, documents)
     }
 
     fn upsert_error(&self, document: Document) -> Result<(), Error> {

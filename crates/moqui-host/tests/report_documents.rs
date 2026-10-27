@@ -36,19 +36,36 @@ fn options() -> Json {
     json!({"datasetId":"scoped-mixed","from":"now-1h","thru":"now+1h","pageSize":100,"sort":["amount"]})
 }
 
+struct VectorSchema {
+    tx: moqui_core::transaction::TransactionManager,
+    schema: String,
+}
+impl Drop for VectorSchema {
+    fn drop(&mut self) {
+        assert!(self.schema.starts_with("report_vector_") && self.schema.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        self.tx.with_reserve(|conn| conn.execute(&format!("DROP SCHEMA {} CASCADE",self.schema), &[])).unwrap();
+    }
+}
+
 #[test]
 fn mixed_index_documents_keep_type_row_link_and_dialog_boundaries() {
-    verify_documents(None);
+    verify_documents(None, false);
 }
 
 #[test]
 #[ignore = "requires MONITOR_READER_OPENSEARCH_URL, for example http://127.0.0.1:19200"]
 fn mixed_index_documents_keep_type_row_link_and_dialog_boundaries_opensearch() {
     let url = std::env::var("MONITOR_READER_OPENSEARCH_URL").expect("set MONITOR_READER_OPENSEARCH_URL");
-    verify_documents(Some(&url));
+    verify_documents(Some(&url), false);
 }
 
-fn verify_documents(opensearch_url: Option<&str>) {
+#[test]
+#[ignore = "requires an isolated pgvector server, configured with MONITOR_VECTOR_PG_HOST/PORT/USER/PASSWORD/DATABASE"]
+fn semantic_documents_rank_only_the_authorized_population_on_pgvector() {
+    verify_documents(None, true);
+}
+
+fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
     moqui_host::logging::install();
     let mut fixture = String::from(
         r#"<entity-facade-xml type="seed">
@@ -67,12 +84,12 @@ fn verify_documents(opensearch_url: Option<&str>) {
       <moqui.basic.EnumerationType enumTypeId="DOC_BOTH" description="Both-reader rows"/>
       <moqui.basic.EnumerationType enumTypeId="DOC_PARTY" description="Party-reader rows"/>
       <moqui.basic.EnumerationType enumTypeId="DOC_OTHER" description="Another owner's rows"/>
-      <moqui.basic.Enumeration enumId="PARTY_A" enumTypeId="DOC_BOTH" enumCode="Visible party" description="Common business record" sequenceNum="3"/>
-      <moqui.basic.Enumeration enumId="PARTY_NOLINK" enumTypeId="DOC_BOTH" enumCode="NoLink" description="Common business record" sequenceNum="7"/>
+      <moqui.basic.Enumeration enumId="PARTY_A" enumTypeId="DOC_BOTH" optionValue="3" enumCode="Visible party" description="Common business record" sequenceNum="3"/>
+      <moqui.basic.Enumeration enumId="PARTY_NOLINK" enumTypeId="DOC_BOTH" optionValue="7" enumCode="NoLink" description="Common business record" sequenceNum="7"/>
       <moqui.basic.Enumeration enumId="PARTY_BLOCKED" enumTypeId="DOC_BOTH" enumCode="Blocked same owner" description="BLOCKED_SAME_OWNER" sequenceNum="500"/>
       <moqui.basic.Enumeration enumId="PARTY_OTHER" enumTypeId="DOC_OTHER" enumCode="Visible secret" description="SECRET_OTHER_OWNER" sequenceNum="13"/>
       <moqui.basic.Enumeration enumId="PARTY_LIMITED" enumTypeId="DOC_PARTY" enumCode="Limited party" description="Own allowed type" sequenceNum="11"/>
-      <moqui.basic.Enumeration enumId="PRODUCT_A" enumTypeId="DOC_BOTH" enumCode="Visible product" description="Common business record" sequenceNum="5"/>
+      <moqui.basic.Enumeration enumId="PRODUCT_A" enumTypeId="DOC_BOTH" optionValue="20" enumCode="Visible product" description="Common business record" sequenceNum="5"/>
       <moqui.basic.Enumeration enumId="PRODUCT_FORBIDDEN" enumTypeId="DOC_PARTY" enumCode="Forbidden product" description="SECRET_FORBIDDEN_TYPE" sequenceNum="50"/>
     "#,
     );
@@ -88,6 +105,8 @@ fn verify_documents(opensearch_url: Option<&str>) {
           <moqui.entity.document.DataDocumentField dataDocumentId="{id}" fieldSeqId="04" fieldPath="description" fieldType="text"/>
           <moqui.entity.document.DataDocumentField dataDocumentId="{id}" fieldSeqId="05" fieldPath="sequenceNum" fieldNameAlias="amount" fieldType="long"/>
           <moqui.entity.document.DataDocumentField dataDocumentId="{id}" fieldSeqId="06" fieldPath="lastUpdatedStamp" fieldNameAlias="time" fieldType="date"/>
+          <moqui.entity.document.DataDocumentField dataDocumentId="{id}" fieldSeqId="07" fieldPath="optionValue" fieldNameAlias="measure" fieldType="double"/>
+          <moqui.entity.document.DataDocumentField dataDocumentId="{id}" fieldSeqId="08" fieldPath="(enumCode === 'NoLink' ? null : (enumCode === 'Visible party' ? 'Other' : 'A'))" fieldNameAlias="category" fieldType="keyword"/>
           <moqui.entity.document.DataDocumentUserGroup dataDocumentId="{id}" userGroupId="ADMIN"/>
           <moqui.entity.document.DataDocumentUserGroup dataDocumentId="{id}" userGroupId="{group}"/>
           <moqui.entity.document.DataDocumentLink dataDocumentId="{id}" linkSeqId="01" label="Open {title}" linkUrl="/fixture/{id}/${{enumId}}" urlType="plain" linkCondition="enumCode !== 'NoLink'"/>
@@ -110,6 +129,23 @@ fn verify_documents(opensearch_url: Option<&str>) {
         None => common::start_with_data("report-documents", &fixture),
     };
     let factory = gate.server.factory();
+    let _vector_schema = vector.then(|| {
+        use moqui_core::{driver::DbDriver, search::SearchBackend, transaction::{PoolConfig, TransactionManager}};
+        let variable = |name: &str| std::env::var(format!("MONITOR_VECTOR_PG_{name}")).unwrap_or_else(|_| panic!("set MONITOR_VECTOR_PG_{name}"));
+        let driver: Arc<dyn DbDriver> = Arc::new(moqui_host::db::postgres::PostgresDriver::tcp_no_tls(
+            variable("USER"), variable("DATABASE"), variable("HOST"), variable("PORT").parse().unwrap(),
+        ).password(variable("PASSWORD")));
+        let tx = TransactionManager::new(driver, PoolConfig { min:0,max:4,reserve:1,..Default::default() }).unwrap();
+        let schema = format!("report_vector_{}_{}", std::process::id(), jiff::Timestamp::now().as_microsecond());
+        let backend = search::postgres::PostgresBackend::open(tx.clone(),Some(&schema)).unwrap().with_semantic(&search::semantic::SemanticConf {
+            enabled:true,dimensions:64,representation:"vector".into(),max_chars:4000,embedder:Some("hash".into())
+        }).unwrap();
+        assert!(backend.capabilities().contains(&search::Capability::Semantic), "configured pgvector capability must actually be enabled");
+        let facade = search::SearchFacade::new(Arc::new(backend), factory.entity().unwrap());
+        facade.set_embedder(Some(Arc::new(search::semantic::HashEmbedder::new(64))));
+        search::install(factory,facade);
+        VectorSchema { tx, schema }
+    });
     let facade = search::installed(factory).unwrap();
     viewer(factory, "john.doe", |ec| {
         let entity = factory.entity().unwrap();
@@ -129,9 +165,30 @@ fn verify_documents(opensearch_url: Option<&str>) {
                 ("ReportProduct", vec!["PRODUCT_A", "PRODUCT_FORBIDDEN"]),
             ] {
                 let ids = ids.into_iter().map(str::to_owned).collect::<Vec<_>>();
-                let docs = moqui_core::entity::document::documents_by_ids(&entity, kind, &ids).unwrap();
+                let mut docs = moqui_core::entity::document::documents_by_ids(&entity, kind, &ids).unwrap();
+                for doc in &mut docs {
+                    let id = doc.get("_id").and_then(Value::as_str).unwrap();
+                    let counts = match id {
+                        "PARTY_A" => vec![1, 0, 0],
+                        "PARTY_NOLINK" => vec![0, 1, 0],
+                        "PRODUCT_A" => vec![0, 0, 1],
+                        _ => vec![100, 100, 100],
+                    };
+                    doc.insert("bounds".into(), Value::List(vec![Value::I64(1), Value::I64(2)]));
+                    doc.insert(
+                        "buckets".into(),
+                        Value::List(counts.into_iter().map(Value::I64).collect()),
+                    );
+                }
                 assert_eq!(docs.len(), ids.len());
                 assert_eq!(facade.index_documents(&docs).unwrap(), ids.len());
+            }
+            if vector {
+                assert_eq!(facade.embed_pending(&search::Target::Index("report_mixed".into()),100,4000).unwrap(), 7);
+                let mut nearest = search::SearchRequest::new(search::Query::MatchAll);
+                nearest.retrieval = search::Retrieval::Semantic(search::hybrid::HybridOptions { text:"SECRET_OTHER_OWNER".into(),..Default::default() });
+                let raw = facade.search(&search::Target::Index("report_mixed".into()), &nearest).unwrap();
+                assert_eq!(raw.hits.first().unwrap().id,"PARTY_OTHER", "the unfiltered nearest result must be denied by the viewer's row policy");
             }
         }
         let tx = entity.transactions_for("moqui.report.Definition").unwrap();
@@ -203,6 +260,68 @@ fn verify_documents(opensearch_url: Option<&str>) {
             "the ungrouped scalar total uses the same authorized population: {aggregated}"
         );
         assert_eq!(aggregated["sourceCount"], 3);
+        let rich=report::execute_query(ec,&json!({"datasetId":"scoped-mixed","from":"now-1h","thru":"now+1h","aggs":{"average":{"avg":{"field":"measure"}},"stats":{"stats":{"field":"measure"}},"median":{"median":{"field":"measure"}},"percentiles":{"percentiles":{"field":"measure","percents":[50,100]}},"owners":{"cardinality":{"field":"enumTypeId"}},"samples":{"top_hits":{"size":1,"sort":["-measure"]}},"distribution":{"histogram_merge":{"bounds":[1,2]}}}})).unwrap();
+        let fields = rich["frames"][0]["fields"].as_array().unwrap();
+        let value = |name: &str| {
+            fields
+                .iter()
+                .find(|field| field["name"] == name)
+                .unwrap_or_else(|| panic!("missing {name}: {rich}"))["values"][0]
+                .clone()
+        };
+        assert_eq!(
+            value("average").as_f64(),
+            Some(10.0),
+            "average must weight all three observations, not average per-type averages"
+        );
+        for (name, expected) in [
+            ("stats.count", 3.0),
+            ("stats.sum", 30.0),
+            ("stats.min", 3.0),
+            ("stats.max", 20.0),
+            ("stats.avg", 10.0),
+            ("median", 7.0),
+            ("percentiles.50", 7.0),
+            ("percentiles.100", 20.0),
+            ("owners", 1.0),
+        ] {
+            assert_eq!(value(name).as_f64(), Some(expected), "{name}: {rich}");
+        }
+        for index in 0..3 {
+            assert_eq!(value(&format!("distribution.bucket.{index}")).as_u64(), Some(1));
+        }
+        let sample: Json = serde_json::from_str(value("samples").as_str().unwrap()).unwrap();
+        assert_eq!(sample[0]["id"], "PRODUCT_A");
+        assert_eq!(sample[0]["documentId"], "ReportProduct");
+        for (size, order, missing) in [(10, "asc", "A"), (2, "desc", "Missing")] {
+            let grouped=report::execute_query(ec,&json!({"datasetId":"scoped-mixed","from":"now-1h","thru":"now+1h","aggs":{"category":{"terms":{"field":"category","size":size,"order":{"_key":order},"missing":missing,"other_bucket":"Other"},"aggs":{"average":{"avg":{"field":"measure"}}}}}})).unwrap();
+            let frame: report::frame::Frame = serde_json::from_value(grouped["frames"][0].clone()).unwrap();
+            let dimension = frame.fields.iter().find(|field| field.name == "category").unwrap();
+            let rows = frame.rows();
+            assert_eq!(
+                dimension.config["bucket"]["filters"].as_array().unwrap().len(),
+                rows.len()
+            );
+            for (index, row) in rows.iter().enumerate() {
+                let mut selected = options();
+                selected["query"] = dimension.config["bucket"]["filters"][index].clone();
+                let page = report::documents(ec, &selected).unwrap();
+                assert_eq!(page["total"].as_f64(),row["count"].as_f64(),"canonical Missing/Other query must count exactly its row, including display-label collisions: {grouped}");
+            }
+            if size == 10 {
+                assert!(dimension.values.iter().any(Json::is_null));
+                assert!(dimension.values.iter().any(|value| value == "A"));
+                assert_eq!(
+                    dimension.config["bucket"]["labels"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|label| *label == "A")
+                        .count(),
+                    2
+                );
+            }
+        }
         for (id, total) in [("PARTY_A", 1), ("PARTY_OTHER", 0), ("PARTY_BLOCKED", 0)] {
             let mut one = options();
             one["query"] = json!({"field":{"name":"_id","op":"eq","value":id}});
@@ -232,6 +351,17 @@ fn verify_documents(opensearch_url: Option<&str>) {
                 report::documents(ec, &ranked).is_err(),
                 "unsupported semantic mode must not silently become lexical"
             );
+        } else {
+            for mode in ["semantic", "hybrid"] {
+                ranked["retrievalMode"] = json!(mode);
+                ranked["queryString"] = json!("SECRET_OTHER_OWNER");
+                ranked.as_object_mut().unwrap().remove("sort");
+                let page = report::documents(ec,&ranked).unwrap();
+                let hits = page["hits"].as_array().unwrap();
+                assert!(!hits.is_empty(), "{mode} must retrieve authorized candidates despite a denied nearest neighbor: {page}");
+                assert!(hits.iter().all(|hit| ids.contains(hit["id"].as_str().unwrap())), "{mode} row policy must constrain ranking, not only returned bodies: {page}");
+                assert!(!page.to_string().contains("SECRET_OTHER_OWNER"));
+            }
         }
         assert!(
             report::documents(

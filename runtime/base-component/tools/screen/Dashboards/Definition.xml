@@ -33,11 +33,12 @@
         ]]></script></actions><default-response url="//apps/dashboards/Home"/>
     </transition>
     <actions><script><![CDATA[
-        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:'otel_logs',mode:'documents'}]}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
+        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:'otel_logs',mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
         definitionType = definition.type; definitionTitle = definition.title; definitionVersion = definition.version || 0; definitionUserGroupId = definition.userGroupId || null
         definitionJson = JSON.stringify(definition.body,null,2)
         definitionFolder=definition.body.folder || '';definitionTags=(definition.body.tags || []).join(', ')
         libraryPanels=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'panel'}).call().definitions || []
+        dashboardOptions=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'dashboard'}).call().definitions || []
         datasetOptions=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
         usedIn=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.find#DefinitionUses').parameters({definitionId}).call().usedIn || []:[]
         versionDiff=''
@@ -62,10 +63,15 @@
                 <section name="DashboardPanelOptions" condition="definitionType === 'dashboard' || definitionType === 'panel'"><widgets>
                     <render-mode>
                         <text type="qvt"><![CDATA[<m-report-definition-editor name="definitionJson" :panel-only="${definitionType === 'panel' ? 'true' : 'false'}" :libraries="${WebUtilities.encodeHtml(JSON.stringify(libraryPanels))}" :datasets="${WebUtilities.encodeHtml(JSON.stringify(datasetOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-definition-editor>]]></text>
-                        <text type="tui"><![CDATA[{"t":"text","text":"Edit the JSON below to configure panels, queries, transformations and layout. Library references use panelRef."}]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:definitionType,form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:libraryPanels,panelOnly:definitionType==='panel',readOnly:definition.readOnly}})}]]></text>
                         <text type="html,html-print,text"><![CDATA[<p>Edit the JSON below to configure panels, queries, transformations and layout. Library references use panelRef.</p>]]></text>
                     </render-mode>
                 </widgets></section>
+                <section name="ReportCompositionOptions" condition="definitionType === 'report'"><widgets><render-mode>
+                    <text type="qvt"><![CDATA[<m-report-composition-editor name="definitionJson" :dashboards="${WebUtilities.encodeHtml(JSON.stringify(dashboardOptions))}" :read-only="${definition.readOnly ? 'true' : 'false'}"></m-report-composition-editor>]]></text>
+                    <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:definition.body,kind:'report',form:'EditDefinition',field:'definitionJson',datasets:datasetOptions,libraries:dashboardOptions,readOnly:definition.readOnly}})}]]></text>
+                    <text type="html,html-print,text"><![CDATA[<p>Report entries name a dashboardRef, variables and time range. The saved report uses the same authorized queries for previews and schedules.</p>]]></text>
+                </render-mode></widgets></section>
                 <text-area rows="22" cols="100"/>
             </default-field></field>
             <field name="note"><default-field title="Version note"><text-line size="70"/></default-field></field>

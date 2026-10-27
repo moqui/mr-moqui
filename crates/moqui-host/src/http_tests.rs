@@ -15,14 +15,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::extract::Request;
 use axum::routing::get;
+use axum::Router;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use super::{ListenLimits, TlsConnection, header_map, http_port, serve, status_allowed};
+use super::{header_map, http_port, serve, status_allowed, ListenLimits, TlsConnection};
 use crate::guard::Guard;
 use crate::tls;
 
@@ -121,6 +121,98 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
     assert!(!health.contains_key("user.id"));
     assert!(!health.contains_key("session.id"));
     drop(entries);
+    telemetry.shutdown();
+}
+
+#[tokio::test]
+#[cfg(feature = "telemetry")]
+async fn streamed_request_roots_finish_on_consumption_failure_or_cancellation() {
+    use moqui_core::{
+        entity::document::Document,
+        telemetry::{Exporter, Resource, Telemetry},
+    };
+    use moqui_lib::{error::Error, object::Value};
+    use tower::ServiceExt as _;
+    #[derive(Default)]
+    struct Capture(std::sync::Mutex<Vec<Document>>);
+    impl Exporter for Capture {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+    let capture = Arc::new(Capture::default());
+    let telemetry = Arc::new(Telemetry::from_conf(
+        "<moqui-conf><telemetry sample-ratio=\"0\"/></moqui-conf>",
+        Resource::default(),
+    ));
+    telemetry.set_exporter(capture.clone());
+    let app = Router::new()
+        .route(
+            "/delayed",
+            get(|| async {
+                axum::body::Body::from_stream(futures_util::stream::once(async {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"payload"))
+                }))
+            }),
+        )
+        .route(
+            "/failed",
+            get(|| async {
+                axum::body::Body::from_stream(futures_util::stream::iter([
+                    Ok(bytes::Bytes::from_static(b"partial")),
+                    Err(std::io::Error::other("fixture body failure")),
+                ]))
+            }),
+        )
+        .route(
+            "/cancelled",
+            get(|| async {
+                axum::body::Body::from_stream(futures_util::stream::pending::<Result<bytes::Bytes, std::io::Error>>())
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            super::RequestTelemetry {
+                telemetry: telemetry.clone(),
+            },
+            super::log_http,
+        ));
+    let request = |path| Request::builder().uri(path).body(axum::body::Body::empty()).unwrap();
+    let response = app.clone().oneshot(request("/delayed")).await.unwrap();
+    telemetry.flush();
+    assert!(
+        capture.0.lock().unwrap().is_empty(),
+        "response headers must not end a streaming root"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 100).await.unwrap();
+    assert_eq!(&bytes[..], b"payload");
+    let response = app.clone().oneshot(request("/failed")).await.unwrap();
+    assert!(axum::body::to_bytes(response.into_body(), 100).await.is_err());
+    let response = app.oneshot(request("/cancelled")).await.unwrap();
+    drop(response);
+    telemetry.flush();
+    let spans = capture.0.lock().unwrap();
+    assert_eq!(spans.len(), 3, "every request root survives zero child sampling");
+    for (path, completed, bytes) in [("/delayed", true, 7), ("/failed", false, 7), ("/cancelled", false, 0)] {
+        let span = spans
+            .iter()
+            .find(|span| span.get("url.path").and_then(Value::as_str) == Some(path))
+            .unwrap();
+        assert_eq!(span["http.response.body.size"], Value::I64(bytes));
+        let attributes = moqui_lib::json::to_json(span.get("attributes").unwrap());
+        assert_eq!(attributes["moqui.http.response.completed"], completed);
+        if !completed {
+            assert_eq!(span["status_code"].as_str(), Some("ERROR"));
+        } else {
+            let number = |key: &str| moqui_lib::object::to_plain_string(&span[key]).parse::<f64>().unwrap();
+            assert!(number("duration_nano") >= number("moqui.http.time_to_first_byte") * 1_000_000.0 + 20_000_000.0);
+        }
+    }
+    drop(spans);
     telemetry.shutdown();
 }
 

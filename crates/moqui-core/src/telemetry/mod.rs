@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use moqui_lib::error::Error;
@@ -18,6 +18,7 @@ use moqui_lib::object::Value;
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::document::Document;
 
+mod exponential;
 pub mod ingest;
 pub mod maintenance;
 #[cfg(feature = "http")]
@@ -49,6 +50,8 @@ mod sdk;
 
 const MAX_QUEUE: usize = 8192;
 const MAX_BUFFER_BYTES: usize = 32 * 1024 * 1024;
+const ROOT_RESERVED_RECORDS: usize = 512;
+const ROOT_RESERVED_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TRACES: usize = 1024;
 const MAX_TRACE_SPANS: usize = 512;
 const MAX_DECISIONS: usize = 4096;
@@ -363,6 +366,30 @@ enum Command {
     Stop,
 }
 
+// Administrative callers may wait for queue capacity; business producers remain
+// nonblocking. Enqueue and acknowledgement share one bounded deadline.
+fn flush_barrier(queue: &mpsc::SyncSender<Command>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let mut command = Command::Flush(sender);
+    loop {
+        match queue.try_send(command) {
+            Ok(()) => {
+                return receiver
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .is_ok()
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return false,
+            Err(mpsc::TrySendError::Full(returned)) => command = returned,
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(1)));
+    }
+}
+
 struct Shared {
     sender: mpsc::SyncSender<Command>,
     counters: Arc<Counters>,
@@ -555,17 +582,24 @@ impl Telemetry {
     }
 
     pub fn flush(&self) {
-        if !self.shared.config.enabled || self.shared.stopped.load(Ordering::Relaxed) {
-            return;
+        let _ = self.flush_complete();
+    }
+
+    /// Request SDK collection and wait for the accepted queue's bounded flush
+    /// barrier. Transport failures/loss remain in `counters`; a false result
+    /// means the barrier was not acknowledged, rather than a business error.
+    pub fn flush_complete(&self) -> bool {
+        if !self.shared.config.enabled {
+            return true;
+        }
+        if self.shared.stopped.load(Ordering::Relaxed) {
+            return false;
         }
         #[cfg(feature = "telemetry")]
         if let Some(sdk) = &self.sdk {
             sdk.flush();
         }
-        let (sender, receiver) = mpsc::sync_channel(1);
-        if self.shared.sender.try_send(Command::Flush(sender)).is_ok() {
-            let _ = receiver.recv_timeout(Duration::from_secs(5));
-        }
+        flush_barrier(&self.shared.sender, Duration::from_secs(5))
     }
 
     pub fn shutdown(&self) {
@@ -718,6 +752,37 @@ impl Shared {
     }
 
     fn try_enqueue(&self, index: &'static str, documents: Vec<Document>, local: bool) -> Result<(), Error> {
+        if local && index == "otel_spans" && documents.iter().any(mandatory_root) {
+            if documents.iter().all(mandatory_root) {
+                return self.send_documents(index, documents, local, true);
+            }
+            // Preserve child evidence before a normal root's tail decision. Only
+            // contiguous runs share an admission class; failed children do not
+            // stop a following mandatory root from using its reserve.
+            let mut result = Ok(());
+            let mut run = Vec::new();
+            let mut root = mandatory_root(&documents[0]);
+            for document in documents {
+                let next = mandatory_root(&document);
+                if next != root {
+                    let sent = self.send_documents(index, std::mem::take(&mut run), local, root);
+                    result = result.and(sent);
+                    root = next;
+                }
+                run.push(document);
+            }
+            return result.and(self.send_documents(index, run, local, root));
+        }
+        self.send_documents(index, documents, local, false)
+    }
+
+    fn send_documents(
+        &self,
+        index: &'static str,
+        documents: Vec<Document>,
+        local: bool,
+        root: bool,
+    ) -> Result<(), Error> {
         let count = documents.len();
         if count == 0 {
             return Ok(());
@@ -726,20 +791,36 @@ impl Shared {
             .iter()
             .map(document_bytes)
             .fold(0_usize, usize::saturating_add);
-        self.send_records(count, bytes, Command::Documents(index, documents, bytes, local, count))
+        self.send_records(
+            count,
+            bytes,
+            Command::Documents(index, documents, bytes, local, count),
+            root,
+        )
     }
 
     #[cfg(feature = "telemetry")]
     fn enqueue_sdk(&self, batch: sdk::ExportBatch) {
+        if let Some(root) = batch.uniform_root_priority() {
+            self.enqueue_sdk_batch(batch, root);
+        } else {
+            for (batch, root) in batch.into_priority_runs() {
+                self.enqueue_sdk_batch(batch, root);
+            }
+        }
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn enqueue_sdk_batch(&self, batch: sdk::ExportBatch, root: bool) {
         let count = batch.len();
         if count == 0 || !self.config.enabled {
             return;
         }
         let bytes = batch.estimated_bytes();
-        let _ = self.send_records(count, bytes, Command::Sdk(batch, bytes));
+        let _ = self.send_records(count, bytes, Command::Sdk(batch, bytes), root);
     }
 
-    fn send_records(&self, count: usize, bytes: usize, command: Command) -> Result<(), Error> {
+    fn send_records(&self, count: usize, bytes: usize, command: Command, root: bool) -> Result<(), Error> {
         #[allow(deprecated)] // fetch_update remains available on the workspace's Rust 1.95 minimum.
         let reserve = |counter: &AtomicUsize, value: usize, max: usize| {
             counter
@@ -748,11 +829,27 @@ impl Shared {
                 })
                 .is_ok()
         };
-        if !reserve(&self.queued_records, count, MAX_QUEUE) {
+        if !reserve(
+            &self.queued_records,
+            count,
+            if root {
+                MAX_QUEUE
+            } else {
+                MAX_QUEUE - ROOT_RESERVED_RECORDS
+            },
+        ) {
             self.counters.dropped.fetch_add(count as u64, Ordering::Relaxed);
             return Err(Error::new("telemetry queue record limit reached"));
         }
-        if !reserve(&self.queued_bytes, bytes, MAX_BUFFER_BYTES) {
+        if !reserve(
+            &self.queued_bytes,
+            bytes,
+            if root {
+                MAX_BUFFER_BYTES
+            } else {
+                MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES
+            },
+        ) {
             self.queued_records.fetch_sub(count, Ordering::AcqRel);
             self.counters.dropped.fetch_add(count as u64, Ordering::Relaxed);
             return Err(Error::new("telemetry queue byte limit reached"));
@@ -839,6 +936,9 @@ impl Span {
     }
     pub fn context(&self) -> Option<TraceContext> {
         self.context.clone()
+    }
+    pub fn is_recording(&self) -> bool {
+        self.context.is_some()
     }
     pub fn set_attribute(&mut self, key: &str, value: Value) {
         #[cfg(feature = "telemetry")]
@@ -1098,6 +1198,38 @@ fn true_field(document: &Document, key: &str) -> bool {
     matches!(document.get(key), Some(Value::Bool(true))) || string_field(document, key) == "true"
 }
 
+fn mandatory_root(document: &Document) -> bool {
+    string_field(document, "kind") == "SERVER" || true_field(document, "moqui.job.root")
+}
+
+/// Tail promotion may make a large batch. Charge mandatory local roots first,
+/// retaining the original document order while dropping only excess children.
+fn admit_ready(ready: &mut Vec<Document>, local_roots: bool, count: &mut usize, bytes: &mut usize) -> usize {
+    let original = ready.len();
+    let mut admit = |document: &Document, record_limit: usize, byte_limit: usize| {
+        let document_bytes = document_bytes(document);
+        if *count < record_limit && bytes.checked_add(document_bytes).is_some_and(|next| next <= byte_limit) {
+            *count += 1;
+            *bytes += document_bytes;
+            true
+        } else {
+            false
+        }
+    };
+    if local_roots {
+        ready.retain(|document| !mandatory_root(document) || admit(document, MAX_QUEUE, MAX_BUFFER_BYTES));
+    }
+    ready.retain(|document| {
+        (local_roots && mandatory_root(document))
+            || admit(
+                document,
+                MAX_QUEUE - ROOT_RESERVED_RECORDS,
+                MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES,
+            )
+    });
+    original - ready.len()
+}
+
 fn has_exception(document: &Document) -> bool {
     string_field(document, "status_code") == "ERROR"
         || document.contains_key("exception.type")
@@ -1179,8 +1311,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                 for document in documents {
                     if index == "otel_spans" && local {
                         let trace = string_field(&document, "trace_id");
-                        let mandatory_root =
-                            string_field(&document, "kind") == "SERVER" || true_field(&document, "moqui.job.root");
+                        let mandatory_root = mandatory_root(&document);
                         let root = mandatory_root || string_field(&document, "parent_span_id").is_empty();
                         let sampled = true_field(&document, "sampled");
                         let important = has_exception(&document)
@@ -1236,12 +1367,14 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                     }
                 }
                 if !ready.is_empty() {
-                    let ready_bytes = ready.iter().map(document_bytes).sum::<usize>();
-                    if pending_count + ready.len() <= MAX_QUEUE
-                        && pending_bytes.saturating_add(ready_bytes) <= MAX_BUFFER_BYTES
-                    {
-                        pending_count += ready.len();
-                        pending_bytes += ready_bytes;
+                    let dropped = admit_ready(
+                        &mut ready,
+                        local && index == "otel_spans",
+                        &mut pending_count,
+                        &mut pending_bytes,
+                    );
+                    shared.counters.dropped.fetch_add(dropped as u64, Ordering::Relaxed);
+                    if !ready.is_empty() {
                         if let Some((_, documents, _)) = pending
                             .iter_mut()
                             .find(|(queued_index, _, queued_local)| *queued_index == index && *queued_local == local)
@@ -1250,8 +1383,6 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                         } else {
                             pending.push((index, ready, local));
                         }
-                    } else {
-                        shared.counters.dropped.fetch_add(ready.len() as u64, Ordering::Relaxed);
                     }
                 }
             }

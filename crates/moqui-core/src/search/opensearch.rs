@@ -618,9 +618,6 @@ fn agg_json(mapping: &DocumentMapping, agg: &Agg) -> Result<Json, Error> {
             );
             if let Some(Json::Object(inner)) = body.get_mut("terms") {
                 inner.insert("min_doc_count".into(), json!(terms.min_doc_count));
-                if let Some(missing) = &terms.missing {
-                    inner.insert("missing".into(), json!(missing));
-                }
             }
             sub(&terms.aggs, &mut body)?;
             Json::Object(body)
@@ -653,7 +650,11 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
                 .and_then(Json::as_array)
                 .into_iter()
                 .flatten()
-                .map(|hit| moqui_lib::json::from_json(&json!({"id":hit["_id"],"body":hit["_source"]})))
+                .map(|hit| {
+                    moqui_lib::json::from_json(
+                        &json!({"id":hit["_id"],"documentId":hit["_moqui_document_type"],"body":hit["_source"]}),
+                    )
+                })
                 .collect(),
         ),
         Agg::HistogramMerge { .. } => moqui_lib::json::from_json(part.get("value").unwrap_or(&Json::Null)),
@@ -779,6 +780,72 @@ pub struct OpenSearchBackend {
 }
 
 impl OpenSearchBackend {
+    fn index_documents_with_refresh(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+        read_at: Option<Timestamp>,
+        deferred_refresh: bool,
+    ) -> Result<usize, Error> {
+        if documents.is_empty() {
+            return Ok(0);
+        }
+        let index = self.index_name(mapping);
+        let now = read_at.unwrap_or_else(Timestamp::now).as_millisecond();
+        let mut text = String::new();
+        // Preserve the legacy generated-id write behavior; exporter deferral is explicit.
+        let generated_ids = documents.iter().all(|(id, _)| id.is_empty());
+        for (id, body) in documents {
+            let generated;
+            let id = if id.is_empty() {
+                generated = super::postgres::generated_doc_id();
+                &generated
+            } else {
+                id
+            };
+            let action = if id.is_empty() {
+                json!({"index": {"_index": index}})
+            } else if read_at.is_some() {
+                json!({"index": {"_index": index, "_id": id, "version": now, "version_type": "external_gte"}})
+            } else {
+                json!({"index": {"_index": index, "_id": id}})
+            };
+            text.push_str(&action.to_string());
+            text.push('\n');
+            // Dates as ISO-8601, which the date format reads, wherever the script or the caller gave them as text.
+            let mut typed = body.clone();
+            mapping.root.type_dates(&mut typed);
+            let mut source = body_json_map(&typed);
+            if let Json::Object(map) = &mut source {
+                map.insert(INDEXED_AT.into(), Json::from(now));
+                map.insert("__cursor".into(), json!(format!("{}:{id}", mapping.document_id)));
+            }
+            text.push_str(&source.to_string());
+            text.push('\n');
+        }
+        let path = if deferred_refresh || generated_ids {
+            "_bulk"
+        } else {
+            "_bulk?refresh=wait_for"
+        };
+        let response = self.checked("POST", path, Some(Body::NdJson(text)))?;
+        if response.get("errors").and_then(Json::as_bool) == Some(true) {
+            // A version conflict is a document already stored from a later read; it stays.
+            let first = response.get("items").and_then(Json::as_array).and_then(|items| {
+                items.iter().find_map(|item| {
+                    let error = item.pointer("/index/error")?;
+                    let conflict =
+                        error.get("type").and_then(Json::as_str) == Some("version_conflict_engine_exception");
+                    (!conflict).then(|| error.get("reason").cloned().unwrap_or(Json::Null))
+                })
+            });
+            if let Some(reason) = first {
+                return Err(Error::new(format!("OpenSearch bulk index failed: {reason}")));
+            }
+        }
+        Ok(documents.len())
+    }
+
     pub fn new(conf: &ClusterConf) -> Self {
         let authorization = conf.user.as_ref().map(|user| {
             let pair = format!("{user}:{}", conf.password.clone().unwrap_or_default());
@@ -1019,63 +1086,18 @@ impl SearchBackend for OpenSearchBackend {
         documents: &[(String, Document)],
         read_at: Option<Timestamp>,
     ) -> Result<usize, Error> {
-        if documents.is_empty() {
-            return Ok(0);
+        self.index_documents_with_refresh(mapping, documents, read_at, false)
+    }
+
+    fn index_telemetry_documents(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+    ) -> Result<usize, Error> {
+        if !super::telemetry::is_telemetry_index(&mapping.document_id) {
+            return Err(Error::new("deferred refresh is restricted to telemetry indexes"));
         }
-        let index = self.index_name(mapping);
-        let now = read_at.unwrap_or_else(Timestamp::now).as_millisecond();
-        let mut text = String::new();
-        // Log entries come without ids: OpenSearch makes them, and the write does not wait for a refresh.
-        let generated_ids = documents.iter().all(|(id, _)| id.is_empty());
-        for (id, body) in documents {
-            let generated;
-            let id = if id.is_empty() {
-                generated = super::postgres::generated_doc_id();
-                &generated
-            } else {
-                id
-            };
-            let action = if id.is_empty() {
-                json!({"index": {"_index": index}})
-            } else if read_at.is_some() {
-                json!({"index": {"_index": index, "_id": id, "version": now, "version_type": "external_gte"}})
-            } else {
-                json!({"index": {"_index": index, "_id": id}})
-            };
-            text.push_str(&action.to_string());
-            text.push('\n');
-            // Dates as ISO-8601, which the date format reads, wherever the script or the caller gave them as text.
-            let mut typed = body.clone();
-            mapping.root.type_dates(&mut typed);
-            let mut source = body_json_map(&typed);
-            if let Json::Object(map) = &mut source {
-                map.insert(INDEXED_AT.into(), Json::from(now));
-                map.insert("__cursor".into(), json!(format!("{}:{id}", mapping.document_id)));
-            }
-            text.push_str(&source.to_string());
-            text.push('\n');
-        }
-        let path = if generated_ids {
-            "_bulk"
-        } else {
-            "_bulk?refresh=wait_for"
-        };
-        let response = self.checked("POST", path, Some(Body::NdJson(text)))?;
-        if response.get("errors").and_then(Json::as_bool) == Some(true) {
-            // A version conflict is a document already stored from a later read; it stays.
-            let first = response.get("items").and_then(Json::as_array).and_then(|items| {
-                items.iter().find_map(|item| {
-                    let error = item.pointer("/index/error")?;
-                    let conflict =
-                        error.get("type").and_then(Json::as_str) == Some("version_conflict_engine_exception");
-                    (!conflict).then(|| error.get("reason").cloned().unwrap_or(Json::Null))
-                })
-            });
-            if let Some(reason) = first {
-                return Err(Error::new(format!("OpenSearch bulk index failed: {reason}")));
-            }
-        }
-        Ok(documents.len())
+        self.index_documents_with_refresh(mapping, documents, None, true)
     }
 
     fn delete_document(&self, mapping: &DocumentMapping, id: &str) -> Result<bool, Error> {
@@ -1247,6 +1269,87 @@ impl SearchBackend for OpenSearchBackend {
         Ok(result)
     }
 
+    fn aggregate_many(
+        &self,
+        mappings: &[Arc<DocumentMapping>],
+        filter: &Query,
+        aggs: &IndexMap<String, Agg>,
+        _fresh_by: Option<std::time::Instant>,
+    ) -> Result<IndexMap<String, Value>, Error> {
+        let merged = super::mapping::combined_mapping(mappings)?;
+        let population = |query: &Query| json!({"bool":{"should":mappings.iter().map(|mapping|json!({"bool":{"filter":[{"term":{"_index":self.index_name(mapping)}},query_json(mapping,query)]}})).collect::<Vec<_>>(),"minimum_should_match":1}});
+        fn compile(
+            mapping: &DocumentMapping,
+            aggs: &IndexMap<String, Agg>,
+            population: &dyn Fn(&Query) -> Json,
+        ) -> Result<Json, Error> {
+            let mut body = aggs_json(mapping, aggs)?;
+            for (name, agg) in aggs {
+                match agg {
+                    Agg::Filter { query, .. } => body[name]["filter"] = population(query),
+                    Agg::NamedFilters { filters, .. } => {
+                        body[name]["filters"]["filters"] = Json::Object(
+                            filters
+                                .iter()
+                                .map(|(name, query)| (name.clone(), population(query)))
+                                .collect(),
+                        )
+                    }
+                    Agg::Terms(terms) if terms.field == super::query::DOCUMENT_FIELD => {
+                        body[name]["terms"]["field"] = json!("_index")
+                    }
+                    _ => {}
+                }
+                if let Some(nested) = agg.sub_aggs() {
+                    if !nested.is_empty() {
+                        body[name]["aggs"] = compile(mapping, nested, population)?;
+                    }
+                }
+            }
+            Ok(body)
+        }
+        let indexes = mappings
+            .iter()
+            .map(|mapping| self.index_name(mapping))
+            .collect::<Vec<_>>();
+        let mut response = self.searched(
+            &format!("{}/_search", indexes.join(",")),
+            json!({"size":0,"query":population(filter),"aggs":compile(&merged,aggs,&population)?}),
+        )?;
+        fn count(value: &Json) -> usize {
+            match value {
+                Json::Object(map) => map
+                    .iter()
+                    .map(|(key, value)| {
+                        if key == "buckets" {
+                            value
+                                .as_array()
+                                .map_or_else(|| value.as_object().map_or(0, |map| map.len()), Vec::len)
+                                + count(value)
+                        } else {
+                            count(value)
+                        }
+                    })
+                    .sum(),
+                Json::Array(values) => values.iter().map(count).sum(),
+                _ => 0,
+            }
+        }
+        if count(&response["aggregations"]) > super::limits::buckets() {
+            return Err(Error::new("combined aggregation returned too many groups"));
+        }
+        let identities = mappings
+            .iter()
+            .map(|mapping| (self.index_name(mapping), mapping.document_id.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        rewrite_population_response(aggs, &mut response["aggregations"], &identities);
+        let mut result = read_aggs(aggs, &response["aggregations"]);
+        let mut again =
+            |filter: &Query, aggs: &IndexMap<String, Agg>| self.aggregate_many(mappings, filter, aggs, None);
+        super::agg::fill_other_buckets_with(&mut again, filter, aggs, &mut result)?;
+        Ok(result)
+    }
+
     fn drop_index(&self, mapping: &DocumentMapping) -> Result<(), Error> {
         let index = self.index_name(mapping);
         let (status, json) = self.send("DELETE", &index, None)?;
@@ -1257,6 +1360,45 @@ impl SearchBackend for OpenSearchBackend {
             )));
         }
         Ok(())
+    }
+}
+
+fn rewrite_population_response(
+    aggs: &IndexMap<String, Agg>,
+    response: &mut Json,
+    identities: &std::collections::HashMap<String, String>,
+) {
+    for (name, agg) in aggs {
+        let part = &mut response[name];
+        if let Agg::TopHits { .. } = agg {
+            for hit in part["hits"]["hits"].as_array_mut().into_iter().flatten() {
+                if let Some(identity) = hit["_index"].as_str().and_then(|index| identities.get(index)) {
+                    hit["_moqui_document_type"] = json!(identity);
+                }
+            }
+        }
+        if let Agg::Terms(terms) = agg {
+            if terms.field == super::query::DOCUMENT_FIELD {
+                for bucket in part["buckets"].as_array_mut().into_iter().flatten() {
+                    if let Some(identity) = bucket["key"].as_str().and_then(|index| identities.get(index)) {
+                        bucket["key"] = json!(identity);
+                    }
+                }
+            }
+        }
+        if let Some(nested) = agg.sub_aggs() {
+            if matches!(agg, Agg::Filter { .. }) {
+                rewrite_population_response(nested, part, identities);
+            } else if let Some(buckets) = part["buckets"].as_array_mut() {
+                for bucket in buckets {
+                    rewrite_population_response(nested, bucket, identities);
+                }
+            } else if let Some(buckets) = part["buckets"].as_object_mut() {
+                for bucket in buckets.values_mut() {
+                    rewrite_population_response(nested, bucket, identities);
+                }
+            }
+        }
     }
 }
 
