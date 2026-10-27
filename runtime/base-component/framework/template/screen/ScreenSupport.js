@@ -265,19 +265,36 @@
         return code;
     };
 
+    // Self-contained so the static renderer can embed the same chooser in its isolated runtime.
+    const renderModeHelpers = function () {
+        const renderModeTypeMatches = (type, mode) => {
+            const canonical = (name) => name === "xsl-fo" ? "html-print" : name;
+            return String(type || "").split(",").map((name) => canonical(name.trim())).includes(canonical(mode));
+        };
+        // Last explicit match wins over the last fallback, regardless of their document order.
+        const chooseRenderModeText = (node, mode) => {
+            let fallback = null;
+            let matching = null;
+            (node.children || []).filter((text) => text.name === "text").forEach((text) => {
+                const type = (text.attrs || {}).type;
+                if (!type || type === "any") fallback = text;
+                else if (renderModeTypeMatches(type, mode)) matching = text;
+            });
+            return matching || fallback;
+        };
+        return { renderModeTypeMatches, chooseRenderModeText };
+    };
+    const { renderModeTypeMatches, chooseRenderModeText } = renderModeHelpers();
+
     // The macros every mode shares: include-screen, render-mode, text and the subscreen and section calls.
     const anyMacros = (mode) => {
         // A text type list names the mode; xsl-fo is the older name of html-print.
-        const typeMatches = (type) => type.split(",").map((name) => name.trim()).map((name) => name === "xsl-fo" ? "html-print" : name).includes(mode);
+        const typeMatches = (type) => renderModeTypeMatches(type, mode);
         return {
             "include-screen": stmt((node) =>
                 `sri.renderIncludeScreen(${jsString(attr(node, "location"))}, ${jsString(attr(node, "share-scope"))});`),
             "render-mode": stmt((node) => {
-                const texts = childrenNamed(node, "text");
-                if (!texts.length) return "";
-                let chosen = null;
-                texts.forEach((kid) => { if (!attr(kid, "type") || attr(kid, "type") === "any") chosen = kid; });
-                texts.forEach((kid) => { if (attr(kid, "type") && typeMatches(attr(kid, "type"))) chosen = kid; });
+                const chosen = chooseRenderModeText(node, mode);
                 return chosen ? renderTextCode(chosen) : "";
             }),
             "text": stmt((node) => {
@@ -403,7 +420,7 @@
 
     return {
         beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
-        setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, anyMacros,
+        setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
         displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, heldCode, noops
     };
 })

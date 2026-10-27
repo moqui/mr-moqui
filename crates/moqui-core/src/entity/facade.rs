@@ -182,6 +182,26 @@ impl EntityFacade {
         Ok(facade)
     }
 
+    /// Open the factory's component model and merged configuration over host-owned transaction groups.
+    /// The host configures the groups' drivers and transaction settings; naming, load-entity files,
+    /// extensions and encryption use the same merged configuration on every host.
+    pub fn open_for_factory(
+        factory: &crate::context::ExecutionContextFactory,
+        default_group: &str,
+        groups: Vec<EntityGroup>,
+    ) -> Result<Self, Error> {
+        let conf = MNode::parse_shared("moqui-conf", factory.conf_text())?;
+        let facade = Self::open_components_with_conf(
+            factory.framework_dir(),
+            &crate::context::component_entity_dirs(factory),
+            default_group,
+            groups,
+            &conf,
+        )?;
+        facade.crypt_from_conf(&conf)?;
+        Ok(facade)
+    }
+
     /// Load the framework entity model and attach one transaction manager per group.
     pub fn open(framework_dir: &Path, default_group: &str, groups: Vec<EntityGroup>) -> Result<Self, Error> {
         Self::open_components(framework_dir, &[], default_group, groups)

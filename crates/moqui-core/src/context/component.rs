@@ -46,6 +46,17 @@ impl ComponentInfo {
     }
 }
 
+/// Component entity directories in load order, excluding the framework model already loaded by the facade.
+pub fn component_entity_dirs(factory: &super::ExecutionContextFactory) -> Vec<PathBuf> {
+    factory
+        .components()
+        .iter()
+        .filter(|info| !same_directory(&info.location, factory.framework_dir()))
+        .map(|info| info.location.join("entity"))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
 /// What discovery needs besides the conf: the instance purpose the boot will set, which components and directories
 /// with a `purpose` are checked against.
 struct Discovery<'a> {

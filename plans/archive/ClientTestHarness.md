@@ -1,11 +1,12 @@
 # Client test harness: `moqui test-client`
 
-Oct 24, 2026 · Built the same day: P1 to P6 (§11), with the differences from the text and what is left in "Built so
-far" at the end of §11. The guide is [docs/Client-Testing.md](../docs/Client-Testing.md). The user answered the first
-questions the same day: the server a suite needs comes from a `--serve` child process (D9), the command is in every
+> Archived 2026-10-27: the client test harness and HTTP security-test migration are complete (125 Java proofs ported, 18 not applicable, none pending). Current usage is in [Client-Testing](../../docs/Client-Testing.md); coverage is catalogued in [Security proof tests](../../docs/SECURITY_TESTS.md). Optional extensions are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
+
+Oct 24, 2026 · Built the same day: P1 to P6 (§11), with the implementation notes in "Built so far" at the end of §11.
+The guide is [docs/Client-Testing.md](../../docs/Client-Testing.md). The user answered the first questions the same day: the server a suite needs comes from a `--serve` child process (D9), the command is in every
 package (D12), and all of mr-marble's Node and Python tests move to Moqui (§9).
 
-`moqui test` ([docs/Testing.md](../docs/Testing.md), [TestHarness](archive/TestHarness.md)) runs a component's specs
+`moqui test` ([docs/Testing.md](../../docs/Testing.md), [TestHarness](TestHarness.md)) runs a component's specs
 inside the framework: the services' engine, a scratch database, `ec`. Tests from outside, over HTTP and in a browser,
 have no place there, so they were written on other stacks. mr-marble has a Playwright test with npm and a lock
 file, and two Node scripts that drive Chromium over CDP. Moqui Java's security proofs over HTTP are a pytest suite (143
@@ -36,7 +37,7 @@ Reviewed for it:
 - `moqui tui --server`'s HTTP and WebSocket client (`host/tui_remote.rs`);
 - the PDF engine's Chromium (`host/pdf.rs`, `host/pdf/cdp.rs`);
 - the browser test driver (`host-tests/common/cdp.rs`) and `host-tests/gate3_browser.rs`;
-- the speed tests (`host-tests/speed/`, [Profiling](Profiling.md));
+- the speed tests (`host-tests/speed/`, [Profiling](../Profiling.md));
 - the session token, CORS and login code (`core/screen/mod.rs`, `core/screen/render.rs`, `webroot/rest.xml`,
   `webroot/Login.xml`);
 - every file of `MRSS/test/`;
@@ -66,7 +67,7 @@ Moqui Java checkout (`~/work/moquiwork/moqui`). Every other path is relative to 
 | D11 | Parameters come from `--param name=value` and the `MOQUI_TEST_<NAME>` environment variables; the defaults are the demo data's (`john.doe`/`moqui`). Plain `http` is allowed only to loopback unless `--allow-http`. `--insecure` accepts an invalid certificate, with a WARN. | The Playwright tests read `MRSS_*` variables. A password on the command line shows in `ps`. The loopback rule is `tui --server`'s (`host/tui_remote.rs:88-107`). |
 | D12 | In every package, as the `test-client` feature in Lite and Enterprise (Dev and Maximal include those). | Answered (question 2). It adds no dependency: `reqwest` is always in the host, and `tungstenite` comes with `tui`. A CI box with any binary can test any server. |
 | D13 | Specs get no process or shell API. `files.list` and `files.read` are read-only and confined to the spec's own component directory. `random-screen.spec.mjs`'s `git diff` sample becomes every candidate Find screen as a `where` row, and `--param screen=` picks one. | A component's test should not run programs on the tester's machine. A random sample makes a failure unrepeatable. |
-| D14 | Failure tolerance as in [AGENTS.md](../AGENTS.md). These failures are each reported, naming what failed, and the run goes on: a spec that does not load, a feature that fails, a virtual user whose iteration throws, a page whose screenshot fails, and a `--serve` child that does not start (its suite only). | The repository's rule. |
+| D14 | Failure tolerance as in [AGENTS.md](../../AGENTS.md). These failures are each reported, naming what failed, and the run goes on: a spec that does not load, a feature that fails, a virtual user whose iteration throws, a page whose screenshot fails, and a `--serve` child that does not start (its suite only). | The repository's rule. |
 
 ## 1. What it looks like
 
@@ -507,7 +508,7 @@ on any conf, so they run against `./moq run` too.
 That is 33 Python tests in about 28 features, and it covers each pattern the remaining 110 need, except multipart, HMAC and
 timing. Those three are named in the catalog and arrive with their tests.
 
-**Differences from Java** (in the catalog; each one recorded in [Parity-Diffs](Parity-Diffs.md) if it is not already
+**Differences from Java** (in the catalog; each one recorded in [Parity-Diffs](../Parity-Diffs.md) if it is not already
 there):
 
 - A preflight answers 204, not 200.
@@ -565,7 +566,7 @@ keeps it from answering 429.
 
 The defaults (4 users, 10 s) make it a smoke test that every `--serve` run includes. A real run is
 `--param users=50 --param duration=120`, against `./moq run` or another server, with the JSON kept for comparison. It
-adds the HTTP-level numbers [Profiling](Profiling.md) lacks (line 195: the speed tests do not cover screen renders).
+adds the HTTP-level numbers [Profiling](../Profiling.md) lacks (line 195: the speed tests do not cover screen renders).
 
 ## 9. mr-marble
 
@@ -642,7 +643,7 @@ P1 to P4 need no browser, so the security and load users arrive before the large
   Node or Python: `FindScreens`, `BrowserSmoke`, `OrderRoleFilters`, `ScreenReport`, and `ClientAccess`, the test-only
   grant of §9. `moqui test-client mr-marble --serve` passes 40 of 40, and FindScreens passed 20 runs in a row
   (§14, 1).
-- **P6, the docs.** [Client-Testing](../docs/Client-Testing.md), pointers from Testing, Packaging and the READMEs.
+- **P6, the docs.** [Client-Testing](../../docs/Client-Testing.md), pointers from Testing, Packaging and the READMEs.
 - **Differences.**
   - `--spec` takes exact names, comma-separated, as `moqui test` does; there are no patterns.
   - Timeouts are seconds throughout: `waitUntil`'s `timeout`, a request's, a WebSocket `receive({ timeout })`, and the
@@ -666,10 +667,7 @@ P1 to P4 need no browser, so the security and load users arrive before the large
   (`ec.artifactExecution.disableTarpit()` for scripts too), and a refusal under a template render keeps its kind and
   `Retry-After`. The mr-marble suite's server runs the dev conf, with the screen tarpits off, so it is not
   affected.
-- **Left:**
-  - the 90 pending Python tests of the catalog, with multipart, HMAC and timing to build (§14, 6), and the `Host`
-    header proof of §7 to check first;
-  - the items of §15.
+- **Follow-up complete (2026-10-27):** the HTTP security catalog now records 125 ported proofs and 18 not applicable, with none pending. Screen and transition tarpit counting is implemented; `SecurityTarpit` runs against the production conf. See [Security proof tests](../../docs/SECURITY_TESTS.md). Optional extensions from §15 are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
 
 ## 12. Tests of the harness
 
@@ -720,13 +718,12 @@ P1 to P4 need no browser, so the security and load users arrive before the large
 4. **The `Host` header and `returnTo`** (§7): possibly a real finding; it is handled privately if so.
 5. **Windows.** The child's stop through its standard input and the raw TLS stream are portable. Chromium discovery on
    Windows is not tested (as for PDF).
-6. **Coverage of the remaining suite.** The catalog makes it a checklist. Multipart, HMAC (`/rest/sm` with the
-   `SEC_SMR_*` remotes as fixtures) and timing (the tarpit, which needs its production conf) are the patterns still to
-   build.
+6. **Coverage of the remaining suite.** Completed after the initial build: the catalog has no pending HTTP proofs, including multipart, HMAC and production-conf tarpit checks. See the archive status and follow-up above.
 
 ## 15. Later
 
-- the rest of the Python suite;
+The HTTP security migration is complete. These optional extensions remain in [Remaining-Work, Tests](../Remaining-Work.md#tests):
+
 - moving `gate3_browser` flows into client specs where that is clearer;
 - browser users in `load`, an arrival-rate model, server `/metrics` before and after a load, merged reports from
   several clients;

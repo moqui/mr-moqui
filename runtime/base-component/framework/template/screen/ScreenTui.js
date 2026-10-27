@@ -1488,11 +1488,8 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
             return `$openRender({t:"fragment",id:$uid(${jsString(name)})});\nsri.renderDynamicForm(${jsString(name)});\n$closeRender();\n`;
         }),
         "render-mode": stmt((node) => {
-            const texts = childrenNamed(node, "text");
-            const tui = texts.find((kid) => typeNames(attr(kid, "type")).includes("tui"));
-            if (tui) return textCode(tui);
-            const any = texts.find((kid) => !attr(kid, "type") || attr(kid, "type") === "any");
-            if (any) return textCode(any);
+            const chosen = S.chooseRenderModeText(node, "tui");
+            if (chosen) return textCode(chosen);
             return `$emit({t:"placeholder",id:$uid(${jsString(idOf(node))}),text:"render-mode",url:${screenUrlExpr}});\n`;
         }),
         "text": stmt((node) => textCode(node)),

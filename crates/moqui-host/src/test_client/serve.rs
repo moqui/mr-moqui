@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-client --serve` (plans/ClientTestHarness.md 6): the selected components grouped by the server their
+//! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server their
 //! `test/client/suite.js` declares (`suite([...], { server: { components, specs, conf } })`), and for each group this
 //! binary started as `moqui test <components> --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file <file>`,
 //! with `MOQUI_CONF` set to the declared conf. Its standard input is a pipe this process holds, so the child also stops

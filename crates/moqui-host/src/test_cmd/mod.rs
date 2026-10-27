@@ -19,7 +19,7 @@
 //! `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs
 //! their `dependsOn` names, in suite order. Each spec runs in its own execution context. A `dependsOn` name a spec's
 //! component lacks comes from the run's other components. Each component's `test/MoquiConf.xml` merges after its
-//! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`, plans/ClientTestHarness.md 6).
+//! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`, plans/archive/ClientTestHarness.md 6).
 //!
 //! Discovery, argument parsing, factory boot and `run_spec` are in every build. `--db none` boots the factory and
 //! leaves the entity facade unset. `fixture::open`, `--serve`, coverage and `--agents` need `embedded-postgres`.
@@ -365,7 +365,7 @@ pub(crate) fn select_specs(component: &TestComponent, names: &[String]) -> Resul
 
 /// The specs named, in every component of the run that has them, and the specs they depend on, each component with
 /// its specs in its own order; components left with none are dropped. A `dependsOn` name the spec's own component
-/// lacks is looked up in the run's other components, in order (plans/ClientTestHarness.md 6): mr-marble's specs
+/// lacks is looked up in the run's other components, in order (plans/archive/ClientTestHarness.md 6): mr-marble's specs
 /// depend on mr-mantle's.
 pub(crate) fn select_across(components: &[TestComponent], names: &[String]) -> Result<Vec<TestComponent>, Error> {
     let mut wanted: Vec<(usize, String)> = Vec::new();

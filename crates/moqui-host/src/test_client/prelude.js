@@ -1,4 +1,4 @@
-// The globals of a client spec (`moqui test-client`, plans/ClientTestHarness.md 5): the server under test, the params,
+// The globals of a client spec (`moqui test-client`, plans/archive/ClientTestHarness.md 5): the server under test, the params,
 // HTTP sessions, HMAC, raw requests, WebSocket, the browser and the component's files, over __moquiTestHost.call. The host
 // (test_client/mod.rs) evaluates this after the core prelude (spec, feature, the conditions, assert, dec, sum, skip),
 // before each spec file. There is no execution context: `ec` and the server helpers throw, naming what to use instead.
@@ -33,7 +33,7 @@
     };
     const plainArgs = (args) => args === undefined ? null : __moquiTest.plain(args, 0);
 
-    // Virtual users (plans/ClientTestHarness.md 5.6): each a thread with its own engine and default session (`http`)
+    // Virtual users (plans/archive/ClientTestHarness.md 5.6): each a thread with its own engine and default session (`http`)
     // runs setup once, scenario until the duration ends or for its iterations, then teardown. They run from their
     // source text, so they cannot use the spec file's variables; args are copied as JSON. The requests of scenario are
     // timed; a response of 400 or more (unless the request has expect: [...]), a transport error or a throw is an
@@ -227,7 +227,7 @@
         }
     }));
 
-    // Headless Chromium (plans/ClientTestHarness.md 5.5, the host's browser.rs): one per spec file, started on the
+    // Headless Chromium (plans/archive/ClientTestHarness.md 5.5, the host's browser.rs): one per spec file, started on the
     // first newPage and closed after the spec, each page in a browser context of its own. Calls block until done; the
     // actions wait for their element and then for the Moqui client to settle. A page's problems fail the feature unless
     // it or the spec has allowPageProblems. With no Chromium to start, newPage skips the feature (or the spec, in

@@ -53,7 +53,7 @@ feature("a sign-out ends the kept sign-in and the next page signs in again", {
     },
 })
 
-// The locate script's roles and accessible names (plans/ClientTestHarness.md 5.5) on HTML of its own.
+// The locate script's roles and accessible names (plans/archive/ClientTestHarness.md 5.5) on HTML of its own.
 feature("roles and accessible names on a fixture", {
     expect() {
         const page = browser.newPage({ user: "john.doe" })

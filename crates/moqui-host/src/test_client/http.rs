@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! HTTP of a client spec (plans/ClientTestHarness.md 5.2): the server under test, sessions with a cookie jar and the
+//! HTTP of a client spec (plans/archive/ClientTestHarness.md 5.2): the server under test, sessions with a cookie jar and the
 //! session token of their own, and requests with redirects off unless asked. The cookie jar keeps what `Set-Cookie`
 //! says by name, domain and path, with expiry; the session token comes from the `moquiSessionToken` and `X-CSRF-Token`
 //! response headers, an HTML page's `<meta name="moquiSessionToken">`, or a `/qapps` page's `moqui-config` JSON.

@@ -162,10 +162,8 @@ feature('disabled, unauthorized and hidden navigation do not expose saved finds'
 })(); } });
 
 feature('server-static forms also separate Saved Finds from Find Options', { expect() { (function () {
-    const factory = readModule('ScreenQvtStatic.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const T = readModule('../TemplateSupport.js');
+    const module = readModule('ScreenQvtStatic.js')(T, readModule('ScreenSupport.js')(T));
     let html = '';
     const context = { sri: { write: text => { html += text; }, staticUrl: () => ({ path: '/qapps/FindThing', exists: true }), staticDisableKey: () => 'mqDisable_test' } };
     runInContext(module.runtime, context);

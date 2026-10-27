@@ -372,6 +372,71 @@ fn static_fixture_compiled(name: &str) -> (String, String, crate::screen::static
 }
 
 #[test]
+fn merged_and_static_render_modes_share_last_match_selection_inside_and_outside_fields() {
+    let context = ExecutionContextFactory::test_context();
+    let dir = std::env::temp_dir().join(format!("moqui-mode-selection-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, mode, static_screen) in [
+        ("Html", "html", false),
+        ("Merged", "qvt", false),
+        ("Static", "qvt", true),
+    ] {
+        let path = dir.join(format!("{name}.xml"));
+        let xml = format!(
+            r#"<screen require-authentication="false" {}><widgets>
+            <render-mode><text type="html,qvt">top-first;</text><text type="qvt, html">top-chosen;</text>
+                <text>top-unused;</text><text type="any">top-last-unused;</text></render-mode>
+            <render-mode><text>fallback-first;</text><text type="any">fallback-chosen;</text>
+                <text type="csv">wrong-mode;</text></render-mode>
+            <form-single name="Edit"><field name="body"><default-field><render-mode>
+                <text type="html,qvt">field-first;</text><text type="qvt, html">field-chosen;</text>
+                <text>field-unused;</text><text type="any">field-last-unused;</text>
+            </render-mode></default-field></field></form-single>
+        </widgets></screen>"#,
+            if static_screen { "server-static=\"qvt\"" } else { "" }
+        );
+        std::fs::write(&path, xml).unwrap();
+        let location = path.to_string_lossy().into_owned();
+        let report = static_screen.then(|| crate::screen::statics::ReportGuard::start(true));
+        let output = make_render(context.factory())
+            .root_screen(location.clone())
+            .screen_path("")
+            .render_mode(mode)
+            .render()
+            .unwrap();
+        let report = report.map(crate::screen::statics::ReportGuard::finish);
+        let html = if static_screen {
+            ScreenFacade::of(context.factory())
+                .screen_def(context.factory(), &location)
+                .unwrap()
+                .generated()
+                .static_template("")
+                .unwrap_or_else(|| panic!("static mode template: {report:?}"))
+                .html
+                .clone()
+        } else {
+            output.body_text()
+        };
+        for chosen in ["top-chosen;", "fallback-chosen;", "field-chosen;"] {
+            assert_eq!(html.matches(chosen).count(), 1, "{name}: {html}");
+        }
+        for absent in [
+            "top-first;",
+            "top-unused;",
+            "top-last-unused;",
+            "fallback-first;",
+            "wrong-mode;",
+            "field-first;",
+            "field-unused;",
+            "field-last-unused;",
+        ] {
+            assert!(!html.contains(absent), "{name}, {absent}: {html}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_qvt_fixture_screens_become_templates_that_compile() {
     for name in [
         "containers",

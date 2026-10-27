@@ -272,7 +272,7 @@ type Booted = (
 
 /// Boot the factory, open its database, and attach the entity facade and search, as `load` does.
 fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
-    // A test run merges each component's test/MoquiConf.xml (plans/ClientTestHarness.md 6).
+    // A test run merges each component's test/MoquiConf.xml (plans/archive/ClientTestHarness.md 6).
     let options = moqui_core::context::BootOptions {
         test_confs: true,
         ..moqui_core::context::BootOptions::default()

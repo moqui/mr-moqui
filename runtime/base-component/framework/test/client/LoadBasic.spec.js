@@ -1,4 +1,4 @@
-// A basic load test of the framework's own screens and REST (plans/ClientTestHarness.md 8), as the user test.load
+// A basic load test of the framework's own screens and REST (plans/archive/ClientTestHarness.md 8), as the user test.load
 // that test/ClientFixtures.spec.js makes (VIEW on System, MOQUI_API and the Enumeration entity). By default 4 users for
 // 10 seconds, a smoke test of each --serve run; a real run is
 //     moqui test-client framework --spec LoadBasic --param users=50 --param duration=120

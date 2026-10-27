@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-client [component | path ...]` (plans/ClientTestHarness.md): run the spec files of a component's
+//! `moqui test-client [component | path ...]` (plans/archive/ClientTestHarness.md): run the spec files of a component's
 //! `test/client` directory against a server that is already running, over HTTP, WebSocket and headless Chromium
 //! ([`browser`]). The specs have the
 //! format, the runner and the report of `moqui test`; they run under [`ClientHost`], a [`SpecHost`] with no execution

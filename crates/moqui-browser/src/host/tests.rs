@@ -251,3 +251,119 @@ fn a_suspended_write_transaction_and_a_new_one_both_write() {
         .unwrap();
     assert_eq!(all.len(), 3);
 }
+
+#[test]
+fn custom_runtime_loads_component_entities_extensions_and_merged_configuration() {
+    use moqui_core::driver::DbDriver;
+    let runtime = TempRuntime::new("component-model");
+    let component = runtime.0.join("component/custom-model");
+    for dir in ["entity", "extra", "service/test/browser"] {
+        std::fs::create_dir_all(component.join(dir)).unwrap();
+    }
+    std::fs::write(
+        component.join("component.xml"),
+        r#"<component name="custom-model" version="1"/>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        component.join("MoquiConf.xml"),
+        r#"<moqui-conf><entity-facade sql-name-style="java" crypt-pass="component-pass">
+        <load-entity location="component://custom-model/extra/Extra.xml"/>
+    </entity-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        runtime.0.join("conf/MoquiDevConf.xml"),
+        r#"<moqui-conf><entity-facade sql-name-style="legacy" crypt-pass="runtime-pass"/></moqui-conf>"#,
+    )
+    .unwrap();
+    std::fs::write(component.join("entity/Model.xml"), r#"<entities>
+        <entity entity-name="RuntimeRecord" package="test.browser">
+            <field name="recordId" type="id" is-pk="true"/>
+            <field name="secretText" type="text-medium" encrypt="true"/>
+        </entity>
+        <extend-entity entity-name="TestEntity" package="moqui.test"><field name="componentNote" type="text-medium"/></extend-entity>
+    </entities>"#).unwrap();
+    std::fs::write(
+        component.join("extra/Extra.xml"),
+        r#"<entities><entity entity-name="ExtraRecord" package="test.browser">
+        <field name="recordId" type="id" is-pk="true"/>
+    </entity></entities>"#,
+    )
+    .unwrap();
+    std::fs::write(component.join("service/test/browser/ModelServices.xml"), r#"<services>
+        <service verb="create" noun="test.browser.RuntimeRecord" type="entity-auto" authenticate="false"><in-parameters><auto-parameters/></in-parameters><out-parameters><auto-parameters include="pk"/></out-parameters></service>
+    </services>"#).unwrap();
+    let browser = Browser::open(&runtime.0, &framework(), ":memory:").unwrap();
+    assert_eq!(
+        browser.entity().entity_dirs(),
+        vec![
+            framework().join("entity").canonicalize().unwrap(),
+            component.join("entity").canonicalize().unwrap()
+        ]
+    );
+    assert!(browser
+        .entity()
+        .entity_files()
+        .iter()
+        .any(|file| file.ends_with("extra/Extra.xml")));
+    assert_eq!(browser.entity().crypt().unwrap().0.pass, "runtime-pass");
+    browser.check_tables(&[]).unwrap();
+    let parameters = fields(&[
+        ("recordId", Value::string("R1")),
+        ("secretText", Value::string("private text")),
+    ]);
+    let result = browser
+        .call_service(
+            "test.browser.ModelServices.create#test.browser.RuntimeRecord",
+            &parameters,
+        )
+        .unwrap();
+    assert_eq!(result.get("recordId"), Some(&Value::string("R1")));
+    let found = browser
+        .find(
+            "test.browser.RuntimeRecord",
+            &fields(&[("recordId", Value::string("R1"))]),
+            &[],
+            None,
+        )
+        .unwrap();
+    assert_eq!(found[0].get("secretText"), Some(&Value::string("private text")));
+    browser
+        .store(
+            "moqui.test.TestEntity",
+            &fields(&[
+                ("testId", Value::string("T1")),
+                ("componentNote", Value::string("from the component")),
+            ]),
+        )
+        .unwrap();
+    let found = browser
+        .find(
+            "moqui.test.TestEntity",
+            &fields(&[("testId", Value::string("T1"))]),
+            &[],
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        found[0].get("componentNote"),
+        Some(&Value::string("from the component"))
+    );
+    browser
+        .store(
+            "test.browser.ExtraRecord",
+            &fields(&[("recordId", Value::string("E1"))]),
+        )
+        .unwrap();
+    let mut connection = browser.sqlite.connect().unwrap();
+    let stored = connection
+        .query(
+            "SELECT secretText FROM RuntimeRecord WHERE recordId = ?",
+            &[Value::string("R1")],
+        )
+        .unwrap();
+    let encrypted = stored[0].columns[0].1.as_str().unwrap();
+    assert_ne!(encrypted, "private text");
+    assert!(!encrypted.is_empty());
+}

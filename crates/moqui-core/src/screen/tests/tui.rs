@@ -41,6 +41,40 @@ fn document(output: &RenderOutput) -> Json {
     serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}: {text}"))
 }
 
+#[test]
+fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conversion() {
+    let output = render(
+        "mode-selection",
+        r#"<screen require-authentication="false"><widgets>
+        <render-mode>
+            <text type="tui">{"t":"text","text":"first typed"}</text>
+            <text type="csv, tui">{"t":"text","text":"last typed"}</text>
+            <text>unused fallback</text><text type="any">last unused fallback</text>
+        </render-mode>
+        <render-mode><text>first fallback</text><text type="any">last fallback</text>
+            <text type="qvt">unmatched</text></render-mode>
+        </widgets></screen>"#,
+        BTreeMap::new(),
+    );
+    let doc = document(&output);
+    let text = doc.to_string();
+    assert!(
+        nodes(&doc)
+            .into_iter()
+            .any(|node| node.get("t") == Some(&json!("text")) && node.get("text") == Some(&json!("last typed"))),
+        "{doc}"
+    );
+    assert!(
+        nodes(&doc)
+            .into_iter()
+            .any(|node| node.get("t") == Some(&json!("html")) && json!(node).to_string().contains("last fallback")),
+        "{doc}"
+    );
+    for absent in ["first typed", "unused fallback", "first fallback", "unmatched"] {
+        assert!(!text.contains(absent), "{absent}: {doc}");
+    }
+}
+
 fn objects<'a>(value: &'a Json, found: &mut Vec<&'a serde_json::Map<String, Json>>) {
     match value {
         Json::Array(items) => {

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `browser` of a client spec (plans/ClientTestHarness.md 5.5): headless Chromium over [`cdp`], one per spec file,
+//! The `browser` of a client spec (plans/archive/ClientTestHarness.md 5.5): headless Chromium over [`cdp`], one per spec file,
 //! started on the first `newPage` and stopped after the spec, with a browser context per page so each has its own
 //! cookies; a user signs in through `/Login` once a spec, and the user's later pages are given those cookies. Pages
 //! navigate and settle; locators wait for their element to be attached, visible, enabled and stable before they act

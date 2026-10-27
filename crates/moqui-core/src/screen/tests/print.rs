@@ -157,7 +157,11 @@ fn text_types_name_html_print_or_its_older_name() {
         </render-mode>
         <render-mode><text type="html-print">new name;</text></render-mode>
         <render-mode><text type="csv,xsl-fo">in a list;</text></render-mode>
-        <render-mode><text type="text">only text;</text></render-mode></widgets></screen>"#,
+        <render-mode><text type="text">only text;</text></render-mode>
+        <render-mode><text type="html-print">first;</text><text type="csv, xsl-fo">last typed;</text>
+            <text>fallback;</text><text type="any">last fallback;</text></render-mode>
+        <render-mode><text>first fallback;</text><text type="any">fallback only;</text>
+            <text type="text">unmatched;</text></render-mode></widgets></screen>"#,
     )
     .unwrap();
     let location = path.to_string_lossy().into_owned();
@@ -169,8 +173,8 @@ fn text_types_name_html_print_or_its_older_name() {
             .unwrap();
         print_body(&output)
     };
-    // render-mode shows the last matching text of its own element; each element here has one choice.
-    let expected = "old name;new name;in a list;";
+    // The last typed match wins even when fallbacks follow it; print aliases match in type lists too.
+    let expected = "old name;new name;in a list;last typed;fallback only;";
     assert_eq!(print("html-print"), expected);
     assert_eq!(print("xsl-fo"), expected);
     let csv = make_render(context.factory())
@@ -178,7 +182,7 @@ fn text_types_name_html_print_or_its_older_name() {
         .render_mode("csv")
         .render()
         .unwrap();
-    assert_eq!(csv.body_text(), "in a list;");
+    assert_eq!(csv.body_text(), "in a list;last typed;fallback only;");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

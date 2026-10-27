@@ -14,7 +14,7 @@ beside `./moq run` in the same runtime directory, or on another machine against 
 
 It is in every package (the `test-client` feature, [Packaging](Packaging.md)). `--serve`, which starts a server for the
 suite, needs `moqui test` and so the `embedded-postgres` build (not Enterprise). The design record is
-`plans/ClientTestHarness.md`.
+[ClientTestHarness](../plans/archive/ClientTestHarness.md).
 
 ## Running
 
