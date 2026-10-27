@@ -646,8 +646,10 @@ fn a_disallowed_origin_is_refused_before_the_request_runs() {
     );
     let mut configured = request("POST", "/go");
     configured.set_header("host", "127.0.0.1:8080");
-    configured.set_header("origin", "http://erp.example");
+    configured.set_header("origin", "http://erp.example:8080");
     assert_eq!(serve_at(&world.factory, configured.clone(), &root).status, 302);
+    configured.set_header("origin", "http://erp.example");
+    assert_eq!(serve_at(&world.factory, configured.clone(), &root).status, 401);
     configured.set_header("origin", "https://erp.example");
     assert_eq!(
         serve_at(&world.factory, configured, &root).status,

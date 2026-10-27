@@ -43,7 +43,10 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     for name in names {
         moqui_lib::env::set_property(name, "");
     }
-    let context = crate::context::ExecutionContextFactory::test_context();
+    let context = crate::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="${webapp_http_host}" http-port="${webapp_http_port}"
+            https-enabled="${webapp_https_enabled}" https-port="${webapp_https_port}"/></webapp-list></moqui-conf>"#,
+    );
     let _entered = context.enter();
     let factory = context.factory();
     let check = |expected: &str| {
