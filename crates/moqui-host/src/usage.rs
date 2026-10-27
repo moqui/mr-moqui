@@ -137,8 +137,8 @@ Flags:
                                   Empty or all: every data type.
   components=a,b                  Component names. Empty means all.
   location=FILE                   Load only this data file.
-  timeout=SECONDS                 Transaction timeout for each record. Omitted uses the
-                                  transaction default, 60 seconds.
+  timeout=SECONDS                 Transaction timeout for each data file.
+                                  Omitted: 600 seconds; each file is one transaction.
   raw=true|false                  Empty-database load: turn off entity ECA, audit log,
                                   foreign-key create, and the data feed.
   disableEntityEca=true|false     Turn off entity ECA rules.

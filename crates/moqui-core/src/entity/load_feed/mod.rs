@@ -75,7 +75,7 @@ pub struct LoadOptions {
     pub only_create: bool,
     pub dummy_fks: bool,
     pub disable_fk_create: bool,
-    /// Transaction timeout for each record. `None` uses the transaction manager default.
+    /// Transaction timeout for each data file (one transaction per file). `None` uses 600 seconds.
     pub timeout: Option<std::time::Duration>,
     /// Java `restrictSensitiveEntities`: refuse every record, root or nested, whose entity is a
     /// restricted entity ([`is_restricted_entity`]). Here service elements are refused too, a hardening beyond the Java, which ran
