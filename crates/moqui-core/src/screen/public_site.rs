@@ -1,8 +1,8 @@
 //! Operator-bound public site routes. Site IDs and screen roots never come from request parameters.
-use moqui_lib::node::MNode;
-use moqui_lib::object::Value;
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 use crate::web::WebRequest;
+use moqui_lib::node::MNode;
+use moqui_lib::object::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PublicSiteRoute {
@@ -239,5 +239,23 @@ mod tests {
         );
         let request = WebRequest::new("GET", "/rest/s1/pass");
         assert!(resolve_conf(&conf(), &request, "webroot").expect("framework").is_none());
+    }
+    #[test]
+    fn a_site_mounted_at_the_root_never_takes_the_status_probes() {
+        let conf = MNode::parse_shared("test", r#"<moqui-conf><webapp-list><webapp name="webroot"><public-site host="forum.test" site-id="SITE_A" screen-location="component://mr-pass/screen/Pass.xml"><mount path="/" screen="Forum"/></public-site></webapp></webapp-list></moqui-conf>"#).expect("conf");
+        for path in ["/metrics", "/health"] {
+            for query in [None, Some("format=prometheus")] {
+                let mut request = WebRequest::new("GET", path);
+                request.headers.insert("host".into(), "forum.test".into());
+                request.raw_query = query.map(str::to_string);
+                assert!(
+                    resolve_conf(&conf, &request, "webroot").expect(path).is_none(),
+                    "{path} stays the status handler's"
+                );
+            }
+        }
+        let mut request = WebRequest::new("GET", "/Topics");
+        request.headers.insert("host".into(), "forum.test".into());
+        assert!(resolve_conf(&conf, &request, "webroot").expect("site").is_some());
     }
 }

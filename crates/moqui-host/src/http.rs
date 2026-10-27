@@ -231,6 +231,7 @@ pub(crate) async fn listen(
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
     guard.log_start();
+    crate::monitor::register_guard_gauges(&factory, &guard);
     tokio::spawn(sweep(Arc::clone(&guard), shutdown_rx.clone()));
     // Text responses are compressed when the client accepts gzip (`Compressible`).
     let app = Router::new()
@@ -698,7 +699,14 @@ async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectI
     }
 }
 
-async fn metrics(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+/// `name value` lines, or Prometheus text for a scrape (`crate::monitor::wants_prometheus`). Both answer only
+/// `status-ips` and loopback peers, as `/health` does.
+async fn metrics(
+    State(state): State<Arc<HttpState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> Response {
     if !status_allowed(
         &state.factory.webapp_setting("webroot", "status-ips"),
         &peer.ip().to_canonical().to_string(),
@@ -711,6 +719,10 @@ async fn metrics(State(state): State<Arc<HttpState>>, ConnectInfo(peer): Connect
     let depth = state.factory.request_pool().queue_depth();
     let (statements, statement_ms) = moqui_core::entity::statement_stats();
     let idle = stats.ordinary_idle.saturating_add(stats.reserve_idle);
+    let accept = headers.get("accept").and_then(|value| value.to_str().ok());
+    if crate::monitor::wants_prometheus(uri.query(), accept) {
+        return prometheus_metrics(&state, stats, depth, (statements, statement_ms)).await;
+    }
     let mut text = format!(
         "checked_out {}\nparked {}\nwaiting {}\nidle {}\ncheckouts {}\nrequest_queue {}\nstatements {}\nstatement_ms {}\n",
         stats.checked_out, stats.parked, stats.waiting, idle, stats.checkouts, depth, statements, statement_ms
@@ -738,6 +750,64 @@ async fn metrics(State(state): State<Arc<HttpState>>, ConnectInfo(peer): Connect
         ));
     }
     plain(200, &text)
+}
+
+/// The SDK's instruments, cumulative, with the host totals no instrument carries.
+async fn prometheus_metrics(
+    state: &HttpState,
+    stats: PoolStats,
+    depth: usize,
+    (statements, statement_ms): (u64, u64),
+) -> Response {
+    let telemetry = moqui_core::telemetry::for_factory(&state.factory);
+    let counters = telemetry.counters();
+    let factory = Arc::clone(&state.factory);
+    // Collection runs the gauge callbacks, which read the pool and the process.
+    let (sdk, replica) = tokio::task::spawn_blocking(move || {
+        let replica = moqui_core::search::installed(&factory).and_then(|facade| facade.backend().replica_status());
+        (telemetry.prometheus_text(), replica)
+    })
+    .await
+    .unwrap_or((None, None));
+    let idle = stats.ordinary_idle.saturating_add(stats.reserve_idle);
+    let mut observed = vec![
+        ("moqui_db_pool_checked_out", stats.checked_out as f64),
+        ("moqui_db_pool_parked", stats.parked as f64),
+        ("moqui_db_pool_waiting", stats.waiting as f64),
+        ("moqui_db_pool_idle", idle as f64),
+        ("moqui_request_queue_depth", depth as f64),
+    ];
+    let guard = state.guard.values();
+    let guard_names: Vec<String> = guard.iter().map(|(name, _)| format!("moqui_{name}")).collect();
+    for (name, (_, value)) in guard_names.iter().zip(guard) {
+        observed.push((name.as_str(), value as f64));
+    }
+    let totals = [
+        ("moqui_db_pool_checkouts_total", stats.checkouts as f64),
+        ("moqui_db_statements_total", statements as f64),
+        ("moqui_db_statement_milliseconds_total", statement_ms as f64),
+        ("moqui_telemetry_queued_total", counters.queued as f64),
+        ("moqui_telemetry_exported_total", counters.exported as f64),
+        ("moqui_telemetry_dropped_total", counters.dropped as f64),
+        ("moqui_telemetry_export_failures_total", counters.failed as f64),
+        ("moqui_telemetry_remote_exported_total", counters.remote_exported as f64),
+        ("moqui_telemetry_remote_dropped_total", counters.remote_dropped as f64),
+        ("moqui_telemetry_remote_failures_total", counters.remote_failed as f64),
+    ];
+    let mut gauges = Vec::new();
+    if let Some(replica) = replica {
+        gauges.push(("moqui_search_replica_lag_seconds", replica.lag_seconds.unwrap_or(-1.0)));
+        gauges.push((
+            "moqui_search_replica_primary_fallbacks",
+            replica.primary_fallbacks as f64,
+        ));
+    }
+    let text = crate::monitor::prometheus_body(sdk, &observed, &totals, &gauges);
+    Response::builder()
+        .status(200)
+        .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+        .body(axum::body::Body::from(text))
+        .unwrap_or_else(|_| Response::new(axum::body::Body::empty()))
 }
 
 async fn dispatch_screen(

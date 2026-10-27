@@ -46,12 +46,19 @@ pub fn rollup(
     maintenance::rollup_metrics(ec.factory()).map(|document| document.into_iter().collect())
 }
 #[cfg(feature = "telemetry")]
+mod prometheus;
+#[cfg(feature = "telemetry")]
 mod sdk;
 
+/// The defaults of [`Capacity`].
 const MAX_QUEUE: usize = 8192;
 const MAX_BUFFER_BYTES: usize = 32 * 1024 * 1024;
-const ROOT_RESERVED_RECORDS: usize = 512;
-const ROOT_RESERVED_BYTES: usize = 2 * 1024 * 1024;
+#[cfg(test)]
+const ROOT_RESERVED_RECORDS: usize = MAX_QUEUE / ROOT_RESERVE_SHARE;
+#[cfg(test)]
+const ROOT_RESERVED_BYTES: usize = MAX_BUFFER_BYTES / ROOT_RESERVE_SHARE;
+/// Request and job roots may use the last 1/16 of the queue, which other records may not.
+const ROOT_RESERVE_SHARE: usize = 16;
 const MAX_TRACES: usize = 1024;
 const MAX_TRACE_SPANS: usize = 512;
 const MAX_DECISIONS: usize = 4096;
@@ -219,6 +226,41 @@ impl Default for Resource {
     }
 }
 
+/// The bounds of the export queue and of the tail buffer, which holds the spans of a trace until its root decides.
+/// The tail buffer as a whole shares the queue's record and byte limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capacity {
+    /// Records waiting for the exporter (telemetry queue-records).
+    pub queue_records: usize,
+    /// Estimated bytes waiting for the exporter (queue-bytes).
+    pub queue_bytes: usize,
+    /// Traces whose spans wait for their root (tail-traces).
+    pub tail_traces: usize,
+    /// Spans one trace may hold there (tail-trace-spans).
+    pub tail_trace_spans: usize,
+}
+
+impl Default for Capacity {
+    fn default() -> Self {
+        Self {
+            queue_records: MAX_QUEUE,
+            queue_bytes: MAX_BUFFER_BYTES,
+            tail_traces: MAX_TRACES,
+            tail_trace_spans: MAX_TRACE_SPANS,
+        }
+    }
+}
+
+impl Capacity {
+    /// The records and bytes every record but a local request or job root may use.
+    fn ordinary(&self) -> (usize, usize) {
+        (
+            self.queue_records - self.queue_records / ROOT_RESERVE_SHARE,
+            self.queue_bytes - self.queue_bytes / ROOT_RESERVE_SHARE,
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub enabled: bool,
@@ -228,6 +270,11 @@ pub struct Config {
     pub slow_root: Duration,
     pub interval: Duration,
     pub artifact_types: HashMap<String, (bool, bool)>,
+    /// A ratio for the spans of an artifact type (telemetry/artifact sample-ratio), in place of [`Self::sample_ratio`].
+    pub artifact_sample_ratios: HashMap<String, f64>,
+    /// The attributes an instrument keeps (telemetry/metric attributes), in place of the global list.
+    pub metric_attributes: HashMap<String, Vec<String>>,
+    pub capacity: Capacity,
     /// Configuration problems, logged once when the factory's telemetry starts.
     warnings: Vec<String>,
     legacy_slow_types: HashSet<String>,
@@ -244,6 +291,9 @@ impl Default for Config {
                 ("AT_ENTITY".into(), (false, false)),
                 ("AT_XML_SCREEN_CONTENT".into(), (false, true)),
             ]),
+            artifact_sample_ratios: HashMap::new(),
+            metric_attributes: HashMap::new(),
+            capacity: Capacity::default(),
             warnings: Vec::new(),
             legacy_slow_types: HashSet::new(),
         }
@@ -292,13 +342,48 @@ impl Config {
         if let Some(node) = root.first_named("telemetry") {
             config.enabled &= setting(&node, "enabled").as_deref() != Some("false");
             if let Some(text) = setting(&node, "sample-ratio").filter(|text| !text.trim().is_empty()) {
-                match text.trim().parse::<f64>().ok().filter(|value| value.is_finite()) {
-                    Some(value) => config.sample_ratio = value.clamp(0.0, 1.0),
+                match ratio(&text) {
+                    Some(value) => config.sample_ratio = value,
                     None => config.warnings.push(format!(
                         "telemetry sample-ratio [{text}] is not a number; using {}",
                         config.sample_ratio
                     )),
                 }
+            }
+            // A size that is not a whole number, or is below its floor, is warned about and the default kept.
+            for (name, slot, floor) in [
+                ("queue-records", &mut config.capacity.queue_records, 64),
+                ("queue-bytes", &mut config.capacity.queue_bytes, 1024 * 1024),
+                ("tail-traces", &mut config.capacity.tail_traces, 1),
+                ("tail-trace-spans", &mut config.capacity.tail_trace_spans, 1),
+            ] {
+                let Some(text) = setting(&node, name).filter(|text| !text.trim().is_empty()) else {
+                    continue;
+                };
+                match text.trim().parse::<usize>().ok().filter(|value| *value >= floor) {
+                    Some(value) => *slot = value,
+                    None => config.warnings.push(format!(
+                        "telemetry {name} [{text}] is not a whole number of at least {floor}; using {slot}"
+                    )),
+                }
+            }
+            for item in node.named_iter("metric") {
+                let Some(name) = item.attribute("name").filter(|name| !name.is_empty()) else {
+                    config
+                        .warnings
+                        .push("telemetry metric without a name is ignored".into());
+                    continue;
+                };
+                let attributes = setting(&item, "attributes").unwrap_or_default();
+                config.metric_attributes.insert(
+                    name,
+                    attributes
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|key| !key.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
             }
             // Metric documents are minute documents: the rollups and the dashboards' buckets assume it, so another
             // interval is for tests.
@@ -318,17 +403,46 @@ impl Config {
                 if let Some(kind) = item.attribute("type") {
                     config.legacy_slow_types.remove(&kind);
                     config.artifact_types.insert(
-                        kind,
+                        kind.clone(),
                         (
                             setting(&item, "spans").as_deref() != Some("false"),
                             setting(&item, "metrics").as_deref() != Some("false"),
                         ),
                     );
+                    match setting(&item, "sample-ratio").filter(|text| !text.trim().is_empty()) {
+                        Some(text) => match ratio(&text) {
+                            Some(value) => {
+                                config.artifact_sample_ratios.insert(kind, value);
+                            }
+                            None => config.warnings.push(format!(
+                                "telemetry artifact {kind} sample-ratio [{text}] is not a number; using the telemetry sample-ratio"
+                            )),
+                        },
+                        None => {
+                            config.artifact_sample_ratios.remove(&kind);
+                        }
+                    }
                 }
             }
         }
         config
     }
+
+    /// The head sampling ratio of an artifact type's spans.
+    pub fn artifact_sample_ratio(&self, kind: &str) -> f64 {
+        self.artifact_sample_ratios
+            .get(kind)
+            .copied()
+            .unwrap_or(self.sample_ratio)
+    }
+}
+
+fn ratio(text: &str) -> Option<f64> {
+    text.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0.0, 1.0))
 }
 
 pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
@@ -472,7 +586,7 @@ pub struct Telemetry {
 impl Telemetry {
     pub fn from_conf(text: &str, resource: Resource) -> Self {
         let config = Config::from_conf(text);
-        let (sender, receiver) = mpsc::sync_channel(MAX_QUEUE);
+        let (sender, receiver) = mpsc::sync_channel(config.capacity.queue_records);
         let shared = Arc::new(Shared {
             sender,
             counters: Arc::default(),
@@ -554,10 +668,30 @@ impl Telemetry {
         #[cfg(feature = "telemetry")]
         if self.shared.config.enabled && !is_suppressed() {
             if let Some(sdk) = &self.sdk {
-                return sdk.start_span(name, kind, parent.or_else(capture), None, false);
+                return sdk.start_span(
+                    name,
+                    kind,
+                    parent.or_else(capture),
+                    None,
+                    false,
+                    self.shared.config.sample_ratio,
+                );
             }
         }
         let _ = (name, kind, parent);
+        Span::noop()
+    }
+
+    /// A span of an artifact frame, head-sampled by its type's ratio (telemetry/artifact sample-ratio) when it has one.
+    pub fn start_artifact_span(&self, artifact_type: &str, name: &str, kind: SpanKind) -> Span {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                let ratio = self.shared.config.artifact_sample_ratio(artifact_type);
+                return sdk.start_span(name, kind, capture(), None, false, ratio);
+            }
+        }
+        let _ = (artifact_type, name, kind);
         Span::noop()
     }
 
@@ -571,7 +705,8 @@ impl Telemetry {
         #[cfg(feature = "telemetry")]
         if self.shared.config.enabled && !is_suppressed() {
             if let Some(sdk) = &self.sdk {
-                return sdk.start_span(name, SpanKind::Internal, parent, Some(started), true);
+                let ratio = self.shared.config.sample_ratio;
+                return sdk.start_span(name, SpanKind::Internal, parent, Some(started), true, ratio);
             }
         }
         let _ = (name, parent, started);
@@ -636,6 +771,18 @@ impl Telemetry {
     /// Whether telemetry is enabled and not shut down, so received records can be queued.
     pub fn accepting(&self) -> bool {
         self.shared.config.enabled && !self.shared.stopped.load(Ordering::Acquire)
+    }
+
+    /// The SDK's instruments as Prometheus text (exposition format 0.0.4), cumulative since start; None when telemetry
+    /// is off or its metrics cannot be collected.
+    pub fn prometheus_text(&self) -> Option<String> {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled {
+            if let Some(sdk) = &self.sdk {
+                return sdk.prometheus_text();
+            }
+        }
+        None
     }
 
     pub fn counters(&self) -> CounterSnapshot {
@@ -905,14 +1052,12 @@ impl Shared {
                 })
                 .is_ok()
         };
+        let capacity = &self.config.capacity;
+        let (ordinary_records, ordinary_bytes) = capacity.ordinary();
         if !reserve(
             &self.queued_records,
             count,
-            if root {
-                MAX_QUEUE
-            } else {
-                MAX_QUEUE - ROOT_RESERVED_RECORDS
-            },
+            if root { capacity.queue_records } else { ordinary_records },
         ) {
             self.counters.dropped.fetch_add(count as u64, Ordering::Relaxed);
             return Err(Error::new("telemetry queue record limit reached"));
@@ -920,11 +1065,7 @@ impl Shared {
         if !reserve(
             &self.queued_bytes,
             bytes,
-            if root {
-                MAX_BUFFER_BYTES
-            } else {
-                MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES
-            },
+            if root { capacity.queue_bytes } else { ordinary_bytes },
         ) {
             self.queued_records.fetch_sub(count, Ordering::AcqRel);
             self.counters.dropped.fetch_add(count as u64, Ordering::Relaxed);
@@ -1257,7 +1398,13 @@ fn mandatory_root(document: &Document) -> bool {
 
 /// Tail promotion may make a large batch. Charge mandatory local roots first,
 /// retaining the original document order while dropping only excess children.
-fn admit_ready(ready: &mut Vec<Document>, local_roots: bool, count: &mut usize, bytes: &mut usize) -> usize {
+fn admit_ready(
+    ready: &mut Vec<Document>,
+    local_roots: bool,
+    capacity: &Capacity,
+    count: &mut usize,
+    bytes: &mut usize,
+) -> usize {
     let original = ready.len();
     let mut admit = |document: &Document, record_limit: usize, byte_limit: usize| {
         let document_bytes = document_bytes(document);
@@ -1270,15 +1417,13 @@ fn admit_ready(ready: &mut Vec<Document>, local_roots: bool, count: &mut usize, 
         }
     };
     if local_roots {
-        ready.retain(|document| !mandatory_root(document) || admit(document, MAX_QUEUE, MAX_BUFFER_BYTES));
+        ready.retain(|document| {
+            !mandatory_root(document) || admit(document, capacity.queue_records, capacity.queue_bytes)
+        });
     }
+    let (ordinary_records, ordinary_bytes) = capacity.ordinary();
     ready.retain(|document| {
-        (local_roots && mandatory_root(document))
-            || admit(
-                document,
-                MAX_QUEUE - ROOT_RESERVED_RECORDS,
-                MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES,
-            )
+        (local_roots && mandatory_root(document)) || admit(document, ordinary_records, ordinary_bytes)
     });
     original - ready.len()
 }
@@ -1449,14 +1594,15 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                                 ready.push(document);
                             }
                         } else {
-                            if traces.len() < MAX_TRACES || traces.contains_key(trace) {
+                            let capacity = &shared.config.capacity;
+                            if traces.len() < capacity.tail_traces || traces.contains_key(trace) {
                                 let (_, buffered) = traces
                                     .entry(trace.to_string())
                                     .or_insert_with(|| (Instant::now(), Vec::new()));
                                 let bytes = document_bytes(&document);
-                                if buffered.len() < MAX_TRACE_SPANS
-                                    && tail_count < MAX_QUEUE
-                                    && tail_bytes.saturating_add(bytes) <= MAX_BUFFER_BYTES
+                                if buffered.len() < capacity.tail_trace_spans
+                                    && tail_count < capacity.queue_records
+                                    && tail_bytes.saturating_add(bytes) <= capacity.queue_bytes
                                 {
                                     tail_count += 1;
                                     tail_bytes += bytes;
@@ -1476,6 +1622,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                     let dropped = admit_ready(
                         &mut ready,
                         local && index == "otel_spans",
+                        &shared.config.capacity,
                         &mut pending_count,
                         &mut pending_bytes,
                     );

@@ -43,6 +43,32 @@ pub(super) struct Runtime {
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
     logger: opentelemetry_sdk::logs::SdkLogger,
     gauges: Mutex<Vec<opentelemetry::metrics::ObservableGauge<f64>>>,
+    /// The cumulative reader behind [`Self::prometheus_text`], which collects only when asked.
+    pull: Arc<opentelemetry_sdk::metrics::ManualReader>,
+    /// The configured attribute allow-lists by instrument (telemetry/metric), in place of [`ALLOWED_ATTRIBUTES`].
+    allowed: HashMap<String, Vec<opentelemetry::Key>>,
+}
+
+/// A reader the meter provider owns that the runtime can still collect from.
+#[derive(Debug)]
+struct SharedReader(Arc<opentelemetry_sdk::metrics::ManualReader>);
+
+impl opentelemetry_sdk::metrics::reader::MetricReader for SharedReader {
+    fn register_pipeline(&self, pipeline: std::sync::Weak<opentelemetry_sdk::metrics::Pipeline>) {
+        self.0.register_pipeline(pipeline);
+    }
+    fn collect(&self, metrics: &mut opentelemetry_sdk::metrics::data::ResourceMetrics) -> OTelSdkResult {
+        self.0.collect(metrics)
+    }
+    fn force_flush(&self) -> OTelSdkResult {
+        self.0.force_flush()
+    }
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.0.shutdown_with_timeout(timeout)
+    }
+    fn temporality(&self, kind: opentelemetry_sdk::metrics::InstrumentKind) -> opentelemetry_sdk::metrics::Temporality {
+        self.0.temporality(kind)
+    }
 }
 
 impl Runtime {
@@ -67,6 +93,12 @@ impl Runtime {
         let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(LocalMetricExporter(Arc::clone(&shared)))
             .with_interval(shared.config.interval)
             .build();
+        // Scrapes read totals since start, apart from the minute deltas the periodic reader writes.
+        let pull = Arc::new(
+            opentelemetry_sdk::metrics::ManualReader::builder()
+                .with_temporality(opentelemetry_sdk::metrics::Temporality::Cumulative)
+                .build(),
+        );
         let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_resource(resource.clone())
             .with_view(|_: &opentelemetry_sdk::metrics::Instrument| {
@@ -76,6 +108,7 @@ impl Runtime {
                     .ok()
             })
             .with_reader(reader)
+            .with_reader(SharedReader(Arc::clone(&pull)))
             .build();
         use opentelemetry::metrics::MeterProvider;
         let meter = meter_provider.meter("moqui");
@@ -86,6 +119,18 @@ impl Runtime {
             .build();
         use opentelemetry::logs::LoggerProvider;
         let logger = logger_provider.logger("moqui");
+        let allowed = shared
+            .config
+            .metric_attributes
+            .iter()
+            .map(|(name, keys)| {
+                let keys = keys
+                    .iter()
+                    .map(|key| opentelemetry::Key::from(Arc::<str>::from(key.as_str())))
+                    .collect();
+                (name.clone(), keys)
+            })
+            .collect();
         Self {
             provider,
             tracer,
@@ -98,6 +143,35 @@ impl Runtime {
             logger_provider,
             logger,
             gauges: Mutex::default(),
+            pull,
+            allowed,
+        }
+    }
+
+    /// Collect the cumulative reader and render it for a Prometheus scrape.
+    pub(super) fn prometheus_text(&self) -> Option<String> {
+        use opentelemetry_sdk::metrics::reader::MetricReader;
+        let mut metrics = opentelemetry_sdk::metrics::data::ResourceMetrics::default();
+        if let Err(error) = self.pull.collect(&mut metrics) {
+            tracing::debug!(%error, "telemetry metrics could not be collected for a scrape");
+            return None;
+        }
+        let request = opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest::from(&metrics);
+        Some(super::prometheus::render(&request, &lock(&self.shared.resource)))
+    }
+
+    /// The attributes `name` keeps: its configured list, or the global one.
+    fn metric_attributes(&self, name: &str, attributes: Document) -> Vec<KeyValue> {
+        match self.allowed.get(name) {
+            Some(keys) => attributes
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    keys.iter()
+                        .find(|allowed| allowed.as_str() == key)
+                        .map(|allowed| KeyValue::new(allowed.clone(), metric_value(&key, value)))
+                })
+                .collect(),
+            None => metric_attributes(attributes),
         }
     }
 
@@ -108,6 +182,7 @@ impl Runtime {
         parent: Option<TraceContext>,
         started: Option<SystemTime>,
         retain: bool,
+        sample_ratio: f64,
     ) -> Span {
         let parent_context = parent.as_ref().map_or_else(Context::new, sdk_context);
         let mut builder = self.tracer.span_builder(name.to_string());
@@ -126,7 +201,7 @@ impl Runtime {
         // tracing on, and every span of a trace (and every service with the same ratio) decides alike.
         let sampled = retain || {
             let value = u64::from_str_radix(&trace_id[..16], 16).unwrap_or(0);
-            (value as f64 / u64::MAX as f64) < self.shared.config.sample_ratio
+            (value as f64 / u64::MAX as f64) < sample_ratio
         };
         let context = TraceContext {
             trace_id,
@@ -156,7 +231,7 @@ impl Runtime {
             _ => None,
         };
         if let Some(instrument) = hot {
-            instrument.record(seconds, &metric_attributes(attributes));
+            instrument.record(seconds, &self.metric_attributes(name, attributes));
             return;
         }
         let instrument = {
@@ -172,7 +247,7 @@ impl Runtime {
                 instrument
             }
         };
-        instrument.record(seconds, &metric_attributes(attributes));
+        instrument.record(seconds, &self.metric_attributes(name, attributes));
     }
 
     pub(super) fn add_counter(&self, name: &str, value: u64, attributes: Document) {
@@ -189,7 +264,7 @@ impl Runtime {
                 instrument
             }
         };
-        instrument.add(value, &metric_attributes(attributes));
+        instrument.add(value, &self.metric_attributes(name, attributes));
     }
 
     pub(super) fn observe_gauge(&self, name: &str, callback: impl Fn() -> Option<f64> + Send + Sync + 'static) {
@@ -462,32 +537,37 @@ fn clip_text(value: &str, limit: usize) -> String {
     }
     clipped
 }
+/// The attributes a metric keeps unless its instrument has its own list (telemetry/metric attributes).
+const ALLOWED_ATTRIBUTES: &[&str] = &[
+    "moqui.artifact.type",
+    "moqui.artifact.name",
+    "moqui.artifact.action",
+    "moqui.artifact.sub_type",
+    "http.request.method",
+    "http.route",
+    "http.response.status_code",
+    "db.system.name",
+    "outcome",
+];
+
 fn metric_attributes(attributes: Document) -> Vec<KeyValue> {
-    const ALLOWED: &[&str] = &[
-        "moqui.artifact.type",
-        "moqui.artifact.name",
-        "moqui.artifact.action",
-        "moqui.artifact.sub_type",
-        "http.request.method",
-        "http.route",
-        "http.response.status_code",
-        "db.system.name",
-        "outcome",
-    ];
     attributes
         .into_iter()
         .filter_map(|(key, value)| {
-            ALLOWED.iter().find(|allowed| **allowed == key).map(|allowed| {
-                KeyValue::new(
-                    *allowed,
-                    sdk_value(match value {
-                        Value::String(value) if !safe_key(allowed) => Value::String(super::redact_owned(value)),
-                        other => other,
-                    }),
-                )
-            })
+            ALLOWED_ATTRIBUTES
+                .iter()
+                .find(|allowed| **allowed == key)
+                .map(|allowed| KeyValue::new(*allowed, metric_value(allowed, value)))
         })
         .collect()
+}
+
+/// A metric attribute's value, redacted unless the framework sets it from names and routes.
+fn metric_value(key: &str, value: Value) -> opentelemetry::Value {
+    sdk_value(match value {
+        Value::String(value) if !safe_key(key) => Value::String(super::redact_owned(value)),
+        other => other,
+    })
 }
 
 /// Owned SDK payloads cross only the bounded core queue. Formatting, JSON-compatible

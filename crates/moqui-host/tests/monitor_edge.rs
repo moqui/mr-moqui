@@ -51,6 +51,23 @@ fn post(
         .unwrap();
     (status, response[split + 4..].to_vec())
 }
+/// The status, the head and the body of a GET.
+fn get(address: std::net::SocketAddr, path: &str, accept: Option<&str>) -> (u16, String, String) {
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let accept = accept.map_or_else(String::new, |accept| format!("Accept: {accept}\r\n"));
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{accept}\r\n"
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let response = String::from_utf8_lossy(&response).into_owned();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, head.to_string(), body.to_string())
+}
 #[test]
 fn otlp_keys_partial_success_compression_and_request_context() {
     let gate = common::start_with_conf_properties(
@@ -105,6 +122,38 @@ fn otlp_keys_partial_success_compression_and_request_context() {
         assert_eq!(row.get("revoked").and_then(Value::as_str), Some("N"));
     }
     let address = gate.server.address();
+    // `/metrics` keeps its `name value` lines and answers a Prometheus scrape with the SDK's instruments.
+    let (status, head, text) = get(address, "/metrics", None);
+    assert_eq!(status, 200, "{text}");
+    for line in ["checked_out ", "edge_denied ", "telemetry_dropped_total "] {
+        assert!(
+            text.lines().any(|candidate| candidate.starts_with(line)),
+            "{line}\n{text}"
+        );
+    }
+    assert!(!text.contains("# TYPE"), "{text}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("content-type: text/plain; charset=utf-8"),
+        "{head}"
+    );
+    for (path, accept) in [
+        ("/metrics", Some("text/plain;version=0.0.4;q=0.3,*/*;q=0.2")),
+        ("/metrics?format=prometheus", None),
+    ] {
+        let (status, head, text) = get(address, path, accept);
+        assert_eq!(status, 200, "{text}");
+        assert!(head.to_ascii_lowercase().contains("version=0.0.4"), "{head}");
+        for line in [
+            "# TYPE target_info gauge",
+            "# TYPE moqui_edge_denied gauge",
+            "# TYPE moqui_db_pool_checked_out gauge",
+            "# TYPE moqui_db_statements_total counter",
+            "# TYPE moqui_telemetry_dropped_total counter",
+        ] {
+            assert!(text.lines().any(|candidate| candidate == line), "{line}\n{text}");
+        }
+    }
     let now = jiff::Timestamp::now().as_millisecond();
     let span = json!({"traceId":"fefefefefefefefefefefefefefefefe","spanId":"1212121212121212","name":"edge-fixture","kind":2,"startTimeUnixNano":((now-10)*1_000_000).to_string(),"endTimeUnixNano":(now*1_000_000).to_string(),"attributes":[{"key":"password","value":{"stringValue":"must-never-index"}}]});
     let body=json!({"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"outside-fixture"}}]},"scopeSpans":[{"spans":[span,{"traceId":"invalid","spanId":"invalid"}]}]}]}).to_string();

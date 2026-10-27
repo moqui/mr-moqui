@@ -22,7 +22,8 @@ encoding_rs = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
+# The manual reader behind /metrics (Prometheus text) is the custom-reader API.
+opentelemetry_sdk = { workspace = true, optional = true, features = ["experimental_metrics_custom_reader"] }
 opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
