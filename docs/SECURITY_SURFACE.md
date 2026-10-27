@@ -18,7 +18,7 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 
 ## HTTP authentication and authorization
 
-A servlet request is signed in from the session cookie, HTTP Basic, an `api_key` or `login_key` header, or `authUsername` and `authPassword` (`docs/Web-Scripts.md`). `/notws` accepts the session cookie and, failing that, a `login_key` header. `/termws` accepts the session cookie only.
+A servlet request is signed in from the session cookie, HTTP Basic, an `api_key` or `login_key` header, or `authUsername` and `authPassword` (`docs/Web-Scripts.md`). `/notws` accepts the session cookie and, failing that, a `login_key` header. `/termws` accepts the session cookie only. Notification sockets revalidate the original session or hashed login key every 60 seconds and close on logout, a changed user, key revocation or expiry, or a failed credential lookup. Revalidation does not log in again or write login history. Protocol Ping/Pong traffic cannot extend authentication.
 
 Screens carry `require-authentication`. The parser maps `false`, `anonymous-view`, and `anonymous-all` to those modes, and it maps a missing attribute to required. A render requires a user when any screen in the chain is required. An anonymous login counts as a user.
 

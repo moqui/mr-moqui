@@ -460,7 +460,11 @@ pub fn login_user_key(key: &str) -> Result<(), Error> {
 pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
-    let Some(row) = facade.find(USER_LOGIN_KEY)?.eq("loginKey", Value::string(hashed)).one()? else {
+    let Some(row) = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("loginKey", Value::string(hashed))
+        .one()?
+    else {
         return Ok(None);
     };
     let now = now_millis();
@@ -468,7 +472,9 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
         return Ok(None);
     }
     let user_id = text_field(&row, "userId");
-    let Some(account) = find_user_id(&facade, &user_id)? else { return Ok(None) };
+    let Some(account) = find_user_id(&facade, &user_id)? else {
+        return Ok(None);
+    };
     Ok((!user_id.is_empty() && !still_disabled(&account, now) && !terminated(&account, now)).then_some(user_id))
 }
 

@@ -34,6 +34,82 @@ const SHARED_TOPIC: &str = "Wave3Shared";
 const ONLY_TOPIC: &str = "Wave3Only";
 
 #[test]
+#[ignore = "slow: waits for the production 60-second credential recheck"]
+fn notification_sockets_close_after_logout_key_revocation_and_expiry() {
+    let gate = crate::common::start_with_conf("notws-revalidate", "", &[]);
+    let address = gate.server.address();
+    let cookie = login(address);
+    let healthy_cookie = login(address);
+    let mut logged_out = open_socket(address, &cookie);
+    let mut healthy = open_socket(address, &healthy_cookie);
+    let factory = gate.server.factory();
+    let (revoked_key, expired_key) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let revoked = moqui_core::user::get_login_key(None).unwrap();
+        let expired = moqui_core::user::get_login_key(None).unwrap();
+        (revoked, expired)
+    };
+    let open_key = |key: &str| {
+        let uri: tungstenite::http::Uri = format!("ws://{address}/notws").parse().unwrap();
+        connect(ClientRequestBuilder::new(uri).with_header("login_key", key))
+            .unwrap()
+            .0
+    };
+    let mut revoked = open_key(&revoked_key);
+    let mut expired = open_key(&expired_key);
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _session = moqui_core::user::bind(factory, Some(&cookie), None, false).unwrap();
+        moqui_core::user::logout().unwrap();
+        moqui_core::user::end_request().unwrap();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let find_key = |key: &str| {
+            facade
+                .find("moqui.security.UserLoginKey")
+                .unwrap()
+                .eq(
+                    "loginKey",
+                    Value::string(moqui_core::user::hash_login_key(key).unwrap()),
+                )
+                .one()
+                .unwrap()
+                .unwrap()
+        };
+        find_key(&revoked_key).delete(&facade).unwrap();
+        let mut row = find_key(&expired_key);
+        row.set("thruDate", basic_convert(&Value::I64(1), "java.sql.Timestamp").value);
+        row.update(&facade).unwrap();
+    }
+    for socket in [&mut logged_out, &mut revoked, &mut expired] {
+        set_read_timeout(socket, Duration::from_secs(70));
+        loop {
+            match socket.read().unwrap() {
+                Message::Ping(_) => socket.flush().unwrap(),
+                Message::Close(Some(frame)) => {
+                    assert_eq!(u16::from(frame.code), 1008);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    healthy.send(Message::Ping(vec![1].into())).unwrap();
+    set_read_timeout(&mut healthy, Duration::from_secs(5));
+    loop {
+        match healthy.read().unwrap() {
+            Message::Ping(_) => healthy.flush().unwrap(),
+            Message::Pong(bytes) if bytes.as_ref() == [1] => break,
+            Message::Close(frame) => panic!("a healthy session closed: {frame:?}"),
+            _ => {}
+        }
+    }
+}
+
+#[test]
 #[ignore = "slow: cargo test-slow"]
 fn notws_push_and_one_cluster_invalidation() {
     let _serial = crate::common::serial();

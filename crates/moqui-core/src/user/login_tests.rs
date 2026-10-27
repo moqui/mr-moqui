@@ -346,13 +346,28 @@ fn a_socket_key_check_is_read_only_and_observes_expiry_revocation_and_user_chang
         assert!(super::session::current_user_id().unwrap().is_none());
     }
     assert!(facade.find(USER_LOGIN_HISTORY).unwrap().list().unwrap().is_empty());
-    let mut row = facade.find(USER_LOGIN_KEY).unwrap().eq("loginKey", Value::string(&hash)).one().unwrap().unwrap();
+    let mut row = facade
+        .find(USER_LOGIN_KEY)
+        .unwrap()
+        .eq("loginKey", Value::string(&hash))
+        .one()
+        .unwrap()
+        .unwrap();
     row.set("thruDate", stamp(now_millis() - 1000));
     row.update(&facade).unwrap();
     assert!(login_key_user_by_hash(&hash).unwrap().is_none());
     row.set("thruDate", Value::Null);
     row.update(&facade).unwrap();
     assert_eq!(login_key_user_by_hash(&hash).unwrap(), Some(user));
+    create_user(&facade, "socket-other", "Secret1!", |_| {});
+    let other = text(&load_user(&facade, "socket-other"), "userId");
+    row.set("userId", Value::string(&other));
+    row.update(&facade).unwrap();
+    assert_eq!(login_key_user_by_hash(&hash).unwrap(), Some(other));
+    let mut account = load_user(&facade, "socket-other");
+    account.set("disabled", Value::string("Y"));
+    account.update(&facade).unwrap();
+    assert!(login_key_user_by_hash(&hash).unwrap().is_none());
     row.delete(&facade).unwrap();
     assert!(login_key_user_by_hash(&hash).unwrap().is_none());
     session::reset_session();
