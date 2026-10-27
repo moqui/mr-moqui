@@ -1059,6 +1059,43 @@ fn xoauth2_for_the_sync_the_server_test_and_a_send() {
     assert_eq!(state.messages.len(), 3);
     assert!(state.messages[2].0.is_empty());
     assert!(state.messages[2].2.contains("Accepted"));
+    drop(state);
+    let notice = || {
+        super::implementation::send_built(
+            &facade,
+            &server_id,
+            "",
+            "carol@example.com",
+            "Delivered",
+            b"Subject: Delivered\r\n\r\nAccepted\r\n",
+        )
+    };
+    // A provider returning the same refused token does not trigger a second SMTP attempt.
+    {
+        let mut state = lock(&smtp.state);
+        state.tokens.clear();
+        state.auths.clear();
+    }
+    lock(&fake.state).reuse_access_token = true;
+    assert!(notice().is_err());
+    assert_eq!(lock(&smtp.state).auths, ["XOAUTH2 refused"]);
+    // A newly issued token refused again gets no third attempt.
+    lock(&fake.state).reuse_access_token = false;
+    lock(&smtp.state).auths.clear();
+    assert!(notice().is_err());
+    assert_eq!(lock(&smtp.state).auths, ["XOAUTH2 refused", "XOAUTH2 refused"]);
+    // A delivery refusal after authentication never refreshes a token or resends the message.
+    let access = lock(&fake.state).access_tokens.last().cloned().unwrap();
+    {
+        let mut state = lock(&smtp.state);
+        state.tokens = vec![access];
+        state.auths.clear();
+        state.refuse_recipient = true;
+    }
+    let refreshes = lock(&fake.state).count("/token", "refresh_token");
+    assert!(notice().is_err());
+    assert_eq!(lock(&smtp.state).auths, ["XOAUTH2 ok"]);
+    assert_eq!(lock(&fake.state).count("/token", "refresh_token"), refreshes);
 }
 
 /// A POP3 account signs in with AUTH XOAUTH2 (no USER or PASS): its sign-in asks for the provider's POP scope and

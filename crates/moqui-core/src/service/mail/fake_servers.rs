@@ -1342,6 +1342,7 @@ pub(super) struct FakeSmtpState {
     pub(super) passwords: Vec<(String, String)>,
     /// Each message: the envelope sender, the recipients and the data.
     pub(super) messages: Vec<(String, Vec<String>, String)>,
+    pub(super) refuse_recipient: bool,
 }
 
 /// An ESMTP server offering AUTH XOAUTH2 on 127.0.0.1; mail is taken only after a sign-in.
@@ -1459,8 +1460,12 @@ fn serve_smtp(stream: TcpStream, state: &Mutex<FakeSmtpState>) -> std::io::Resul
                 write(&mut writer, "530 5.7.0 Authentication Required\r\n")?;
             }
         } else if upper.starts_with("RCPT TO:") {
-            recipients.push(text[8..].trim().trim_matches(['<', '>']).to_string());
-            write(&mut writer, "250 OK\r\n")?;
+            if lock(state).refuse_recipient {
+                write(&mut writer, "550 5.1.1 Recipient refused\r\n")?;
+            } else {
+                recipients.push(text[8..].trim().trim_matches(['<', '>']).to_string());
+                write(&mut writer, "250 OK\r\n")?;
+            }
         } else if upper == "DATA" {
             write(&mut writer, "354 Go ahead\r\n")?;
             let mut data = String::new();
@@ -1506,6 +1511,7 @@ pub(super) struct FakeProviderState {
     pub(super) refresh_tokens: Vec<String>,
     /// Each access token it gave, the latest last.
     pub(super) access_tokens: Vec<String>,
+    pub(super) reuse_access_token: bool,
     /// The tokens revoked at its revocation endpoint.
     pub(super) revoked: Vec<String>,
     /// Each request: the path and the form parameters.
@@ -1613,7 +1619,11 @@ fn refresh_answer(writer: &mut TcpStream, state: &mut FakeProviderState, refresh
             &json!({"error": "invalid_grant", "error_description": "Token has been expired or revoked."}),
         );
     }
-    let access = state.next_id("at");
+    let access = if state.reuse_access_token {
+        state.access_tokens.last().cloned().unwrap_or_default()
+    } else {
+        state.next_id("at")
+    };
     state.access_tokens.push(access.clone());
     let mut answer = json!({"access_token": access, "token_type": "Bearer", "expires_in": 3599});
     if state.rotate {
