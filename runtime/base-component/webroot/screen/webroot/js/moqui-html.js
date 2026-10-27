@@ -21,6 +21,12 @@
     // A datetime-local value with a T between date and time becomes the timestamp text the server reads.
     const normalizeDateTime = (value) => (/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d/.test(value || "") ? value.replace("T", " ") : value);
 
+    const excludeEmptyFields = (data) => {
+        const empty = Array.from(data.entries()).filter(([, value]) => value === "" || value === null || value === undefined).map(([name]) => name);
+        empty.forEach((name) => data.delete(name));
+        return data;
+    };
+
     const parseJson = (text, fallback) => {
         if (!text) return fallback;
         try {
@@ -181,7 +187,7 @@
         return !empty && options.length ? options[0].value : "";
     };
 
-    const pure = { normalizeDateTime, parseJson, queryString, optionList, dependsParams, orderByValue, treeNodes, editableOptions,
+    const pure = { normalizeDateTime, excludeEmptyFields, parseJson, queryString, optionList, dependsParams, orderByValue, treeNodes, editableOptions,
         datePattern, dateKey, quickKeyWaits, keptValue };
 
     // ---------- the browser client ----------
@@ -332,6 +338,7 @@
             Array.from(form.elements).forEach((field) => {
                 if (field.type === "datetime-local" && field.name && field.value) event.formData.set(field.name, normalizeDateTime(field.value));
             });
+            if (form.dataset.excludeEmptyFields === "true") excludeEmptyFields(event.formData);
         });
         if (form.hasAttribute("data-bg")) {
             form.addEventListener("submit", (event) => {

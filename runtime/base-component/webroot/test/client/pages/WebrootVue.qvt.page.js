@@ -492,3 +492,27 @@ test("quickKeyWaits holds ENTER and TAB in a drop-down search while options load
     assert.equal(qvt.quickKeyWaits(true, 1000, 9000), true);
     assert.equal(qvt.quickKeyWaits(false, 0, 50), false);
 });
+
+test("form submissions preserve Java empty, scalar, masked, and multivalued controls", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+        for (const exclude of [false, true]) {
+            const options = qvt.components["m-form"];
+            const fieldsInitial = {empty:"", whitespace:" ", zero:0, flag:false, tags:["a","b"], masked:"__-__"};
+            const form = Object.assign(options.data.call({fieldsInitial}), {
+                excludeEmptyFields:exclude, method:"POST", action:"/save", $refs:{qForm:{$el:document.createElement("form")}},
+                $root:{loading:0,appRootPath:"",moquiSessionToken:"csrf",getCsrfToken(){}}, handleResponse(){}, $emit(){},
+            });
+            let posted;
+            globalThis.fetch = (_url, init) => { posted = init.body; return Promise.resolve(new Response("{}", {headers:{"Content-Type":"application/json"}})); };
+            options.methods.submitGo.call(form);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.equal(posted.has("empty"), !exclude);
+            assert.equal(posted.get("whitespace"), " ");
+            assert.equal(posted.get("zero"), "0");
+            assert.equal(posted.get("flag"), "false");
+            assert.deepEqual(posted.getAll("tags"), ["a","b"]);
+            assert.equal(posted.get("masked"), "", "Java's fallback normalizes the unfilled mask to an explicit empty value");
+        }
+    } finally { globalThis.fetch = originalFetch; }
+});

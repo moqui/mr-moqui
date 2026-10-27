@@ -33,7 +33,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
     }
     const $focusName = ec.resource.expand("name", "");
 if ($focusName && $focusName !== "null") sri.setFocusField("NewForm" + "." + $focusName);
-$openChildren({t:"form",id:$uid("NewForm"),name:"NewForm",kind:"single",transitionUrl:$transitionUrl,domId:(String("NewForm" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:ec.resource.expand("Saved"),backgroundReloadId:"",backgroundHideId:"New"});
+$openChildren({t:"form",id:$uid("NewForm"),name:"NewForm",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("NewForm" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:ec.resource.expand("Saved"),backgroundReloadId:"",backgroundHideId:"New"});
     $emit((() => {
             let $required = false;
             const $max = 0;

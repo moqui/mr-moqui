@@ -87,6 +87,7 @@ pub struct FieldInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormInfo {
+    pub exclude_empty_fields: bool,
     pub id: String,
     pub name: String,
     pub transition_url: String,
@@ -256,6 +257,7 @@ impl Index {
         for node in nodes {
             match node {
                 Node::Form {
+                    exclude_empty_fields,
                     id,
                     name,
                     multipart,
@@ -279,6 +281,7 @@ impl Index {
                     self.forms.insert(
                         id.clone(),
                         FormInfo {
+                            exclude_empty_fields: *exclude_empty_fields,
                             id: id.clone(),
                             name: name.clone(),
                             transition_url: transition_url.clone(),
@@ -887,6 +890,7 @@ pub fn names_field(dep: &str, changed: &str, target: &str) -> bool {
 /// The form of a list's row, or of all its rows (multi): it posts to the list's transition.
 fn list_form(list: &FormList, id: &str, fields: Vec<String>, hidden: Vec<(String, String)>) -> FormInfo {
     FormInfo {
+        exclude_empty_fields: false,
         id: id.to_string(),
         name: list.name.clone(),
         transition_url: list.transition_url.clone(),
@@ -1048,14 +1052,13 @@ pub fn field_keys(field: &FieldInfo) -> Vec<String> {
         .collect()
 }
 
-/// What a form posts: its hidden values, then each shown field. An empty optional value the user did not touch is left
-/// out, so an untouched empty field does not write "" into a foreign key.
+/// Successful controls, as Java's forms: empty text is explicit unless the form excludes empty fields.
 pub fn posted(
     index: &Index,
     field_ids: &[String],
     hidden: &[(String, String)],
     values: &dyn Fn(&str) -> String,
-    dirty: &dyn Fn(&str) -> bool,
+    exclude_empty_fields: bool,
 ) -> BTreeMap<String, String> {
     let mut out: BTreeMap<String, String> = hidden.iter().cloned().collect();
     for id in field_ids {
@@ -1065,14 +1068,15 @@ pub fn posted(
         if !index.visible(id, values) {
             continue;
         }
-        let keys = field_keys(field);
-        let touched = keys.iter().any(|key| dirty(key));
         for (name, value) in field_parameters(field, values) {
-            if value.is_empty() && !field.required && !touched {
+            if value.is_empty() && exclude_empty_fields {
                 continue;
             }
             out.insert(name, value);
         }
+    }
+    if exclude_empty_fields {
+        out.retain(|_, value| !value.is_empty());
     }
     out
 }

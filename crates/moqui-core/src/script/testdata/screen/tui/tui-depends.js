@@ -29,7 +29,7 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    $openChildren({t:"form",id:$uid("Find"),name:"Find",kind:"single",transitionUrl:$transitionUrl,domId:(String("Find" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("Find"),name:"Find",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("Find" ?? "") + $sec()),writes:$formWrites,method:"post",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     $emit((() => {
             let $required = false;
             const $max = 0;

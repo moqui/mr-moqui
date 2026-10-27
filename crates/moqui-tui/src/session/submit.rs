@@ -59,8 +59,13 @@ impl Session {
             self.apply_marks(marks);
             return;
         }
-        let dirty = |key: &str| self.edits.is_dirty(key);
-        let mut fields = forms::posted(&self.index, &form.fields, &form.hidden, &values, &dirty);
+        let mut fields = forms::posted(
+            &self.index,
+            &form.fields,
+            &form.hidden,
+            &values,
+            form.exclude_empty_fields,
+        );
         if let Some(name) = pressed {
             fields.insert(name.clone(), name);
         }
@@ -132,8 +137,7 @@ impl Session {
             self.apply_marks(marks);
             return;
         }
-        let dirty = |key: &str| self.edits.is_dirty(key);
-        let fields = forms::posted(&self.index, &ids, &[], &values, &dirty);
+        let fields = forms::posted(&self.index, &ids, &[], &values, false);
         let mut parameters = self.parameters().clone();
         for (name, value) in fields {
             if value.is_empty() || value == "N" && name.ends_with("_not") {

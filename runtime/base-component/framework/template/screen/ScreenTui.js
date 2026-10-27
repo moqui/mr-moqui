@@ -863,7 +863,7 @@ try {
             $hidden.push({name:String($key),value:String($value)});
         }
     }
-    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${jsString(transition ? "post" : "")},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
+    ` : ""}${focusCode}$openChildren({t:"form",id:$uid(${jsString(id)}),name:${jsString(name)},kind:"single",excludeEmptyFields:${attr(node, "exclude-empty-fields") === "true"},${multipart ? "multipart:true," : ""}transitionUrl:$transitionUrl,domId:${domIdExpr(node)},writes:$formWrites,method:${jsString(transition ? "post" : "")},hidden:$hidden,submitMessage:${attr(node, "submit-message") ? S.expandExpr(attr(node, "submit-message")) : '""'},backgroundReloadId:${exprOf(attr(node, "background-reload-id") || "")},backgroundHideId:${exprOf(attr(node, "background-hide-id") || "")}});
     ${body}$closeChildren();
 } finally {
     sri.popContext();

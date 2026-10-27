@@ -150,3 +150,14 @@ test('saved-find changes navigate to the selected URL and ignore the placeholder
     listeners.change({ target: { closest: () => null } });
     assert.deepEqual(visited, ['/apps/FindOrder?formListFindId=sales', '/apps/FindOrder?formListFindId=_clear']);
 });
+
+test("empty-field exclusion preserves whitespace, zero, false, and multiple values", () => {
+    const data = new FormData();
+    for (const [name, value] of [["empty", ""], ["blank", " "], ["zero", "0"], ["false", "false"], ["tags", "a"], ["tags", "b"]]) data.append(name, value);
+    u.excludeEmptyFields(data);
+    assert.equal(data.has("empty"), false);
+    assert.equal(data.get("blank"), " ");
+    assert.equal(data.get("zero"), "0");
+    assert.equal(data.get("false"), "false");
+    assert.deepEqual(data.getAll("tags"), ["a", "b"]);
+});

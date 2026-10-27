@@ -12,7 +12,7 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
-    $openChildren({t:"form",id:$uid("LinkForm"),name:"LinkForm",kind:"single",transitionUrl:$transitionUrl,domId:(String("LinkForm" ?? "") + $sec()),writes:$formWrites,method:"",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("LinkForm"),name:"LinkForm",kind:"single",excludeEmptyFields:false,transitionUrl:$transitionUrl,domId:(String("LinkForm" ?? "") + $sec()),writes:$formWrites,method:"",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     {
     const $l = (() => {
             let $text = ec.resource.expand("Go ${a}");

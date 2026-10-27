@@ -850,3 +850,24 @@ fn a_late_answer_for_a_request_not_sent_is_ignored() {
     session.on_reply(999, Reply::Level(link.level(GALLERY_DETAIL_PATH, &BTreeMap::new())));
     assert_eq!(session.path(), GALLERY_LIST_PATH);
 }
+
+#[test]
+fn empty_controls_follow_java_form_exclusion() {
+    for exclude in [false, true] {
+        let json = EDIT_JSON.replace(
+            "\"transitionUrl\"",
+            &format!("\"excludeEmptyFields\":{exclude},\"transitionUrl\""),
+        );
+        let model = ScreenModel::from_json(&json).unwrap();
+        let link = FakeLink::from_json(&[&json]).unwrap();
+        let mut session = Session::new(model);
+        session.set_buffer("Edit.name", "Ann".into());
+        // An untouched empty password and an explicitly cleared note are both successful controls.
+        session.set_buffer("Edit.note", String::new());
+        press(&mut session, &link, Key::Enter);
+        let calls = transitions(&link);
+        assert_eq!(calls[0].1.get("note").map(String::as_str), (!exclude).then_some(""));
+        assert_eq!(calls[0].1.get("password").map(String::as_str), (!exclude).then_some(""));
+        assert_eq!(calls[0].1.get("partyId").map(String::as_str), Some("P1"));
+    }
+}

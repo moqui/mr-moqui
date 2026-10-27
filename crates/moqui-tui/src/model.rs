@@ -409,6 +409,8 @@ pub enum Node {
     Form {
         id: String,
         name: String,
+        #[serde(default, rename = "excludeEmptyFields")]
+        exclude_empty_fields: bool,
         #[serde(default)]
         kind: String,
         /// The form holds a file field, so it posts as multipart.

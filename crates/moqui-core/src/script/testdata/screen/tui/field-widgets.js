@@ -12,7 +12,7 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
-    $openChildren({t:"form",id:$uid("AllFields"),name:"AllFields",kind:"single",multipart:true,transitionUrl:$transitionUrl,domId:(String("AllFields" ?? "") + $sec()),writes:$formWrites,method:"",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
+    $openChildren({t:"form",id:$uid("AllFields"),name:"AllFields",kind:"single",excludeEmptyFields:false,multipart:true,transitionUrl:$transitionUrl,domId:(String("AllFields" ?? "") + $sec()),writes:$formWrites,method:"",hidden:$hidden,submitMessage:"",backgroundReloadId:"",backgroundHideId:""});
     $openChildren({t:"row",id:$uid("AllFields.l0")});
 $emit((() => {
             let $required = false;
