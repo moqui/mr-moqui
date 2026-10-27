@@ -1061,6 +1061,16 @@ fn sri_static_url<'js>(ctx: Ctx<'js>, text: String, url_type: Opt<String>) -> rq
             crate::screen::urls::static_url(state, &text, url_type.0.as_deref().unwrap_or("transition"))
         })?;
         let object = Object::new(ctx.clone())?;
+        let inline = Object::new(ctx.clone())?;
+        for (name, value) in found.inline_parameters {
+            inline.set(name, value)?;
+        }
+        object.set("inlineParameters", inline)?;
+        let screen_inline = Object::new(ctx.clone())?;
+        for (name, value) in found.screen_inline_parameters {
+            screen_inline.set(name, value)?;
+        }
+        object.set("screenInlineParameters", screen_inline)?;
         object.set("path", found.path)?;
         object.set("screenPath", found.screen_path)?;
         object.set("exists", found.exists)?;

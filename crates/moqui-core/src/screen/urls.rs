@@ -498,6 +498,8 @@ fn service_parameter_names(service: &str) -> Vec<String> {
 #[derive(Clone, Debug, Default)]
 pub struct StaticUrl {
     pub path: String,
+    pub inline_parameters: Vec<(String, String)>,
+    pub screen_inline_parameters: Vec<(String, String)>,
     /// The path leads to a screen or transition of this server.
     pub exists: bool,
     pub is_transition: bool,
@@ -586,9 +588,41 @@ pub fn static_url(state: &RenderState, text: &str, url_type: &str) -> Result<Sta
                 }
                 None => Vec::new(),
             };
+            let screen_inline_parameters = if alias.is_some() {
+                transition
+                    .filter(|transition| !transition.default_response.url.contains("${"))
+                    .and_then(|transition| {
+                        resolve_path(state, &info.pre_transition_path, &transition.default_response.url)
+                            .ok()
+                            .map(|prepared| (transition, prepared))
+                    })
+                    .map(|(transition, prepared)| {
+                        prepared
+                            .inline
+                            .into_iter()
+                            .filter(|(name, value)| {
+                                !value.is_empty()
+                                    && !transition
+                                        .default_response
+                                        .parameters
+                                        .iter()
+                                        .any(|parameter| parameter.name == *name)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let is_transition = transition.is_some() || info.target_transition_name.is_some();
             Ok(StaticUrl {
                 path: encode_path(&info.full_path),
+                screen_inline_parameters,
+                inline_parameters: prepared
+                    .inline
+                    .into_iter()
+                    .filter(|(_, value)| !value.is_empty())
+                    .collect(),
                 exists: true,
                 is_transition,
                 is_screen: !is_transition,
@@ -617,6 +651,12 @@ pub fn static_url(state: &RenderState, text: &str, url_type: &str) -> Result<Sta
                 .unwrap_or_default();
             Ok(StaticUrl {
                 path: encode_path(&names),
+                screen_inline_parameters: Vec::new(),
+                inline_parameters: prepared
+                    .inline
+                    .into_iter()
+                    .filter(|(_, value)| !value.is_empty())
+                    .collect(),
                 exists: local.is_some(),
                 is_transition: local.is_some(),
                 is_screen: false,

@@ -10,9 +10,10 @@ const qvt = moqui.qvt;
 // The offline origin does not list a directory. These are the goldens fixture() reads today.
 // A file added later is covered when this list grows.
 const GOLDEN = "/files/crates/moqui-core/src/screen/testdata/Static/golden/";
-const GOLDEN_NAMES = ["Items.script.js", "Items.package.json", "Items.ItemList.json", "Items.ItemMulti.json",
+const GOLDEN_NAMES = ["Integration.script.js", "Integration.package.json", "Integration.Rows.json", "Items.script.js", "Items.package.json", "Items.ItemList.json", "Items.ItemMulti.json",
     "Parity.script.js", "Parity.package.json", "Parity.EditList.json", "Parity.OrderList.json", "Parity.PickList.json"];
 const FIXTURE_JSON = {
+    Integration: ["Integration.Rows.json"],
     Items: ["Items.ItemList.json", "Items.ItemMulti.json"],
     Parity: ["Parity.EditList.json", "Parity.OrderList.json", "Parity.PickList.json"]
 };
@@ -143,6 +144,19 @@ const mountStatic = async (search, name) => {
     await flush();
     return { app, container };
 };
+
+test("typed hidden values keep Java plain text while display snapshots remain civil", async () => {
+    await setup();
+    const { app, container } = await mountStatic("", "Integration");
+    try {
+        const text = html(container);
+        assert.ok(text.includes('"day":"1793059200000"'), text);
+        assert.ok(text.includes('"clock":"47100000"'), text);
+        assert.ok(text.includes('"dateText":"2026-10-27"'), text);
+        assert.ok(text.includes('x=one%20two') && text.includes('kind=own'), text);
+        assert.ok(text.includes('lookup') && text.includes('scope'), text);
+    } finally { app.unmount(); }
+});
 
 test("the script registers a render function and holds no request data", async () => {
     await goldenReady;

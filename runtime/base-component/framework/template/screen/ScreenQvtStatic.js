@@ -244,7 +244,8 @@
             if (!target || !target.length) return null;
             return "{" + target.map((p) => {
                 let value;
-                if (p.from) value = X(p.from, n, "url");
+                if (p.literal !== undefined) value = sq(p.literal);
+                else if (p.from) value = X(p.from, n, "url");
                 else if (p.value) value = exp(p.value, n, "url", true);
                 else value = scopeRef(p.name);
                 return sq(p.name) + ":" + value;
@@ -295,21 +296,10 @@
             return "$mq.merge(" + present.join(",") + ")";
         };
 
-        // The query string of a link's url as the entries it adds (expressions by name), and the path without it, so the
-        // template's link keeps the parameters the url names, as the server render does. A url with ${} is left whole.
-        const splitQuery = (text) => {
-            const value = String(text || "");
-            const index = value.indexOf("?");
-            if (index < 0 || isDynamic(value)) return { path: value, extra: null };
-            const extra = {};
-            value.slice(index + 1).split("&").forEach((pair) => {
-                if (!pair) return;
-                const eq = pair.indexOf("=");
-                const decode = (part) => { try { return decodeURIComponent(part.replace(/\+/g, " ")); } catch (e) { return part; } };
-                const name = decode(eq < 0 ? pair : pair.slice(0, eq));
-                if (name) extra[name] = sq(eq < 0 ? "" : decode(pair.slice(eq + 1)));
-            });
-            return { path: value.slice(0, index), extra: Object.keys(extra).length ? extra : null };
+        // Inline URL parameters precede the element's own parameters, as in makeUrlByType.
+        const withInline = (found, target, alias) => {
+            const literals = Object.assign({}, alias && found ? found.screenInlineParameters : {}, found && found.inlineParameters || {});
+            return (target || []).filter((p) => !Object.prototype.hasOwnProperty.call(literals, p.name)).concat(Object.keys(literals).map((name) => ({name, literal:literals[name]})));
         };
 
         // ---- state of the form being written ----
@@ -438,7 +428,7 @@
             const found = sri.staticUrl(transition, "transition");
             const deps = {};
             kids(holder, "depends-on").forEach((dep) => { deps[at(dep, "parameter") || at(dep, "field")] = at(dep, "field"); });
-            return { url: found.path, params: allParams(holder), dependsOn: js_(deps) };
+            return { url: found.path, params: allParams(holder, null, withInline(found, found.parameters)), dependsOn: js_(deps) };
         };
 
         // ---- the values a field starts with ----
@@ -605,14 +595,14 @@
                 const found = sri.staticUrl(at(n, "mention-transition"), "transition");
                 if (found) {
                     out["mention-url"] = found.path;
-                    out[":mention-parameters"] = allParams(n);
+                    out[":mention-parameters"] = allParams(n, null, withInline(found, []));
                 } else note("mention-transition", n, at(n, "mention-transition"));
             }
             if (at(n, "record-transition") && richEditor) {
                 const found = sri.staticUrl(at(n, "record-transition"), "transition");
                 if (found) {
                     out["record-url"] = found.path;
-                    out[":record-parameters"] = allParams(n);
+                    out[":record-parameters"] = allParams(n, null, withInline(found, []));
                 } else note("record-transition", n, at(n, "record-transition"));
             }
             tipOf(n, out);
@@ -891,7 +881,7 @@
         const imageTag = (img) => {
             const type = at(img, "url-type") || "content";
             const target = type === "content" || type === "plain" ? null : sri.staticUrl(at(img, "url"), type);
-            const src = target ? urlOf(img, target.path, null, target.parameters) : exp(at(img, "url"), img, "url", false);
+            const src = target ? urlOf(img, target.path, null, withInline(target, target.parameters)) : exp(at(img, "url"), img, "url", false);
             const out = { ":src": src, ":alt": exp(at(img, "alt") || "image", img, "alt", true), width: at(img, "width") || null, height: at(img, "height") || null };
             plainAttr(out, "id", at(img, "id"), img);
             plainAttr(out, "class", at(img, "style"), img);
@@ -942,8 +932,7 @@
         };
         const link = (n, inField) => {
             const urlType = at(n, "url-type") || "transition";
-            const query = urlType === "transition" || urlType === "screen" ? splitQuery(at(n, "url")) : { path: at(n, "url"), extra: null };
-            const found = urlType === "transition" || urlType === "screen" ? sri.staticUrl(query.path, urlType) : null;
+            const found = urlType === "transition" || urlType === "screen" ? sri.staticUrl(at(n, "url"), urlType) : null;
             const disable = disableOf(n, found);
             const img = first(n, "image");
             const linkType = at(n, "link-type");
@@ -966,7 +955,7 @@
             // An alias transition's screenPath is the screen it names. A form still posts found.path.
             const toAlias = !!(found && at(n, "expand-transition-url") !== "false" && found.screenPath);
             const navPath = toAlias ? found.screenPath : (found ? found.path : "");
-            const navParams = toAlias ? found.screenParameters : (found ? found.parameters : null);
+            const navParams = withInline(found, toAlias ? found.screenParameters : (found ? found.parameters : null), toAlias);
             // A ${} url: the expression over the scope, resolved in the browser (m-link follows an external one as a plain anchor).
             const dynamic = !!found && isDynamic(at(n, "url") || "");
             let out = "";
@@ -975,7 +964,7 @@
                 // does not setUrl it. An unresolved ${} target stays an m-link.
                 const toScreen = !!(found && found.screenUrl);
                 const href = dynamic ? (noParam ? dynamicPath(n, "url") : urlOfPath(n, dynamicPath(n, "url"), null, null)) :
-                    found ? (noParam ? sq(navPath) : urlOf(n, navPath, query.extra, navParams)) : exp(at(n, "url"), n, "url", false);
+                    found ? (noParam ? sq(navPath) : urlOf(n, navPath, null, navParams)) : exp(at(n, "url"), n, "url", false);
                 const tag = toScreen ? "m-link" : "a";
                 // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons.
                 const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
@@ -989,7 +978,7 @@
                 plainAttr(attrs, "id", at(n, "id"), n);
                 out = "<" + tag + A(attrs) + ">" + (textLink ? tooltip + body : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true, ":disable": disable }, btnKindOf(n, "m-link", style))) + ">" + tooltip + body + "</q-btn>") + "</" + tag + ">";
             } else {
-                const fieldsInitial = allParams(n, query.extra, found && !noParam ? found.parameters : null);
+                const fieldsInitial = allParams(n, null, found && !noParam ? withInline(found, found.parameters) : null);
                 const isForm = found ? !found.isScreen : true;
                 const tag = isForm ? "m-form" : "m-form-link";
                 const hiddenLink = linkType === "hidden-form-link";
@@ -1026,7 +1015,7 @@
             const widgetType = at(n, "widget-type") || "textarea";
             const labelValue = exp(at(n, "text"), n, "text", true);
             const out = Object.assign({
-                "label-type": at(n, "type") || "span", ":label-value": labelValue, url: found.path, ":url-parameters": allParams(n),
+                "label-type": at(n, "type") || "span", ":label-value": labelValue, url: found.path, ":url-parameters": allParams(n, null, withInline(found, [])),
                 "parameter-name": at(n, "parameter-name") || "value", "widget-type": widgetType, ":indicator": "ec.l10n.localize('Saving')",
                 ":tooltip": "ec.l10n.localize('Click to edit')", ":cancel": "ec.l10n.localize('Cancel')", ":submit": "ec.l10n.localize('Save')"
             });
@@ -1051,7 +1040,7 @@
             if (load) {
                 const loadUrl = sri.staticUrl(at(load, "transition"), "transition");
                 out["load-url"] = loadUrl.path;
-                out[":load-parameters"] = allParams(load);
+                out[":load-parameters"] = allParams(load, null, withInline(loadUrl, []));
             }
             w("<m-editable" + A(out) + "></m-editable>");
         };
@@ -1081,7 +1070,7 @@
 
         const dynamicDialog = (n) => {
             const found = sri.staticUrl(at(n, "transition"), "transition");
-            const out = { ":url": urlOf(n, found.screenPath || found.path), color: quasarColor(at(n, "type") || "primary") || null, width: at(n, "width") || null,
+            const out = { ":url": urlOf(n, found.screenPath || found.path, null, withInline(found, [], !!found.screenPath)), color: quasarColor(at(n, "type") || "primary") || null, width: at(n, "width") || null,
                 "button-icon": at(n, "icon") || null, "button-class": cls(st.inList ? "m-btn-flat" : null, at(n, "button-style") || null) };
             plainAttr(out, "id", at(n, "id"), n);
             textAttr(out, "button-text", at(n, "button-text"), n, true);
@@ -1093,7 +1082,7 @@
         const dynamicContainer = (n) => {
             const found = sri.staticUrl(at(n, "transition"), "transition");
             const id = at(n, "id");
-            const out = { ":url": urlOf(n, found.screenPath || found.path, { _dynamic_container_id: sq(id) }) };
+            const out = { ":url": urlOf(n, found.screenPath || found.path, { _dynamic_container_id: sq(id) }, withInline(found, [], !!found.screenPath)) };
             plainAttr(out, "id", id, n);
             w("<m-dynamic-container" + A(out) + "></m-dynamic-container>\n");
         };
@@ -1108,7 +1097,7 @@
                 found = sri.staticUrl("actions", "transition");
                 items = found.path + "/" + at(n, "name");
             }
-            const out = { id: at(n, "name"), items, ":parameters": allParams(n) };
+            const out = { id: at(n, "name"), items, ":parameters": allParams(n, null, withInline(found, [])) };
             plainAttr(out, "open-path", at(n, "open-path"), n);
             w("<m-tree-top" + A(out) + "></m-tree-top>\n");
         };
@@ -1169,7 +1158,7 @@
             const tag = isForm ? "m-form" : "m-form-link";
             const map = at(n, "map") || "fieldValues";
             const fields = kids(n, "field");
-            const initial = layeredInitial([passThroughOf(n), hiddenEntries(n), initialOf(fields, "r", [["moquiFormName", sq(at(n, "name"))]])]);
+            const initial = layeredInitial([targetOf(n, withInline(found, [])), passThroughOf(n), hiddenEntries(n), initialOf(fields, "r", [["moquiFormName", sq(at(n, "name"))]])]);
             const attrs = {
                 name: at(n, "name"), id: at(n, "name"), action: found.path, ":disable": disableOf(n, found), method: isForm && found.method === "get" ? "GET" : null, "read-only": isForm && found.readOnly ? true : null,
                 "focus-field": at(n, "focus-field") || null, "exclude-empty-fields": at(n, "exclude-empty-fields") === "true" ? true : null,
@@ -1280,7 +1269,8 @@
             const columnsMode = at(n, "select-columns") === "true";
             st.columnsMode = columnsMode;
             // A multi form suffixes every key of row-initial, so hidden parameters are a separate map posted once, unsuffixed.
-            const hidden = hiddenEntries(n);
+            const inline = targetOf(n, withInline(found, []));
+            const hidden = inline ? layeredInitial([inline, hiddenEntries(n)]) : hiddenEntries(n);
             const rowFields = initialOf(kids(n, "field"), "r", []);
             if (multi || columnsMode) attrs[":row-initial"] = "(_ctx) => (" + (multi ? rowFields : layeredInitial([hidden, rowFields])) + ")";
             if (multi && hidden) attrs[":hidden-initial"] = "(_ctx) => (" + hidden + ")";
@@ -2196,12 +2186,11 @@
                 // known only in the browser: resolved against this screen there; m-link follows an external one as an anchor
                 out[":href"] = dynamicPath(n, "link");
             } else if (at(n, "link")) {
-                const query = splitQuery(at(n, "link"));
-                const found = sri.staticUrl(query.path, "transition");
+                const found = sri.staticUrl(at(n, "link"), "transition");
                 const toAlias = !!(found && found.screenPath);
                 const navPath = toAlias ? found.screenPath : (found ? found.path : "");
-                const navParams = toAlias ? found.screenParameters : (found ? found.parameters : null);
-                out[":href"] = found ? urlOf(n, navPath, query.extra, navParams) : exp(at(n, "link"), n, "link", false);
+                const navParams = withInline(found, toAlias ? found.screenParameters : (found ? found.parameters : null), toAlias);
+                out[":href"] = found ? urlOf(n, navPath, null, navParams) : exp(at(n, "link"), n, "link", false);
                 if (!(found && found.screenUrl)) out.external = true;
             }
             if (at(n, "size")) out.size = at(n, "size");
@@ -2233,7 +2222,7 @@
                 const found = sri.staticUrl(at(n, "transition"), "transition");
                 if (found && found.path && found.path !== "#") {
                     out.action = found.path;
-                    out[":parameters"] = allParams(n);
+                    out[":parameters"] = allParams(n, null, withInline(found, []));
                 }
             }
             if (at(n, "parameter-name") && at(n, "parameter-name") !== "statusId") out["parameter-name"] = at(n, "parameter-name");

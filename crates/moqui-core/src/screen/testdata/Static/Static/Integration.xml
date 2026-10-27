@@ -1,0 +1,21 @@
+<screen require-authentication="false" server-static="qvt">
+
+    <transition name="go" read-only="true"><default-response type="none"/></transition>
+    <transition name="alias"><default-response url=".?target=destination&amp;overridden=url"><parameter name="overridden" value="response"/></default-response></transition>
+    <widgets>
+        <link url="alias/~target=source?more=inline" text="Alias" link-type="anchor"/>
+        <link url="go/~kind=inline?x=one+two" text="Inline" link-type="anchor"><parameter name="kind" value="own"/></link>
+        <image url="go?image=yes" url-type="transition" alt="Inline image"/>
+        <form-single name="Edit" transition="go">
+            <field name="day"><default-field><hidden/></default-field></field>
+            <field name="clock"><default-field><display/></default-field></field>
+            <field name="dateText"><default-field><hidden/></default-field></field>
+            <field name="lookup"><default-field><drop-down><dynamic-options transition="go/~scope=all?lookup=yes"/></drop-down></default-field></field>
+        </form-single>
+        <form-list name="Rows" list="rows" transition="go">
+            <field name="id"><default-field><display/></default-field></field>
+            <field name="day"><conditional-field condition="id === 'first'"><hidden/></conditional-field><default-field><display/></default-field></field>
+            <field name="clock"><default-field><hidden/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

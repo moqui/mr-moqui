@@ -447,8 +447,8 @@ fn a_number_card_is_bound_over_the_scope_in_a_static_template() {
         r#":title="ec.l10n.localize('Open orders')""#,
         r#"<template v-if="(showHidden)"><m-number-card"#,
         // the query of the url is kept, over a parameter of the target screen from the scope (a link's too)
-        r#":href="$mq.url('/Orders',{'statusId':'Open'},$mq.merge({'statusId':$scope['statusId']},null))""#,
-        r#"<m-link :href="$mq.url('/Orders',{'statusId':'Open','sort':'-date'},$mq.merge({'statusId':$scope['statusId']},null))""#,
+        r#":href="$mq.url('/Orders',{},$mq.merge({'statusId':'Open'},null))""#,
+        r#"<m-link :href="$mq.url('/Orders',{},$mq.merge({'sort':'-date','statusId':'Open'},null))""#,
     ] {
         assert!(html.contains(expected), "{expected} in {html}");
     }
@@ -1423,4 +1423,96 @@ fn form_list_views_and_the_markdown_view_in_a_static_template() {
         "the roll-up is no cell of the tree row: {tree}"
     );
     eprintln!("{}", report.render());
+}
+
+#[test]
+fn static_plain_temporal_values_keep_java_text_and_literal_urls_keep_inline_parameters() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let factory = context.factory();
+    let day = Value::Date(moqui_lib::object::parse_date("2026-10-27").unwrap());
+    let clock = Value::Time(moqui_lib::object::parse_time("13:05:00").unwrap());
+    let rows = Value::List(
+        ["first", "second"]
+            .into_iter()
+            .map(|id| {
+                Value::Map(indexmap::IndexMap::from_iter([
+                    ("id".into(), Value::string(id)),
+                    ("day".into(), day.clone()),
+                    ("clock".into(), clock.clone()),
+                ]))
+            })
+            .collect(),
+    );
+    let parameters = BTreeMap::from([
+        ("day".into(), day),
+        ("clock".into(), clock),
+        ("dateText".into(), Value::string("2026-10-27")),
+        ("rows".into(), rows),
+    ]);
+    let integration = |path: &str| {
+        make_render(factory)
+            .root_screen(root())
+            .screen_path(path)
+            .parameters(parameters.clone())
+            .render()
+            .unwrap()
+    };
+    let output = integration("/Integration.qvt");
+    assert_eq!(output.status, 200, "{}", output.body_text());
+    let html = html_of(factory, "Integration", "/Integration");
+    golden("Integration.script.js", &output.body_text());
+    for expected in [
+        "mqPlain_",
+        "'x':'one two'",
+        "'kind':'inline'",
+        "'kind':ec.l10n.localize('own')",
+        "'image':'yes'",
+        "'lookup':'yes'",
+        "'scope':'all'",
+        "'target':'source'",
+        "'more':'inline'",
+    ] {
+        assert!(html.contains(expected), "missing {expected}: {html}");
+    }
+    let package = json_of(&integration("/Integration/actions"));
+    golden("Integration.package.json", &serde_json::to_string(&package).unwrap());
+    assert_eq!(package["day"], "2026-10-27");
+    assert_eq!(package["clock"], "13:05:00");
+    let expected_day =
+        moqui_lib::object::to_plain_string(&Value::Date(moqui_lib::object::parse_date("2026-10-27").unwrap()));
+    let expected_clock =
+        moqui_lib::object::to_plain_string(&Value::Time(moqui_lib::object::parse_time("13:05:00").unwrap()));
+    let extras = package["mqExtra_Edit"].as_object().unwrap();
+    let plains: Vec<_> = extras
+        .iter()
+        .filter(|(key, _)| key.starts_with("mqPlain_"))
+        .map(|(_, value)| value.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        plains.len(),
+        2,
+        "date-looking strings must not get typed metadata: {package}"
+    );
+    assert!(
+        plains.contains(&expected_day.as_str()) && plains.contains(&expected_clock.as_str()),
+        "{package}"
+    );
+    let rows = json_of(&integration("/Integration/actions/Rows"));
+    golden("Integration.Rows.json", &serde_json::to_string(&rows).unwrap());
+    let rows = rows["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        let values: Vec<_> = row
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.starts_with("mqPlain_"))
+            .map(|(_, value)| value.as_str().unwrap())
+            .collect();
+        assert!(
+            values.contains(&expected_day.as_str()) && values.contains(&expected_clock.as_str()),
+            "{row}"
+        );
+    }
 }
