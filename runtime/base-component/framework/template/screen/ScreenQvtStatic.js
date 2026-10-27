@@ -75,7 +75,7 @@
     };
 
     // The runtime. Its source is run once for each script engine, and every unit reads it as $s.
-    const runtimeFunction = function () {
+    const runtimeFunction = function (renderModes) {
         "use strict";
 
         const ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
@@ -1461,8 +1461,9 @@
             else if (name === "tree") tree(n);
             else if (name === "form-single") formSingle(n);
             else if (name === "render-mode" || name === "text") {
-                const texts = name === "text" ? [n] : kids(n, "text");
-                const matches = (text) => !at(text, "type") || at(text, "type") === "any" || at(text, "type").split(",").map((part) => part.trim()).includes("qvt");
+                const chosen = name === "render-mode" ? renderModes.chooseRenderModeText(n, "qvt") : n;
+                const texts = chosen ? [chosen] : [];
+                const matches = (text) => !at(text, "type") || at(text, "type") === "any" || renderModes.renderModeTypeMatches(at(text, "type"), "qvt");
                 texts.filter(matches).forEach((text) => {
                     const body = text.text || "";
                     if (at(text, "location") || at(text, "template") === "true" || body.indexOf("${") >= 0) note("text", text, "a text with request data or a file is not written");
@@ -2266,7 +2267,7 @@
         Object.defineProperty(globalThis, "$mqQvtS", { value: h, configurable: true });
     };
 
-    const runtime = "(" + runtimeFunction.toString() + ")();";
+    const runtime = "(" + runtimeFunction.toString() + ")((" + S.renderModeHelpers.toString() + ")());";
     // a unit keeps the render state of the unit around it and gives it back when it ends, as ScreenQvt.js
     const prelude = "const $s = globalThis.$mqQvtS;\n$s.enter($depth);\ntry {\n";
     const epilogue = "} finally {\n$s.leave($depth);\n}\n";
@@ -2391,7 +2392,7 @@
         return code + `sri.write("<template v-else>");\n${call(null)}sri.write("</template>");\n`;
     });
 
-    const typeMatches = (type) => !type || type === "any" || type.split(",").map((name) => name.trim()).includes(MODE);
+    const typeMatches = (type) => !type || type === "any" || S.renderModeTypeMatches(type, MODE);
 
     const textMacro = stmt((node) => {
         if (!typeMatches(attr(node, "type"))) return "";
@@ -2408,10 +2409,7 @@
     });
 
     const renderModeMacro = stmt((node) => {
-        const texts = childrenNamed(node, "text");
-        let chosen = null;
-        texts.forEach((kid) => { if (!attr(kid, "type") || attr(kid, "type") === "any") chosen = kid; });
-        texts.forEach((kid) => { if (attr(kid, "type") && typeMatches(attr(kid, "type"))) chosen = kid; });
+        const chosen = S.chooseRenderModeText(node, MODE);
         return chosen ? chosen.source || "" : "";
     });
 
