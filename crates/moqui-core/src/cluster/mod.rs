@@ -144,7 +144,7 @@ impl ClusterState {
     }
 }
 
-/// Posts one topic message to a peer. The host installs the HTTPS client. Tests install a recorder.
+/// A delivered message or a permanent refusal that does not imply the peer is down.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostOutcome {
     Accepted,
@@ -162,6 +162,7 @@ impl PostOutcome {
     }
 }
 
+/// Posts one topic message to a peer. Errors represent retryable transport or server failures.
 pub trait Sender: Send + Sync {
     /// `base_url` has no trailing slash. `topic` is the topic name, not a path.
     fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<PostOutcome, Error>;
@@ -614,18 +615,10 @@ fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
         let payload = match payload_bytes(message) {
             Ok(bytes) => bytes,
             Err(err) => {
-                tracing::warn!("cluster fan-out could not encode a message: {err}");
+                tracing::warn!(topic, error = %err, "cluster fan-out message was skipped");
                 continue;
             }
         };
-        if payload.len() > MAX_CLUSTER_BODY {
-            tracing::warn!(
-                topic,
-                size = payload.len(),
-                "cluster message exceeds the body limit; skipped"
-            );
-            continue;
-        }
         for base_url in &peers {
             if peer_down(state, base_url) {
                 continue;
@@ -729,6 +722,7 @@ fn live_peer_urls(
     Ok(bases)
 }
 
+/// Assign a message identity and validate its complete envelope before applying a collaborative edit.
 pub fn prepare_message(body: serde_json::Value) -> Result<TopicMessage, Error> {
     let message = TopicMessage {
         origin_id: notify::origin_id().to_string(),
@@ -739,7 +733,7 @@ pub fn prepare_message(body: serde_json::Value) -> Result<TopicMessage, Error> {
     Ok(message)
 }
 
-pub fn payload_bytes(message: &TopicMessage) -> Result<Vec<u8>, Error> {
+fn payload_bytes(message: &TopicMessage) -> Result<Vec<u8>, Error> {
     let value = serde_json::json!({
         "origin_id": message.origin_id,
         "message_id": message.message_id,

@@ -33,53 +33,6 @@ use super::{Push, Slot};
 
 static REMOTE: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_oversized_update_is_refused_before_apply_ack_or_broadcast() {
-        let context = ExecutionContextFactory::test_context();
-        let factory = Arc::clone(context.factory());
-        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let slot = Arc::new(Slot {
-            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            user_id: "editor".into(),
-            session_id: "session".into(),
-            topics: Mutex::new(Default::default()),
-            tx,
-            overflow: tokio::sync::Notify::new(),
-        });
-        let doc = "oversized-regression";
-        lock(members()).insert(
-            doc.into(),
-            vec![Member {
-                slot: Arc::downgrade(&slot),
-                slot_id: slot.id,
-                client: "client".into(),
-                user_id: "editor".into(),
-                name: "Editor".into(),
-                awareness: Json::Null,
-            }],
-        );
-        update(
-            &factory,
-            &slot,
-            doc,
-            "client",
-            &json!({"id":"ack", "update":"A".repeat(moqui_core::cluster::MAX_CLUSTER_BODY)}),
-        );
-        lock(members()).remove(doc);
-        let response: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
-        assert_eq!(response["type"], "error");
-        assert_eq!(response["code"], 413);
-        assert!(rx.try_recv().is_err(), "no acknowledgement or update was broadcast");
-        let small = remote_message(json!({"doc":"document", "frame":{"type":"update", "update":"AAAA"}})).unwrap();
-        assert!(small.body.get("update").is_none(), "the update is carried once");
-        assert_eq!(small.body["frame"]["update"], "AAAA");
-    }
-}
-
 /// An editor on this server: its socket, its client id, user and presence id.
 #[derive(Clone)]
 struct Member {
@@ -393,4 +346,51 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_update_is_refused_before_apply_ack_or_broadcast() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "editor".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let doc = "oversized-regression";
+        lock(members()).insert(
+            doc.into(),
+            vec![Member {
+                slot: Arc::downgrade(&slot),
+                slot_id: slot.id,
+                client: "client".into(),
+                user_id: "editor".into(),
+                name: "Editor".into(),
+                awareness: Json::Null,
+            }],
+        );
+        update(
+            &factory,
+            &slot,
+            doc,
+            "client",
+            &json!({"id":"ack", "update":"A".repeat(moqui_core::cluster::MAX_CLUSTER_BODY)}),
+        );
+        lock(members()).remove(doc);
+        let response: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(response["type"], "error");
+        assert_eq!(response["code"], 413);
+        assert!(rx.try_recv().is_err(), "no acknowledgement or update was broadcast");
+        let small = remote_message(json!({"doc":"document", "frame":{"type":"update", "update":"AAAA"}})).unwrap();
+        assert!(small.body.get("update").is_none(), "the update is carried once");
+        assert_eq!(small.body["frame"]["update"], "AAAA");
+    }
 }

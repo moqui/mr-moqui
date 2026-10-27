@@ -490,6 +490,30 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     let posts = gate.server.cluster_posts();
     assert_eq!(posts.len(), before + 2, "{posts:?}");
     assert_eq!(posts.last().map(String::as_str), Some("entity-cache-invalidate"));
+    let large = serde_json::to_vec(&serde_json::json!({
+        "origin_id":"peer-large", "message_id":"large", "body": {
+            "entityName":"moqui.basic.Enumeration", "padding":"x".repeat(2 * 1024 * 1024)
+        }
+    }))
+    .unwrap();
+    assert_eq!(
+        sender.post(&base_url, "entity-cache-invalidate", &large).unwrap(),
+        moqui_core::cluster::PostOutcome::Accepted
+    );
+    assert_eq!(
+        sender
+            .post(
+                &base_url,
+                "entity-cache-invalidate",
+                &vec![b'x'; moqui_core::cluster::MAX_CLUSTER_BODY + 1]
+            )
+            .unwrap(),
+        moqui_core::cluster::PostOutcome::Rejected(413)
+    );
+    assert_eq!(
+        sender.post(&base_url, "entity-cache-invalidate", payload).unwrap(),
+        moqui_core::cluster::PostOutcome::Accepted
+    );
     // An unknown topic is refused by the peer, and a key that is not the cluster key cannot log in as the cluster.
     assert_eq!(
         sender.post(&base_url, "no-such-topic", payload).unwrap(),

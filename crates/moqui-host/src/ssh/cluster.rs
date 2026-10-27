@@ -106,6 +106,9 @@ pub struct SshSender {
 
 impl Sender for SshSender {
     fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
+        if payload.len() > moqui_core::cluster::MAX_CLUSTER_BODY {
+            return Ok(moqui_core::cluster::PostOutcome::Rejected(413));
+        }
         let Some(address) = base_url.strip_prefix("ssh://") else {
             return self.https.post(base_url, topic, payload);
         };

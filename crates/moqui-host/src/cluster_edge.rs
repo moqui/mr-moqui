@@ -493,6 +493,9 @@ impl PeerSender {
 
 impl Sender for PeerSender {
     fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<moqui_core::cluster::PostOutcome, CoreError> {
+        if payload.len() > moqui_core::cluster::MAX_CLUSTER_BODY {
+            return Ok(moqui_core::cluster::PostOutcome::Rejected(413));
+        }
         if !topic_segment(topic) {
             return Err(CoreError::new("cluster topic is not a path segment"));
         }

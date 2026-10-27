@@ -61,7 +61,7 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
     assert_eq!(gate.server.cluster_posts().len(), before + 1);
 
     // A message past the payload limit is a ClusterMessage row, and the NOTIFY carries its id.
-    let padding = "x".repeat(9_000);
+    let padding = "x".repeat(2 * 1024 * 1024);
     let big = format!(
         r#"{{"origin_id": "peer-2", "message_id": "m-2", "body": {{"entityName": "moqui.basic.Enumeration", "primaryKey": {{"pad": "{padding}"}}}}}}"#
     );
