@@ -365,9 +365,9 @@ pub(crate) fn set_host(host: &str) {
     });
 }
 
-/// The full URL of a request for artifact hits and the visit, Java's `getRequestUrl`: the scheme, the host, its port
-/// unless it is 80 or 443, the path, and the query string as the client sent it. Without the raw query (a request the
-/// host did not make) the pairs are encoded again.
+/// The full URL of a request for the visit and the request details, Java's `getRequestUrl`: the scheme, the host, its
+/// port unless it is 80 or 443, the path, and the query string as the client sent it. Without the raw query (a request
+/// the host did not make) the pairs are encoded again.
 fn full_url(request: &WebRequest) -> String {
     let host = request.header("host").unwrap_or("localhost");
     let scheme = if request.https { "https" } else { "http" };

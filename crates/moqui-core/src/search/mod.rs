@@ -261,6 +261,10 @@ pub struct ReplicaStatus {
     pub primary_fallbacks: u64,
 }
 
+/// Write a telemetry batch, retrying what was not acknowledged. Returns how many were persisted. A document that still
+/// fails is skipped: the first reason, with the count, goes to the telemetry worker
+/// ([`crate::telemetry::note_write_error`]), which counts them failed and logs once per batch, rate-limited, so an
+/// outage does not log every document.
 fn retry_telemetry_batch(
     documents: &[(String, Document)],
     mut write: impl FnMut(&[(String, Document)]) -> Result<Vec<TelemetryItem>, Error>,
@@ -269,6 +273,8 @@ fn retry_telemetry_batch(
 ) -> Result<usize, Error> {
     let mut pending = documents.to_vec();
     let mut accepted = 0;
+    let mut failed = 0_usize;
+    let mut first_error = None;
     for attempt in 0..3 {
         if attempt > 0 {
             wait(std::time::Duration::from_millis(if attempt == 1 { 100 } else { 500 }));
@@ -290,7 +296,8 @@ fn retry_telemetry_batch(
                 TelemetryItem::Accepted => accepted += 1,
                 TelemetryItem::Retryable(_) if attempt < 2 => retry.push(document),
                 TelemetryItem::Retryable(error) | TelemetryItem::Rejected(error) => {
-                    tracing::error!(index, id = %document.0, %error, "telemetry document not persisted; continuing");
+                    failed += 1;
+                    first_error.get_or_insert_with(|| format!("document {}: {error}", document.0));
                 }
             }
         }
@@ -298,6 +305,12 @@ fn retry_telemetry_batch(
             break;
         }
         pending = retry;
+    }
+    if let Some(error) = first_error {
+        crate::telemetry::note_write_error(&format!(
+            "{failed} of {} {index} documents not persisted; first: {error}",
+            documents.len()
+        ));
     }
     Ok(accepted)
 }
@@ -926,11 +939,13 @@ impl SearchFacade {
         Ok(page)
     }
 
-    /// Aggregate over one document type. `filter` is the top-level constraint and does not score.
+    /// Aggregate over the target's document types: one type on its own index, several as one combined
+    /// query. `filter` is the top-level constraint and does not score. A type without an index adds nothing.
     ///
     /// # Errors
     ///
-    /// Returns an error when the target is not one document, or a tree does not compile.
+    /// Returns an error when a tree does not compile, or a result is over the bucket budget
+    /// ([`limits::is_too_many_groups`]).
     pub fn aggregate(
         &self,
         target: &Target,

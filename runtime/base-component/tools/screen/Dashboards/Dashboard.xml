@@ -27,8 +27,9 @@
             const values=JSON.parse(variableValuesJson || '{}')
             values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
             variableParameters={definitionId,from,thru,filtersJson}
+            if (panelId) variableParameters.panelId=panelId
             for (const [name,value] of Object.entries(values)) variableParameters['var-'+name]=value
-        ]]></script></actions><default-response url="//apps/dashboards/Dashboard" parameter-map="variableParameters"/>
+        ]]></script></actions><default-response url="." parameter-map="variableParameters"/>
     </transition>
     <transition name="edit"><default-response url="//apps/dashboards/Definition"/></transition>
     <actions><script><![CDATA[
@@ -38,6 +39,9 @@
         dashboardDefinition = JSON.parse(JSON.stringify(definition.body || {}))
         const activeFilters = [...(dashboardDefinition.filters || []),...JSON.parse(filtersJson || '[]')]
         dashboardDefinition.variableValues = {}
+        // The time form carries the current values as one JSON parameter; a var-* parameter wins over it.
+        let carriedValues = {}
+        try { carriedValues = JSON.parse(ec.web.parameters.variableValuesJson || '{}') || {} } catch (error) { ec.logger.warn('Dashboard variableValuesJson ignored: '+String(error)) }
         for (const variable of dashboardDefinition.variables || []) {
             if (variable.kind === 'query') {
                 try {
@@ -53,7 +57,7 @@
                     variable.options = []
                 }
             }
-            const supplied = ec.web.parameters['var-'+variable.name]
+            const supplied = ec.web.parameters['var-'+variable.name] ?? carriedValues[variable.name]
             let value = supplied == null ? variable.default : supplied
             if (value == null) value = variable.includeAll ? '$__all' : (variable.options || [])[0]
             if (value && typeof value === 'object' && !Array.isArray(value)) value = value.value
@@ -76,6 +80,10 @@
         dashboardDefinition.layout = rendered.layout || dashboardDefinition.layout
         dashboardDefinition.absoluteTime = rendered.range
         dashboardDefinition.definitionId = definitionId
+        // The including screen's URL: the panel export, inspect and variable requests use its transitions.
+        dashboardDefinition.screenUrl = sri.buildUrl('.').path
+        dashboardDefinition.panelId = panelId || null
+        dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
         dashboardDefinition.variableValues = rendered.variableValues || dashboardDefinition.variableValues
         dashboardNotices.push(...(rendered.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
         dashboardVariables=(dashboardDefinition.variables || []).filter(variable=>variable.kind!=='constant').map(variable=>Object.assign({},variable,{
@@ -87,6 +95,10 @@
             dashboardFrames[panelId] = panel.frames || []
             dashboardNotices.push(...(panel.notices || []).map(notice=>panelId+': '+(typeof notice === 'string' ? notice : notice.message || JSON.stringify(notice))))
         }
+        // A fractional number comes back from the service as a decimal, which JSON.stringify writes as {}; the widgets take numbers.
+        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
+            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
+        dashboardFrames = plain(dashboardFrames); dashboardDefinition = plain(dashboardDefinition)
     ]]></script></actions>
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>
@@ -94,6 +106,8 @@
         <form-single name="DashboardTime" transition=".">
             <field name="filtersJson"><default-field><hidden/></default-field></field>
             <field name="definitionId"><default-field><hidden/></default-field></field>
+            <field name="panelId"><default-field><hidden/></default-field></field>
+            <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues || {})"><default-field><hidden/></default-field></field>
             <field name="from"><default-field title="From"><text-line/></default-field></field>
             <field name="thru"><default-field title="Through"><text-line/></default-field></field>
             <field name="refresh"><default-field><submit text="Refresh"/></default-field></field>
@@ -103,6 +117,7 @@
                 <form-single name="SetDashboardVariable" transition="setVariable">
                     <field name="filtersJson"><default-field><hidden/></default-field></field>
                     <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="panelId"><default-field><hidden/></default-field></field>
                     <field name="from"><default-field><hidden/></default-field></field>
                     <field name="thru"><default-field><hidden/></default-field></field>
                     <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues)"><default-field><hidden/></default-field></field>

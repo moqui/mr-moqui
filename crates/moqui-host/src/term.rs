@@ -262,8 +262,9 @@ impl Write for FrameWriter {
     }
 }
 
-/// Whether `username` may view the System app (`component://tools/screen/System.xml`, which its Log Viewer inherits),
-/// checked on the request pool as that user. A check that fails is a no. Blocks until the pool answers.
+/// Whether `username` may read Monitor Logs: view the Monitor app (`component://tools/screen/Monitor.xml`, which its
+/// Logs screen inherits) and the `otel_logs` dataset that screen reads, checked on the request pool as that user. A
+/// check that fails is a no. Blocks until the pool answers.
 fn may_read_log_now(factory: &Weak<ExecutionContextFactory>, username: &str) -> bool {
     let Some(factory) = factory.upgrade() else {
         return false;
@@ -272,7 +273,10 @@ fn may_read_log_now(factory: &Weak<ExecutionContextFactory>, username: &str) -> 
     let owner = Arc::clone(&factory);
     let Ok(rx) = factory.request_pool().try_submit(owner, move || {
         moqui_core::user::internal_login_user(&username)?;
-        Ok(moqui_core::user::authorize("AT_XML_SCREEN", "component://tools/screen/System.xml", "view").is_ok())
+        Ok(
+            moqui_core::user::authorize("AT_XML_SCREEN", "component://tools/screen/Monitor.xml", "view").is_ok()
+                && moqui_core::user::authorize("AT_SERVICE", "org.moqui.report.dataset.otel_logs", "view").is_ok(),
+        )
     }) else {
         return false;
     };
@@ -453,7 +457,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         failures: AtomicUsize::new(0),
         note: Mutex::new(None),
     });
-    // The log pane, WARN and ERROR only, for a user who may view the System app, whose Log Viewer reads the same log.
+    // The log pane, WARN and ERROR only, for a user who may read Monitor Logs, which shows the same log.
     let (log, link, login_name) = match &start.who {
         Who::User(username) => {
             let log = may_read_log(&start.factory, username).await;

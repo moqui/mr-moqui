@@ -877,10 +877,19 @@ impl ExecutionContext {
 
     /// Push an artifact frame without any check, for a frame that is already authorized.
     pub fn push(&self, artifact_type: &str, name: &str, action: &str) {
+        let errors = self.errors_at_push();
         self.state
             .artifacts
             .borrow_mut()
-            .push_with(artifact_type, name, action, AuthInfo::default());
+            .push_with(artifact_type, name, action, AuthInfo::default(), errors);
+    }
+
+    fn errors_at_push(&self) -> super::artifact::ErrorsAtPush {
+        let messages = self.state.messages.borrow();
+        super::artifact::ErrorsAtPush {
+            added: messages.errors_added(),
+            held: messages.errors().len(),
+        }
     }
 
     /// Decide an artifact against the frame below it, then push it. A denied artifact is not pushed.
@@ -927,10 +936,11 @@ impl ExecutionContext {
             }
             return Err(crate::user::denied(artifact_type, name, action, &info));
         }
+        let errors = self.errors_at_push();
         self.state
             .artifacts
             .borrow_mut()
-            .push_with(artifact_type, name, action, info);
+            .push_with(artifact_type, name, action, info, errors);
         Ok(())
     }
 
@@ -969,16 +979,28 @@ impl ExecutionContext {
         }
     }
 
-    /// Pop the top frame and finish its telemetry span and metric.
+    /// Pop the top frame and finish its telemetry span and metric. The span is an error only when an error was added
+    /// while the frame was on the stack: the first of those, so its parents carry it and a later sibling does not.
     pub fn pop(&self) -> Result<(), Error> {
-        let error = self.state.messages.borrow().errors().first().cloned();
-        let user_id = crate::user::current_user_id().ok().flatten();
-        let visit_id = crate::user::visit_id().ok().flatten();
-        self.state.artifacts.borrow_mut().finish_top_telemetry(
-            error.as_deref(),
-            user_id.as_deref(),
-            visit_id.as_deref(),
-        );
+        let at_push = self.state.artifacts.borrow().top_telemetry_errors();
+        if let Some(at_push) = at_push {
+            let error = {
+                let messages = self.state.messages.borrow();
+                (messages.errors_added() > at_push.added)
+                    .then(|| {
+                        let errors = messages.errors();
+                        errors.get(at_push.held).or_else(|| errors.last()).cloned()
+                    })
+                    .flatten()
+            };
+            let user_id = crate::user::current_user_id().ok().flatten();
+            let visit_id = crate::user::visit_id().ok().flatten();
+            self.state.artifacts.borrow_mut().finish_top_telemetry(
+                error.as_deref(),
+                user_id.as_deref(),
+                visit_id.as_deref(),
+            );
+        }
         self.state.artifacts.borrow_mut().pop()?;
         Ok(())
     }
@@ -995,12 +1017,18 @@ impl ExecutionContext {
         }
     }
 
-    /// Do not count the top frame as a hit, Java's `setTrackArtifactHit(false)`.
+    /// Java's `setTrackArtifactHit(false)`: the top frame records no span or metric of its own, and what runs under it
+    /// (a REST path's service, a screen's always-actions) records as children of its parent.
     pub(crate) fn untrack_hit(&self) {
-        if let Some(hit) = self.state.artifacts.borrow_mut().top_hit_mut() {
-            hit.track = false;
-        }
-        self.state.artifacts.borrow_mut().suppress_top_telemetry();
+        self.state.artifacts.borrow_mut().untrack_top();
+    }
+
+    /// For a screen that says `track-artifact-hit="false"`: neither the top frame nor anything under it records
+    /// artifact spans or metrics until it is popped. The request's root span is still written.
+    pub(crate) fn suppress_descendant_telemetry(&self) {
+        let mut artifacts = self.state.artifacts.borrow_mut();
+        artifacts.untrack_top();
+        artifacts.suppress_top_descendants();
     }
 
     pub fn disable_authz(&self) -> AuthzGuard {

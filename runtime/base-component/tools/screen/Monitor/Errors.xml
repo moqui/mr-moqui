@@ -10,7 +10,9 @@
             datasetId: 'otel_errors', from, thru, queryString: queryString || '',
             sort: [order === 'oldest' ? 'time' : '-time'], pageIndex: parseInt(pageIndex || '0', 10), pageSize: parseInt(pageSize || '50', 10)
         }).call()
-        documentList = (result.hits || []).map(hit => Object.assign({documentId:hit.documentId || hit.id},hit.body || {}))
+        const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return value == null || Number.isNaN(date.getTime()) ? String(value ?? '') : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss') }
+        documentList = (result.hits || []).map(hit => { const body = hit.body || {}; return Object.assign({documentId:hit.documentId || hit.id},body,{
+            messageText:String(body.message || body['exception.type'] || 'Error group').slice(0,200),exceptionType:body['exception.type'] || '',serviceName:body['service.name'] || '',firstSeenText:stamp(body.first_seen),lastSeenText:stamp(body.last_seen)}) })
         documentListCount = result.total || 0
         documentListPageIndex = parseInt(pageIndex || '0', 10)
         documentListPageSize = parseInt(pageSize || '50', 10)
@@ -18,9 +20,9 @@
         documentListPageRangeLow = documentList.length ? documentListPageIndex*documentListPageSize+1 : 0
         documentListPageRangeHigh = documentListPageIndex*documentListPageSize+documentList.length
         queryNotices = result.notices || []
-        
     ]]></script></actions>
-    <widgets>        <form-single name="SearchOptions" transition=".">
+    <widgets>
+        <form-single name="SearchOptions" transition=".">
             <field name="queryString"><default-field title="Query"><text-line size="70"/></default-field></field>
             <field name="from"><default-field title="From"><text-line default-value="now-7d"/></default-field></field>
             <field name="thru"><default-field title="Through"><text-line default-value="now"/></default-field></field>
@@ -31,11 +33,12 @@
         <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
 
         <form-list name="Errors" list="documentList" skip-form="true">
-            <field name="fingerprint"><default-field title="Group"><link url="errorDetail" text="${fingerprint}" link-type="anchor"><parameter name="fingerprint"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
-            <field name="message"><default-field><display/></default-field></field>
-            <field name="count"><default-field><display/></default-field></field>
-            <field name="first_seen"><default-field><display/></default-field></field>
-            <field name="last_seen"><default-field><display/></default-field></field>
+            <field name="message"><default-field title="Error"><link url="errorDetail" text="${messageText}" link-type="anchor"><parameter name="fingerprint"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
+            <field name="exceptionType"><default-field title="Type"><display/></default-field></field>
+            <field name="serviceName"><default-field title="Service"><display/></default-field></field>
+            <field name="count"><default-field title="Occurrences"><display/></default-field></field>
+            <field name="first_seen"><default-field title="First seen"><display text="${firstSeenText}"/></default-field></field>
+            <field name="last_seen"><default-field title="Last seen"><display text="${lastSeenText}"/></default-field></field>
         </form-list>
     </widgets>
 </screen>

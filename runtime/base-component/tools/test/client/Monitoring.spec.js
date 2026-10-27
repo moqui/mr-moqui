@@ -96,9 +96,11 @@ async function monitoringOtlpFixture(options) {
     const attribute=(name,value)=>join(string(1,name),message(2,string(1,value)));
     const resource=(instance)=>join(message(1,attribute('service.name',marker)),...(instance?[message(1,attribute('service.instance.id',instance))]:[]));
     const resourceJson=instance=>({attributes:[{key:'service.name',value:{stringValue:marker}},...(instance?[{key:'service.instance.id',value:{stringValue:instance}}]:[])]});
+    // The transition shows the new token once, in its message, and returns to Sources.
     const credentials=await moqui.request('/apps/monitor/Sources/createKey',{method:'POST',params:{source:marker,expireDays:1}});
-    if(!credentials.ok || !credentials.json || !credentials.json.accessToken)throw new Error('The authorized ingest-key transition failed');
-    const token=credentials.json.accessToken,keyId=credentials.json.keyId,statuses=[];
+    const shown=credentials.json && (credentials.json.messageInfos || []).map(info=>info.message).find(message=>/token: mqi_/.test(message));
+    if(!credentials.ok || !shown || !/\/Sources/.test(credentials.json.screenUrl || ''))throw new Error('The authorized ingest-key transition failed');
+    const token=shown.match(/token: (\S+)/)[1],keyId=shown.match(/ingest key (\S+) for/)[1],statuses=[];
     try {
         const post=async(signal,format,body)=>{const response=await fetch('/v1/'+signal,{method:'POST',credentials:'same-origin',headers:{api_key:token,'Content-Type':format==='json'?'application/json':'application/x-protobuf'},body:format==='json'?JSON.stringify(body):body});statuses.push({signal,format,status:response.status});if(response.status!==200)throw new Error(signal+' '+format+' rejected ('+response.status+')');if(format==='json'){const out=await response.json(),partial=out.partialSuccess || {};for(const value of Object.values(partial))if(/^\d+$/.test(String(value)) && Number(value)>0)throw new Error(signal+' '+format+' partially rejected records');}};
         const span={traceId:traceJson,spanId:spanJson,name:marker+'.json',kind:2,startTimeUnixNano:(now-1000000n).toString(),endTimeUnixNano:now.toString()};
@@ -243,3 +245,63 @@ async function monitoringBuildReport(options) {
 async function monitoringReportPreview(options) {
     const result=await moqui.request('/apps/dashboards/Reports/preview',{params:{definitionId:options.id,renderMode:'csv'}});if(!result.ok)throw new Error('Composed report preview failed');const match=result.text.match(/data:text\/csv;base64,([^"\s<>]+)/);if(!match)throw new Error('Composed CSV download absent');return {hasDocuments:atob(match[1]).includes('documents')};
 }
+// Monitor Logs includes Explore; its row links and forms resolve against /monitor/Logs, so its transitions must be there.
+feature('Monitor Logs follows a trace link and the surrounding entries of a row',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/Sources').status==200
+        page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
+        const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
+        const logs='/qapps/monitor/Logs?from=now-1h&thru=now&queryString='+encodeURIComponent('service.name:'+JSON.stringify(fixture.marker))
+        page.goto(logs).status==200
+        page.waitFor(()=>!!document.querySelector('a[href*="/monitor/TraceDetail"]'))
+        page.evaluate(()=>Array.from(document.querySelectorAll('a')).filter(a=>a.textContent.trim()==='Surrounding entries').every(a=>/\/LogContext\?/.test(a.getAttribute('href') || '')))
+        page.locator('a[href*="/monitor/TraceDetail"]').first().click()
+        page.waitFor(()=>location.pathname.endsWith('/monitor/TraceDetail') && /^[0-9a-f]{32}$/.test(new URL(location.href).searchParams.get('traceId') || ''))
+        page.waitFor(()=>document.body.innerText.includes('Logs for this trace'))
+        page.goto(logs).status==200
+        page.waitFor(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent.trim()==='Surrounding entries'))
+        page.evaluate(()=>{Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Surrounding entries').click();return true})
+        page.waitFor(()=>location.pathname.endsWith('/dashboards/LogContext'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+    },
+})
+feature('the Monitor overview inspects and exports a panel through its own transitions',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/dashboard?from=now-1h&thru=now').status==200
+        page.waitFor(()=>!!document.querySelector('button[aria-label="Inspect Job runs by outcome"]'))
+        page.evaluate(()=>{const fetch=window.fetch;window.panelRequests=[];window.fetch=function(url,init){window.panelRequests.push(String(url));return fetch.call(this,url,init);};return true})
+        page.locator('button[aria-label="Inspect Job runs by outcome"]').click()
+        page.waitFor(()=>Array.from(document.querySelectorAll('.m-report-panel pre')).some(pre=>pre.textContent.includes('"dashboard"')))
+        page.locator('button[aria-label="Export Job runs by outcome as CSV"]').click()
+        page.waitFor(()=>window.panelRequests.some(url=>url.includes('/exportPanel')) && !document.querySelector('button[aria-label="Export Job runs by outcome as CSV"]').disabled)
+        const requests=page.evaluate(()=>window.panelRequests.filter(url=>/\/(inspectPanel|exportPanel)\?/.test(url)))
+        requests.length==2
+        requests.every(url=>url.startsWith('/apps/monitor/dashboard/'))
+        page.evaluate(()=>!document.querySelector('.m-report-panel [role="alert"]'))
+    },
+})
+feature('creating an ingest key shows its token once, in a message',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/Sources').status==200
+        page.waitFor(()=>!!document.querySelector('form input[name="source"]'))
+        page.evaluate(()=>{for(const [name,value] of [['source','browser-token-check'],['expireDays','1']]){const input=document.querySelector('form input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}return true})
+        page.getByRole('button',{name:'Create ingest key'}).click()
+        page.waitFor(()=>/New ingest key [0-9a-f]+ for browser-token-check\. Copy it now; it is not shown again\. token: mqi_[A-Za-z0-9_-]+/.test(document.body.innerText))
+        page.waitFor(()=>location.pathname.endsWith('/monitor/Sources'))
+    },
+})
+feature('the dashboard time form keeps the variables and the single-panel view',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/apps/monitor/Services?from=now-1h&thru=now&panelId=summary&var-service=browser-variable').status==200
+        // The marker is on the page before the submit only, so the wait is for the page the form answers with.
+        page.evaluate(()=>{window.timeFormSent=true;const form=document.getElementById('DashboardTime');form.querySelector('input[name="from"]').value='now-2h';form.requestSubmit();return true})
+        page.waitFor(()=>!window.timeFormSent && document.readyState==='complete' && !!document.getElementById('DashboardTime') && document.querySelector('#DashboardTime input[name="from"]').value==='now-2h')
+        const kept=page.evaluate(()=>({values:JSON.parse(document.querySelector('#DashboardTime input[name="variableValuesJson"]').value),panelId:document.querySelector('#DashboardTime input[name="panelId"]').value}))
+        kept.values.service=='browser-variable'
+        kept.panelId=='summary'
+    },
+})

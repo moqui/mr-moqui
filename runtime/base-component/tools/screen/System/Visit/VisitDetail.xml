@@ -32,13 +32,30 @@ along with this software (see the LICENSE.md file). If not, see
             if (artifactName) filters.push({field:{name:'moqui.artifact.name',op:'wildcard',value:'*'+artifactName+'*'}})
             if (wasError) filters.push({field:{name:'status_code',op:'eq',value:'ERROR',negate:wasError!=='Y'}})
             if (isSlowHit) filters.push({field:{name:'moqui.artifact.slow',op:'eq',value:isSlowHit==='Y'}})
-            const sortFields = {startDateTime:'start',artifactType:'moqui.artifact.type',artifactName:'moqui.artifact.name',runningTimeMillis:'duration_nano',wasError:'status_code'}
+            // The text finds match words of the request query and the exception message; _not=Y excludes the matches.
+            const clauses = []
+            for (const [name,field] of [['parameterString','url.query'],['errorMessage','exception.message']]) {
+                const value = String(ec.web.parameters[name] ?? '').trim()
+                if (value) clauses.push((ec.web.parameters[name+'_not']==='Y'?'NOT ':'')+field+':'+JSON.stringify(value))
+            }
+            const millisOf = value => value == null || value === '' ? NaN : value instanceof Date ? value.getTime() : /^\d+$/.test(String(value)) ? Number(value) :
+                Number.isFinite(Number(value)) ? Number(value) : Date.parse(String(value).replace(' ','T'))
+            const period = ec.user.getPeriodRange('startDateTime', ec.web.parameters) || []
+            // The first request's span starts before the visit row is written, so the range starts a minute earlier.
+            const visitStart = Math.max(Date.now()-3650*86400000,(millisOf(visit.fromDate) || 0)-60000),periodFrom = millisOf(period[0]),periodThru = millisOf(period[1])
+            const sortFields = {startDateTime:'start',artifactType:'moqui.artifact.type',artifactName:'moqui.artifact.name',runningTimeMillis:'duration_nano',wasError:'status_code',isSlowHit:'moqui.artifact.slow',requestUrl:'url.path'}
             const sort = String(orderByField || 'startDateTime').split(',').map(name=>{const descending=name[0]==='-';const field=sortFields[descending?name.slice(1):name];return field ? (descending?'-':'')+field : null}).filter(Boolean)
-            const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
-                datasetId:'otel_spans',from:new Date(Math.max(Date.now()-3650*86400000,Number(visit.fromDate) || 0)).toISOString(),thru:'now',filters,
+            const rangeFrom = Number.isFinite(periodFrom) ? Math.max(visitStart,periodFrom) : visitStart
+            // A period before the visit has no requests of it.
+            const result = Number.isFinite(periodThru) && periodThru <= rangeFrom ? {hits:[],total:0} : ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
+                datasetId:'otel_spans',from:new Date(rangeFrom).toISOString(),
+                thru:Number.isFinite(periodThru)?new Date(periodThru).toISOString():'now',filters,queryString:clauses.join(' AND '),
                 sort:sort.length?sort:['start'],pageIndex:parseInt(pageIndex || '0',10),pageSize:parseInt(pageSize || '50',10)
             }).call()
+            // A trace link searches a minute either side of its request.
+            const spanTime = (span, shift) => { const start = millisOf(span.start); return Number.isFinite(start) ? new Date(start + shift).toISOString() : null }
             artifactHitList = (result.hits || []).map(hit=>{const span=hit.body;return {
+                traceFrom:spanTime(span,-60000),traceThru:spanTime(span,Number(span.duration_nano || 0)/1000000+60000),
                 startDateTime:span.start,userId:span['user.id'],artifactType:span['moqui.artifact.type'],artifactSubType:span['moqui.artifact.sub_type'],
                 artifactName:span['moqui.artifact.name'] || span.name,parameterString:span['url.query'] || '',runningTimeMillis:Number(span.duration_nano || 0)/1000000,
                 isSlowHit:span['moqui.artifact.slow']===true?'Y':span['moqui.artifact.slow']===false?'N':'',outputSize:span['http.response.body.size'],
@@ -159,7 +176,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="serverIpAddress"><default-field><display/></default-field></field>
             <field name="serverHostName"><default-field><display/></default-field></field>
 
-            <field name="traceId"><default-field title="Trace"><link url="traceDetail" text="${traceId}" link-type="anchor"><parameter name="traceId"/></link></default-field></field>
+            <field name="traceId"><default-field title="Trace"><link url="traceDetail" text="${traceId}" link-type="anchor"><parameter name="traceId"/><parameter name="from" from="traceFrom"/><parameter name="thru" from="traceThru"/></link></default-field></field>
             <field name="findButton"><header-field title="Find"><submit/></header-field></field>
 
             <!-- NOTE: maybe go to 3-4 rows per record instead of two -->

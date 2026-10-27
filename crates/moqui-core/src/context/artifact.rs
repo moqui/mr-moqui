@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Artifact stack. Push and pop are tracing spans. A checked push decides the frame against the one below it.
+//! Artifact stack. Each frame is a telemetry span, and its pop records the artifact duration metric. A checked push
+//! decides the frame against the one below it.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -35,6 +36,17 @@ struct Frame {
     legacy_slow: Option<Box<LegacySlow>>,
     started: Instant,
     hit: HitDetail,
+    /// The context's errors when the frame was pushed: an error added since marks the frame's span.
+    errors: ErrorsAtPush,
+}
+
+/// What a frame needs to tell whether an error was added while it was on the stack, and which one came first.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ErrorsAtPush {
+    /// [`super::MessageFacade::errors_added`] at the push.
+    pub(super) added: u64,
+    /// How many errors the message facade held at the push.
+    pub(super) held: usize,
 }
 
 /// A deferred legacy hit keeps only bounded frame metadata, without starting or buffering
@@ -92,7 +104,14 @@ impl ArtifactStack {
     }
 
     /// Push a frame that has already been decided. `info` is what the decision recorded.
-    pub(super) fn push_with(&mut self, artifact_type: &str, name: &str, action: &str, info: AuthInfo) {
+    pub(super) fn push_with(
+        &mut self,
+        artifact_type: &str,
+        name: &str,
+        action: &str,
+        info: AuthInfo,
+        errors: ErrorsAtPush,
+    ) {
         let artifact_type = known(artifact_type);
         let name = name.to_string();
         let action = known(action);
@@ -113,9 +132,11 @@ impl ArtifactStack {
             .filter(|telemetry| telemetry.artifact_enabled(&artifact_type).0)
             .map(|telemetry| telemetry.start_span(&name, crate::telemetry::SpanKind::Internal, None))
             .unwrap_or_else(crate::telemetry::Span::noop);
-        telemetry_span.set_attribute("moqui.artifact.type", Value::string(artifact_type.as_ref()));
-        telemetry_span.set_attribute("moqui.artifact.name", Value::string(&name));
-        telemetry_span.set_attribute("moqui.artifact.action", Value::string(action.as_ref()));
+        if telemetry_span.is_recording() {
+            telemetry_span.set_attribute("moqui.artifact.type", Value::string(artifact_type.as_ref()));
+            telemetry_span.set_attribute("moqui.artifact.name", Value::string(&name));
+            telemetry_span.set_attribute("moqui.artifact.action", Value::string(action.as_ref()));
+        }
         let telemetry_context = crate::telemetry::attach(telemetry_span.context().or_else(crate::telemetry::capture));
         self.frames.push(Frame {
             artifact_type,
@@ -128,6 +149,7 @@ impl ArtifactStack {
             legacy_slow,
             started: Instant::now(),
             hit: HitDetail::default(),
+            errors,
         });
     }
 
@@ -184,14 +206,31 @@ impl ArtifactStack {
         self.frames.last_mut().map(|frame| &mut frame.hit)
     }
 
-    pub(super) fn suppress_top_telemetry(&mut self) {
+    /// The top frame is not an artifact hit: no span or metric of its own. What runs under it records as children of
+    /// its parent.
+    pub(super) fn untrack_top(&mut self) {
         if let Some(frame) = self.frames.last_mut() {
+            frame.hit.track = false;
             frame.telemetry_span.suppress();
             frame.telemetry_context.restore_parent();
+        }
+    }
+
+    /// Nothing under the top frame records artifact spans or metrics, until it is popped.
+    pub(super) fn suppress_top_descendants(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
             if frame.telemetry_suppression.is_none() {
                 frame.telemetry_suppression = Some(crate::telemetry::suppress_artifacts());
             }
         }
+    }
+
+    /// The top frame's errors at its push, when its pop records telemetry; `None` when there is nothing to finish.
+    pub(super) fn top_telemetry_errors(&self) -> Option<ErrorsAtPush> {
+        self.frames
+            .last()
+            .filter(|frame| frame.hit.track && (frame.telemetry_span.is_recording() || frame.legacy_slow.is_some()))
+            .map(|frame| frame.errors)
     }
 
     pub(super) fn finish_top_telemetry(&mut self, error: Option<&str>, user_id: Option<&str>, visit_id: Option<&str>) {
@@ -268,9 +307,11 @@ impl ArtifactStack {
                         }
                     }
                 }
-                frame
-                    .telemetry_span
-                    .set_attribute("moqui.artifact.slow", Value::Bool(slow));
+                if slow {
+                    frame
+                        .telemetry_span
+                        .set_attribute("moqui.artifact.slow", Value::Bool(true));
+                }
                 if crate::web::attribute("moqui.telemetry.artifact.name")
                     .as_ref()
                     .and_then(Value::as_str)
@@ -388,8 +429,20 @@ mod telemetry_tests {
         let _trace = crate::telemetry::attach(Some(parent.clone()));
         {
             let mut stack = ArtifactStack::new();
-            stack.push_with("AT_OTHER", "outer", "view", AuthInfo::default());
-            stack.push_with("AT_OTHER", "inner", "view", AuthInfo::default());
+            stack.push_with(
+                "AT_OTHER",
+                "outer",
+                "view",
+                AuthInfo::default(),
+                ErrorsAtPush::default(),
+            );
+            stack.push_with(
+                "AT_OTHER",
+                "inner",
+                "view",
+                AuthInfo::default(),
+                ErrorsAtPush::default(),
+            );
             assert_ne!(crate::telemetry::capture(), Some(parent.clone()));
         }
         assert_eq!(crate::telemetry::capture(), Some(parent));
@@ -432,7 +485,13 @@ mod telemetry_tests {
             let _trace = crate::telemetry::attach(Some(parent.clone()));
             let mut stack = ArtifactStack::new();
             let mut record = |duration: Duration| {
-                stack.push_with("AT_SERVICE", "legacy.service", "view", AuthInfo::default());
+                stack.push_with(
+                    "AT_SERVICE",
+                    "legacy.service",
+                    "view",
+                    AuthInfo::default(),
+                    ErrorsAtPush::default(),
+                );
                 assert_eq!(
                     crate::telemetry::capture(),
                     Some(parent.clone()),

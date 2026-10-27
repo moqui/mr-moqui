@@ -891,16 +891,27 @@ fn dashboard_url(dashboard: &Value, action: &str, panel_id: Option<&str>, mode: 
             }
         }
     }
+    // A view of the dashboard keeps its single-panel view; the panel requests name their panel.
+    let panel_id = panel_id.or_else(|| {
+        dashboard["panelId"]
+            .as_str()
+            .filter(|panel| action.is_empty() && !panel.is_empty())
+    });
     if let Some(panel) = panel_id {
         pairs.push(("panelId".into(), panel.into()));
     }
     if let Some(mode) = mode {
         pairs.push(("renderMode".into(), mode.into()));
     }
+    // The screen that renders the dashboard (a Monitor screen includes Dashboard and its transitions).
+    let screen = dashboard["screenUrl"]
+        .as_str()
+        .filter(|url| url.starts_with('/') && !url.starts_with("//") && !url.contains(['?', '#']))
+        .unwrap_or("/apps/dashboards/Dashboard");
     let path = if action.is_empty() {
-        "/apps/dashboards/Dashboard".to_string()
+        screen.to_string()
     } else {
-        format!("/apps/dashboards/Dashboard/{action}")
+        format!("{screen}/{action}")
     };
     format!(
         "{path}?{}",
@@ -941,6 +952,12 @@ impl Component for ReportDashboard {
         let mut lines = Vec::new();
         let (_, controls) = layout_view(data, state);
         let focus = state.local["layoutFocus"].as_u64().unwrap_or(0) as usize;
+        if let Some(panel) = data["dashboard"]["panelId"].as_str().filter(|panel| !panel.is_empty()) {
+            lines.push(vec![Span::new(
+                format!("Showing panel {panel}; Esc shows all panels"),
+                Role::Muted,
+            )]);
+        }
         for (at, control) in controls.iter().enumerate() {
             lines.push(vec![Span::new(
                 format!(
@@ -1021,6 +1038,19 @@ impl Component for ReportDashboard {
                         return Some(acts);
                     }
                 }
+            }
+            // Esc closes the inspector, then leaves a single-panel view for all the panels.
+            if press.key == Key::Escape {
+                state.closed.remove("__time_prefix");
+                if state.closed.remove("__report_inspector") {
+                    return Some(Vec::new());
+                }
+                if dashboard["panelId"].as_str().is_some_and(|panel| !panel.is_empty()) {
+                    let mut all = dashboard.clone();
+                    all["panelId"] = Value::Null;
+                    return Some(vec![Act::Follow(dashboard_url(&all, "", None, None))]);
+                }
+                return None;
             }
             let (_, controls) = layout_view(&data, state);
             let focus =
@@ -1171,6 +1201,7 @@ impl Component for ReportDashboard {
             ("←/→", "Choose dashboard tab"),
             ("i", "Inspect selected panel"),
             ("v/Enter", "View panel"),
+            ("Esc", "Close inspector; all panels"),
             ("e", "Edit definition"),
             ("c/x", "Export CSV/XLSX"),
             ("t-", "Zoom out"),
@@ -1913,6 +1944,58 @@ mod gap_tests {
             .join("\n");
         assert!(text.contains("pivot") && text.contains("input") && text.contains("output") && text.contains("null"));
         assert!(state.data.is_none(), "inspector must not replace dashboard frames");
+    }
+    #[test]
+    fn an_including_screen_takes_the_panel_requests_and_esc_leaves_the_single_panel_view() {
+        let props = json!({"dashboard":{"definitionId":"monitor-overview","screenUrl":"/apps/monitor/dashboard","panelId":"p","absoluteTime":{"from":"2026-01-01T00:00:00Z","thru":"2026-01-02T00:00:00Z"},"variableValues":{"service":"erp"},"panels":{"p":{"title":"Errors"}}},"frames":{}});
+        let mut state = ComponentState::default();
+        let text = ReportDashboard
+            .lines(&props, &state, 120, false)
+            .iter()
+            .map(super::super::line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Showing panel p; Esc shows all panels"), "{text}");
+        let acts = ReportDashboard
+            .key(&props, &mut state, &KeyPress::plain(Key::Char('c')), false)
+            .unwrap();
+        assert!(
+            matches!(&acts[0],Act::DownloadReport(url)if url.starts_with("/apps/monitor/dashboard/exportPanel?")&&url.contains("panelId=p")),
+            "{acts:?}"
+        );
+        // a time shift keeps the single-panel view and the variables
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Char('t')), false);
+        let acts = ReportDashboard
+            .key(&props, &mut state, &KeyPress::plain(Key::Left), false)
+            .unwrap();
+        assert!(
+            matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/monitor/dashboard?")&&url.contains("panelId=p")&&url.contains("var-service=erp")),
+            "{acts:?}"
+        );
+        // Esc closes the inspector first, then shows all the panels
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Char('i')), false);
+        assert_eq!(
+            ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Escape), false),
+            Some(Vec::new())
+        );
+        let acts = ReportDashboard
+            .key(&props, &mut state, &KeyPress::plain(Key::Escape), false)
+            .unwrap();
+        assert!(
+            matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/monitor/dashboard?")&&!url.contains("panelId")&&url.contains("var-service=erp")),
+            "{acts:?}"
+        );
+        // without a single-panel view Esc is the session's
+        let all = json!({"dashboard":{"definitionId":"d","panels":{"p":{}}},"frames":{}});
+        assert_eq!(
+            ReportDashboard.key(
+                &all,
+                &mut ComponentState::default(),
+                &KeyPress::plain(Key::Escape),
+                false
+            ),
+            None
+        );
     }
     #[test]
     fn playlist_rotation_is_bounded_pauses_and_preserves_request_authority() {

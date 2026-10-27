@@ -141,15 +141,16 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
     // A request-pool worker already entered a fresh context for this job. Direct callers get one here.
     let context = (!crate::context::ExecutionContext::is_entered()).then(|| factory.new_context());
     let _entered = context.as_ref().map(|context| context.enter());
+    // The page's trace id, which its later requests send as X-Moqui-Page-Trace: each of them is a trace of its own
+    // that names the page's, so a browser session is not one trace.
     crate::context::ExecutionContext::with_current(|context| {
-        let trace = crate::telemetry::capture();
         context.shared_map().insert(
-            "telemetryTraceparent".into(),
-            Value::string(trace.as_ref().map(|trace| trace.traceparent()).unwrap_or_default()),
-        );
-        context.shared_map().insert(
-            "telemetryTracestate".into(),
-            Value::string(trace.as_ref().map(|trace| trace.tracestate.clone()).unwrap_or_default()),
+            "telemetryPageTraceId".into(),
+            Value::string(
+                crate::telemetry::capture()
+                    .map(|trace| trace.trace_id)
+                    .unwrap_or_default(),
+            ),
         );
     });
     let mut parameters = parsed.parameters;

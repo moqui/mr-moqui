@@ -15,8 +15,8 @@
 //! Every tools screen, System and Tools, renders in `html` for an admin user on the seeded embedded Postgres: each
 //! screen file under the two apps with no parameters, then the detail screens with the records they show. A screen
 //! whose `render-modes` leave out `html` answers that html is not supported, as Java does. The screens that wait for
-//! a later phase or are not ported show their message: the Groovy shell, and the log viewer on the Postgres search
-//! backend. The screens and REST calls `SystemScreenRenderTests`, `ToolsScreenRenderTests`, and `ToolsRestApiTests`
+//! a later phase or are not ported show their message: the Groovy shell. The screens and REST calls
+//! `SystemScreenRenderTests`, `ToolsScreenRenderTests`, and `ToolsRestApiTests`
 //! check for text are checked here too, on the same server, after that walk.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "git"))]
@@ -184,6 +184,17 @@ fn rest_get(address: SocketAddr, auth: &str, path: &str) -> (u16, String) {
     (status, page)
 }
 
+fn rest_post_json(address: SocketAddr, auth: &str, path: &str, body: &str) -> (u16, String) {
+    let request = http_request(
+        "POST",
+        path,
+        &[("Authorization", auth), ("Content-Type", "application/json")],
+        body,
+    );
+    let (status, _, page) = exchange(address, &request);
+    (status, page)
+}
+
 fn assert_page(address: SocketAddr, auth: &str, path: &str, texts: &[&str]) {
     let (status, page) = get(address, auth, path);
     assert_eq!(status, 200, "{}", failure(path, status, &page));
@@ -216,15 +227,12 @@ fn failure(path: &str, status: u16, page: &str) -> String {
     format!("{path}: {status}: {snippet}")
 }
 
-/// Groovy's suite uses the dev conf, which persists entity hit bins, and that process has already been up longer than
-/// one bin, so `hitSummary` sees `moqui.basic.StatusType` creates from the seed load. The default conf does not
-/// persist entity bins, and a bin stays open for 15 minutes. This server persists them and closes a bin after one
-/// second, on a one-second scheduler tick, so a create this test makes is in the report before the REST call.
-const HIT_CONF: &str = r#"
-    <default-property name="scheduled_job_check_time" value="1"/>
-    <server-stats bin-length-seconds="1">
-        <artifact-stats type="AT_ENTITY" persist-bin="true"/>
-    </server-stats>
+/// Groovy's suite reads `moqui.basic.StatusType` creates from the artifact hit summary, which the Monitor Artifacts
+/// dashboard replaced. The default conf records no entity frames, and metric documents are written each minute. This
+/// server records the entity duration metric and collects it every second, so a create this test makes is in the
+/// dashboard's dataset before the query.
+const TELEMETRY_CONF: &str = r#"
+    <telemetry interval-seconds="1"><artifact type="AT_ENTITY" spans="false" metrics="true"/></telemetry>
 "#;
 
 /// The checks share one server, and so one seed of [`DATA`] and [`SQL_DATA`]: a server start is most of what the SQL runner check costs.
@@ -234,7 +242,7 @@ fn tools_screens_render_and_the_sql_runners_run() {
     let seed_end = "</entity-facade-xml>";
     let sql_rows = SQL_DATA.split_once('>').map_or("", |(_, rows)| rows);
     let data = format!("{}{sql_rows}", DATA.trim_end_matches(seed_end));
-    let gate = start_with_conf_properties("tools-screens", Some(data.as_str()), HIT_CONF, &[]);
+    let gate = start_with_conf_properties("tools-screens", Some(data.as_str()), TELEMETRY_CONF, &[]);
     every_tools_screen_renders_in_html_for_an_admin(&gate);
     the_groovy_specs_text_is_on_the_screens_and_the_rest_api(&gate);
     the_sql_runners_run_for_an_admin_and_refuse_other_users(&gate);
@@ -542,8 +550,8 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &["UomDbView", "Afghani", "Area"],
     );
 
-    // The seed load runs in another process and does not keep its bins. This create is the `moqui.basic` row the
-    // report has to list. The bin is written on the scheduler tick once it is a second old.
+    // The seed load runs in another process, whose metrics this server does not have. This create is the
+    // `moqui.basic` entity the Monitor Artifacts data has to list, once the next one-second collection is indexed.
     let create_status = "/Tools/AutoScreen/AutoFind/create";
     let (status, page) = post(
         address,
@@ -556,10 +564,11 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         ],
     );
     ran(create_status, status, &page);
-    let hit_path = "/rest/s1/moqui/artifacts/hitSummary?artifactType=AT_ENTITY&artifactSubType=create&artifactName=moqui.basic&artifactName_op=contains";
+    // The query the Monitor Artifacts dashboard's statistics run: entity creates by name, from the duration metric.
+    let artifacts_query = r#"{"query":{"datasetId":"otel_metrics","from":"now-1h","thru":"now+1h","queryString":"name:\"moqui.artifact.duration\" AND moqui.artifact.type:AT_ENTITY AND moqui.artifact.sub_type:create","aggs":{"names":{"terms":{"field":"moqui.artifact.name","size":50},"aggs":{"hits":{"sum":{"field":"count"}}}}}}}"#;
     let started = std::time::Instant::now();
     let (status, page) = loop {
-        let got = rest_get(address, &john, hit_path);
+        let got = rest_post_json(address, &john, "/rest/s1/moqui/reports/query", artifacts_query);
         if got.0 == 200 && got.1.contains("moqui.basic.StatusType") {
             break got;
         }
@@ -568,16 +577,12 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     };
-    assert_eq!(status, 200, "{}", failure("hitSummary", status, &page));
+    assert_eq!(status, 200, "{}", failure("Monitor Artifacts query", status, &page));
     assert!(
-        !page.contains("Error rendering"),
-        "{}",
-        failure("hitSummary", status, &page)
+        page.contains("moqui.basic.StatusType"),
+        "Monitor Artifacts query missing the entity create: {page}"
     );
-    // Jackson spacing, which this port's JSON writer uses: `"name" : value`.
-    for text in ["moqui.basic.StatusType", "\"artifactSubType\" : \"create\""] {
-        assert!(page.contains(text), "hitSummary missing [{text}]: {page}");
-    }
+    assert_page(address, &john, "/apps/monitor/Artifacts", &["Artifact statistics"]);
     let (status, page) = rest_get(address, &john, "/rest/s1/moqui/basic/geos/USA");
     assert_eq!(status, 200, "{}", failure("geos/USA", status, &page));
     for text in ["United States", "Country"] {

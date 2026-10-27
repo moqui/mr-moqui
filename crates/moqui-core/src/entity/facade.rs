@@ -88,6 +88,8 @@ pub(crate) struct Inner {
     pub(crate) component_entity_dirs: Vec<std::path::PathBuf>,
     pub(crate) default_group: String,
     pub(crate) groups: HashMap<String, GroupRuntime>,
+    /// The OTel `db.system.name` the groups share, for SQL spans and metrics; `None` when they differ.
+    pub(crate) db_system: Option<Arc<str>>,
     pub(crate) banks: SequenceBanks,
     /// `entity-facade` `sequenced-id-prefix`, in front of every id a sequence bank issues.
     pub(crate) sequenced_id_prefix: Option<String>,
@@ -278,6 +280,13 @@ impl EntityFacade {
                 },
             );
         }
+        let db_system = {
+            let mut names = runtimes.values().map(|group| group.dialect.name.as_str());
+            let first = names.next();
+            first
+                .filter(|first| names.all(|name| name == *first))
+                .map(|name| Arc::from(if name == "postgres" { "postgresql" } else { name }))
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 model: SharedModel::new(model),
@@ -285,6 +294,7 @@ impl EntityFacade {
                 component_entity_dirs: component_entity_dirs.to_vec(),
                 default_group: default_group.to_string(),
                 groups: runtimes,
+                db_system,
                 banks: SequenceBanks::default(),
                 sequenced_id_prefix: sequenced_id_prefix(conf),
                 datasource_uuid: datasource_uuid(conf),

@@ -57,15 +57,13 @@
         <cache name="l10n.message" expire-time-idle="600"/>
     </cache-list>
 
-    <server-stats stats-skip-condition="pathInfo?.startsWith('/rest') || pathInfo?.startsWith('/status')">
-        <!-- For development, track everything! It'll run slow through... -->
-        <artifact-stats type="AT_XML_SCREEN" persist-bin="true" persist-hit="true"/>
-        <artifact-stats type="AT_XML_SCREEN_CONTENT" persist-bin="true" persist-hit="true"/>
-        <artifact-stats type="AT_XML_SCREEN_TRANS" persist-bin="true" persist-hit="true"/>
-        <!-- NOTE: entity-implicit and entity-auto services never persist hits -->
-        <artifact-stats type="AT_SERVICE" persist-bin="true" persist-hit="true"/>
-        <artifact-stats type="AT_ENTITY" persist-bin="true"/>
-    </server-stats>
+    <!-- For development, record more: screen content as spans, and entity frame times as metrics. Screens, transitions
+        and services have both by default. Set telemetry_sample_ratio=1 to keep every span, not only those of error and
+        slow traces. -->
+    <telemetry>
+        <artifact type="AT_XML_SCREEN_CONTENT" spans="true" metrics="true"/>
+        <artifact type="AT_ENTITY" spans="false" metrics="true"/>
+    </telemetry>
 
     <artifact-execution-facade>
         <!-- turn off tarpit in dev mode -->

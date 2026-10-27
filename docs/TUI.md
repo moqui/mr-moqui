@@ -84,7 +84,8 @@ moqui> apps                                 from the admin shell; quitting the a
 - **Files.** Exports are not downloaded, because the client runs on the server; the text export still shows in a
   dialog. Uploads are off.
 - **Log.** Alt+L opens the log pane, with the WARN and ERROR lines from the session's start, for a user who may view
-  the System app (whose Log Viewer reads the same log). Others are told the log is not offered.
+  the Monitor app and read the `otel_logs` dataset (Monitor › Logs reads the same log). Others are told the log is not
+  offered.
 - **Background.** The client asks the terminal for its background color (OSC 11) and takes the dark or light colors
   to match; a terminal that does not answer keeps what `COLORFGBG` says, else dark.
 

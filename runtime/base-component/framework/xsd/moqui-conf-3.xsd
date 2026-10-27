@@ -146,19 +146,43 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="telemetry"><xs:complexType>
+        <xs:annotation><xs:documentation>Spans, metrics and logs of this server, written to the otel_* search indexes,
+            and the OTLP receiver that takes them from other services. Replaces server-stats/artifact-stats.
+        </xs:documentation></xs:annotation>
         <xs:sequence><xs:element name="artifact" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
+            <xs:annotation><xs:documentation>Per artifact type (AT_SERVICE, AT_XML_SCREEN, AT_ENTITY, ...): whether
+                its frames are spans and whether they record the moqui.artifact.duration metric. Both default to true,
+                except AT_ENTITY (neither) and AT_XML_SCREEN_CONTENT (metrics only).</xs:documentation></xs:annotation>
             <xs:attribute name="type" type="xs:string" use="required"/><xs:attribute name="spans" type="boolean"/>
             <xs:attribute name="metrics" type="boolean"/>
         </xs:complexType></xs:element>
         <xs:element name="receiver" minOccurs="0"><xs:complexType>
-            <xs:attribute name="enabled" type="boolean"/>
-            <xs:attribute name="body-limit" type="xs:positiveInteger"/>
-            <xs:attribute name="requests-per-minute" type="xs:positiveInteger"/>
-            <xs:attribute name="concurrent-requests" type="xs:positiveInteger"/>
+            <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics, and the
+                deploy markers at /v1/annotations, each authorized by an ingest key. A request refused before it is
+                decoded (busy, over the rate, too large) answers an error status and is not counted; each record a
+                request rejects, or the queue cannot take, counts as dropped.
+            </xs:documentation></xs:annotation>
+            <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>false answers 404 on the
+                receiver paths. Default true.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="body-limit" type="xs:positiveInteger"><xs:annotation><xs:documentation>The largest
+                request body in bytes, after gzip is undone. Default 4194304 (4 MiB).</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="requests-per-minute" type="xs:positiveInteger"><xs:annotation><xs:documentation>
+                Requests each ingest key may make a minute; more answer 429. Default 600.</xs:documentation>
+            </xs:annotation></xs:attribute>
+            <xs:attribute name="concurrent-requests" type="xs:positiveInteger"><xs:annotation><xs:documentation>
+                Requests decoded at once; more answer 503. Default 8.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element></xs:sequence>
-        <xs:attribute name="enabled" type="boolean"/><xs:attribute name="sample-ratio" type="xs:string"/>
+        <xs:attribute name="enabled" type="boolean"/>
+        <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of traces, 0 to
+            1, whose spans below the root are kept, decided from the trace id (a client's sampled flag does not change
+            it). Every request and job root span is kept whatever the ratio, and the tail rule keeps the whole trace
+            of an error or a slow root, so 0 keeps the roots plus the traces worth looking at. A value that is not a
+            number is warned about and the default, 0, is used.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="service-name" type="xs:string"/>
-        <xs:attribute name="interval-seconds" type="xs:positiveInteger"/>
+        <xs:attribute name="interval-seconds" type="xs:positiveInteger"><xs:annotation><xs:documentation>How often
+            metrics are collected. Metric documents are minute documents, which the rollups and dashboards assume, so
+            anything but 60 is for tests and is warned about.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="span-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="log-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="error-retention-days" type="xs:nonNegativeInteger"/>
@@ -180,19 +204,22 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="artifact-stats"/>
             </xs:sequence>
             <xs:attribute name="bin-length-seconds" type="xs:positiveInteger" default="900">
-                <xs:annotation><xs:documentation>The bin length should be less than or equal to one hour and evenly
-                    divisible into an hour, the default is 900 seconds (15 minutes)</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>Deprecated and ignored: ArtifactHitBin is gone, and artifact metrics
+                    are minute documents rolled up to hours and days (see telemetry).</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="visit-enabled" type="boolean" default="true"/>
             <xs:attribute name="visit-ip-info-on-login" type="boolean" default="true"/>
             <xs:attribute name="visitor-enabled" type="boolean" default="true"/>
             <xs:attribute name="stats-skip-condition" type="xs:string">
-                <xs:annotation><xs:documentation>If true, skip creating visit and visitor records and suppress
-                    screen artifact telemetry. HTTP request roots are retained.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>Not read; deprecated, and a warning is logged at startup when it is
+                    set. Configure artifact telemetry with telemetry/artifact.</xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="artifact-stats">
+        <xs:annotation><xs:documentation>Deprecated: use telemetry/artifact. One left in a conf still applies, with a
+            warning at startup: persist-hit turns the type's spans on or off and persist-bin its metrics.
+        </xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="type" use="required"><xs:simpleType><xs:restriction base="xs:token">
                 <xs:enumeration value="AT_XML_SCREEN"/>
@@ -289,8 +316,9 @@ along with this software (see the LICENSE.md file). If not, see
                         priority order, then as declared, before the servlet. It is the script at location, whose value is
                         a handler object with doFilter(request, response, chain); chain.doFilter() goes on. Or class, one
                         of the Java classes this server has: org.moqui.impl.webapp.MoquiAuthFilter (the script
-                        component://webroot/script/AuthFilter.js) and org.moqui.impl.webapp.ElasticRequestLogFilter (the
-                        server's request log; enabled="false" turns it off). See docs/Web-Scripts.md.
+                        component://webroot/script/AuthFilter.js) and org.moqui.impl.webapp.ElasticRequestLogFilter
+                        (accepted and not run: every request's root span in otel_spans is the request log, written
+                        whatever enabled says). See docs/Web-Scripts.md.
                     </xs:documentation></xs:annotation>
                     <xs:complexType>
                     <xs:sequence>

@@ -93,7 +93,7 @@
             <field name="cronExpression"><default-field><display/></default-field></field>
             <field name="renderMode"><default-field><display/></default-field></field>
             <field name="paused"><default-field><display/></default-field></field>
-            <field name="send"><default-field><link url="send" text="Send now" link-type="hidden-form-link" parameter-map="{screenScheduledId:screenScheduledId}"/></default-field></field>
+            <field name="send"><default-field><link url="send" text="Send now" link-type="hidden-form-link" confirmation="Send this report to its recipients now?" parameter-map="{screenScheduledId:screenScheduledId}"/></default-field></field>
             <field name="pause"><default-field><link url="pause" text="Pause / resume" link-type="hidden-form-link" parameter-map="{screenScheduledId:screenScheduledId,paused:paused}"/></default-field></field>
         </form-list>
     </widgets>

@@ -45,7 +45,7 @@ use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata, Subscriber};
 
-/// Entries waiting for the shipper, per index. Java's `QUEUE_LIMIT`.
+/// Application log entries from before telemetry attaches, exported when it does; capped at `QUEUE_LIMIT`.
 const QUEUE_LIMIT: usize = 16384;
 static APP_QUEUE: Mutex<VecDeque<Document>> = Mutex::new(VecDeque::new());
 static TELEMETRY: Mutex<Option<std::sync::Weak<moqui_core::telemetry::Telemetry>>> = Mutex::new(None);

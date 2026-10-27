@@ -1099,16 +1099,16 @@ fn run_source_in_app(
     id_match: bool,
 ) -> Result<Option<Value>, Error> {
     let required = app.def.authentication == crate::screen::definition::Authentication::Required;
+    // The app's frame is a check, not a hit: untracked before the source runs, so the source's spans are children of
+    // the request's.
     ExecutionContext::with_current(|ec| {
-        ec.push_checked("AT_XML_SCREEN", &app.def.location, "view", required, false, None)
+        ec.push_checked("AT_XML_SCREEN", &app.def.location, "view", required, false, None)?;
+        ec.untrack_hit();
+        Ok::<(), crate::context::Error>(())
     })
     .unwrap_or(Ok(()))?;
     let answer = run_source(source, text, limit, doc_types, id_match);
-    ExecutionContext::with_current(|ec| {
-        ec.untrack_hit();
-        ec.pop()
-    })
-    .unwrap_or(Ok(()))?;
+    ExecutionContext::with_current(ExecutionContext::pop).unwrap_or(Ok(()))?;
     answer
 }
 

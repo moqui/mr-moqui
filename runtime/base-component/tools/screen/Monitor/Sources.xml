@@ -3,8 +3,10 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Sources" default-menu-index="8">
     <transition name="createKey" method="post" authz-action="create">
         <actions><script><![CDATA[
-            ec.web.sendJsonResponse(ec.service.sync().name('org.moqui.monitor.MonitorServices.create#IngestKey').parameters({source:source,expireDays:parseInt(expireDays || '90',10)}).call())
-        ]]></script></actions><default-response type="none"/>
+            // Only the key's hash is stored, so its token shows once, in a message on the next page (the log masks it).
+            const created=ec.service.sync().name('org.moqui.monitor.MonitorServices.create#IngestKey').parameters({source:source,expireDays:parseInt(expireDays || '90',10)}).call()
+            if (created.accessToken) ec.message.addPublic('New ingest key '+created.keyId+' for '+source+'. Copy it now; it is not shown again. token: '+created.accessToken,'warning')
+        ]]></script></actions><default-response url="."/>
     </transition>
     <transition name="revokeKey" method="post" authz-action="delete">
         <actions><service-call name="org.moqui.monitor.MonitorServices.revoke#IngestKey" in-map="{keyId:keyId}"/></actions><default-response url="."/>
@@ -54,7 +56,7 @@
             <field name="status"><default-field><display/></default-field></field>
         </form-list>
         <label text="Ingest keys" type="h5"/>
-        <label text="Creating a key displays its value once. Copy it into the source configuration before returning here. Keep keys out of URLs and log messages." type="p"/>
+        <label text="Creating a key shows its token once, in a message. Copy it into the source configuration before you leave this page. Keep keys out of URLs and log messages." type="p"/>
         <form-single name="CreateIngestKey" transition="createKey">
             <field name="source"><default-field title="Source name"><text-line/></default-field></field>
             <field name="expireDays"><default-field title="Expires in days"><text-line default-value="90"/></default-field></field>
@@ -66,7 +68,7 @@
             <field name="createdDate"><default-field title="Created"><display/></default-field></field>
             <field name="lastSeen"><default-field title="Latest telemetry"><display/></default-field></field>
             <field name="revoked"><default-field><display/></default-field></field>
-            <field name="revoke"><default-field><submit text="Revoke"/></default-field></field>
+            <field name="revoke"><default-field><submit text="Revoke" confirmation="Revoke this ingest key? Sources that send with it are refused from then on."/></default-field></field>
         </form-list>
     </widgets>
 </screen>

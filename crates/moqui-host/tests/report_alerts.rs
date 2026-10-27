@@ -292,6 +292,121 @@ fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations(
         evaluate(gate.server.factory(), rule_id, at);
         assert_eq!(states(gate.server.factory(), rule_id), [state]);
     }
+    verify_rule_validation(gate.server.factory(), &body);
+    verify_histogram_alert_with_a_current_bucket(gate.server.factory(), at);
+    verify_series_pruning_and_cap(gate.server.factory(), at);
+}
+
+fn verify_rule_validation(factory: &Arc<ExecutionContextFactory>, body: &Json) {
+    for condition in [
+        json!({"type":"abvoe","threshold":10}),
+        json!({"type":"within","min":5,"max":1}),
+        json!({"type":"outside","min":1}),
+        json!({"type":"above","threshold":"ten"}),
+    ] {
+        let mut bad = body.clone();
+        bad["condition"] = condition.clone();
+        let saved = with_owner(factory, |ec| {
+            let entity = factory.entity().unwrap();
+            let tx = entity.transactions_for("moqui.report.Definition").unwrap();
+            tx.run(TransactionAttribute::UseOrBegin, None, || {
+                report::save_definition(
+                    ec,
+                    &service(),
+                    &parameters(
+                        json!({"definition":{"id":"invalid-condition","type":"alert","title":"invalid","body":bad}}),
+                    ),
+                )
+            })
+        });
+        assert!(saved.is_err(), "{condition} must be refused");
+    }
+}
+
+/// The current bucket is partial and dropped. That is a warning, not missing data, so the rule
+/// observes the completed buckets and is Firing or Normal, never Error.
+fn verify_histogram_alert_with_a_current_bucket(factory: &Arc<ExecutionContextFactory>, at: i64) {
+    let clock = at + 150_000;
+    let docs = [("histogram-done", at - 600_000, 12.0), ("histogram-current", at + 60_000, 50.0)]
+        .into_iter()
+        .map(|(id, time, value)| document(json!({"_id":id,"bucket_start":time,"name":"m6-histogram","service.name":"one","granularity":"minute","sum":value,"count":1})))
+        .collect();
+    assert_eq!(
+        search::installed(factory)
+            .unwrap()
+            .index_entries("otel_metrics", docs)
+            .unwrap(),
+        2
+    );
+    for (rule_id, threshold, state) in [("histogram-firing", 10, "Firing"), ("histogram-normal", 100, "Normal")] {
+        // Absolute times: the rule runs in a fresh owner context, which has no effective time.
+        let rule = json!({"query":{"datasetId":"otel_metrics","from":(clock-3_600_000).to_string(),"thru":clock.to_string(),"queryString":"name:m6-histogram","aggregations":[{"id":"time","type":"date_histogram","role":"x-axis","params":{"field":"bucket_start","fixed_interval":"5m"}},{"id":"value","type":"sum","role":"metric","params":{"field":"sum"}}]},"field":"value","reduce":"max","condition":{"type":"above","threshold":threshold},"intervalSeconds":60,"contactPoints":[]});
+        save(factory, rule_id, &rule);
+        with_owner(factory, |ec| {
+            ec.set_effective_time(Some(clock));
+            let result = report::execute_query(ec, &rule["query"]).unwrap();
+            let notices = result["notices"].as_array().unwrap();
+            assert!(
+                notices
+                    .iter()
+                    .any(|notice| notice["code"] == "partial_buckets_excluded"),
+                "{result}"
+            );
+            assert!(notices.iter().all(|notice| notice["complete"] != false), "{result}");
+        });
+        assert_eq!(evaluate(factory, rule_id, clock)["failed"], 0);
+        assert_eq!(states(factory, rule_id), [state], "{rule_id}");
+    }
+}
+
+fn verify_series_pruning_and_cap(factory: &Arc<ExecutionContextFactory>, at: i64) {
+    let facade = search::installed(factory).unwrap();
+    let docs = [("prune-a", "a", at), ("prune-b", "b", at - 7_200_000)]
+        .into_iter()
+        .map(|(id, series, time)| document(json!({"_id":id,"bucket_start":time,"name":"m6-prune","service.name":series,"granularity":"minute","sum":12,"count":1})))
+        .collect();
+    assert_eq!(facade.index_entries("otel_metrics", docs).unwrap(), 2);
+    let rule = json!({"query":{"datasetId":"otel_metrics","from":(at-86_400_000).to_string(),"thru":(at+86_400_000).to_string(),"queryString":"name:m6-prune","aggs":{"service":{"terms":{"field":"service.name","size":20},"aggs":{"value":{"sum":{"field":"sum"}}}}}},"field":"value","labelFields":["service"],"condition":{"type":"above","threshold":10},"intervalSeconds":60,"pruneAfterMissing":2,"contactPoints":[]});
+    save(factory, "prune-alert", &rule);
+    evaluate(factory, "prune-alert", at);
+    assert_eq!(states(factory, "prune-alert"), ["Firing", "Firing"]);
+    // With the range narrowed past b's point, b is missing: once it is NoData, twice it is removed.
+    let mut narrowed = rule.clone();
+    narrowed["query"]["from"] = json!((at - 3_600_000).to_string());
+    save(factory, "prune-alert", &narrowed);
+    let later = at + 60_000;
+    evaluate(factory, "prune-alert", later);
+    let mut seen = states(factory, "prune-alert");
+    seen.sort();
+    assert_eq!(seen, ["Firing", "NoData"]);
+    evaluate(factory, "prune-alert", later + 60_000);
+    assert_eq!(states(factory, "prune-alert"), ["Firing"]);
+    let remaining = rows(factory, "moqui.report.AlertInstance", Some("prune-alert"));
+    assert!(
+        remaining[0]["labelsJson"].as_str().unwrap().contains("\"a\""),
+        "{remaining:?}"
+    );
+
+    let many = (0..501)
+        .map(|index| document(json!({"_id":format!("cap-{index:03}"),"bucket_start":at,"name":"m6-cap","service.name":format!("series-{index:03}"),"granularity":"minute","sum":1,"count":1})))
+        .collect();
+    assert_eq!(facade.index_entries("otel_metrics", many).unwrap(), 501);
+    let mut capped = rule.clone();
+    capped["query"]["queryString"] = json!("name:m6-cap");
+    capped["query"]["aggs"]["service"]["terms"]["size"] = json!(1000);
+    capped["query"]["maxBuckets"] = json!(2000);
+    save(factory, "cap-alert", &capped);
+    let output = evaluate(factory, "cap-alert", at);
+    assert_eq!(output["failed"], 0, "{output}");
+    assert!(
+        output["notices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|notice| notice["code"] == "series_limit" && notice["rule"] == "cap-alert"),
+        "{output}"
+    );
+    assert_eq!(states(factory, "cap-alert").len(), 500);
 }
 
 // The wire fixture deliberately keeps production SSRF enforcement intact. Its adapter

@@ -82,6 +82,75 @@ fn basic_enum_types_returns_fixture_rows_and_a_service_runs() {
     );
 }
 
+/// A REST path's frames are not artifact hits, but the service it calls is: its span is a child of the request's,
+/// with no span for the path frames between them.
+#[cfg(feature = "telemetry")]
+#[test]
+fn a_rest_service_is_a_span_of_the_request() {
+    use crate::entity::document::Document;
+    use crate::telemetry::{Exporter, SpanKind};
+    use std::sync::{Arc, Mutex};
+    #[derive(Default)]
+    struct Memory(Mutex<Vec<Document>>);
+    impl Exporter for Memory {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, moqui_lib::error::Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("moqui-rest-telemetry-{}", std::process::id()));
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(dir.join("service")).unwrap();
+    std::fs::write(dir.join("service/moqui.rest.xml"), REST_XML).unwrap();
+    std::fs::write(dir.join("service/echo.xml"), SERVICE_XML).unwrap();
+    let facade = crate::testing::open();
+    let ctx =
+        ExecutionContextFactory::test_context_with_conf("<moqui-conf><telemetry sample-ratio=\"1\"/></moqui-conf>");
+    install(ctx.factory(), &[dir.join("service/moqui.rest.xml")]);
+    ctx.factory().set_entity(facade.clone());
+    let telemetry = crate::telemetry::for_factory(ctx.factory());
+    let memory = Arc::new(Memory::default());
+    telemetry.set_exporter(memory.clone());
+    let root_id;
+    {
+        let _entered = ctx.enter();
+        // Registers the service file, as the first test does.
+        let failures = crate::service::lint(&[dir.join("service/echo.xml")]).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        let root = telemetry.start_span("POST", SpanKind::Server, None);
+        root_id = root.context().unwrap().span_id;
+        {
+            let _trace = crate::telemetry::attach(root.context());
+            let mut params = BTreeMap::new();
+            params.insert("note".to_string(), Value::string("traced"));
+            run(&["moqui", "basic", "echo"], "post", &params).unwrap();
+        }
+        root.finish();
+    }
+    telemetry.flush();
+    let spans = memory.0.lock().unwrap();
+    let named = |name: &str| {
+        spans
+            .iter()
+            .find(|span| span.get("name").and_then(Value::as_str) == Some(name))
+            .map(|span| {
+                span.get("parent_span_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            })
+    };
+    assert_eq!(named("echo.ping#Rest"), Some(root_id), "{spans:?}");
+    for path in ["/moqui", "/moqui/basic", "/moqui/basic/echo"] {
+        assert_eq!(named(path), None, "{path}: {spans:?}");
+    }
+    drop(spans);
+    telemetry.shutdown();
+}
+
 /// As Java's `RestApi`: identity-admin entities are refused, a `UserAccount` write loses the password fields and,
 /// for a caller who is not ADMIN, the identity fields, secret-config writes need ADMIN, and results never carry
 /// the password fields.

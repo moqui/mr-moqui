@@ -36,7 +36,9 @@
         <field name="lastEvaluated" type="date-time"/>
         <field name="previouslyFiring" type="text-indicator"/>
         <field name="labelsJson" type="text-long"/>
-        <field name="lastNotified" type="date-time"/>
+        <!-- Consecutive successful evaluations without this series; at the rule's pruneAfterMissing (default 10) it is removed.
+            Repeat delivery is per notification group, in AlertNotification.lastSent. -->
+        <field name="missingCount" type="number-integer"/>
         <relationship type="one" related="moqui.report.Definition"/>
     </entity>
     <entity entity-name="AlertRuleLock" package="moqui.report" use="transactional" cache="never">

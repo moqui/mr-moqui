@@ -34,6 +34,16 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- request and clock values for the labels, so a server-static template reads them from the screen package -->
         <set field="requestDetails" from="ec.web.getRequestDetails()"/>
         <set field="nowText" from="ec.l10n.format(ec.user.nowTimestamp, null)"/>
+
+        <!-- Explore Documents opens the first DataDocument index this user may read (index:<indexName>); with none it opens
+            Explore's default. list#Datasets leaves out the indexes whose documents the user's groups may not read. -->
+        <script><![CDATA[
+            documentDatasetId = null
+            try {
+                const datasets = ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
+                documentDatasetId = (datasets.find(dataset => String(dataset.id).startsWith('index:')) || {}).id || null
+            } catch (error) { ec.logger.warn('Explore Documents dataset unavailable: ' + String(error)) }
+        ]]></script>
     </actions>
     <widgets>
         <container-row><row-col md="6">
@@ -53,15 +63,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="../Security/ActiveUsers" text="Active Users"/>
             </box-body></container-box>
             <container-box id="Usage"><box-header title="Usage"/><box-body>
-                <link url="/apps/monitor/Artifacts" text="Artifact Performance"/>
-                <link url="/apps/monitor/Traces" text="Request Traces"/>
+                <link url="//apps/monitor/Artifacts" text="Artifact Performance"/>
+                <link url="//apps/monitor/Traces" text="Request Traces"/>
                 <link url="../AuditLog" text="Audit Log"/>
                 <link url="../Visit" text="Visits"/>
-                <link url="/apps/monitor/Logs" text="Logs"/>
+                <link url="//apps/monitor/Logs" text="Logs"/>
             </box-body></container-box>
         </row-col><row-col md="6">
             <container-box id="DataDocumentsFeeds"><box-header title="Data Documents and Feeds"/><box-body>
-                <link url="/apps/dashboards/Explore" text="Explore Documents"/>
+                <link url="//apps/dashboards/Explore" text="Explore Documents" parameter-map="documentDatasetId ? {datasetId:documentDatasetId,from:'now-10y',thru:'now'} : {}"/>
                 <link url="../DataDocument/Export" text="Export"/>
                 <link url="../DataDocument/Index" text="Feed Index"/>
                 <link url="../DataDocument/Edit" text="Edit and Report Builder"/>

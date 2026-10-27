@@ -3,5 +3,5 @@
     <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" description="Evaluate report alert rules as their owners"
         serviceName="org.moqui.report.ReportServices.evaluate#Alerts" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.security.user.NotificationTopic topic="ReportAlert" inboxEnumId="NinUpdates" description="Report alert"
-        typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="N" isPrivate="Y"/>
+        typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"/>
 </entity-facade-xml>

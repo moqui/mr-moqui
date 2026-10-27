@@ -16,6 +16,9 @@ use moqui_lib::{error::Error, object::Value};
 use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
 
+/// The most rows a service source may return, as a row list or a frame.
+const SERVICE_ROW_LIMIT: usize = 10_000;
+
 fn fail(error: impl std::fmt::Display) -> Error {
     Error::new(error.to_string())
 }
@@ -66,6 +69,41 @@ fn output(mut value: Json) -> Parameters {
     }
 }
 
+/// The audit line for an export of report data, on the `moqui.report.audit` target so it reaches
+/// `otel_logs` with its fields as attributes. `kind` is what was exported (`definitions`, `report`,
+/// `panel`, `scheduled`, `documents`), `format` the file type, and `recipients` the addresses of a
+/// scheduled delivery. The user is the authenticated viewer, or the owner a schedule runs as.
+pub fn audit_export(kind: &str, format: &str, definition: &str, rows: usize, recipients: &[String]) {
+    let user = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    tracing::info!(target: "moqui.report.audit", user = %user, kind, format, definition, rows,
+        recipients = %recipients.join(","), "report data exported");
+}
+
+/// The exporting viewer records an export done outside the report services, such as the Explore
+/// document download, which pages through `query#Documents`.
+pub fn audit_export_service(
+    _ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    params: &Parameters,
+) -> Result<Parameters, Error> {
+    let params = input(params);
+    crate::user::current_user_id()
+        .map_err(fail)?
+        .filter(|user| !user.is_empty())
+        .ok_or_else(|| fail("an export audit requires an authenticated viewer"))?;
+    audit_export(
+        text(&params, "kind", "documents"),
+        text(&params, "format", ""),
+        text(&params, "definitionId", ""),
+        params["rowCount"]
+            .as_u64()
+            .and_then(|rows| usize::try_from(rows).ok())
+            .unwrap_or(0),
+        &[],
+    );
+    Ok(Parameters::new())
+}
+
 /// An authorized dataset, resolved afresh for each execution so permission changes take effect.
 pub struct Dataset {
     pub id: String,
@@ -85,16 +123,39 @@ fn authorize_dataset(id: &str) -> Result<(), Error> {
 }
 
 pub fn dataset(ec: &ExecutionContext, id: &str) -> Result<Dataset, Error> {
+    resolve_dataset(ec, id, true)
+}
+
+/// A dataset definition: a saved or shipped one, an `index:` alias, or a DataDocument by its id.
+fn dataset_definition(ec: &ExecutionContext, id: &str) -> Result<Json, Error> {
+    if let Some(index) = id.strip_prefix("index:") {
+        return Ok(json!({"type":"dataset","body":{"indexName":index,"timeField":"_timestamp"}}));
+    }
+    if let Some(definition) = definitions::read_optional(ec, id)? {
+        return Ok(definition);
+    }
+    let entity = ec
+        .factory()
+        .entity()
+        .ok_or_else(|| fail("entity facade is unavailable"))?;
+    if metadata(ec, || {
+        entity
+            .find("moqui.entity.document.DataDocument")?
+            .eq("dataDocumentId", Value::string(id))
+            .one()
+    })?
+    .is_none()
+    {
+        return Err(fail(format!("report definition {id} does not exist")));
+    }
+    Ok(json!({"type":"dataset","body":{"documentType":id,"timeField":"_timestamp"}}))
+}
+
+/// `resolve_rows` false is for listing: a `rowFilterService` is not called, and the dataset then
+/// matches no rows.
+fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Result<Dataset, Error> {
     authorize_dataset(id)?;
-    let time = match id {
-        "otel_spans" => Some("start"),
-        "otel_logs" => Some("timestamp"),
-        "otel_metrics" => Some("bucket_start"),
-        "otel_errors" => Some("last_seen"),
-        "monitor_annotations" => Some("time"),
-        _ => None,
-    };
-    if let Some(time) = time {
+    if let Some(time) = search::telemetry::time_field(id) {
         return Ok(Dataset {
             id: id.into(),
             target: Target::Index(id.into()),
@@ -104,33 +165,7 @@ pub fn dataset(ec: &ExecutionContext, id: &str) -> Result<Dataset, Error> {
             telemetry: true,
         });
     }
-    let definition = if let Some(index) = id.strip_prefix("index:") {
-        json!({"type":"dataset","body":{"indexName":index,"timeField":"_timestamp"}})
-    } else {
-        match definitions::read(ec, id) {
-            Ok(d) => d,
-            Err(error) => {
-                if !error.message().contains("does not exist") {
-                    return Err(error);
-                }
-                let entity = ec
-                    .factory()
-                    .entity()
-                    .ok_or_else(|| fail("entity facade is unavailable"))?;
-                if metadata(ec, || {
-                    entity
-                        .find("moqui.entity.document.DataDocument")?
-                        .eq("dataDocumentId", Value::string(id))
-                        .one()
-                })?
-                .is_none()
-                {
-                    return Err(error);
-                }
-                json!({"type":"dataset","body":{"documentType":id,"timeField":"_timestamp"}})
-            }
-        }
-    };
+    let definition = dataset_definition(ec, id)?;
     if text(&definition, "type", "") != "dataset" {
         return Err(fail(format!("{id} is not a dataset")));
     }
@@ -205,7 +240,11 @@ pub fn dataset(ec: &ExecutionContext, id: &str) -> Result<Dataset, Error> {
             });
         }
     }
-    if let Some(service) = body["rowFilterService"].as_str() {
+    if body["rowFilterService"].is_string() && !resolve_rows {
+        // A listing needs only the name and time field and does not run the row-filter service,
+        // so the dataset it resolves matches nothing.
+        predicates.push(Query::exclude(Query::MatchAll));
+    } else if let Some(service) = body["rowFilterService"].as_str() {
         let user = crate::user::current_user_id()
             .map_err(fail)?
             .filter(|user| !user.is_empty())
@@ -229,15 +268,7 @@ pub fn dataset(ec: &ExecutionContext, id: &str) -> Result<Dataset, Error> {
     let telemetry = allowed.iter().any(|id| search::telemetry::is_telemetry_index(id));
     let default_time = allowed
         .first()
-        .map(String::as_str)
-        .and_then(|id| match id {
-            "otel_spans" => Some("start"),
-            "otel_logs" => Some("timestamp"),
-            "otel_metrics" => Some("bucket_start"),
-            "otel_errors" => Some("last_seen"),
-            "monitor_annotations" => Some("time"),
-            _ => None,
-        })
+        .and_then(|id| search::telemetry::time_field(id))
         .unwrap_or("_timestamp");
     let time_field = text(body, "timeField", default_time).to_owned();
     Ok(Dataset {
@@ -350,8 +381,14 @@ pub fn documents(ec: &ExecutionContext, options: &Json) -> Result<Json, Error> {
     search::limits::with_limits(Default::default(), || documents_inner(ec, options))
 }
 fn documents_inner(ec: &ExecutionContext, options: &Json) -> Result<Json, Error> {
-    let id = text(options, "datasetId", "otel_spans");
-    let dataset = dataset(ec, id)?;
+    if !options.is_object() {
+        return Err(fail("a document query must be an object"));
+    }
+    let dataset = dataset(ec, text(options, "datasetId", "otel_spans"))?;
+    documents_of(ec, options, &dataset)
+}
+fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Result<Json, Error> {
+    let id = dataset.id.as_str();
     if dataset.service.is_some() {
         return Err(fail("a service dataset returns frames; run it as a report query"));
     }
@@ -365,17 +402,19 @@ fn documents_inner(ec: &ExecutionContext, options: &Json) -> Result<Json, Error>
     let mut request = SearchRequest::new(constraints(
         ec,
         options,
-        &dataset,
+        dataset,
         ec.effective_time().unwrap_or_else(crate::user::now_millis),
     )?);
     let mode = text(options, "retrievalMode", "lexical");
     if mode != "lexical" {
         let mut trusted = options.clone();
-        trusted.as_object_mut().unwrap().remove("queryString");
+        if let Some(map) = trusted.as_object_mut() {
+            map.remove("queryString");
+        }
         request.filter = Some(constraints(
             ec,
             &trusted,
-            &dataset,
+            dataset,
             ec.effective_time().unwrap_or_else(crate::user::now_millis),
         )?);
         let retrieval = search::hybrid::HybridOptions {
@@ -558,6 +597,9 @@ pub fn execute_query(ec: &ExecutionContext, options: &Json) -> Result<Json, Erro
 }
 
 fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize) -> Result<Json, Error> {
+    if !options.is_object() {
+        return Err(fail("a report query must be an object"));
+    }
     if *budget == 0 {
         return Err(fail("report exceeds 64 queries"));
     }
@@ -571,7 +613,8 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         let mut query = options.clone();
         query["from"] = range["from"].clone();
         query["thru"] = range["thru"].clone();
-        let documents = documents_inner(ec, &query)?;
+        let dataset = dataset(ec, text(options, "datasetId", "otel_spans"))?;
+        let documents = documents_of(ec, &query, &dataset)?;
         let rows = documents["hits"]
             .as_array()
             .into_iter()
@@ -591,7 +634,6 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             })
             .collect::<Vec<_>>();
         let mut frame = frame::Frame::from_rows(&rows);
-        let dataset = dataset(ec, text(options, "datasetId", "otel_spans"))?;
         configure_frame(ec, &dataset, options, &mut frame)?;
         let (frames, inspection) = apply_transformations(vec![frame], options)?;
         return Ok(
@@ -605,6 +647,11 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         let mut requests = Vec::new();
         let mut inspection_budget = 1_048_576;
         for (query_index, query) in queries.iter().enumerate() {
+            if !query.is_object() {
+                tracing::error!(query = query_index, "report query is not an object, skipping");
+                notices.push(json!({"level":"error","message":format!("report query {query_index} must be an object"),"complete":false}));
+                continue;
+            }
             let mut query = query.clone();
             if options["inspect"] == true {
                 query["inspect"] = json!(true);
@@ -667,12 +714,16 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
                 .map_err(fail)?;
         let result = input(&result);
         let mut frame = if let Some(frame) = result.get("frame") {
-            serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail)?
+            let frame = serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail)?;
+            if frame.fields.iter().any(|field| field.values.len() > SERVICE_ROW_LIMIT) {
+                return Err(fail("service report exceeds 10000 rows"));
+            }
+            frame
         } else {
             let rows = result["rows"]
                 .as_array()
                 .ok_or_else(|| fail("report source service must return rows or a frame"))?;
-            if rows.len() > 10_000 {
+            if rows.len() > SERVICE_ROW_LIMIT {
                 return Err(fail("service report exceeds 10000 rows"));
             }
             let rows = rows
@@ -725,7 +776,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     })?;
     let mut result = match facade.aggregate(&dataset.target, &filter, &aggs) {
         Ok(result) => result,
-        Err(error) if error.message().contains("groups") || error.message().contains("too many buckets") => {
+        Err(error) if search::limits::is_too_many_groups(&error) => {
             return Ok(
                 json!({"frames":[],"range":range,"notices":[{"level":"warning","code":"too_many_groups","message":error.message(),"complete":false}]}),
             )
@@ -813,11 +864,9 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             if partial.root && partial.spec.drop && count >= population {
                 only_partial = true;
             }
-            let mut notice = json!({"level":if partial.spec.drop{"warning"}else{"info"},"code":if partial.spec.drop{"partial_buckets_excluded"}else{"partial_buckets_retained"},"aggregation":partial.spec.id,"observations":count,"ranges":partial.spec.ranges.iter().map(|(from,thru)|json!({"from":from.to_string(),"thru":thru.to_string()})).collect::<Vec<_>>(),"message":if partial.spec.drop{"Observations in partial time buckets were excluded within this bucket's filters"}else{"The first or last time bucket covers only part of its interval"}});
-            if partial.spec.drop {
-                notice["complete"] = json!(false);
-            }
-            notices.push(notice);
+            // A dropped partial bucket is a warning, not missing data: every completed bucket is
+            // whole, so alerts and scheduled reports still use the result.
+            notices.push(json!({"level":if partial.spec.drop{"warning"}else{"info"},"code":if partial.spec.drop{"partial_buckets_excluded"}else{"partial_buckets_retained"},"aggregation":partial.spec.id,"observations":count,"ranges":partial.spec.ranges.iter().map(|(from,thru)|json!({"from":from.to_string(),"thru":thru.to_string()})).collect::<Vec<_>>(),"message":if partial.spec.drop{"Observations in partial time buckets were excluded within this bucket's filters"}else{"The first or last time bucket covers only part of its interval"}}));
         }
     }
     if only_partial {
@@ -1005,7 +1054,7 @@ fn restore_bucket_filters(
     };
     let rows = output.rows();
     for (field_index, field) in output.fields.iter_mut().enumerate() {
-        if !rebuild[field_index] || !field.config.contains_key("bucket") {
+        if !rebuild[field_index] || !field.config.get("bucket").is_some_and(Json::is_object) {
             continue;
         }
         let mut grouped = BTreeMap::<String, Vec<Json>>::new();
@@ -1096,25 +1145,16 @@ fn dataset_field_defaults(ec: &ExecutionContext, dataset: &Dataset) -> Result<BT
     if search::telemetry::is_telemetry_index(&dataset.id) || dataset.id.starts_with("index:") {
         return Ok(BTreeMap::new());
     }
-    match definitions::read(ec, &dataset.id) {
-        Ok(definition) => definition["body"]["fieldDefaults"]
-            .as_object()
-            .map(|fields| {
-                fields
-                    .iter()
-                    .map(|(name, config)| (name.clone(), config.clone()))
-                    .collect()
-            })
-            .ok_or_else(|| fail("dataset fieldDefaults must be a field-name map"))
-            .or_else(|error| {
-                if definition["body"]["fieldDefaults"].is_null() {
-                    Ok(BTreeMap::new())
-                } else {
-                    Err(error)
-                }
-            }),
-        Err(error) if error.message().contains("does not exist") => Ok(BTreeMap::new()),
-        Err(error) => Err(error),
+    let Some(definition) = definitions::read_optional(ec, &dataset.id)? else {
+        return Ok(BTreeMap::new());
+    };
+    match &definition["body"]["fieldDefaults"] {
+        Json::Null => Ok(BTreeMap::new()),
+        Json::Object(fields) => Ok(fields
+            .iter()
+            .map(|(name, config)| (name.clone(), config.clone()))
+            .collect()),
+        _ => Err(fail("dataset fieldDefaults must be a field-name map")),
     }
 }
 
@@ -1256,11 +1296,13 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
         .filter(|v| *v > 0)
         .ok_or_else(|| fail("comparison requires a positive time range"))?;
     let mut current_options = options.clone();
-    current_options.as_object_mut().unwrap().remove("comparePrevious");
+    if let Some(map) = current_options.as_object_mut() {
+        map.remove("comparePrevious");
+    }
     current_options["from"] = range["from"].clone();
     current_options["thru"] = range["thru"].clone();
     fn child_ranges(query: &mut Json, anchor: i64, shift: i64) -> Result<(), Error> {
-        if let Some(queries) = query["queries"].as_array_mut() {
+        if let Some(queries) = query.get_mut("queries").and_then(Json::as_array_mut) {
             for query in queries {
                 for key in ["from", "thru"] {
                     if let Some(value) = query[key].as_str() {
@@ -1640,6 +1682,9 @@ fn normalize_intervals(options: &mut Json, range: &Json, notices: &mut Vec<Json>
         .as_millisecond();
     let width = thru.saturating_sub(from);
     fn visit(params: &mut Json, from: i64, thru: i64, width: i64, notices: &mut Vec<Json>) -> Result<(), Error> {
+        if !params.is_object() && !params.is_null() {
+            return Err(fail("date_histogram params must be an object"));
+        }
         let target = params["targetBars"].as_i64().unwrap_or(60).clamp(1, 2000);
         let wanted = width.div_euclid(target).max(1);
         let table = [
@@ -1787,20 +1832,14 @@ pub fn list_datasets(
     _parameters: &Parameters,
 ) -> Result<Parameters, Error> {
     let mut items = Vec::new();
-    for id in [
-        "otel_spans",
-        "otel_logs",
-        "otel_metrics",
-        "otel_errors",
-        "monitor_annotations",
-    ] {
-        if let Ok(dataset) = dataset(ec, id) {
+    for id in search::telemetry::TELEMETRY_INDEXES {
+        if let Ok(dataset) = resolve_dataset(ec, id, false) {
             items.push(json!({"id":id,"timeField":dataset.time_field}));
         }
     }
     for definition in definitions::list(ec, Some("dataset"))? {
         let id = text(&definition, "id", "");
-        if let Ok(dataset) = dataset(ec, id) {
+        if let Ok(dataset) = resolve_dataset(ec, id, false) {
             items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field}));
         }
     }
@@ -1814,7 +1853,7 @@ pub fn list_datasets(
         }
         for index in indexes {
             let id = format!("index:{index}");
-            if let Ok(dataset) = dataset(ec, &id) {
+            if let Ok(dataset) = resolve_dataset(ec, &id, false) {
                 items.push(json!({"id":id,"title":index,"timeField":dataset.time_field}));
             }
         }
@@ -1893,6 +1932,10 @@ pub fn dashboard_frames_filtered(
         return Err(fail("dashboard exceeds 64 filter pills"));
     }
     fn filter_queries(query: &mut Json, filters: &[Json]) -> Result<(), Error> {
+        if !query.is_object() {
+            // A malformed query fails on its own when it runs.
+            return Ok(());
+        }
         if let Some(queries) = query["queries"].as_array_mut() {
             for query in queries {
                 filter_queries(query, filters)?;
@@ -1967,6 +2010,7 @@ pub fn dashboard_frames_filtered(
         .map_err(fail)?
         .to_string();
     let mut resolved = vars.as_object().cloned().unwrap_or_default();
+    let mut variable_notices = Vec::new();
     let variable_definitions = body["variables"].as_array().cloned().unwrap_or_default();
     for variable in &variable_definitions {
         let name = text(variable, "name", "");
@@ -1986,22 +2030,37 @@ pub fn dashboard_frames_filtered(
                 value = value["value"].clone();
             }
             if value.is_null() && variable["kind"] == "query" && !text(variable, "field", "").is_empty() {
-                let options = execute_query(
+                match execute_query(
                     ec,
                     &json!({"datasetId":variable["datasetId"],"from":from,"thru":thru,"aggregations":[{"id":"option","type":"terms","role":"x-axis","params":{"field":variable["field"],"size":1000}}]}),
-                )?;
-                value = options["frames"][0]["fields"]
-                    .as_array()
-                    .and_then(|fields| fields.iter().find(|field| field["name"] == "option"))
-                    .and_then(|field| field["values"].as_array())
-                    .and_then(|values| values.first())
-                    .cloned()
-                    .unwrap_or(Json::Null);
+                ) {
+                    Ok(options) => {
+                        value = options["frames"][0]["fields"]
+                            .as_array()
+                            .and_then(|fields| fields.iter().find(|field| field["name"] == "option"))
+                            .and_then(|field| field["values"].as_array())
+                            .and_then(|values| values.first())
+                            .cloned()
+                            .unwrap_or(Json::Null);
+                    }
+                    Err(error) => {
+                        // The variable stays unset, so it does not narrow any panel.
+                        tracing::error!(variable=%name,%error,"dashboard variable options failed, continuing");
+                        variable_notices.push(json!({"level":"warning","code":"variable_error","variable":name,"message":format!("Options for variable {name} are unavailable: {}",error.message())}));
+                    }
+                }
             }
             resolved.insert(name.to_owned(), value);
         }
     }
     fn apply_variables(query: &mut Json, definitions: &[Json], values: &serde_json::Map<String, Json>) {
+        // Malformed queries and params are left for the query to report when it runs.
+        fn params(item: &mut Json) -> Option<&mut Json> {
+            Some(&mut item["params"]).filter(|params| params.is_object() || params.is_null())
+        }
+        if !query.is_object() {
+            return;
+        }
         if let Some(queries) = query["queries"].as_array_mut() {
             for query in queries {
                 apply_variables(query, definitions, values);
@@ -2028,13 +2087,17 @@ pub fn dashboard_frames_filtered(
             if matches!(kind, "groupBy" | "group-by") {
                 if let Some(items) = query["aggregations"].as_array_mut() {
                     if let Some(bucket) = items.iter_mut().find(|a| text(a, "role", "metric") != "metric") {
-                        bucket["params"]["field"] = selected[0].clone();
+                        if let Some(params) = params(bucket) {
+                            params["field"] = selected[0].clone();
+                        }
                     }
                 }
             } else if kind == "interval" {
                 if let Some(items) = query["aggregations"].as_array_mut() {
                     for item in items.iter_mut().filter(|a| a["type"] == "date_histogram") {
-                        item["params"]["fixed_interval"] = selected[0].clone();
+                        if let Some(params) = params(item) {
+                            params["fixed_interval"] = selected[0].clone();
+                        }
                     }
                 }
             } else if let Some(field) = variable["field"].as_str() {
@@ -2086,6 +2149,13 @@ pub fn dashboard_frames_filtered(
             .filter(|v| v.is_object())
             .cloned()
             .unwrap_or_else(|| source.clone());
+        if !query.is_object() {
+            tracing::error!("dashboard annotation source is not an object, skipping");
+            annotation_notices.push(
+                json!({"level":"warning","code":"annotation_error","message":"An annotation source is not a query"}),
+            );
+            continue;
+        }
         query["from"] = json!(from);
         query["thru"] = json!(thru);
         query["pageSize"] = json!(200);
@@ -2106,14 +2176,14 @@ pub fn dashboard_frames_filtered(
     }
     let mut results = serde_json::Map::new();
     for (id, panel) in panels {
-        let panel = if let Some(reference) = panel["panelRef"].as_str() {
-            match definitions::read(ec, reference){Ok(definition)=>definition,
-                Err(error)=>{results.insert(id.clone(),json!({"title":id,"frames":[],"notices":[{"level":"error","complete":false,"message":error.message()}]}));continue;}}
-                .get("body")
-                .cloned()
-                .ok_or_else(|| fail("library panel requires a body"))?
-        } else {
-            panel.clone()
+        // A panel that cannot be read or queried gets an error notice; the others still render.
+        let panel = match dashboard_panel(ec, panel) {
+            Ok(panel) => panel,
+            Err(error) => {
+                tracing::error!(panel=%id,%error,"dashboard panel could not be read, continuing");
+                results.insert(id.clone(),json!({"title":id,"frames":[],"notices":[{"level":"error","complete":false,"message":error.message()}]}));
+                continue;
+            }
         };
         let mut frames = Vec::new();
         let mut notices = Vec::new();
@@ -2124,30 +2194,35 @@ pub fn dashboard_frames_filtered(
         } else if panel["queries"].as_array().is_none_or(Vec::is_empty) {
             notices.push(json!({"level":"error","code":"missing_query","complete":false,"message":"A data panel requires at least one query"}));
         } else {
-            let panel_from = panel["time"]["from"]
-                .as_str()
-                .or_else(|| panel["timeFrom"].as_str())
-                .unwrap_or(&from);
-            let panel_thru = panel["time"]["thru"].as_str().unwrap_or(&thru);
-            let mut panel_from = time::parse(panel_from, now)?;
-            let mut panel_thru = time::parse(panel_thru, now)?;
-            if let Some(shift) = panel["time"]["shift"].as_str().or_else(|| panel["timeShift"].as_str()) {
-                let shift = if shift.starts_with("now") {
-                    shift.to_owned()
-                } else {
-                    format!("now-{shift}")
-                };
-                panel_from = time::parse(&shift, panel_from)?;
-                panel_thru = time::parse(&shift, panel_thru)?;
-            }
-            let mut query = json!({"queries":panel["queries"],"transformations":panel["transformations"],"from":jiff::Timestamp::from_millisecond(panel_from).map_err(fail)?.to_string(),"thru":jiff::Timestamp::from_millisecond(panel_thru).map_err(fail)?.to_string()});
-            query["comparePrevious"] =
-                json!(panel["comparePrevious"] == true || panel["time"]["comparePrevious"] == true);
-            query["inspect"] = json!(panel["inspect"] == true || body["inspect"] == true);
-            variables(&mut query, &resolved);
-            apply_variables(&mut query, &variable_definitions, resolved.as_object().unwrap());
-            filter_queries(&mut query, &all_filters)?;
-            match execute_query(ec, &query) {
+            let query = (|| -> Result<Json, Error> {
+                let panel_from = panel["time"]["from"]
+                    .as_str()
+                    .or_else(|| panel["timeFrom"].as_str())
+                    .unwrap_or(&from);
+                let panel_thru = panel["time"]["thru"].as_str().unwrap_or(&thru);
+                let mut panel_from = time::parse(panel_from, now)?;
+                let mut panel_thru = time::parse(panel_thru, now)?;
+                if let Some(shift) = panel["time"]["shift"].as_str().or_else(|| panel["timeShift"].as_str()) {
+                    let shift = if shift.starts_with("now") {
+                        shift.to_owned()
+                    } else {
+                        format!("now-{shift}")
+                    };
+                    panel_from = time::parse(&shift, panel_from)?;
+                    panel_thru = time::parse(&shift, panel_thru)?;
+                }
+                let mut query = json!({"queries":panel["queries"],"transformations":panel["transformations"],"from":jiff::Timestamp::from_millisecond(panel_from).map_err(fail)?.to_string(),"thru":jiff::Timestamp::from_millisecond(panel_thru).map_err(fail)?.to_string()});
+                query["comparePrevious"] =
+                    json!(panel["comparePrevious"] == true || panel["time"]["comparePrevious"] == true);
+                query["inspect"] = json!(panel["inspect"] == true || body["inspect"] == true);
+                variables(&mut query, &resolved);
+                if let Some(values) = resolved.as_object() {
+                    apply_variables(&mut query, &variable_definitions, values);
+                }
+                filter_queries(&mut query, &all_filters)?;
+                Ok(query)
+            })();
+            match query.and_then(|query| execute_query(ec, &query)) {
                 Ok(result) => {
                     frames.extend(result["frames"].as_array().into_iter().flatten().cloned());
                     notices.extend(result["notices"].as_array().into_iter().flatten().cloned());
@@ -2168,9 +2243,41 @@ pub fn dashboard_frames_filtered(
         rendered["requests"] = json!(requests);
         results.insert(id.clone(), rendered);
     }
+    annotation_notices.extend(variable_notices);
     Ok(
         json!({"title":definition["title"],"layout":body["layout"],"panels":results,"annotations":annotations,"notices":annotation_notices,"variableValues":resolved,"filters":filters,"range":{"from":from,"thru":thru}}),
     )
+}
+
+/// A dashboard panel, or the body of the library panel it references.
+fn dashboard_panel(ec: &ExecutionContext, panel: &Json) -> Result<Json, Error> {
+    let panel = match panel["panelRef"].as_str() {
+        Some(reference) => definitions::read(ec, reference)?
+            .get("body")
+            .filter(|body| body.is_object())
+            .cloned()
+            .ok_or_else(|| fail(format!("library panel {reference} requires a body")))?,
+        None => panel.clone(),
+    };
+    if !panel.is_object() {
+        return Err(fail("a dashboard panel must be an object"));
+    }
+    Ok(panel)
+}
+
+/// Keep one panel and lay it out alone, for the single-panel view and a panel export.
+pub fn select_panel(definition: &mut Json, panel_id: &str) -> Result<(), Error> {
+    let body = definition
+        .get_mut("body")
+        .filter(|body| body.is_object())
+        .ok_or_else(|| fail("dashboard body must be an object"))?;
+    let selected = body["panels"]
+        .get(panel_id)
+        .cloned()
+        .ok_or_else(|| fail("dashboard panel does not exist"))?;
+    body["panels"] = json!({panel_id:selected});
+    body["layout"] = json!({"type":"autoGrid","items":[{"panelId":panel_id}]});
+    Ok(())
 }
 
 pub fn render_dashboard(
@@ -2180,15 +2287,14 @@ pub fn render_dashboard(
 ) -> Result<Parameters, Error> {
     let params = input(params);
     let mut definition = definitions::read(ec, text(&params, "definitionId", ""))?;
+    if !definition["body"].is_object() {
+        return Err(fail("dashboard body must be an object"));
+    }
     if params["inspect"] == true {
         definition["body"]["inspect"] = json!(true);
     }
     if let Some(panel) = params["panelId"].as_str().filter(|p| !p.is_empty()) {
-        let selected = definition["body"]["panels"]
-            .get(panel)
-            .cloned()
-            .ok_or_else(|| fail("dashboard panel does not exist"))?;
-        definition["body"]["panels"] = json!({panel:selected});
+        select_panel(&mut definition, panel)?;
     }
     dashboard_frames_filtered(
         ec,
@@ -2221,6 +2327,7 @@ pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crat
         ("create_annotation", create_annotation),
         ("find_definition_uses", find_definition_uses),
         ("get_definition_diff", get_definition_diff),
+        ("audit_export", audit_export_service),
     ] {
         registry.service_function(&format!("moqui_core::report::{name}"), function)?;
     }
@@ -2244,6 +2351,91 @@ mod tests {
             aggs.get("average").is_none(),
             "a filtered metric may not become an unfiltered total"
         );
+    }
+    #[test]
+    fn malformed_query_json_is_an_error_not_a_panic() {
+        let ec = crate::context::ExecutionContextFactory::test_context();
+        let _entered = ec.enter();
+        let result = execute_query(&ec, &json!({"queries":[1,"text",null]})).unwrap();
+        let notices = result["notices"].as_array().unwrap();
+        assert_eq!(notices.len(), 3, "{result}");
+        assert!(notices
+            .iter()
+            .all(|notice| notice["level"] == "error" && notice["complete"] == false));
+        assert!(execute_query(&ec, &json!(5)).is_err());
+        if let Ok(result) = execute_query(&ec, &json!({"comparePrevious":true,"queries":[1]})) {
+            assert!(
+                result["notices"].as_array().is_some_and(|notices| !notices.is_empty()),
+                "{result}"
+            );
+        }
+        assert!(documents(&ec, &json!([1])).is_err());
+        let range = json!({"from":"2026-01-01T00:00:00Z","thru":"2026-01-02T00:00:00Z"});
+        for mut query in [
+            json!({"aggregations":[{"id":"time","type":"date_histogram","role":"x-axis","params":5}]}),
+            json!({"aggs":{"time":{"date_histogram":"5m"}}}),
+        ] {
+            assert!(
+                normalize_intervals(&mut query, &range, &mut Vec::new()).is_err(),
+                "{query}"
+            );
+        }
+        let mut absent = json!({"aggregations":[{"id":"time","type":"date_histogram","role":"x-axis"}]});
+        normalize_intervals(&mut absent, &range, &mut Vec::new()).unwrap();
+        assert_eq!(absent["aggregations"][0]["params"]["drop_partial"], true);
+        let service = ServiceInfo {
+            name: "org.moqui.report.ReportServices.import#Definitions",
+            service_type: "rust",
+            location: "test",
+            method: "",
+        };
+        let bundle = output(json!({"bundle":{"definitions":[1]}}));
+        assert!(definitions::import_definitions(&ec, &service, &bundle)
+            .unwrap_err()
+            .message()
+            .contains("must be an object"));
+    }
+    #[test]
+    fn one_bad_panel_or_variable_leaves_the_others_rendered() {
+        let ec = crate::context::ExecutionContextFactory::test_context();
+        let _entered = ec.enter();
+        let definition = json!({"id":"tolerant","title":"Tolerant","body":{
+            "variables":[{"name":"service","kind":"query","datasetId":"otel_spans","field":"service.name"}],
+            "panels":{
+                "notes":{"visualization":"text","text":"Still here"},
+                "scalar":5,
+                "shifted":{"visualization":"table","time":{"shift":"sideways"},"queries":[{"datasetId":"otel_spans"}]},
+                "window":{"visualization":"table","time":{"from":"yesterday-ish"},"queries":[{"datasetId":"otel_spans"}]},
+                "library":{"panelRef":"no-such-library-panel"},
+                "pill":{"visualization":"table","queries":[{"datasetId":"otel_spans"}]}
+            },
+            "layout":{"type":"autoGrid","items":[{"panelId":"notes"},{"panelId":"pill"}]}}});
+        let rendered = dashboard_frames_filtered(
+            &ec,
+            &definition,
+            &json!({}),
+            "now-1h",
+            "now",
+            &json!([{"field":{"name":"service.name","op":"no-such-op"}}]),
+        )
+        .unwrap();
+        let panels = rendered["panels"].as_object().unwrap();
+        assert_eq!(panels.len(), 6, "{rendered}");
+        assert_eq!(panels["notes"]["text"], "Still here");
+        assert!(panels["notes"]["notices"].as_array().unwrap().is_empty());
+        for id in ["scalar", "shifted", "window", "library", "pill"] {
+            assert_eq!(panels[id]["notices"][0]["level"], "error", "{id}: {}", panels[id]);
+            assert_eq!(panels[id]["notices"][0]["complete"], false, "{id}");
+        }
+        assert!(
+            rendered["notices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|notice| notice["code"] == "variable_error" && notice["variable"] == "service"),
+            "{rendered}"
+        );
+        assert!(rendered["variableValues"]["service"].is_null());
     }
     #[test]
     fn native_boundary_preserves_nanoseconds_as_decimal_text() {

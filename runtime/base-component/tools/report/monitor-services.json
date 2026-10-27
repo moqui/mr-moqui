@@ -3,6 +3,7 @@
   "type": "dashboard",
   "title": "Services",
   "body": {
+    "folder": "Monitor",
     "panels": {
       "summary": {
         "title": "Services duration and count",
@@ -101,22 +102,6 @@
                 "unit": "s",
                 "decimals": 4
               }
-            },
-            {
-              "match": {
-                "name": "last_active"
-              },
-              "config": {
-                "type": "time"
-              }
-            },
-            {
-              "match": {
-                "name": "slow_hits"
-              },
-              "config": {
-                "noValue": "0"
-              }
             }
           ]
         },
@@ -147,7 +132,10 @@
               "latency.bucket.12",
               "latency.bucket.13",
               "latency.bucket.14"
-            ]
+            ],
+            "rename": {
+              "latency.stddev": "stddev_estimated"
+            }
           }
         ]
       },
@@ -165,7 +153,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -204,7 +192,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },

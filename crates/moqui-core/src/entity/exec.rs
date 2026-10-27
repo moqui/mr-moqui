@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Run one statement. The span records SQL text and `duration_ms`.
+//! Run one statement: a SQL client span inside a trace, the `db.client.operation.duration` metric, the statement
+//! counters, and the slow-statement warning.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -208,52 +209,40 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
     let telemetry = crate::telemetry::current();
     let system = telemetry.as_ref().and_then(|_| {
         crate::context::ExecutionContext::with_current(|context| {
-            let facade = context.factory().entity()?;
-            let mut groups = facade.inner.groups.values();
-            let first = groups.next()?;
-            groups
-                .all(|group| group.dialect.name == first.dialect.name)
-                .then(|| first.dialect.name.clone())
+            context
+                .factory()
+                .entity()
+                .and_then(|facade| facade.inner.db_system.clone())
         })
         .flatten()
     });
-    let mut span = telemetry.as_ref().map(|telemetry| {
-        let mut span = telemetry.start_span("sql", crate::telemetry::SpanKind::Client, None);
-        span.set_attribute("db.query.text", Value::String(crate::telemetry::redact_sql(sql)));
-        if let Some(system) = &system {
-            span.set_attribute(
-                "db.system.name",
-                Value::string(if system == "postgres" {
-                    "postgresql"
-                } else {
-                    system.as_str()
-                }),
-            );
-        } else {
-            span.set_attribute("moqui.db.system.uncertain", Value::Bool(true));
+    // A statement is a span only inside a trace: a scheduler poll or a data load outside any request or job would
+    // otherwise write a trace per statement. Its duration metric is recorded either way.
+    let parent = telemetry.as_ref().and_then(|_| crate::telemetry::capture());
+    let mut span = telemetry.as_ref().zip(parent).map(|(telemetry, parent)| {
+        let mut span = telemetry.start_span("sql", crate::telemetry::SpanKind::Client, Some(parent));
+        if span.is_recording() {
+            span.set_attribute("db.query.text", Value::String(crate::telemetry::redact_sql(sql)));
+            if let Some(system) = &system {
+                span.set_attribute("db.system.name", Value::string(&**system));
+            } else {
+                span.set_attribute("moqui.db.system.uncertain", Value::Bool(true));
+            }
         }
         span
     });
-    let _trace = crate::telemetry::attach(
-        span.as_ref()
-            .and_then(crate::telemetry::Span::context)
-            .or_else(crate::telemetry::capture),
-    );
+    let _trace = span
+        .as_ref()
+        .and_then(crate::telemetry::Span::context)
+        .map(|context| crate::telemetry::attach(Some(context)));
     let result = body();
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     STATEMENT_COUNT.fetch_add(1, Ordering::Relaxed);
     STATEMENT_MILLIS.fetch_add(duration_ms, Ordering::Relaxed);
     if let Some(telemetry) = telemetry {
         let mut attributes = crate::entity::document::Document::new();
-        if let Some(system) = system {
-            attributes.insert(
-                "db.system.name".into(),
-                Value::string(if system == "postgres" {
-                    "postgresql"
-                } else {
-                    system.as_str()
-                }),
-            );
+        if let Some(system) = &system {
+            attributes.insert("db.system.name".into(), Value::string(&**system));
         }
         telemetry.record_duration(
             "db.client.operation.duration",
@@ -268,7 +257,8 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
         span.finish();
     }
     if duration_ms >= SLOW_MS {
-        tracing::warn!(sql = %sql, duration_ms, "slow statement");
+        // The warning reaches the telemetry logs, so the statement's literals are left out as on its span.
+        tracing::warn!(sql = %crate::telemetry::redact_sql(sql), duration_ms, "slow statement");
     }
     result
 }
@@ -277,6 +267,70 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
 mod tests {
     use super::already_exists;
     use moqui_lib::error::Error;
+
+    /// A scheduler poll or a data load outside any request or job writes no trace per statement; a statement inside a
+    /// trace is a client span of it.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn a_statement_is_a_span_only_inside_a_trace() {
+        use crate::entity::document::Document;
+        use crate::telemetry::{Exporter, SpanKind};
+        use moqui_lib::object::Value;
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Memory(Mutex<Vec<Document>>);
+        impl Exporter for Memory {
+            fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
+                let count = documents.len();
+                if index == "otel_spans" {
+                    self.0.lock().unwrap().extend(documents);
+                }
+                Ok(count)
+            }
+        }
+        let context = crate::context::ExecutionContextFactory::test_context_with_conf(
+            "<moqui-conf><telemetry sample-ratio=\"1\"/></moqui-conf>",
+        );
+        let facade = crate::testing::open();
+        context.factory().set_entity(facade.clone());
+        let telemetry = crate::telemetry::for_factory(context.factory());
+        let memory = Arc::new(Memory::default());
+        telemetry.set_exporter(memory.clone());
+        let root_id;
+        {
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let find = || {
+                facade
+                    .find("moqui.basic.Enumeration")
+                    .unwrap()
+                    .use_cache(false)
+                    .list()
+                    .unwrap()
+            };
+            find();
+            let root = telemetry.start_span("job", SpanKind::Server, None);
+            root_id = root.context().unwrap().span_id;
+            {
+                let _trace = crate::telemetry::attach(root.context());
+                find();
+            }
+            root.finish();
+        }
+        telemetry.flush();
+        let spans = memory.0.lock().unwrap();
+        let statements: Vec<_> = spans
+            .iter()
+            .filter(|span| span.get("name").and_then(Value::as_str) == Some("sql"))
+            .collect();
+        assert_eq!(statements.len(), 1, "{spans:?}");
+        assert_eq!(
+            statements[0].get("parent_span_id").and_then(Value::as_str),
+            Some(root_id.as_str())
+        );
+        drop(spans);
+        telemetry.shutdown();
+    }
 
     #[test]
     fn an_existing_object_is_not_duplicate_data() {

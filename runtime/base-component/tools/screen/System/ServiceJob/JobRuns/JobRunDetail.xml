@@ -23,13 +23,24 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
     <actions>
         <entity-find-one entity-name="moqui.service.job.ServiceJobRun" value-field="serviceJobRun"/>
-        <set field="queryString" value="thread.name:${serviceJobRun.runThread}"/>
+        <script><![CDATA[
+            // The telemetry screens take relative times, epoch millis or ISO-8601 with an offset; a running job ends now.
+            const isoTime = (value, shift) => {
+                if (value == null || value === '') return null
+                const millis = value instanceof Date ? value.getTime() : /^\d+$/.test(String(value)) ? Number(value) : Number.isFinite(Number(value)) ? Number(value) : Date.parse(String(value))
+                return Number.isFinite(millis) ? new Date(millis + (shift || 0)).toISOString() : null
+            }
+            logFrom = isoTime(serviceJobRun?.startTime) || 'now-1d'
+            logThru = isoTime(serviceJobRun?.endTime, 1000) || 'now'
+            // The job span starts with the run; a minute either side keeps clock rounding out of the way.
+            traceFrom = isoTime(serviceJobRun?.startTime, -60000) || 'now-7d'
+            traceThru = isoTime(serviceJobRun?.endTime, 60000) || 'now'
+            logQueryString = serviceJobRun?.runThread ? 'thread.name:' + JSON.stringify(String(serviceJobRun.runThread)) : ''
+        ]]></script>
     </actions>
     <widgets>
-        <link condition="serviceJobRun.traceId" url="trace" text="View trace" parameter-map="{traceId:serviceJobRun.traceId}"/>
-        <link url="logViewer" text="View Log" parameter-map="{queryString:('thread.name:' + serviceJobRun?.runThread),
-                from:ec.l10n.format(serviceJobRun?.startTime, 'yyyy-MM-dd HH:mm:ss.SSS'),
-                thru:ec.l10n.format(serviceJobRun?.endTime, 'yyyy-MM-dd HH:mm:ss.SSS')}"/>
+        <link condition="serviceJobRun.traceId" url="trace" text="View trace" parameter-map="{traceId:serviceJobRun.traceId,from:traceFrom,thru:traceThru}"/>
+        <link url="logViewer" text="View Log" parameter-map="{queryString:logQueryString,from:logFrom,thru:logThru}"/>
 
         <form-single name="ServiceJobRunDetail" map="serviceJobRun">
             <auto-fields-entity entity-name="moqui.service.job.ServiceJobRun" field-type="display"/>

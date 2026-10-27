@@ -317,7 +317,7 @@ runtime/dev-component/dev-aide/
   only for users who may open the app), palette actions (Go to file, Go to artifact, New component, Repositories),
   `keymap` keys (Go to file, Go to artifact, Search in files, Save; as `moqui.keymap` actions, so a user rebinds them),
   and `assist-prompt` rows (§13.4).
-- In dev, framework error pages and Log Viewer lines that name a file and line link to the Workspace at that line when
+- In dev, framework error pages and Monitor Logs lines that name a file and line link to the Workspace at that line when
   the dev-aide is loaded (`ec.factory.getComponentInfoList()` tells a screen).
 - **Customize this screen** (D18): on a dev instance with the dev-aide loaded, for users with `DEV_AIDE_EXTEND` or
   above, the shell's page menu and the Assist drawer's header offer it on every app page. It opens the screen builder

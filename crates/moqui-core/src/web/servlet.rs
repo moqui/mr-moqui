@@ -465,7 +465,8 @@ impl WebappScripts {
         !self.listeners.is_empty()
     }
 
-    /// Whether the host logs each request (the `ElasticRequestLogFilter` element, unless it is `enabled="false"`).
+    /// False when the webapp has an `ElasticRequestLogFilter` with `enabled="false"`. The host does not read it:
+    /// every request's root span is the request log, written whatever the filter says.
     pub fn request_log(&self) -> bool {
         self.request_log
     }

@@ -316,3 +316,67 @@ test('stat and gauge cards resolve integer metrics per numeric bucket series wit
     }
     const target=document.createElement('div');document.body.appendChild(target);const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame:{fields:Array.from({length:51},(_,at)=>({name:'metric'+at,type:'integer',values:[at]}))},panel:{visualization:'stat'}});app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('.m-report-stat-series').length,50);assert.equal(target.textContent.includes('Showing 50 of 51 series.'),true);app.unmount();target.remove();
 });
+test('page links open in the current shell and panel requests use the rendering screen transitions',async()=>{
+    assert.equal(report.appPath('/apps/dashboards/Definition?definitionId=x','https://moqui.test/qapps/monitor/dashboard'),'/qapps/dashboards/Definition?definitionId=x');
+    assert.equal(report.appPath('/apps/monitor/TraceDetail?traceId=t','https://moqui.test/apps/monitor/Logs'),'/apps/monitor/TraceDetail?traceId=t');
+    assert.equal(report.appPath('/apps','https://moqui.test/qapps'),'/qapps');
+    assert.equal(report.appPath('/rest/s1/moqui/reports','https://moqui.test/qapps/monitor'),'/rest/s1/moqui/reports');
+    assert.equal(report.appPath('/applications/x','https://moqui.test/qapps/monitor'),'/applications/x');
+    assert.equal(new URL(report.allPanelsUrl('https://moqui.test/qapps/monitor/dashboard?definitionId=d&panelId=p&var-service=a')).search,'?definitionId=d&var-service=a');
+    const target=document.createElement('div');document.body.appendChild(target);
+    const previousFetch=window.fetch;const requests=[];
+    window.fetch=async url=>{requests.push(String(url));return {ok:true,json:async()=>({dashboard:{panels:{jobs:{inspection:[]}}}})};};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'monitor-overview',panelId:'jobs',screenUrl:'/apps/monitor/dashboard',panel:{title:'Job runs by outcome',visualization:'table'},
+        frame:{fields:[{name:'outcome',type:'string',values:['success']}]},range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}});
+    try {
+        const panel=app.mount(target);await Vue.nextTick();
+        for(const label of ['Export Job runs by outcome as CSV','Export Job runs by outcome as XLSX','Inspect Job runs by outcome'])assert.notEqual(target.querySelector('button[aria-label="'+label+'"]'),null,label);
+        await panel.inspect();
+        assert.equal(new URL(requests[0],window.location.href).pathname,'/apps/monitor/dashboard/inspectPanel');
+        assert.equal(new URL(requests[0],window.location.href).searchParams.get('panelId'),'jobs');
+    } finally {app.unmount();target.remove();window.fetch=previousFetch;}
+});
+test('frozen cells and kiosk take the panel color, kiosk can start open and Esc leaves it',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-dashboard'],{dashboard:{kiosk:true,definitionId:'d',panels:{first:{title:'Frozen panel',visualization:'table',fieldConfig:{overrides:[{match:{name:'name'},config:{frozen:true}}]}}}},
+        frames:{first:[{fields:[{name:'name',type:'string',values:['row']},{name:'count',type:'number',values:[1]}]}]}});
+    try {
+        const dashboard=app.mount(target);await Vue.nextTick();
+        assert.equal(dashboard.kiosk,true);
+        assert.equal(target.querySelector('.m-report-dashboard').getAttribute('style').includes('var(--m-panel-bg'),true);
+        assert.equal(Array.from(target.querySelectorAll('td')).find(cell=>cell.textContent==='row').getAttribute('style').includes('var(--m-panel-bg)'),true);
+        dashboard.onKey({key:'Escape',target:document.body,preventDefault(){}});await Vue.nextTick();
+        assert.equal(dashboard.kiosk,false);
+        assert.equal(target.textContent.includes('Kiosk (Alt+K)'),true);
+    } finally {app.unmount();target.remove();}
+});
+test('a single-panel view says so and offers all panels',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-dashboard'],{dashboard:{panelId:'first',definitionId:'d',panels:{first:{title:'Only panel',visualization:'stat'}}},frames:{}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        assert.equal(target.textContent.includes('Showing panel Only panel.'),true);
+        assert.notEqual(Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='All panels (Esc)'),undefined);
+    } finally {app.unmount();target.remove();}
+});
+test('the waterfall names an ERROR span in its accessible label',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-trace-waterfall'],{spans:[{span_id:'a',name:'GET /orders',status_code:'ERROR',start_nano:'1000',duration_nano:2000000},{span_id:'b',parent_span_id:'a',name:'find',status_code:'OK',start_nano:'2000',duration_nano:1000000}]});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const labels=Array.from(target.querySelectorAll('button')).map(button=>button.getAttribute('aria-label'));
+        assert.deepEqual(labels,['GET /orders, ERROR, 2.00 milliseconds','find, 1.00 milliseconds']);
+    } finally {app.unmount();target.remove();}
+});
+test('the report composition editor writes the paper size',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const form=Vue.reactive({fields:{definitionJson:JSON.stringify({dashboards:[],orientation:'portrait'})}});
+    const app=Vue.createApp({provide:{mForm:form},render:()=>Vue.h(moqui.qvtComponents['m-report-composition-editor'],{dashboards:[]})});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const select=Array.from(target.querySelectorAll('label')).find(label=>label.querySelector('span') && label.querySelector('span').textContent==='Paper').querySelector('select');
+        assert.equal(select.value,'letter');
+        select.value='a4';select.dispatchEvent(new Event('change'));await Vue.nextTick();
+        assert.equal(JSON.parse(form.fields.definitionJson).paper,'a4');
+    } finally {app.unmount();target.remove();}
+});

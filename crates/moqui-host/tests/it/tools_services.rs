@@ -176,14 +176,18 @@ fn tools_services_run_on_postgres() {
     assert!(cleaned.contains("\"printJobsRemoved\""), "{cleaned}");
     let jobs = page(address, &john, "/System/Print/PrintJob/PrintJobList.html");
     assert!(!jobs.contains("GATE_OLD_PJ") && jobs.contains("Gate print"), "{jobs}");
+    // The telemetry retention job replaced clean#ArtifactData: each index is cleaned on its own, none failing here.
     let (status, cleaned) = run(
         address,
         &john,
-        "org.moqui.impl.ServerServices.clean#ArtifactData",
-        &[("daysToKeep", "90")],
+        "org.moqui.impl.TelemetryServices.clean#TelemetryData",
+        &[],
     );
     assert_eq!(status, 200, "{cleaned}");
-    assert!(cleaned.contains("artifactHitsRemoved"), "{cleaned}");
+    assert!(
+        cleaned.contains("\"deleted\"") && cleaned.contains("\"failed\" : 0"),
+        "{cleaned}"
+    );
 
     // Decimal arithmetic, both directions.
     let (_, converted) = run(

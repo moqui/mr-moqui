@@ -232,26 +232,36 @@ fn telemetry_retries_only_unacknowledged_items_with_stable_ids() {
     let documents = ["accepted", "transient", "poison"].map(|id| (id.into(), Document::new()));
     let mut calls = Vec::new();
     let mut waits = Vec::new();
-    let persisted = retry_telemetry_batch(
-        &documents,
-        |batch| {
-            calls.push(batch.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
-            Ok(batch
-                .iter()
-                .map(|(id, _)| match (id.as_str(), calls.len()) {
-                    ("poison", _) => TelemetryItem::Rejected("bad record".into()),
-                    ("transient", 1) => TelemetryItem::Retryable("offline".into()),
-                    _ => TelemetryItem::Accepted,
-                })
-                .collect())
-        },
-        |delay| waits.push(delay.as_millis()),
-        "otel_logs",
-    )
+    let _ = crate::telemetry::take_write_error();
+    // A document that is not persisted is not logged here, one line each; the worker logs the batch once.
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let persisted = tracing::subscriber::with_default(crate::testing::LogSubscriber(lines.clone()), || {
+        retry_telemetry_batch(
+            &documents,
+            |batch| {
+                calls.push(batch.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+                Ok(batch
+                    .iter()
+                    .map(|(id, _)| match (id.as_str(), calls.len()) {
+                        ("poison", _) => TelemetryItem::Rejected("bad record".into()),
+                        ("transient", 1) => TelemetryItem::Retryable("offline".into()),
+                        _ => TelemetryItem::Accepted,
+                    })
+                    .collect())
+            },
+            |delay| waits.push(delay.as_millis()),
+            "otel_logs",
+        )
+    })
     .unwrap();
     assert_eq!(persisted, 2);
     assert_eq!(calls, vec![vec!["accepted", "transient", "poison"], vec!["transient"]]);
     assert_eq!(waits, [100]);
+    assert!(lines.lock().unwrap().is_empty(), "{lines:?}");
+    assert_eq!(
+        crate::telemetry::take_write_error().as_deref(),
+        Some("1 of 3 otel_logs documents not persisted; first: document poison: bad record")
+    );
 }
 
 #[test]
