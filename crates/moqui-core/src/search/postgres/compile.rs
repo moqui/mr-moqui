@@ -237,6 +237,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile(&self, query: &Query, scope: &Scope<'a>) -> Result<Sql, Error> {
+        if matches!(scope, Scope::Root) {
+            if let Some(query) = crate::search::telemetry::attribute_query(self.mapping, query) { return self.compile(&query, scope); }
+        }
         match query {
             Query::MatchAll => Ok(Sql::new("TRUE")),
             // The log viewer's string: field:term, ranges, AND/OR/NOT, groups and phrases are in the facade grammar.

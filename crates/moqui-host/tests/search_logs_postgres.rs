@@ -76,6 +76,62 @@ fn postgres_backend_exports_telemetry_through_the_search_facade() {
     };
     assert!(total > 0, "no retained HTTP root spans");
 
+    // The same public query tree covers arbitrary attributes, native fuzzy log text, and weighted groups.
+    use moqui_core::entity::document::Document;
+    use moqui_core::search::{SearchRequest, Target};
+    use moqui_lib::object::Value;
+    let record = |id: &str, body: &str, attributes: serde_json::Value| {
+        Document::from_iter([
+            ("_id".into(), Value::string(id)),
+            ("timestamp".into(), Value::I64(jiff::Timestamp::now().as_millisecond())),
+            ("body".into(), Value::string(body)),
+            ("attributes".into(), moqui_lib::json::from_json(&attributes)),
+        ])
+    };
+    facade
+        .index_entries(
+            "otel_logs",
+            vec![
+                record(
+                    "phase3-a",
+                    "network timeout",
+                    serde_json::json!({"tenant.id":"one", "tags":["blue","green"]}),
+                ),
+                record(
+                    "phase3-b",
+                    "storage failure",
+                    serde_json::json!({"tenant.id":"two", "tags":["one","red"]}),
+                ),
+            ],
+        )
+        .unwrap();
+    let query = |text: &str| {
+        facade
+            .search(
+                &Target::Index("otel_logs".into()),
+                &SearchRequest::new(moqui_core::search::parse::parse_query_string(text).unwrap()),
+            )
+            .unwrap()
+    };
+    let found = query("attributes.tenant.id:one AND attributes.tags:bl*");
+    assert_eq!(found.total, 1);
+    assert_eq!(found.hits[0].id, "phase3-a");
+    assert!(!found.hits[0].body.contains_key("__attributes"));
+    assert_eq!(
+        query("attributes.tenant.id:red").total,
+        0,
+        "keys and values must correlate"
+    );
+    let mut bad = record("phase3-poison", "bad timestamp", serde_json::json!({}));
+    bad.insert("timestamp".into(), Value::string("not-a-date"));
+    assert_eq!(facade.index_entries_deferred_refresh("otel_logs", vec![
+        record("phase3-before", "independent before", serde_json::json!({})), bad,
+        record("phase3-after", "independent after", serde_json::json!({})),
+    ]).unwrap(), 2);
+    assert!(facade.get_document("otel_logs", "phase3-before").unwrap().is_some());
+    assert!(facade.get_document("otel_logs", "phase3-after").unwrap().is_some());
+    assert!(facade.get_document("otel_logs", "phase3-poison").unwrap().is_none());
+
     // Retention deletes telemetry logs by their normalized timestamp.
     let target = moqui_core::search::Target::Index("otel_logs".to_string());
     let cutoff = moqui_lib::object::Value::I64(jiff::Timestamp::now().as_millisecond() + 60_000);

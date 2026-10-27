@@ -1838,6 +1838,9 @@ pub fn get_dataset(
             fields.insert(name.clone(),json!({"name":name,"type":match field.kind{search::FieldKind::Date=>"time",search::FieldKind::Long|search::FieldKind::Double=>"number",search::FieldKind::Boolean=>"boolean",_=>"string"},"kind":field.kind.search_type(),"aggregatable":field.can_sort(),"searchable":field.kind!=search::FieldKind::Binary}));
         }
         for (name, child) in &object.children {
+            if name == search::telemetry::ATTRIBUTE_VALUES {
+                continue;
+            }
             collect(&format!("{prefix}{name}."), child, fields);
         }
     }

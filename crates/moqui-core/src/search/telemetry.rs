@@ -150,6 +150,19 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
         root.fields
             .insert(field.to_string(), FieldMapping { kind, sortable: true });
     }
+    if matches!(name, SPANS | LOGS | METRICS) {
+        let mut values = ObjectMapping::default();
+        for key in ["key", "value"] {
+            values.fields.insert(
+                key.into(),
+                FieldMapping {
+                    kind: Keyword,
+                    sortable: false,
+                },
+            );
+        }
+        root.children.insert(ATTRIBUTE_VALUES.into(), values);
+    }
     Some(DocumentMapping {
         document_id: name.to_string(),
         index_name: None,
@@ -158,4 +171,108 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
         manual_mapping_service: None,
         display: Default::default(),
     })
+}
+
+/// Fixed nested pairs avoid dynamic per-key mappings and keep keys correlated with their values.
+pub(crate) const ATTRIBUTE_VALUES: &str = "__attributes";
+
+pub(crate) fn prepare_attributes(body: &mut crate::entity::document::Document) {
+    use moqui_lib::object::{to_plain_string, Value};
+    let mut pairs = Vec::new();
+    if let Some(Value::Map(attributes)) = body.get("attributes") {
+        for (key, value) in attributes {
+            let values = match value {
+                Value::List(values) => values.as_slice(),
+                value => std::slice::from_ref(value),
+            };
+            for value in values {
+                if matches!(
+                    value,
+                    Value::String(_)
+                        | Value::Bool(_)
+                        | Value::I32(_)
+                        | Value::I64(_)
+                        | Value::F64(_)
+                        | Value::Decimal(_)
+                ) {
+                    pairs.push(Value::Map(indexmap::IndexMap::from_iter([
+                        ("key".into(), Value::string(key)),
+                        ("value".into(), Value::String(to_plain_string(value))),
+                    ])));
+                }
+            }
+        }
+    }
+    body.insert(ATTRIBUTE_VALUES.into(), Value::List(pairs));
+}
+
+/// Translate only attribute leaves; each compiler recursively encounters leaves inside bool/child clauses.
+pub(crate) fn attribute_query(mapping: &DocumentMapping, query: &super::Query) -> Option<super::Query> {
+    use super::query::{FieldOp, Query, TextFields, TextMatch};
+    if !mapping.root.children.contains_key(ATTRIBUTE_VALUES) {
+        return None;
+    }
+    let (name, mut value) = match query {
+        Query::Field(field)
+            if matches!(
+                field.op,
+                FieldOp::Eq | FieldOp::In | FieldOp::Prefix | FieldOp::Wildcard | FieldOp::Exists
+            ) =>
+        {
+            let mut value = (**field).clone();
+            value.name = "value".into();
+            if !value.value.is_null() {
+                value.value = moqui_lib::object::Value::String(moqui_lib::object::to_plain_string(&value.value));
+            }
+            value.values = value
+                .values
+                .iter()
+                .map(|v| moqui_lib::object::Value::String(moqui_lib::object::to_plain_string(v)))
+                .collect();
+            (field.name.as_str(), Query::Field(Box::new(value)))
+        }
+        Query::Text {
+            terms,
+            fields: TextFields::Only(fields),
+            kind,
+        } if fields.len() == 1 => (
+            fields[0].as_str(),
+            Query::Text {
+                terms: terms.clone(),
+                fields: TextFields::Only(vec!["value".into()]),
+                kind: *kind,
+            },
+        ),
+        _ => return None,
+    };
+    let key = name.strip_prefix("attributes.").filter(|key| !key.is_empty())?;
+    let negated = match &mut value {
+        Query::Field(field) => {
+            let negated = field.negate;
+            field.negate = false;
+            negated
+        }
+        _ => false,
+    };
+    // A prefix/exact/wildcard is a keyword predicate, including quoted text and contains syntax.
+    if let Query::Text {
+        terms,
+        kind: TextMatch::Contains,
+        ..
+    } = &value
+    {
+        value = Query::Text {
+            terms: format!(
+                "*{}*",
+                terms.replace('\\', "\\\\").replace('*', "\\*").replace('?', "\\?")
+            ),
+            fields: TextFields::Only(vec!["value".into()]),
+            kind: TextMatch::Wildcard,
+        };
+    }
+    let result = Query::child(
+        ATTRIBUTE_VALUES,
+        Query::all(vec![Query::eq("key", moqui_lib::object::Value::string(key)), value]),
+    );
+    Some(if negated { Query::exclude(result) } else { result })
 }

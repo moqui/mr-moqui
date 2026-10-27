@@ -293,3 +293,35 @@ fn ambiguous_telemetry_writes_are_idempotent_and_retries_are_capped() {
     assert_eq!(calls, 3);
     assert_eq!(waits, [100, 500]);
 }
+
+#[test]
+fn attribute_pairs_keep_scalar_arrays_literal_dotted_keys_and_original_values() {
+    let original = moqui_lib::json::from_json(
+        &serde_json::json!({"tenant.id":"one","tags":["blue",2,false,null,{"nested":true}],"ignored":{"secret":"x"}}),
+    );
+    let mut body = Document::from_iter([("attributes".into(), original.clone())]);
+    telemetry::prepare_attributes(&mut body);
+    assert_eq!(body["attributes"], original);
+    let Value::List(pairs) = &body[telemetry::ATTRIBUTE_VALUES] else {
+        panic!()
+    };
+    assert_eq!(pairs.len(), 4);
+    let mapping = telemetry::telemetry_mapping("otel_logs").unwrap();
+    for text in [
+        "attributes.tenant.id:one",
+        "attributes.tags:bl*",
+        "attributes.tags:*",
+        "NOT attributes.tags:missing",
+    ] {
+        let query = parse::parse_query_string(text).unwrap();
+        let sql = postgres::compile::Compiler::new(&mapping).where_sql(&query).unwrap();
+        assert!(sql.text.contains("jsonb_array_elements"), "{sql:?}");
+        assert!(
+            sql.params
+                .iter()
+                .any(|value| value == &Value::string(if text.contains("tenant") { "tenant.id" } else { "tags" })),
+            "{sql:?}"
+        );
+        assert!(opensearch::query_json(&mapping, &query).to_string().contains("nested"));
+    }
+}

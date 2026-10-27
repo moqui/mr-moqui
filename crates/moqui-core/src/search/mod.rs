@@ -684,6 +684,9 @@ impl SearchFacade {
         let documents: Vec<_> = entries
             .into_iter()
             .map(|mut body| {
+                if mapping.root.children.contains_key(telemetry::ATTRIBUTE_VALUES) {
+                    telemetry::prepare_attributes(&mut body);
+                }
                 let id = body
                     .shift_remove("_id")
                     .map(|v| moqui_lib::object::to_plain_string(&v))
@@ -831,7 +834,9 @@ impl SearchFacade {
         if !self.backend.index_exists(&mapping)? {
             return Ok(None);
         }
-        self.backend.get_document(&mapping, id)
+        let mut body = self.backend.get_document(&mapping, id)?;
+        if telemetry::is_telemetry_index(data_document_id) { if let Some(body) = &mut body { body.shift_remove(telemetry::ATTRIBUTE_VALUES); } }
+        Ok(body)
     }
 
     /// True when at least one document of the target has a store.
@@ -893,7 +898,7 @@ impl SearchFacade {
         if let Some(deadline) = request.fresh_by {
             fresh::wait_for_pending(deadline)?;
         }
-        match &request.retrieval {
+        let mut page = match &request.retrieval {
             Retrieval::Lexical => self.backend.search(&mappings, request),
             Retrieval::Hybrid(options) => {
                 let embedder = self.embedder();
@@ -905,7 +910,13 @@ impl SearchFacade {
                     .ok_or_else(|| capability_error(Capability::Semantic, self.backend.name()))?;
                 hybrid::semantic_search(&*self.backend, &mappings, request, options, &*embedder)
             }
+        }?;
+        for hit in &mut page.hits {
+            if telemetry::is_telemetry_index(&hit.document_id) {
+                hit.body.shift_remove(telemetry::ATTRIBUTE_VALUES);
+            }
         }
+        Ok(page)
     }
 
     /// Aggregate over one document type. `filter` is the top-level constraint and does not score.

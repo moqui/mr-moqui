@@ -193,6 +193,11 @@ fn full(prefix: &str, name: &str) -> String {
 }
 
 fn compile(mapping: &DocumentMapping, query: &Query, prefix: &str) -> Json {
+    if prefix.is_empty() {
+        if let Some(query) = super::telemetry::attribute_query(mapping, query) {
+            return compile(mapping, &query, prefix);
+        }
+    }
     match query {
         Query::MatchAll => json!({"match_all": {}}),
         Query::Lucene(text) => json!({"query_string": {"query": text, "lenient": true, "analyze_wildcard": true}}),
