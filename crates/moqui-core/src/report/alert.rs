@@ -481,7 +481,7 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
             .unwrap_or(0);
         let thru = silence["thru"]
             .as_str()
-            .and_then(|s| super::time::parse(s, now).ok())
+            .and_then(|s| super::time::parse_thru(s, now).ok())
             .unwrap_or(0);
         if now >= from && now < thru && matches_labels(&silence["matchers"], labels) {
             return true;
@@ -742,7 +742,14 @@ fn validate_silence(silence: &Json) -> Result<(), Error> {
     let at = |key: &str| {
         silence[key]
             .as_str()
-            .and_then(|s| super::time::parse(s, now).ok())
+            .and_then(|s| {
+                if key == "thru" {
+                    super::time::parse_thru(s, now)
+                } else {
+                    super::time::parse(s, now)
+                }
+                .ok()
+            })
             .ok_or_else(|| fail(format!("silence {key} must be a time")))
     };
     if at("thru")? <= at("from")? {
