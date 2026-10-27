@@ -665,7 +665,7 @@ pub fn public_base_url(factory: &ExecutionContextFactory) -> String {
     let (scheme, port, default) = if property("webapp_https_enabled") == "true" {
         ("https", property("webapp_https_port"), "443")
     } else {
-        ("http", property("webapp_http_port"), "80")
+        ("http", crate::web::http_url_port(&property("webapp_http_port")), "80")
     };
     if port.is_empty() || port == default {
         format!("{scheme}://{host}")

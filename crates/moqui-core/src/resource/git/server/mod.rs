@@ -328,13 +328,21 @@ pub(crate) fn public_base_url() -> String {
     if !configured.is_empty() {
         return configured.trim_end_matches('/').to_string();
     }
+    if let Some(url) = crate::web::request_url() {
+        if let Some((scheme, rest)) = url.split_once("://") {
+            let authority = rest.split('/').next().unwrap_or_default();
+            if !authority.is_empty() {
+                return format!("{scheme}://{authority}");
+            }
+        }
+    }
     let host = Some(property("webapp_http_host"))
         .filter(|host| !host.is_empty())
         .unwrap_or_else(|| "localhost".to_string());
     let (scheme, port, default) = if property("webapp_https_enabled") == "true" {
         ("https", property("webapp_https_port"), "443")
     } else {
-        ("http", property("webapp_http_port"), "80")
+        ("http", crate::web::http_url_port(&property("webapp_http_port")), "80")
     };
     if port.is_empty() || port == default {
         format!("{scheme}://{host}")

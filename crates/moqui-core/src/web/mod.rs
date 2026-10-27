@@ -20,10 +20,30 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use indexmap::IndexMap;
 use moqui_lib::object::Value;
+
+/// The HTTP listener and generated URLs use 8080 when the configured port is empty.
+///
+/// # Errors
+/// Returns an error for a non-numeric or out-of-range port.
+pub fn effective_http_port(raw: &str) -> Result<u16, moqui_lib::error::Error> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(8080);
+    }
+    raw.parse()
+        .map_err(|_| moqui_lib::error::Error::new(format!("webapp_http_port {raw} is not a port")))
+}
+
+/// Configured HTTP port text for a URL. Invalid non-empty values are kept for listener validation.
+pub(crate) fn http_url_port(raw: &str) -> String {
+    effective_http_port(raw)
+        .map(|port| port.to_string())
+        .unwrap_or_else(|_| raw.to_string())
+}
 
 pub mod address;
 pub mod error_info;

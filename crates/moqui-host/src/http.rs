@@ -681,12 +681,7 @@ async fn termination_signal() {
 
 /// Empty `webapp_http_port` is 8080.
 pub(crate) fn http_port(raw: &str) -> Result<u16, Error> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Ok(8080);
-    }
-    raw.parse::<u16>()
-        .map_err(|_| Error::new(format!("webapp_http_port {raw} is not a port")))
+    moqui_core::web::effective_http_port(raw)
 }
 
 async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {

@@ -23,8 +23,8 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 use moqui_lib::env;
 use moqui_lib::node::MNode;
@@ -535,13 +535,13 @@ impl ExecutionContextFactory {
         &self,
         location: &str,
         run: impl Fn(
-            &ExecutionContext,
-            &crate::native::ServiceInfo<'_>,
-            &crate::native::Parameters,
-        ) -> Result<crate::native::Parameters, moqui_lib::error::Error>
-        + Send
-        + Sync
-        + 'static,
+                &ExecutionContext,
+                &crate::native::ServiceInfo<'_>,
+                &crate::native::Parameters,
+            ) -> Result<crate::native::Parameters, moqui_lib::error::Error>
+            + Send
+            + Sync
+            + 'static,
     ) -> Result<(), Error> {
         if crate::service::define::definitions_read(self) {
             return Err(Error::new(format!(
@@ -618,7 +618,12 @@ impl ExecutionContextFactory {
         let (scheme, host, port, default_port) = if https {
             ("https", attr("https-host"), attr("https-port"), "443")
         } else {
-            ("http", attr("http-host"), attr("http-port"), "80")
+            (
+                "http",
+                attr("http-host"),
+                crate::web::http_url_port(&attr("http-port")),
+                "80",
+            )
         };
         let host = if host.is_empty() { "localhost".to_string() } else { host };
         if port.is_empty() || port == default_port {
@@ -1653,7 +1658,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use super::{ENTERED, ExecutionContext, ExecutionContextFactory};
+    use super::{ExecutionContext, ExecutionContextFactory, ENTERED};
 
     /// The entered context's factory is `factory`, read through the context's own state.
     fn current_is(factory: &Arc<ExecutionContextFactory>) -> Option<bool> {
