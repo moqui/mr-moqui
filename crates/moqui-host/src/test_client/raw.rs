@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Raw requests of a client spec (plans/ClientTestHarness.md 5.3): the request text sent as it is over TCP, or TLS
+//! Raw requests of a client spec (plans/archive/ClientTestHarness.md 5.3): the request text sent as it is over TCP, or TLS
 //! for an `https` server, for paths that must not be normalized and requests no client library would send. Also the
 //! TLS stream the WebSocket client uses.
 

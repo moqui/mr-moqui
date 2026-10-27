@@ -318,7 +318,7 @@ found over SSH).
 
 ## Client test harness (2026-10-24)
 
-What the framework's client specs (`runtime/base-component/framework/test/client/`, [ClientTestHarness](ClientTestHarness.md) 7) found different from the Java pytest proofs they port, and keep. A preflight's 204 is P9-06 above. The account lock on the fourth failed login is Java's too (`successiveFailedLogins > max-failures`); the suite only avoids giving `john.doe` a wrong password.
+What the framework's client specs (`runtime/base-component/framework/test/client/`, [ClientTestHarness](archive/ClientTestHarness.md) 7) found different from the Java pytest proofs they port, and keep. A preflight's 204 is P9-06 above. The account lock on the fourth failed login is Java's too (`successiveFailedLogins > max-failures`); the suite only avoids giving `john.doe` a wrong password.
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|

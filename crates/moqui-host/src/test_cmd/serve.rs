@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test --serve [address]` (plans/ClientTestHarness.md 6): once the specs pass, the test factory shuts down and
+//! `moqui test --serve [address]` (plans/archive/ClientTestHarness.md 6): once the specs pass, the test factory shuts down and
 //! a server starts on the same scratch runtime and cluster, for client specs or a person to use. It serves until
 //! SIGINT or SIGTERM, or until its standard input closes when that is a pipe (the one `moqui test-client --serve`
 //! holds, so the server also stops when the client dies), then the scratch runtime goes unless `--keep`.

@@ -1,7 +1,7 @@
 // The users the framework's client specs (test/client, moqui test-client) log in as: sec.view.only (VIEW on Tools and
 // System), sec.none.only (no artifact authz) and the load user test.load (VIEW on System, MOQUI_API and the
 // Enumeration entity, no tarpit of its own), with Moqui Java's passwords, made as SecurityTestSupport.ensureUsers made
-// them in a Spock setupSpec (plans/ClientTestHarness.md D10, 7). The HTTP security proofs also get sec.all.only
+// them in a Spock setupSpec (plans/archive/ClientTestHarness.md D10, 7). The HTTP security proofs also get sec.all.only
 // (AUTHZA_ALL on Tools and System), sec.lock.test (the view group, unlocked on every run), sec.ent.view and
 // sec.ent.all (narrow and catch-all AT_ENTITY), sec.api.view and sec.api.all (MOQUI_API), sec.ip.v4 and sec.ip.loop
 // (ipAllowed only; login is not tried here), sec.key.http (a known login key), sec.mfa.totp (a single-use factor;

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The browser of `moqui test-client` (plans/ClientTestHarness.md 5.5, 12) against the seeded server: the fixture spec
+//! The browser of `moqui test-client` (plans/archive/ClientTestHarness.md 5.5, 12) against the seeded server: the fixture spec
 //! `tests/fixtures/test-component/browser-client/Browser.spec.js` over the gallery screens of `/qapps` and the login
 //! form, with goto, roles and names, fill, click, a dialog, settle, a provoked console error that fails its feature
 //! and leaves its screenshot and text, allowPageProblems, allowProblems and takeProblems, a screenshot and a PDF. Opt-in

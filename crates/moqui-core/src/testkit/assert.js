@@ -1,4 +1,4 @@
-// The assert of a spec and of an in-page test (plans/NodeDependency.md). Loaded after the core prelude, which sets
+// The assert of a spec and of an in-page test (plans/archive/NodeDependency.md). Loaded after the core prelude, which sets
 // __moquiTest.ConditionNotSatisfied, display and truthy. __moquiTestHost.settle, installed before a spec runs, runs a
 // promise's jobs in QuickJS. In a page there is no settle: rejects returns a promise, and the test returns or awaits it.
 (function (g) {

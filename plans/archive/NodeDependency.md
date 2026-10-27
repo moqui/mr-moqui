@@ -1,5 +1,7 @@
 # Node dependency: moving the node tests onto moqui's own test tools
 
+> Archived 2026-10-27: the Node test migration is complete. Current usage is in [Testing](../../docs/Testing.md) and [Client-Testing](../../docs/Client-Testing.md). Node remains only for the library refresh and WASM smoke tools listed below.
+
 ## Why
 
 The aim of the test-client work is a test toolchain of cargo (to build Rust) plus the moqui binary, with all JavaScript
@@ -38,7 +40,7 @@ Implemented. The work follows this plan, with these corrections:
 Closed. `moqui test --db none` and `spec({ database: false })` run the template specs without Postgres, including on a
 build without `embedded-postgres`. `moqui test-client --offline` runs `spec({ server: false })` at `https://moqui.test`
 with no listening port. Assertions, `browser.runInPage`, `setContent`, `addScript`, `addStyle` and `keyboard.type` are
-in [Client-Testing](../docs/Client-Testing.md). Node is not a test dependency. `libs/refresh.mjs` and `scripts/wasm-smoke.mjs` still use Node.
+in [Client-Testing](../../docs/Client-Testing.md). Node is not a test dependency. `libs/refresh.mjs` and `scripts/wasm-smoke.mjs` still use Node.
 
 ## Plan
 

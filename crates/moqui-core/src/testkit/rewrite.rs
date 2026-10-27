@@ -249,7 +249,7 @@ pub fn suite_order(source: &str) -> Result<Vec<String>, Error> {
     Err(Error::new("suite.js has no suite([...]) call"))
 }
 
-/// The server a client suite needs (plans/ClientTestHarness.md 6): `suite([...], { server: { components, specs, conf } })`
+/// The server a client suite needs (plans/archive/ClientTestHarness.md 6): `suite([...], { server: { components, specs, conf } })`
 /// in `test/client/suite.js`, which `moqui test-client --serve` starts as a child `moqui test ... --serve`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SuiteServer {

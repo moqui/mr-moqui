@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! WebSocket of a client spec (plans/ClientTestHarness.md 5.4), over tungstenite as `moqui tui --server` has it. The
+//! WebSocket of a client spec (plans/archive/ClientTestHarness.md 5.4), over tungstenite as `moqui tui --server` has it. The
 //! session's cookies go in the handshake. A refused handshake is an answer, not an error: the security proofs check
 //! the refusals.
 

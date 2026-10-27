@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `load(opts)` and the client's `parallel(n, fn, args)` (plans/ClientTestHarness.md 5.6): virtual users, each a
+//! `load(opts)` and the client's `parallel(n, fn, args)` (plans/archive/ClientTestHarness.md 5.6): virtual users, each a
 //! thread of [`moqui_core::testkit::run_on_thread`] with its own engine and default session, the samples of each
 //! request, and the statistics, table and JSON of a load.
 //!

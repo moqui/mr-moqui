@@ -1,7 +1,7 @@
 # The framework's client specs
 
 HTTP and WebSocket proofs of the framework's security, run from outside the server by `moqui test-client`
-([plans/ClientTestHarness.md](../../../../../plans/ClientTestHarness.md) 7). They port Moqui Java's pytest suite
+([plans/archive/ClientTestHarness.md](../../../../../plans/archive/ClientTestHarness.md) 7). They port Moqui Java's pytest suite
 (`framework/test/*.py` in the Java checkout, with `SECURITY_TESTS.md` and `SecurityTestSupport.groovy`); the catalog
 below lists each of its tests.
 

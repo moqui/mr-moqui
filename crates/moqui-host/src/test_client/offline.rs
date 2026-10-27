@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The local origin of an offline client spec (`spec({ server: false })`, plans/NodeDependency.md).
+//! The local origin of an offline client spec (`spec({ server: false })`, plans/archive/NodeDependency.md).
 //!
 //! Pages open at [`ORIGIN`]. Nothing listens: the browser's Fetch domain asks here, and the answer is the file or a
 //! 404. `/js`, `/css` and `/libs` are the webroot. `/files/<repo-relative>` is the repo, read-only. A `..` segment is a

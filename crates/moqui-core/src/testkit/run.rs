@@ -16,7 +16,7 @@
 //! register, then drive `setupSpec`, each feature (each `where` row), and `cleanupSpec` from here, one script call
 //! each, so timing, timeouts, `ec.message` errors and the state left between features are handled in one place.
 //!
-//! A client spec (`moqui test-client`, plans/ClientTestHarness.md 4) runs the same way under a [`SpecHost`] and with no
+//! A client spec (`moqui test-client`, plans/archive/ClientTestHarness.md 4) runs the same way under a [`SpecHost`] and with no
 //! execution context: the host's prelude gives the globals, `__moquiTestHost.call` reaches the host, and the host's
 //! hooks take the place of the `ec.message` check and the context reset.
 

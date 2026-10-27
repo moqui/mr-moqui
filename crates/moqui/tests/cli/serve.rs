@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-client --serve` (plans/ClientTestHarness.md 6) over the fixture component: the server its
+//! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6) over the fixture component: the server its
 //! `test/client/suite.js` declares starts as a child `moqui test --serve` on a scratch runtime, with the data of its
 //! Basics spec and its `test/MoquiConf.xml`; the client specs run against it; then it stops and its scratch runtime
 //! goes. Killing the client stops the child too, through the pipe on its standard input. A server that does not start

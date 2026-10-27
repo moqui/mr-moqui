@@ -1,4 +1,4 @@
-// The page side of moqui test-client's browser (browser.rs, plans/ClientTestHarness.md 5.5), evaluated in each new
+// The page side of moqui test-client's browser (browser.rs, plans/archive/ClientTestHarness.md 5.5), evaluated in each new
 // document before the page's own scripts: window.__moquiTest with the fetches in flight, the error notifications seen,
 // whether the Moqui client is busy, and the locators. A locator is a chain of steps, each applied to what the one before
 // found (the document at first): { css }, { role, name, exact }, { text, exact }, { label, exact } or { nth } (negative

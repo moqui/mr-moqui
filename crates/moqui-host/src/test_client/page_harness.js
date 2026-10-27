@@ -1,4 +1,4 @@
-// The in-page runner (plans/NodeDependency.md). assert.js is loaded first. test(name, fn) queues a case; the host
+// The in-page runner (plans/archive/NodeDependency.md). assert.js is loaded first. test(name, fn) queues a case; the host
 // calls __moquiRunPageTests after the test file has loaded. Each start and finish goes out through the moquiPageCase
 // binding, so a hang still names the test that was running. frame(scripts, globals) is a same-origin iframe: globals
 // are set, then each script loads with async = false, and the promise resolves to that window.
