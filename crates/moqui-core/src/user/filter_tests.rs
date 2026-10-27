@@ -198,6 +198,17 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     };
     // applyCond on the active org set skips it while activeOrgId is unset.
     assert_eq!(ids(&facade), ["P1", "P3"]);
+    #[cfg(feature = "llm")]
+    {
+        let record = |id: &str| {
+            crate::llm::tools::catalog::entity_record(
+                &facade, VIEW,
+                &[("productId".to_string(), Value::string(id))].into_iter().collect(),
+            ).unwrap()
+        };
+        assert!(record("P1").is_some(), "agent cards may show an authorized row");
+        assert!(record("P2").is_none(), "agent cards must apply the same org filters as entity finds");
+    }
     set_context_name("activeOrgId", Value::string("ORG1")).unwrap();
     assert_eq!(ids(&facade), ["P1"]);
 

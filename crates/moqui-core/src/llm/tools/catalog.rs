@@ -650,7 +650,7 @@ pub fn entity_record(
             .collect();
         Ok((pk, hidden))
     })?;
-    let mut find = facade.find(entity)?.disable_authz();
+    let mut find = facade.find(entity)?;
     let mut key = serde_json::Map::new();
     for name in &pk {
         let Some(value) = parameters.get(name).filter(|value| !moqui_lib::object::is_empty(value)) else {

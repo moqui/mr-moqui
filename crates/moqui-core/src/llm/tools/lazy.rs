@@ -690,8 +690,6 @@ fn check_service(
         )
         .ignored(repaired.ignored.clone())
     })?;
-    // an entity-auto write runs on the one record its whole key names, which an update or a delete must find
-    let record = entity_target(&facade, &service, &entry.name, &cleaned)?;
     {
         if let Err(error) = catalog::user_permitted(&service) {
             return Err(ToolError::new(
@@ -704,6 +702,8 @@ fn check_service(
             ));
         }
     }
+    // Check permission before the row lookup, so a refused tool is not an existence oracle.
+    let record = entity_target(&facade, &service, &entry.name, &cleaned)?;
     Ok(Checked {
         service,
         cleaned,
@@ -757,7 +757,7 @@ fn entity_target(
             ),
         ));
     }
-    let record = crate::llm::run::quietly(|| catalog::entity_record(facade, &entity, cleaned)).map_err(|error| {
+    let record = catalog::entity_record(facade, &entity, cleaned).map_err(|error| {
         ToolError::new(
             "unavailable",
             format!("the record of {name} could not be read: {error}"),
@@ -889,7 +889,7 @@ fn approval_request(
     let args = args_json(&checked.cleaned);
     let record = checked.record.clone().or_else(|| {
         checked.service.entity_noun().and_then(|entity| {
-            crate::llm::run::quietly(|| catalog::entity_record(facade, &entity, &checked.cleaned)).unwrap_or_else(
+            catalog::entity_record(facade, &entity, &checked.cleaned).unwrap_or_else(
                 |error| {
                     tracing::warn!(
                         "the record of {} could not be read for its approval: {error}",
@@ -1053,7 +1053,7 @@ fn execute(
                     .collect()
             })
             .unwrap_or_default();
-        let now = crate::llm::run::quietly(|| catalog::entity_record(facade, entity, &key))
+        let now = catalog::entity_record(facade, entity, &key)
             .ok()
             .flatten();
         let changed = match &now {

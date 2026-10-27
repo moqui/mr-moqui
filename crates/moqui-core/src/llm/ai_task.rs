@@ -930,7 +930,7 @@ fn field_record(facade: &EntityFacade, parameters: &Parameters) -> Result<FieldR
                 key.values().map(to_plain_string).collect::<Vec<_>>().join(", ")
             )
         })?;
-    let record = crate::llm::run::quietly(|| crate::llm::tools::catalog::entity_record(facade, &entity, &key))
+    let record = crate::llm::tools::catalog::entity_record(facade, &entity, &key)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("there is no {entity} record"))?;
     Ok(FieldRecord {
@@ -1243,7 +1243,7 @@ impl SetField {
             .and_then(|record| record.get("lastUpdatedStamp"))
             .and_then(Json::as_str)
             .map(str::to_string);
-        let now = quietly(|| crate::llm::tools::catalog::entity_record(&facade, &entity, &key))
+        let now = crate::llm::tools::catalog::entity_record(&facade, &entity, &key)
             .ok()
             .flatten();
         if now.as_ref().map(|record| record.stamp.clone()) != Some(asked_stamp) {
@@ -1318,7 +1318,7 @@ impl AgentTool for SetField {
             return ToolOutcome::Failed(format!("the user may not change {entity}: {}", error.message()));
         }
         let key = key_map(&args);
-        let record = match quietly(|| crate::llm::tools::catalog::entity_record(&facade, &entity, &key)) {
+        let record = match crate::llm::tools::catalog::entity_record(&facade, &entity, &key) {
             Ok(Some(record)) => record,
             Ok(None) => return ToolOutcome::Failed(format!("there is no such {entity} record")),
             Err(error) => return ToolOutcome::Failed(format!("the record cannot be read: {error}")),

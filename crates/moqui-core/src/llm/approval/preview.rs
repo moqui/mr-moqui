@@ -111,13 +111,7 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
     }
     let changes = changes?;
     let more = changes.len() > MAX_ROWS;
-    let rows: Vec<Json> = quietly(|| {
-        changes
-            .iter()
-            .take(MAX_ROWS)
-            .map(|change| compared(&facade, change))
-            .collect()
-    });
+    let rows: Vec<Json> = changes.iter().take(MAX_ROWS).map(|change| compared(&facade, change)).collect();
     Ok(json!({"ok": true, "rows": rows, "more": more}))
 }
 
@@ -240,7 +234,7 @@ fn compared(facade: &EntityFacade, change: &SimChange) -> Json {
 }
 
 fn production_row(facade: &EntityFacade, change: &SimChange) -> Result<Option<BTreeMap<String, Value>>, Error> {
-    let mut find = facade.find(&change.entity)?.disable_authz();
+    let mut find = facade.find(&change.entity)?;
     for (name, value) in &change.key {
         find = find.eq(name, Value::string(value));
     }
