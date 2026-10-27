@@ -1046,8 +1046,7 @@ fn sri_get_section_included_node<'js>(ctx: Ctx<'js>, node: JsValue<'js>) -> rqui
     })
 }
 
-/// `sri.staticUrl(text, urlType)`: where a link of a static template goes, and the parameters its target gives the link
-/// (`parameters`, and `screenParameters` for an alias's `screenPath`) for the template to evaluate.
+/// `sri.staticDisableKey(node)`: the request-package key of a static control's availability.
 fn sri_static_disable_key(ctx: Ctx<'_>, node: JsValue<'_>) -> rquickjs::Result<String> {
     host_guard(&ctx, || {
         let node = lit(&ctx, &node)?;
@@ -1055,6 +1054,7 @@ fn sri_static_disable_key(ctx: Ctx<'_>, node: JsValue<'_>) -> rquickjs::Result<S
     })
 }
 
+/// `sri.staticUrl(text, urlType)`: a static link's target and parameter definitions.
 fn sri_static_url<'js>(ctx: Ctx<'js>, text: String, url_type: Opt<String>) -> rquickjs::Result<Object<'js>> {
     host_guard(&ctx, || {
         let found = with_render(&ctx, false, |state| {
