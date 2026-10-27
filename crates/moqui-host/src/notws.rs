@@ -143,7 +143,7 @@ pub(crate) async fn upgrade(
             (
                 session_id,
                 Credential::Session(lookup_id.clone()),
-                tokio::task::spawn_blocking(move || session_user(factory, lookup_id)).await,
+                tokio::task::spawn_blocking(move || session_user(factory, lookup_id).map(|user| (user, false))).await,
             )
         }
         None => {
@@ -166,6 +166,14 @@ pub(crate) async fn upgrade(
             )
         }
     };
+    let loaded = loaded.map(|result| {
+        result.map(|(user, failed)| {
+            if failed {
+                site.record_auth_failure(&state);
+            }
+            user
+        })
+    });
     let user_id = match loaded {
         Ok(Ok(Some(user_id))) => user_id,
         Ok(Ok(None)) => return plain(401, "unauthorized"),
@@ -183,7 +191,15 @@ pub(crate) async fn upgrade(
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out
 /// (`web::origin::request_site`): https over this listener's TLS or a believed proxy's `X-Forwarded-Proto`, and the
 /// host and port of a believed proxy's `X-Forwarded-Host` and `X-Forwarded-Port`, else of `Host`.
-pub(crate) struct RequestSite(Option<SiteOrigin>);
+pub(crate) struct RequestSite(Option<SiteOrigin>, Option<std::net::IpAddr>);
+
+impl RequestSite {
+    pub(crate) fn record_auth_failure(&self, state: &HttpState) {
+        if let Some(client) = self.1 {
+            state.guard.record(client, crate::guard::Event::AuthFailure);
+        }
+    }
+}
 
 impl FromRequestParts<Arc<HttpState>> for RequestSite {
     type Rejection = std::convert::Infallible;
@@ -197,13 +213,16 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
         // set by the listener: TLS, or a believed proxy's X-Forwarded-Proto of https
         let https = parts.extensions.get::<HttpsRequest>().is_some();
         let believed = peer.is_some_and(|peer| state.guard.conf.addressing().believes(peer));
-        Ok(Self(request_site(
-            https,
-            believed,
-            header("host"),
-            header("x-forwarded-host"),
-            header("x-forwarded-port"),
-        )))
+        Ok(Self(
+            request_site(
+                https,
+                believed,
+                header("host"),
+                header("x-forwarded-host"),
+                header("x-forwarded-port"),
+            ),
+            peer.map(|peer| state.guard.client_of(peer, &parts.headers)),
+        ))
     }
 }
 
@@ -251,13 +270,20 @@ pub(crate) fn session_user(
 }
 
 /// The user of a login key, or none for a key that is unknown, expired or revoked.
-pub(crate) fn key_user(factory: Arc<ExecutionContextFactory>, key: String) -> Result<Option<String>, CoreError> {
+pub(crate) fn key_user(
+    factory: Arc<ExecutionContextFactory>,
+    key: String,
+) -> Result<(Option<String>, bool), CoreError> {
     let owner = Arc::clone(&factory);
     let rx = factory.request_pool().try_submit(owner, move || {
-        if moqui_core::user::login_user_key(&key).is_err() {
-            return Ok(None);
-        }
-        Ok(moqui_core::user::current_user_id()?.filter(|id| !id.is_empty()))
+        let login = moqui_core::user::login_user_key(&key);
+        let failed = moqui_core::web::take_auth_failure();
+        let user = if login.is_ok() {
+            moqui_core::user::current_user_id()?.filter(|id| !id.is_empty())
+        } else {
+            None
+        };
+        Ok((user, failed))
     })?;
     match rx.recv() {
         Ok(result) => result,

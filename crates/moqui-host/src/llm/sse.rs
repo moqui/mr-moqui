@@ -104,7 +104,7 @@ async fn user_of(state: &HttpState, headers: &HeaderMap, site: &RequestSite) -> 
                 Ok(Some(id)) if !id.is_empty() => id,
                 Ok(_) | Err(_) => return Err(Box::new(plain(401, "unauthorized"))),
             };
-            tokio::task::spawn_blocking(move || session_user(factory, session_id)).await
+            tokio::task::spawn_blocking(move || session_user(factory, session_id).map(|user| (user, false))).await
         }
         None => {
             let Some(key) = headers
@@ -118,6 +118,14 @@ async fn user_of(state: &HttpState, headers: &HeaderMap, site: &RequestSite) -> 
             tokio::task::spawn_blocking(move || key_user(factory, key)).await
         }
     };
+    let loaded = loaded.map(|result| {
+        result.map(|(user, failed)| {
+            if failed {
+                site.record_auth_failure(state);
+            }
+            user
+        })
+    });
     match loaded {
         Ok(Ok(Some(user_id))) => Ok(user_id),
         Ok(Ok(None)) => Err(Box::new(plain(401, "unauthorized"))),

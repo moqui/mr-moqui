@@ -120,3 +120,47 @@ fn a_screen_hit_past_its_tarpit_is_429_with_retry_after() {
     assert_eq!(status, 429, "{body}");
     assert!(header(&headers, "retry-after").is_some(), "{headers:?}");
 }
+
+#[test]
+#[cfg(feature = "llm")]
+fn rejected_stream_login_keys_count_toward_the_client_ban() {
+    let gate = start_with_conf("stream-key-ban", CONF, &[]);
+    let address = gate.server.address();
+    let key = {
+        let context = gate.server.factory().new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::user::get_login_key(None).unwrap()
+    };
+    for _ in 0..4 {
+        let request = http_request("GET", "/assist/runs/missing/events", &[("X-Forwarded-For", "203.0.113.60"), ("login_key", &key)], "");
+        assert_eq!(exchange(address, &request).0, 404, "valid keys must not contribute failures");
+    }
+    for (client, path) in [
+        ("203.0.113.61", "/notws"),
+        ("203.0.113.62", "/assist/runs/missing/events"),
+    ] {
+        for _ in 0..3 {
+            let request = http_request(
+                "GET",
+                path,
+                &[
+                    ("X-Forwarded-For", client),
+                    ("login_key", "invalid-login-key"),
+                    ("Upgrade", "websocket"),
+                    ("Sec-WebSocket-Version", "13"),
+                    ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+                ],
+                "",
+            );
+            let request = request.replace("Connection: close", "Connection: Upgrade");
+            let (status, _, body) = exchange(address, &request);
+            assert_eq!(status, 401, "{path}: {body}");
+        }
+        let (status, _, _) = exchange(
+            address,
+            &http_request("GET", "/apps/AppList", &[("X-Forwarded-For", client)], ""),
+        );
+        assert_eq!(status, 403, "{path}");
+    }
+}
