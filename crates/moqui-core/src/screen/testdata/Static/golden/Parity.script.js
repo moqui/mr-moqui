@@ -248,7 +248,7 @@ return function render(_ctx, _cache) {
       disable: _ctx.$scope['mqDisable_6e8ee364ab4dc5de']!==false,
       "disable-key": "mqDisable_6e8ee364ab4dc5de",
       "list-name": "itemsForEdit",
-      "special-rows": {first:{action:'/Parity/createItem',initial:(_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.str(_ctx.$mq.dflt(_ctx.$scope['secret'],'S1'))})},last:{action:null,initial:(_ctx) => ({'name':_ctx.$mq.str(_ctx.$scope['name']),'name_display':_ctx.ec.l10n.localize('the last row')})}}
+      "special-rows": {first:{action:'/Parity/createItem',initial:(_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.dflt(_ctx.$scope['mqPlain_2e2888dee5ba2b1c'],_ctx.$mq.str(_ctx.$mq.dflt(_ctx.$scope['secret'],'S1')))})},last:{action:null,initial:(_ctx) => ({'name':_ctx.$mq.dflt(_ctx.$scope['mqPlain_9c6a5fdf17587e16'],_ctx.$mq.str(_ctx.$scope['name'])),'name_display':_ctx.ec.l10n.localize('the last row')})}}
     }, {
       header: _withCtx((hs) => [
         _createElementVNode("div", { class: "th text-left" }, [
@@ -284,7 +284,7 @@ return function render(_ctx, _cache) {
             id: 'EditList_'+_ctx.rowIndex,
             action: "/Parity/saveProduct",
             disable: _ctx.$scope['mqDisable_6e8ee364ab4dc5de']!==false,
-            "fields-initial": {'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.str(_ctx.$scope['secret']),'moquiFormName':'EditList','pageIndex':_ctx.$mq.str(_ctx.$scope['pageIndex']||0)}
+            "fields-initial": {'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_9cc8d5944959127'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.dflt(_ctx.$scope['mqPlain_13b48b22346ec613'],_ctx.$mq.str(_ctx.$scope['secret'])),'moquiFormName':'EditList','pageIndex':_ctx.$mq.str(_ctx.$scope['pageIndex']||0)}
           }, {
             default: _withCtx((formProps) => [
               _createElementVNode("div", { class: "td" }, [

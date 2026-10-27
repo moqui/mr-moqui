@@ -443,13 +443,18 @@
 
         // ---- the values a field starts with ----
 
+        const plainValue = (widget, field, fallback) => {
+            const key = sri.staticDisableKey(hostLit(widget)).replace("mqDisable_", "mqPlain_");
+            return "$mq.dflt(" + scopeRef(key) + ",$mq.str(" + baseValue(field, fallback) + "))";
+        };
+
         // The entries of fields-initial that one widget gives: [name, expression]. They follow ScreenRenderImpl.addFormFieldValue.
         const entriesOf = (widget, field) => {
             const name = at(field, "name");
             const base = baseValue(field, at(widget, "default-value"));
             const kind = widget.name;
             const out = [];
-            const plain = "$mq.str(" + baseValue(field, "") + ")";
+            const plain = plainValue(widget, field, "");
             if (kind === "display") {
                 if (!at(widget, "also-hidden") || at(widget, "also-hidden") === "true") out.push([name, plain]);
                 out.push([name + "_display", displayText(widget, field)]);
@@ -462,7 +467,9 @@
                 out.push([name, "$mq.cur(" + baseValue(field, "") + "," + multiple + "," + none + ")"]);
                 if (multiple) out.push([name + "_op", "'in'"]);
                 if (at(widget, "show-not") === "true") out.push([name + "_not", "(" + scopeRef(name + "_not") + "||'N')"]);
-            } else if (kind === "text-line" || kind === "text-area" || kind === "lookup" || kind === "hidden") {
+            } else if (kind === "hidden") {
+                out.push([name, plainValue(widget, field, at(widget, "default-value"))]);
+            } else if (kind === "text-line" || kind === "text-area" || kind === "lookup") {
                 out.push([name, "$mq.str(" + base + ")"]);
             } else if (kind === "check") {
                 // all-checked seeds every option key, ignoring the field's current value, as the merged mode does.
@@ -638,7 +645,7 @@
         const hidden = (n) => {
             if (st.inForm) return;
             const field = fieldOf(n);
-            w("<input" + A(Object.assign({ type: "hidden", name: nameOf(n), ":value": "$mq.str(" + baseValue(field, at(n, "default-value")) + ")", form: owner() }, idAttrs(n))) + ">\n");
+            w("<input" + A(Object.assign({ type: "hidden", name: nameOf(n), ":value": plainValue(n, field, at(n, "default-value")), form: owner() }, idAttrs(n))) + ">\n");
         };
 
         // The classes of a tonal (soft tinted) button, the secondary kind, as ScreenQvt.js writes them, and the color and class of a link

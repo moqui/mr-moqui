@@ -822,6 +822,27 @@ fn single_form_extras(
 }
 
 /// Resolve one widget's lookups into `out`. A failed lookup is logged and the widget keeps no options.
+fn plain_temporal(widget: &MNode) -> Result<Option<(String, Value)>, Error> {
+    if !matches!(widget.name().as_str(), "hidden" | "display" | "display-entity") {
+        return Ok(None);
+    }
+    let Some(field) = widget.parent().and_then(|sub| sub.parent()) else {
+        return Ok(None);
+    };
+    let field = lit_of(&field, false);
+    let value = sri::get_field_value(&field, "")?;
+    if !matches!(value, Value::Date(_) | Value::Time(_) | Value::Timestamp(_)) {
+        return Ok(None);
+    }
+    Ok(Some((
+        disable_key(&lit_of(widget, true)).replace("mqDisable_", "mqPlain_"),
+        Value::String(sri::get_field_value_plain_string(
+            &field,
+            &widget.attribute("default-value").unwrap_or_default(),
+        )?),
+    )))
+}
+
 fn collect_widget(
     state: &RenderState,
     widget: &MNode,
@@ -831,6 +852,13 @@ fn collect_widget(
     widget_index: usize,
     out: &mut serde_json::Map<String, serde_json::Value>,
 ) {
+    match plain_temporal(widget) {
+        Ok(Some((key, value))) => {
+            out.insert(key, script::template::unwrap_json(&value));
+        }
+        Ok(None) => {}
+        Err(error) => tracing::error!(%error, form = form_name, field = field_name, "plain field value unavailable"),
+    }
     if widget.has_name("link") {
         out.insert(
             disable_key(&lit_of(widget, true)),
@@ -1380,6 +1408,15 @@ fn row_extras_of(
                 }
             }
             for widget in sub.child_iter() {
+                match plain_temporal(&widget) {
+                    Ok(Some((key, value))) => {
+                        extras.insert(key, value);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::error!(%error, form = form_name, field = %field_name, "plain field value unavailable")
+                    }
+                }
                 if widget.has_name("link") {
                     extras.insert(
                         disable_key(&lit_of(&widget, true)),

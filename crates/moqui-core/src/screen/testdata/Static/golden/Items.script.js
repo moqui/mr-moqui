@@ -38,7 +38,7 @@ return function render(_ctx, _cache) {
                 action: "/Items/saveItem",
                 disable: _ctx.$scope['mqDisable_cd5a8b388beaa866']!==false,
                 "read-only": "",
-                "fields-initial": {'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.str(_ctx.$scope['price']),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.str(_ctx.$scope['mode']):_ctx.$mq.str(_ctx.$scope['mode'])),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
+                "fields-initial": {'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_541ae8f3787c841b'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.dflt(_ctx.$scope['mqPlain_8feffd86b3edf876'],_ctx.$mq.str(_ctx.$scope['price'])),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.dflt(_ctx.$scope['mqPlain_20fb1963fb63fe1a'],_ctx.$mq.str(_ctx.$scope['mode'])):_ctx.$mq.dflt(_ctx.$scope['mqPlain_e971d0cef3f41c5a'],_ctx.$mq.str(_ctx.$scope['mode']))),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
               }, {
                 default: _withCtx((formProps) => [
                   _createElementVNode("div", { class: "q-ma-sm" }, [
@@ -176,7 +176,7 @@ return function render(_ctx, _cache) {
       disable: _ctx.$scope['mqDisable_433fe014be392965']!==false,
       "disable-key": "mqDisable_433fe014be392965",
       "list-name": "itemList",
-      "row-initial": (_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'price':_ctx.$mq.str(_ctx.$scope['price']),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00')}),
+      "row-initial": (_ctx) => ({'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_9dd8cc5b0a94e118'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'price':_ctx.$mq.dflt(_ctx.$scope['mqPlain_744e44b6e3fd4ea6'],_ctx.$mq.str(_ctx.$scope['price'])),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00')}),
       "default-columns": [['itemId'],['name'],['price'],['go']],
       "column-fields": [{id:'itemId',label:_ctx.ec.l10n.localize('Item ID')},{id:'name',label:_ctx.ec.l10n.localize('Name')},{id:'price',label:_ctx.ec.l10n.localize('Price')},{id:'go',label:_ctx.ec.l10n.localize('Save')}],
       "columns-action": "/Items/formSelectColumns",
@@ -367,7 +367,7 @@ return function render(_ctx, _cache) {
       "disable-key": "mqDisable_3a76ce2e76385fe0",
       "list-name": "itemList",
       multi: "",
-      "row-initial": (_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name'])})
+      "row-initial": (_ctx) => ({'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_bdc48d3f1ad50e7b'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name'])})
     }, {
       header: _withCtx((hs) => [
         _createElementVNode("div", { class: "th text-left" }, [

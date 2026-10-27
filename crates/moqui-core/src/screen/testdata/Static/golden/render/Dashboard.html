@@ -1,11 +1,11 @@
-<div id="Counters" class="m-dashboard q-mx-sm counters" style="--m-dashboard-min:160px"><div class="m-dashboard-item"><m-number-card :title="ec.l10n.localize('Open orders')" :value="ec.resource.expandNoL10n('${openCount}',{'openCount':()=&gt;(openCount)})" delta="+3" icon="sym_o_receipt_long" :href="$mq.url('/Orders',{'statusId':'Open'},$mq.merge({'statusId':$scope['statusId']},null))"></m-number-card>
+<div id="Counters" class="m-dashboard q-mx-sm counters" style="--m-dashboard-min:160px"><div class="m-dashboard-item"><m-number-card :title="ec.l10n.localize('Open orders')" :value="ec.resource.expandNoL10n('${openCount}',{'openCount':()=&gt;(openCount)})" delta="+3" icon="sym_o_receipt_long" :href="$mq.url('/Orders',{},$mq.merge({'statusId':'Open'},null))"></m-number-card>
 </div><div class="m-dashboard-item"><m-number-card :title="ec.l10n.localize('Late shipments')" :value="ec.resource.expandNoL10n('${lateCount}',{'lateCount':()=&gt;(lateCount)})" delta="+1" delta-good="down" :href="$mq.url('https://example.com/late',{},null)" external size="lg"></m-number-card>
 </div><div class="m-dashboard-item"><template v-if="(showHidden)"><m-number-card :title="ec.l10n.localize('Hidden')" value="0"></m-number-card>
 </template></div><div class="m-dashboard-item"><m-number-card id="Revenue" :title="ec.l10n.localize('Revenue {{x}} &amp; more')" value="$1,200" delta="-5%" icon="fa fa-dollar" size="sm" class="wide"></m-number-card>
 </div><div class="m-dashboard-item"><span class="text-inline" v-text="ec.l10n.localize('not a card')"></span> </div></div>
 <div class="m-dashboard q-mx-sm"><div class="m-dashboard-item"><m-number-card :title="ec.l10n.localize('Plain')" value="7"></m-number-card>
 </div></div>
-<m-link :href="$mq.url('/Orders',{'statusId':'Open','sort':'-date'},$mq.merge({'statusId':$scope['statusId']},null))" :disable="$scope['mqDisable_402d29077ba75b88']!==false" class="m-link-text"><span v-text="ec.l10n.localize('All open')"></span></m-link>
+<m-link :href="$mq.url('/Orders',{},$mq.merge({'sort':'-date','statusId':'Open'},null))" :disable="$scope['mqDisable_402d29077ba75b88']!==false" class="m-link-text"><span v-text="ec.l10n.localize('All open')"></span></m-link>
 <div class="m-dashboard q-mx-sm"><div class="m-dashboard-item"><m-number-card :title="ec.l10n.localize('Held orders')" value="1" :href="$mq.link(ec.resource.expandNoL10n('Orders?statusId=${orderStatus}',{'orderStatus':()=&gt;(orderStatus)}),'/')"></m-number-card>
 </div></div>
 <m-link :href="$mq.url($mq.link(ec.resource.expandNoL10n('${\'Orders\'}',{'\'Orders\'':()=&gt;('Orders')}),'/'),{'sort':ec.l10n.localize('-date')},null)" :disable="$scope['mqDisable_8602f4ee7cad0f5f']!==false" class="m-link-text"><span v-text="ec.l10n.localize('Dynamic orders')"></span></m-link>
