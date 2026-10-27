@@ -20,6 +20,8 @@ Initial implementation of the framework is complete and various applications are
 
 There is a new component called **IronStone Business OS Suite** (IronStone BOSS, in the `mr-boss` repository) that is being designed and implemented (neither are complete). A high-level design can be seen in its `plan/initial-design.md` file.
 
+**IronStoa PASS — Public Application Software Suite** ([mr-pass](https://github.com/moqui/mr-pass)) is the public-facing companion component to IronStone BOSS, covering Forum and future Blog/Publishing and Commerce applications. It is in the design stage, with a [Forum and shared PASS foundation design](https://github.com/moqui/mr-pass/blob/master/plan/design-forum.md). Its separate component is designed for multiple public sites, local or remote Mantle backends, and deployment on servers with their own access controls.
+
 The NextCloud-inspired **Commons & Comms** applications for groupware and communication have been designed and are being built first. These are a major upgrade to the long-neglected My Account app, fill some long-standing gaps in Moqui, and along with other new framework features and application functionality are intended for full cloud service replacement.
 
 The `moq` script replaces our old Gradle tasks, and getting components is similar:
@@ -31,7 +33,7 @@ The `moq` script replaces our old Gradle tasks, and getting components is simila
 
 ## Repositories
 
-MR Moqui is four repositories in the [moqui](https://github.com/moqui) organization on GitHub. For each component, the repository name, its directory under `runtime/component`, and its component.xml name are the same.
+MR Moqui spans five repositories in the [moqui](https://github.com/moqui) organization on GitHub. Component repositories use matching repository, `runtime/component` directory and component.xml names; `mr-pass` currently contains design documentation.
 
 | Repository | What it is | Where it came from |
 |---|---|---|
@@ -39,6 +41,7 @@ MR Moqui is four repositories in the [moqui](https://github.com/moqui) organizat
 | [mr-mantle](https://github.com/moqui/mr-mantle) | Mantle Business Artifacts: the data model (entities and data) and the services | The Java components [mantle-udm](https://github.com/moqui/mantle-udm) and [mantle-usl](https://github.com/moqui/mantle-usl). They were forked as `mr-mantle-udm` and `mr-mantle-usl` and converted from Groovy to JavaScript. Then `mr-mantle-usl` was renamed and `mr-mantle-udm` was merged into it |
 | [mr-marble](https://github.com/moqui/mr-marble) | Marble ERP and the Simple Screens library it is built from, with My Account | The Java components [SimpleScreens](https://github.com/moqui/SimpleScreens) and [MarbleERP](https://github.com/moqui/MarbleERP). They were forked as `MrSimpleScreens` and `MrMarbleERP` for the port. Then `MrSimpleScreens` was renamed and `MrMarbleERP` was merged into it |
 | [mr-boss](https://github.com/moqui/mr-boss) | IronStone BOSS: Commons & Comms (groupware and communication), Projects, and the other BOSS applications | New for MR Moqui. The repository was named `ironstone-boss` until 2026-10-25 |
+| [mr-pass](https://github.com/moqui/mr-pass) | IronStoa PASS: the public-facing companion suite for Forum, Blog/Publishing and Commerce | New for MR Moqui; design stage |
 
 The merges into `mr-mantle` and `mr-marble` kept the commit history of both repositories. On GitHub the renamed repositories redirect from their old names. A Java component that depends on `mantle-udm`, `mantle-usl`, `SimpleScreens` or `MarbleERP` now depends on `mr-mantle` or `mr-marble`, and its `component://` locations change the same way. See [Moqui Java migration notes](docs/Moqui-Java-Migration.md).
 
