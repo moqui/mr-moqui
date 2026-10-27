@@ -29,7 +29,7 @@
     <transition name="preview" method="get" read-only="true">
         <actions><script><![CDATA[
             const result = ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,renderMode:renderMode || 'pdf'}).call()
-            const allowed = ['application/pdf','image/png','text/csv','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+            const allowed = ['application/pdf','image/png','text/csv','application/zip','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
             if (!allowed.includes(result.contentType)) throw new Error('Unexpected report preview content type')
             const encode = value => WebUtilities.encodeHtml(String(value || ''))
             const uri = 'data:'+result.contentType+';base64,'+String(result.contentBase64 || '')

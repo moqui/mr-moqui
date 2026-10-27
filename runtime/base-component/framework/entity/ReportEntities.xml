@@ -43,6 +43,9 @@
     </entity>
     <entity entity-name="AlertRuleLock" package="moqui.report" use="transactional" cache="never">
         <field name="definitionId" type="id-long" is-pk="true"/><field name="lastEvaluated" type="date-time"/>
+        <!-- An evaluator claims the rule briefly, runs its query and deliveries outside any lock, and writes state back
+            only while it still holds this claim. A claim past claimedUntil (wall-clock millis) is abandoned. -->
+        <field name="claimToken" type="id-long"/><field name="claimedUntil" type="number-integer"/>
         <relationship type="one" related="moqui.report.Definition"/>
     </entity>
     <entity entity-name="AlertNotification" package="moqui.report" use="transactional" cache="never">

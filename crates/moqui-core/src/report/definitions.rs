@@ -49,7 +49,8 @@ fn readable(definition: &Json) -> Result<bool, Error> {
 fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
     let viewer = crate::user::current_user_id().map_err(fail)?.unwrap_or_default();
     if text(&definition, "ownerId", "") != viewer || viewer.is_empty() {
-        super::alert::redact_contact_credentials(&mut definition["body"]);
+        let kind = definition["type"].clone();
+        super::alert::redact_definition_credentials(&kind, &mut definition["body"]);
     }
     let _ = ec;
     Ok(definition)
@@ -115,6 +116,7 @@ fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> 
                     let body = definition.clone();
                     definition["body"] = body;
                 }
+                super::alert::validate_shared(text(&definition, "type", ""), &definition["body"])?;
                 if definition["type"] == "alert" {
                     super::alert::validate_contacts(&definition["body"])?;
                     // The evaluator reads only saved rules, which run as their owner.
@@ -193,6 +195,11 @@ pub fn list(ec: &ExecutionContext, kind: Option<&str>) -> Result<Vec<Json>, Erro
     Ok(definitions)
 }
 
+/// A rule body key that lists the ids of shared contact points, silences or mute timings.
+fn is_ref_list(key: &str) -> bool {
+    super::alert::SHARED.iter().any(|(_, refs, _)| *refs == key)
+}
+
 fn references(value: &Json, out: &mut BTreeSet<String>) {
     match value {
         Json::Object(map) => {
@@ -203,6 +210,16 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
                             out.insert(id.into());
                         }
                     }
+                } else if is_ref_list(key) {
+                    out.extend(
+                        value
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Json::as_str)
+                            .map(str::to_owned),
+                    );
+                    continue;
                 }
                 references(value, out);
             }
@@ -225,7 +242,10 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
             "definition id must contain letters, digits, _, -, . or :; type is required",
         ));
     }
-    if !matches!(kind, "dashboard" | "panel" | "dataset" | "search" | "alert" | "report") {
+    if !matches!(
+        kind,
+        "dashboard" | "panel" | "dataset" | "search" | "alert" | "report" | "contactPoint" | "silence" | "muteTiming"
+    ) {
         return Err(fail(format!("unknown report definition type {kind}")));
     }
     if shipped(ec).iter().any(|d| text(d, "id", "") == id) {
@@ -300,6 +320,7 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
     if kind == "alert" {
         super::alert::validate_rule(ec, &body)?;
     }
+    super::alert::validate_shared(kind, &body)?;
     // Owner, group, reference and dataset-admin checks above run with the viewer's rights.
     // Only this storage operation bypasses entity auth; no broad CRUD grant is exposed.
     let _storage = ec.disable_authz();
@@ -419,7 +440,8 @@ fn version_snapshot(ec: &ExecutionContext, current: &Json, version: i64) -> Resu
     let mut snapshot: Json =
         serde_json::from_str(row.get("bodyJson").and_then(Value::as_str).unwrap_or("{}")).map_err(fail)?;
     if text(current, "ownerId", "") != crate::user::current_user_id().map_err(fail)?.unwrap_or_default() {
-        super::alert::redact_contact_credentials(&mut snapshot["body"]);
+        let kind = snapshot["type"].clone();
+        super::alert::redact_definition_credentials(&kind, &mut snapshot["body"]);
     }
     Ok(snapshot)
 }
@@ -576,6 +598,12 @@ fn remap(value: &mut Json, ids: &HashMap<String, String>) {
                     if let Some(id) = value.as_str().and_then(|id| ids.get(id)) {
                         *value = json!(id);
                     }
+                } else if is_ref_list(key) {
+                    for item in value.as_array_mut().into_iter().flatten() {
+                        if let Some(id) = item.as_str().and_then(|id| ids.get(id)) {
+                            *item = json!(id);
+                        }
+                    }
                 } else {
                     remap(value, ids);
                 }
@@ -660,5 +688,22 @@ mod tests {
         assert_eq!(value["datasetId"], "copy-sales");
         assert_eq!(value["title"], "sales");
         assert_eq!(value["panels"][0]["panelRef"], "copy-panel");
+    }
+    #[test]
+    fn alert_rules_reference_shared_items_by_id_lists() {
+        let mut body = json!({"contactPointRefs":["ops"],"silenceRefs":["window"],"muteTimingRefs":["weekend"],"labels":{"silenceRefs":"not-a-list"}});
+        let mut found = BTreeSet::new();
+        references(&body, &mut found);
+        assert_eq!(found, BTreeSet::from(["ops".into(), "window".into(), "weekend".into()]));
+        remap(
+            &mut body,
+            &HashMap::from([
+                ("ops".into(), "import-ops".into()),
+                ("weekend".into(), "import-weekend".into()),
+            ]),
+        );
+        assert_eq!(body["contactPointRefs"], json!(["import-ops"]));
+        assert_eq!(body["silenceRefs"], json!(["window"]));
+        assert_eq!(body["muteTimingRefs"], json!(["import-weekend"]));
     }
 }

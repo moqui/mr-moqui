@@ -313,6 +313,7 @@ fn validate_condition(body: &Json) -> Result<(), Error> {
 pub(super) fn validate_rule(ec: &ExecutionContext, body: &Json) -> Result<(), Error> {
     validate_condition(body)?;
     validate_contacts(body)?;
+    validate_refs(ec, body)?;
     approved_labels(ec, body)?;
     if body["labels"].as_object().is_some_and(|labels| labels.len() > 32) {
         return Err(fail("an alert may have at most 32 static labels"));
@@ -385,15 +386,26 @@ pub(super) fn validate_contacts(body: &Json) -> Result<(), Error> {
 /// Old/imported rows are still protected on group reads; only property names may be shared.
 pub(super) fn redact_contact_credentials(body: &mut Json) {
     for contact in body["contactPoints"].as_array_mut().into_iter().flatten() {
-        if contact.get("headers").is_some() {
-            contact.as_object_mut().unwrap().remove("headers");
-            contact["credentialHeadersOmitted"] = json!(true);
-        }
-        for key in ["authorization", "password", "token", "apiKey"] {
-            if contact.get(key).is_some() {
-                contact.as_object_mut().unwrap().remove(key);
-                contact["credentialHeadersOmitted"] = json!(true);
-            }
+        redact_contact(contact);
+    }
+}
+
+/// [`redact_contact_credentials`] for a definition of any type: a shared contact point's body is the contact.
+pub(super) fn redact_definition_credentials(kind: &Json, body: &mut Json) {
+    if kind == "contactPoint" {
+        redact_contact(body);
+    } else {
+        redact_contact_credentials(body);
+    }
+}
+
+fn redact_contact(contact: &mut Json) {
+    let Some(map) = contact.as_object_mut() else {
+        return;
+    };
+    for key in ["headers", "authorization", "password", "token", "apiKey"] {
+        if map.remove(key).is_some() {
+            map.insert("credentialHeadersOmitted".into(), json!(true));
         }
     }
 }
@@ -598,12 +610,21 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     }
 }
 
-fn notify(ec: &ExecutionContext, definition: &Json, events: &[Json], now: i64) -> Result<(), Error> {
-    let body = &definition["body"];
+/// Groups events per contact point, delivers what is due, and returns the notification rows to save. Nothing here
+/// holds a lock: the rule's claim keeps other evaluators away while contact I/O runs. A failed group or delivery is
+/// logged and left pending for retry; the other groups go on.
+fn notify(
+    ec: &ExecutionContext,
+    definition: &Json,
+    body: &Json,
+    events: &[Json],
+    now: i64,
+) -> Result<Vec<crate::entity::EntityValue>, Error> {
     let entity = ec
         .factory()
         .entity()
         .ok_or_else(|| fail("entity facade is unavailable"))?;
+    let mut rows = Vec::new();
     for (index, contact) in body["contactPoints"].as_array().into_iter().flatten().enumerate() {
         let mut groups: BTreeMap<String, (Json, Vec<Json>)> = BTreeMap::new();
         for event in events.iter().filter(|event| {
@@ -639,7 +660,7 @@ fn notify(ec: &ExecutionContext, definition: &Json, events: &[Json], now: i64) -
             let hash = moqui_lib::json::canonical_sha256(&json!(state_key));
             let resolved = events.iter().all(|event| event["state"] == "Normal");
             let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":format!("/apps/dashboards/Alerts?definitionId={id}")});
-            let result = (|| -> Result<(), Error> {
+            let result = (|| -> Result<crate::entity::EntityValue, Error> {
                 let existing = {
                     let _storage = ec.disable_authz();
                     entity
@@ -647,7 +668,6 @@ fn notify(ec: &ExecutionContext, definition: &Json, events: &[Json], now: i64) -
                         .eq("definitionId", Value::string(id))
                         .eq("contactId", Value::string(&contact_id))
                         .eq("groupId", Value::string(&group))
-                        .for_update(true)
                         .one()?
                 };
                 let mut row = existing.unwrap_or(entity.make_value("moqui.report.AlertNotification")?);
@@ -686,37 +706,310 @@ fn notify(ec: &ExecutionContext, definition: &Json, events: &[Json], now: i64) -
                         }
                     }
                 }
-                let _storage = ec.disable_authz();
-                row.create_or_update(&entity)
+                Ok(row)
             })();
-            if let Err(error) = result {
-                tracing::error!(rule=text(definition,"id",""),contact=%contact_id,%error,"alert notification group failed, continuing");
+            match result {
+                Ok(row) => rows.push(row),
+                Err(error) => {
+                    tracing::error!(rule=text(definition,"id",""),contact=%contact_id,%error,"alert notification group failed, continuing")
+                }
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// Shared alert definition types a rule names by id: the type, the rule body key with the ids, and the rule body
+/// list the shared items join at evaluation.
+pub(super) const SHARED: [(&str, &str, &str); 3] = [
+    ("contactPoint", "contactPointRefs", "contactPoints"),
+    ("silence", "silenceRefs", "silences"),
+    ("muteTiming", "muteTimingRefs", "muteTimings"),
+];
+
+/// The most shared items of one type a rule may reference.
+const MAX_REFS: usize = 50;
+
+fn shared_refs<'a>(body: &'a Json, key: &str) -> impl Iterator<Item = &'a str> {
+    body[key].as_array().into_iter().flatten().filter_map(Json::as_str)
+}
+
+fn validate_silence(silence: &Json) -> Result<(), Error> {
+    if !silence.is_object() {
+        return Err(fail("a silence must be an object"));
+    }
+    let now = crate::user::now_millis();
+    let at = |key: &str| {
+        silence[key]
+            .as_str()
+            .and_then(|s| super::time::parse(s, now).ok())
+            .ok_or_else(|| fail(format!("silence {key} must be a time")))
+    };
+    if at("thru")? <= at("from")? {
+        return Err(fail("a silence must end after it starts"));
+    }
+    if !silence["matchers"].is_null() && !silence["matchers"].is_object() {
+        return Err(fail("silence matchers must be a map of label values"));
+    }
+    Ok(())
+}
+
+fn validate_mute(timing: &Json) -> Result<(), Error> {
+    if !timing.is_object() {
+        return Err(fail("a mute timing must be an object"));
+    }
+    if !timing["weekdays"].is_null()
+        && timing["weekdays"]
+            .as_array()
+            .is_none_or(|days| days.is_empty() || days.iter().any(|day| day.as_u64().is_none_or(|day| day > 6)))
+    {
+        return Err(fail(
+            "mute timing weekdays must list days 0 (Monday) through 6 (Sunday)",
+        ));
+    }
+    for key in ["start", "end"] {
+        if timing[key].is_null() {
+            continue;
+        }
+        let minutes = timing[key]
+            .as_str()
+            .and_then(|s| s.split_once(':'))
+            .filter(|(h, m)| h.len() == 2 && m.len() == 2)
+            .and_then(|(h, m)| Some((h.parse::<u32>().ok()?, m.parse::<u32>().ok()?)))
+            .filter(|(_, m)| *m < 60)
+            .map(|(h, m)| h * 60 + m);
+        let last = if key == "end" { 1440 } else { 1439 };
+        if minutes.is_none_or(|minutes| minutes > last) {
+            return Err(fail(format!("mute timing {key} must be HH:mm")));
+        }
+    }
+    Ok(())
+}
+
+/// Checks the body of a shared contact point, silence or mute timing before it is saved or shipped.
+pub(super) fn validate_shared(kind: &str, body: &Json) -> Result<(), Error> {
+    match kind {
+        "contactPoint" => {
+            if !body.is_object() {
+                return Err(fail("a contact point must be an object"));
+            }
+            match text(body, "type", "notification") {
+                "notification" | "email" | "webhook" => {}
+                other => {
+                    return Err(fail(format!(
+                        "unknown contact point type {other}; use notification, email or webhook"
+                    )))
+                }
+            }
+            validate_contacts(&json!({ "contactPoints": [body] }))
+        }
+        "silence" => validate_silence(body),
+        "muteTiming" => validate_mute(body),
+        _ => Ok(()),
+    }
+}
+
+/// A rule's shared references are lists of ids, each naming a definition of the matching type.
+fn validate_refs(ec: &ExecutionContext, body: &Json) -> Result<(), Error> {
+    for (kind, key, _) in SHARED {
+        let refs = &body[key];
+        if refs.is_null() {
+            continue;
+        }
+        let refs = refs
+            .as_array()
+            .filter(|refs| refs.iter().all(Json::is_string))
+            .ok_or_else(|| fail(format!("{key} must be a list of {kind} ids")))?;
+        if refs.len() > MAX_REFS {
+            return Err(fail(format!("an alert rule may reference at most {MAX_REFS} of {key}")));
+        }
+        for reference in refs.iter().filter_map(Json::as_str) {
+            if super::definitions::read(ec, reference)?["type"] != kind {
+                return Err(fail(format!("{reference} in {key} is not a {kind}")));
             }
         }
     }
     Ok(())
 }
 
+/// The rule body with the shared contact points, silences and mute timings it references added to its own. A
+/// reference the owner cannot read, or that names another type, is logged and left out; the rest still apply.
+fn effective_body(ec: &ExecutionContext, id: &str, body: &Json) -> Json {
+    let mut effective = body.clone();
+    for (kind, key, collection) in SHARED {
+        for reference in shared_refs(body, key).take(MAX_REFS) {
+            let item = match super::definitions::read(ec, reference) {
+                Ok(definition) if definition["type"] == kind && definition["body"].is_object() => {
+                    let mut item = definition["body"].clone();
+                    if kind == "contactPoint" {
+                        item["id"] = json!(reference);
+                    }
+                    item
+                }
+                Ok(_) => {
+                    tracing::error!(rule = id, reference, "alert rule reference is not a {kind}, skipping");
+                    continue;
+                }
+                Err(error) => {
+                    tracing::error!(rule=id,reference,%error,"alert rule {kind} reference could not be read, skipping");
+                    continue;
+                }
+            };
+            if !effective[collection].is_array() {
+                effective[collection] = json!([]);
+            }
+            if let Some(items) = effective[collection].as_array_mut() {
+                items.push(item);
+            }
+        }
+    }
+    effective
+}
+
+const LOCK: &str = "moqui.report.AlertRuleLock";
+/// How long a claim keeps other evaluators off a rule. A claim older than this was abandoned by a stopped evaluator.
+const CLAIM_MS: i64 = 300_000;
+
+fn claim_token(lock: &crate::entity::EntityValue) -> Option<&str> {
+    lock.get("claimToken")
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())
+}
+
+/// Claims the rule in a short transaction: `None` when it ran within its interval or another evaluator holds it.
+fn claim(
+    ec: &ExecutionContext,
+    entity: &crate::entity::EntityFacade,
+    id: &str,
+    now: i64,
+    interval: i64,
+) -> Result<Option<String>, Error> {
+    entity
+        .transactions_for(LOCK)?
+        .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            let _storage = ec.disable_authz();
+            let mut lock = entity
+                .find(LOCK)?
+                .eq("definitionId", Value::string(id))
+                .for_update(true)
+                .one()?
+                .ok_or_else(|| fail("alert rule has no evaluation lock; save it again"))?;
+            if now.saturating_sub(millis(lock.get("lastEvaluated"))) < interval {
+                return Ok(None);
+            }
+            // Claims expire on the wall clock: they guard against stopped evaluators, not evaluation time.
+            let wall = crate::user::now_millis();
+            let held_until = lock
+                .get("claimedUntil")
+                .map(moqui_lib::object::to_plain_string)
+                .and_then(|until| until.parse::<i64>().ok())
+                .unwrap_or(0);
+            if claim_token(&lock).is_some() && held_until > wall {
+                return Ok(None);
+            }
+            let token = crate::entity::uuid_v4()?;
+            lock.set("claimToken", Value::string(&token));
+            lock.set("claimedUntil", Value::I64(wall + CLAIM_MS));
+            lock.update(entity)?;
+            Ok(Some(token))
+        })
+}
+
+/// What one evaluation writes, saved together once the query and deliveries are done.
+#[derive(Default)]
+struct Outcome {
+    saved: Vec<crate::entity::EntityValue>,
+    removed: Vec<crate::entity::EntityValue>,
+    annotations: Vec<crate::entity::document::Document>,
+    changed: usize,
+    notices: Vec<Json>,
+}
+
+/// Writes the outcome and the rule's evaluation time in a short transaction, if this evaluator still holds the claim.
+/// With `outcome` `None` it only gives the claim back, so the rule runs again at the next pass.
+fn finish(
+    ec: &ExecutionContext,
+    entity: &crate::entity::EntityFacade,
+    id: &str,
+    token: &str,
+    now: i64,
+    outcome: Option<&Outcome>,
+) -> Result<(), Error> {
+    entity
+        .transactions_for(LOCK)?
+        .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            let _storage = ec.disable_authz();
+            let mut lock = entity
+                .find(LOCK)?
+                .eq("definitionId", Value::string(id))
+                .for_update(true)
+                .one()?
+                .ok_or_else(|| fail("alert rule evaluation lock disappeared"))?;
+            if claim_token(&lock) != Some(token) {
+                return Err(fail(
+                    "alert rule claim expired and another evaluator took the rule; this result is discarded",
+                ));
+            }
+            if let Some(outcome) = outcome {
+                for row in &outcome.removed {
+                    row.delete(entity)?;
+                }
+                for row in &outcome.saved {
+                    row.create_or_update(entity)?;
+                }
+                lock.set("lastEvaluated", stamp(now));
+            }
+            lock.set("claimToken", Value::Null);
+            lock.set("claimedUntil", Value::Null);
+            lock.update(entity)
+        })
+}
+
+/// Claims the rule, evaluates and delivers with no lock held, then saves the result. A failure gives the claim back
+/// without moving the rule's evaluation time, so the next pass retries it.
 fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<(usize, Vec<Json>), Error> {
     let entity = ec
         .factory()
         .entity()
         .ok_or_else(|| fail("entity facade is unavailable"))?;
     let id = text(definition, "id", "");
-    let body = &definition["body"];
-    let interval = body["intervalSeconds"].as_i64().unwrap_or(60).max(60) * 1000;
-    let mut rule_lock = {
-        let _storage = ec.disable_authz();
-        entity
-            .find("moqui.report.AlertRuleLock")?
-            .eq("definitionId", Value::string(id))
-            .for_update(true)
-            .one()?
-            .ok_or_else(|| fail("alert rule has no evaluation lock; save it again"))?
-    };
-    if now.saturating_sub(millis(rule_lock.get("lastEvaluated"))) < interval {
+    let interval = definition["body"]["intervalSeconds"].as_i64().unwrap_or(60).max(60) * 1000;
+    let Some(token) = claim(ec, &entity, id, now, interval)? else {
         return Ok((0, Vec::new()));
+    };
+    let result = evaluate_claimed(ec, &entity, definition, now, interval)
+        .and_then(|outcome| finish(ec, &entity, id, &token, now, Some(&outcome)).map(|()| outcome));
+    match result {
+        Ok(outcome) => {
+            // History is written after the state it records is saved.
+            if !outcome.annotations.is_empty() {
+                if let Err(error) = crate::search::current()
+                    .and_then(|search| search.index_entries("monitor_annotations", outcome.annotations))
+                {
+                    tracing::error!(rule=id,%error,"could not record alert annotations");
+                }
+            }
+            Ok((outcome.changed, outcome.notices))
+        }
+        Err(error) => {
+            if let Err(release) = finish(ec, &entity, id, &token, now, None) {
+                tracing::error!(rule=id,error=%release,"could not release alert rule claim; it expires on its own");
+            }
+            Err(error)
+        }
     }
+}
+
+/// Runs the query, steps each series and delivers notifications while the rule is claimed but no lock is held.
+fn evaluate_claimed(
+    ec: &ExecutionContext,
+    entity: &crate::entity::EntityFacade,
+    definition: &Json,
+    now: i64,
+    interval: i64,
+) -> Result<Outcome, Error> {
+    let id = text(definition, "id", "");
+    let body = &definition["body"];
     let result = super::execute_query(ec, &body["query"]);
     let mut query_failed = result.is_err();
     let result = match result {
@@ -758,7 +1051,6 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
         entity
             .find("moqui.report.AlertInstance")?
             .eq("definitionId", Value::string(id))
-            .for_update(true)
             .list()?
     };
     let existing: BTreeMap<String, crate::entity::EntityValue> = rows
@@ -772,7 +1064,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             )
         })
         .collect();
-    let mut notices = Vec::new();
+    let mut outcome = Outcome::default();
     let fresh = series
         .keys()
         .filter(|key| !existing.contains_key(*key))
@@ -789,7 +1081,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             dropped,
             "alert rule exceeds {MAX_SERIES} series; new series past it are not evaluated"
         );
-        notices.push(json!({"level":"warning","code":"series_limit","rule":id,"message":format!("Alert rule {id} has more than {MAX_SERIES} series; {dropped} new series are not evaluated")}));
+        outcome.notices.push(json!({"level":"warning","code":"series_limit","rule":id,"message":format!("Alert rule {id} has more than {MAX_SERIES} series; {dropped} new series are not evaluated")}));
     }
     let reported = series.keys().cloned().collect::<BTreeSet<_>>();
     if series.is_empty() && existing.is_empty() {
@@ -806,7 +1098,6 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
         });
     }
     let mut events = Vec::new();
-    let mut changed_count = 0;
     let mut pruned = 0;
     for (key, (labels, value)) in series {
         let previous = existing.get(&key);
@@ -828,8 +1119,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
         };
         if missing_count >= prune_after {
             if let Some(row) = previous {
-                let _storage = ec.disable_authz();
-                row.delete(&entity)?;
+                outcome.removed.push(row.clone());
             }
             pruned += 1;
             if instance.state != State::Normal {
@@ -892,19 +1182,12 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
         ] {
             row.set(k, v);
         }
-        {
-            let _storage = ec.disable_authz();
-            row.create_or_update(&entity)?;
-        }
+        outcome.saved.push(row);
         if changed {
-            changed_count += 1;
+            outcome.changed += 1;
             let annotation = json!({"_id":format!("alert:{id}:{key}:{now}"),"time":jiff::Timestamp::from_millisecond(now).unwrap().to_string(),"source":"alert","text":format!("{}: {}",text(definition,"title",id),state.as_str().unwrap_or("Error")),"scope":"dashboard","dashboard":body["dashboardId"],"panel":body["panelId"],"rule_id":id,"series_id":key,"state":state,"labels":labels});
             if let Value::Map(document) = moqui_lib::json::from_json(&annotation) {
-                if let Err(error) = crate::search::current()
-                    .and_then(|search| search.index_entries("monitor_annotations", vec![document]))
-                {
-                    tracing::error!(rule=id,%error,"could not record alert annotation");
-                }
+                outcome.annotations.push(document);
             }
         }
         if matches!(
@@ -922,17 +1205,40 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             "alert series missing for {prune_after} evaluations were removed"
         );
     }
-    notify(ec, definition, &events, now)?;
-    rule_lock.set("lastEvaluated", stamp(now));
-    {
-        let _storage = ec.disable_authz();
-        rule_lock.update(&entity)?;
+    if !events.is_empty() {
+        let effective = effective_body(ec, id, body);
+        outcome.saved.extend(notify(ec, definition, &effective, &events, now)?);
     }
-    Ok((changed_count, notices))
+    Ok(outcome)
 }
 
-/// Scheduled pass: definitions are loaded as system metadata, then each query runs in a fresh
-/// context authenticated as its owner. Independent rules keep running after a failure.
+/// One rule in its own context, authenticated as the rule's owner, with the evaluator's time as its effective time
+/// so relative query ranges and state timers agree.
+fn evaluate_rule(
+    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    definition: &Json,
+    now: i64,
+) -> Result<(usize, Vec<Json>), Error> {
+    let entity = factory.entity().ok_or_else(|| fail("entity facade is unavailable"))?;
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let owner = text(definition, "ownerId", "");
+    let account = {
+        let _authz = context.disable_authz();
+        entity
+            .find("moqui.security.UserAccount")?
+            .eq("userId", Value::string(owner))
+            .one()?
+            .ok_or_else(|| fail("alert owner account no longer exists"))?
+    };
+    crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or("")).map_err(fail)?;
+    context.set_effective_time(Some(now));
+    evaluate_owned(&context, definition, now)
+}
+
+/// Scheduled pass: definitions are loaded as system metadata, then each rule runs in a fresh context authenticated
+/// as its owner. Rules run on a few workers at once (`report` setting `alert-workers`, 4 by default); independent
+/// rules keep running after one fails.
 pub fn evaluate_rules(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -962,11 +1268,12 @@ pub fn evaluate_rules(
             find = find.eq("definitionId", Value::string(id));
         }
         let rows = find.list()?;
-        let mut definitions = Vec::new();
+        let mut definitions = std::collections::VecDeque::new();
         let mut invalid = 0;
         for row in rows.iter() {
             match super::definitions::row_json(row) {
-                Ok(definition) => definitions.push(definition),
+                Ok(definition) if definition["body"]["paused"] == true => {}
+                Ok(definition) => definitions.push_back(definition),
                 Err(error) => {
                     invalid += 1;
                     tracing::error!(rule=?row.get("definitionId"),%error,"alert rule could not be read, continuing");
@@ -975,43 +1282,46 @@ pub fn evaluate_rules(
         }
         (definitions, invalid)
     };
-    let mut evaluated = 0;
-    let mut failed = invalid;
-    let mut notices = Vec::new();
-    for definition in definitions {
-        if definition["body"]["paused"] == true {
-            continue;
-        }
-        let result = (|| -> Result<(usize, Vec<Json>), Error> {
-            let owner = text(&definition, "ownerId", "");
-            let account = {
-                let _authz = ec.disable_authz();
-                entity
-                    .find("moqui.security.UserAccount")?
-                    .eq("userId", Value::string(owner))
-                    .one()?
-                    .ok_or_else(|| fail("alert owner account no longer exists"))?
-            };
-            let context = ec.factory().new_context();
-            let _entered = context.enter();
-            crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))
-                .map_err(fail)?;
-            let tx = entity.transactions_for("moqui.report.AlertInstance")?;
-            tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
-                evaluate_owned(&context, &definition, now)
-            })
-        })();
+    let factory = ec.factory().clone();
+    let workers = factory
+        .conf_number::<usize>("report", "alert-workers", 4)
+        .clamp(1, 32)
+        .min(definitions.len().max(1));
+    let queue = std::sync::Mutex::new(definitions);
+    let totals = std::sync::Mutex::new((0usize, invalid, Vec::new()));
+    let work = || loop {
+        let Some(definition) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else {
+            break;
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            evaluate_rule(&factory, &definition, now)
+        }))
+        .unwrap_or_else(|_| Err(fail("alert rule evaluation panicked")));
+        let mut totals = totals.lock().unwrap_or_else(|e| e.into_inner());
         match result {
             Ok((_, rule_notices)) => {
-                evaluated += 1;
-                notices.extend(rule_notices);
+                totals.0 += 1;
+                totals.2.extend(rule_notices);
             }
             Err(error) => {
-                failed += 1;
+                totals.1 += 1;
                 tracing::error!(rule=text(&definition,"id",""),%error,"alert rule failed, continuing");
             }
         }
-    }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..workers {
+            if let Err(error) = std::thread::Builder::new()
+                .name("alert-evaluator".into())
+                .spawn_scoped(scope, work)
+            {
+                tracing::error!(%error,"alert evaluator worker could not start; the others take its rules");
+            }
+        }
+        // This thread works the queue too, so the pass finishes even when no worker starts.
+        work();
+    });
+    let (evaluated, failed, notices) = totals.into_inner().unwrap_or_else(|e| e.into_inner());
     Ok(output(json!({"evaluated":evaluated,"failed":failed,"notices":notices})))
 }
 
@@ -1104,5 +1414,67 @@ mod tests {
             &json!({"contactPoints":[{"type":"webhook","url":"https://user:password@example.test/alerts"}]})
         )
         .is_err());
+    }
+    #[test]
+    fn shared_items_validate_like_rule_items() {
+        for (kind, good) in [
+            ("contactPoint", json!({"type":"notification","topic":"ReportAlert"})),
+            (
+                "contactPoint",
+                json!({"type":"webhook","urlProperty":"MONITOR_WEBHOOK_OPS_URL"}),
+            ),
+            (
+                "silence",
+                json!({"from":"2026-10-26T00:00:00Z","thru":"2026-10-27T00:00:00Z","matchers":{"team":"ops"}}),
+            ),
+            ("silence", json!({"from":"now","thru":"now+2h"})),
+            ("muteTiming", json!({"weekdays":[5,6],"start":"18:00","end":"24:00"})),
+            ("muteTiming", json!({"start":"22:00","end":"06:00"})),
+        ] {
+            assert!(validate_shared(kind, &good).is_ok(), "{kind} {good}");
+        }
+        for (kind, bad) in [
+            ("contactPoint", json!({"type":"pager"})),
+            (
+                "contactPoint",
+                json!({"type":"webhook","url":"https://example.test/a","headers":{"Authorization":"x"}}),
+            ),
+            ("contactPoint", json!("ops")),
+            (
+                "silence",
+                json!({"from":"2026-10-27T00:00:00Z","thru":"2026-10-26T00:00:00Z"}),
+            ),
+            ("silence", json!({"from":"2026-10-26T00:00:00Z"})),
+            ("silence", json!({"from":"now","thru":"now+1h","matchers":["team"]})),
+            ("muteTiming", json!({"weekdays":[]})),
+            ("muteTiming", json!({"weekdays":[7]})),
+            ("muteTiming", json!({"start":"24:00"})),
+            ("muteTiming", json!({"end":"24:01"})),
+            ("muteTiming", json!({"start":"9:00"})),
+        ] {
+            assert!(validate_shared(kind, &bad).is_err(), "{kind} {bad}");
+        }
+    }
+    #[test]
+    fn shared_contact_points_hide_credentials_from_other_viewers() {
+        let mut body = json!({"type":"webhook","url":"https://example.test/a","headers":{"Authorization":"Bearer fixture"},"headerProperties":{"Authorization":"MONITOR_WEBHOOK_A"}});
+        redact_definition_credentials(&json!("contactPoint"), &mut body);
+        assert!(!body.to_string().contains("Bearer fixture"));
+        assert_eq!(body["credentialHeadersOmitted"], true);
+        assert_eq!(body["headerProperties"]["Authorization"], "MONITOR_WEBHOOK_A");
+    }
+    #[test]
+    fn shared_items_join_the_rule_body_for_muting() {
+        let monday_noon = "2026-10-26T12:00:00Z"
+            .parse::<jiff::Timestamp>()
+            .unwrap()
+            .as_millisecond();
+        let labels = json!({"team":"ops"});
+        let mut body = json!({});
+        assert!(!muted(&body, &labels, monday_noon));
+        body["silences"] =
+            json!([{"from":"2026-10-26T11:00:00Z","thru":"2026-10-26T13:00:00Z","matchers":{"team":"ops"}}]);
+        assert!(muted(&body, &labels, monday_noon));
+        assert!(!muted(&body, &json!({"team":"sales"}), monday_noon));
     }
 }

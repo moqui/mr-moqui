@@ -297,6 +297,131 @@ fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations(
     verify_series_pruning_and_cap(gate.server.factory(), at);
 }
 
+fn save_typed(factory: &Arc<ExecutionContextFactory>, id: &str, kind: &str, body: &Json) -> Result<Json, String> {
+    with_owner(factory, |ec| {
+        let entity = factory.entity().unwrap();
+        let tx = entity.transactions_for("moqui.report.Definition").unwrap();
+        tx.run(TransactionAttribute::UseOrBegin, None, || {
+            report::save_definition(
+                ec,
+                &service(),
+                &parameters(json!({"definition":{"id":id,"type":kind,"title":id,"body":body}})),
+            )
+        })
+        .map(result)
+        .map_err(|error| error.to_string())
+    })
+}
+
+/// Shared contact points, silences and mute timings are their own definitions that rules name by id; a pass over
+/// every rule runs them on several workers; and a relative query range is read at the evaluator's effective time.
+#[test]
+fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
+    moqui_host::logging::install();
+    let fixture = r#"<entity-facade-xml type="seed">
+      <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
+      <moqui.security.UserGroupMember userGroupId="ADMIN" userId="EX_JOHN_DOE" fromDate="0"/>
+      <moqui.security.user.NotificationTopic topic="M6AlertFixture" description="Alert acceptance" isPrivate="Y" receiveNotifications="Y" persistOnSend="Y"/>
+      <moqui.security.user.NotificationTopicUser topic="M6AlertFixture" userId="EX_JOHN_DOE" receiveNotifications="Y"/>
+    </entity-facade-xml>"#;
+    let gate = common::start_with_data("report-alerts-shared", fixture);
+    let factory = gate.server.factory();
+    let at = "2026-10-26T12:00:00Z"
+        .parse::<jiff::Timestamp>()
+        .unwrap()
+        .as_millisecond();
+    points(factory, at, 12.0);
+    save_typed(
+        factory,
+        "ops-header",
+        "contactPoint",
+        &json!({"type":"notification","topic":TOPIC,"userId":"EX_JOHN_DOE","groupBy":["team"],"groupWaitSeconds":0}),
+    )
+    .unwrap();
+    save_typed(
+        factory,
+        "ops-silence",
+        "silence",
+        &json!({"from":(at-1000).to_string(),"thru":(at+86_400_000).to_string(),"matchers":{"team":"operations"},"comment":"maintenance"}),
+    )
+    .unwrap();
+    save_typed(
+        factory,
+        "always-mute",
+        "muteTiming",
+        &json!({"name":"always","weekdays":[0,1,2,3,4,5,6],"start":"00:00","end":"24:00"}),
+    )
+    .unwrap();
+    for (id, kind, body) in [
+        (
+            "bad-contact",
+            "contactPoint",
+            json!({"type":"webhook","url":"https://example.test/hook","headers":{"Authorization":"Bearer literal"}}),
+        ),
+        (
+            "bad-silence",
+            "silence",
+            json!({"from":"2026-10-26T12:00:00Z","thru":"2026-10-26T11:00:00Z"}),
+        ),
+        (
+            "bad-mute",
+            "muteTiming",
+            json!({"weekdays":[7],"start":"00:00","end":"24:00"}),
+        ),
+        ("bad-mute-time", "muteTiming", json!({"start":"25:00"})),
+    ] {
+        assert!(save_typed(factory, id, kind, &body).is_err(), "{id} must be refused");
+    }
+    // Relative times: the wall clock is past this window, so only the evaluator's effective time finds the points.
+    let mut base = rule(at);
+    base["query"]["from"] = json!("now-1h");
+    base["query"]["thru"] = json!("now+1h");
+    base["pendingSeconds"] = json!(0);
+    base["contactPoints"] = json!([]);
+    base["contactPointRefs"] = json!(["ops-header"]);
+    let mut wrong = base.clone();
+    wrong["contactPointRefs"] = json!(["ops-silence"]);
+    assert!(save_typed(factory, "wrong-ref-alert", "alert", &wrong).is_err());
+    wrong["contactPointRefs"] = json!(["no-such-contact"]);
+    assert!(save_typed(factory, "missing-ref-alert", "alert", &wrong).is_err());
+    save(factory, "shared-contact-alert", &base);
+    let mut silenced = base.clone();
+    silenced["silenceRefs"] = json!(["ops-silence"]);
+    save(factory, "shared-silence-alert", &silenced);
+    let mut muted = base.clone();
+    muted["muteTimingRefs"] = json!(["always-mute"]);
+    save(factory, "shared-mute-alert", &muted);
+    let uses = with_owner(factory, |ec| {
+        result(report::find_definition_uses(ec, &service(), &parameters(json!({"definitionId":"ops-header"}))).unwrap())
+    });
+    assert_eq!(uses["usedIn"].as_array().unwrap().len(), 3, "{uses}");
+
+    let output = with_owner(factory, |ec| {
+        ec.set_effective_time(Some(at));
+        result(report::evaluate_rules(ec, &service(), &parameters(json!({}))).unwrap())
+    });
+    assert_eq!(output["failed"], 0, "{output}");
+    assert_eq!(output["evaluated"], 3, "{output}");
+    for id in ["shared-contact-alert", "shared-silence-alert", "shared-mute-alert"] {
+        assert_eq!(states(factory, id), ["Firing", "Firing"], "{id}");
+    }
+    assert_eq!(notification_count(factory, "shared-contact-alert"), 1);
+    assert_eq!(notification_count(factory, "shared-silence-alert"), 0);
+    assert_eq!(notification_count(factory, "shared-mute-alert"), 0);
+    let lock = rows(factory, "moqui.report.AlertRuleLock", Some("shared-contact-alert"));
+    assert!(
+        lock[0]["claimToken"].is_null() && lock[0]["claimedUntil"].is_null(),
+        "a finished evaluation gives its claim back: {lock:?}"
+    );
+    // Within the interval the next pass skips every rule without claiming it.
+    let again = with_owner(factory, |ec| {
+        ec.set_effective_time(Some(at + 30_000));
+        result(report::evaluate_rules(ec, &service(), &parameters(json!({}))).unwrap())
+    });
+    assert_eq!(again["failed"], 0, "{again}");
+    assert_eq!(notification_count(factory, "shared-contact-alert"), 1);
+}
+
 fn verify_rule_validation(factory: &Arc<ExecutionContextFactory>, body: &Json) {
     for condition in [
         json!({"type":"abvoe","threshold":10}),
@@ -339,7 +464,7 @@ fn verify_histogram_alert_with_a_current_bucket(factory: &Arc<ExecutionContextFa
         2
     );
     for (rule_id, threshold, state) in [("histogram-firing", 10, "Firing"), ("histogram-normal", 100, "Normal")] {
-        // Absolute times: the rule runs in a fresh owner context, which has no effective time.
+        // Absolute times, so the direct execute_query check below reads the same window as the rule.
         let rule = json!({"query":{"datasetId":"otel_metrics","from":(clock-3_600_000).to_string(),"thru":clock.to_string(),"queryString":"name:m6-histogram","aggregations":[{"id":"time","type":"date_histogram","role":"x-axis","params":{"field":"bucket_start","fixed_interval":"5m"}},{"id":"value","type":"sum","role":"metric","params":{"field":"sum"}}]},"field":"value","reduce":"max","condition":{"type":"above","threshold":threshold},"intervalSeconds":60,"contactPoints":[]});
         save(factory, rule_id, &rule);
         with_owner(factory, |ec| {
@@ -768,7 +893,12 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
         assert_eq!(evaluate(factory, id, at)["failed"], 0);
         assert_eq!(states(factory, id), ["Firing", "Firing"]);
         smtp.assert_healthy();
-        assert_eq!(observed.smtp_attempts.load(Ordering::Acquire), 1, "SMTP commands: {:?}", observed.smtp_commands.lock().unwrap());
+        assert_eq!(
+            observed.smtp_attempts.load(Ordering::Acquire),
+            1,
+            "SMTP commands: {:?}",
+            observed.smtp_commands.lock().unwrap()
+        );
         assert!(observed.smtp_messages.lock().unwrap().is_empty());
         assert!(
             !contact_sent(factory, id, "smtp"),

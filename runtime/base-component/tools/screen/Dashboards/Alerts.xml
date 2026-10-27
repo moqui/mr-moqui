@@ -2,9 +2,14 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6">
     <transition name="rule"><default-response url="//apps/dashboards/AlertRule"/></transition>
+    <transition name="shared"><default-response url="//apps/dashboards/AlertShared"/></transition>
     <transition name="evaluate" method="post" authz-action="update"><actions><service-call name="org.moqui.report.ReportServices.evaluate#Alerts" in-map="{definitionId:definitionId}"/></actions><default-response url="."/></transition>
     <actions><script><![CDATA[
         rules=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'alert'}).call().definitions || []
+        const shared=type=>ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:type}).call().definitions || []
+        sharedContacts=shared('contactPoint').map(item=>Object.assign({},item,{detail:[(item.body || {}).type,(item.body || {}).topic || (item.body || {}).toAddresses || (item.body || {}).urlProperty || (item.body || {}).url].filter(Boolean).join(': ')}))
+        sharedSilences=shared('silence').map(item=>Object.assign({},item,{detail:((item.body || {}).from || '')+' to '+((item.body || {}).thru || '')}))
+        sharedMutes=shared('muteTiming').map(item=>Object.assign({},item,{detail:((item.body || {}).start || '00:00')+' to '+((item.body || {}).end || '24:00')}))
         alertInstances=rules.length?ec.entity.find('moqui.report.AlertInstance').condition('definitionId','in',rules.map(rule=>rule.id)).orderBy('-lastEvaluated').list():[]
     ]]></script></actions>
     <widgets>
@@ -15,6 +20,30 @@
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
             <field name="paused"><default-field><display text="${body.paused ? 'Paused' : 'Active'}"/></default-field></field>
             <field name="evaluate"><default-field><link url="evaluate" text="Evaluate now" link-type="hidden-form-link" confirmation="Evaluate this alert rule now? A state change notifies its contact points."><parameter name="definitionId" from="id"/></link></default-field></field>
+        </form-list>
+        <label text="Shared contact points" type="h5"/>
+        <link url="shared" text="New contact point" parameter-map="{sharedType:'contactPoint'}"/>
+        <form-list name="SharedContactPoints" list="sharedContacts" skip-form="true" paginate="false">
+            <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="id"><default-field title="ID"><display/></default-field></field>
+            <field name="detail"><default-field title="Delivery"><display/></default-field></field>
+            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+        </form-list>
+        <label text="Shared silences" type="h5"/>
+        <link url="shared" text="New silence" parameter-map="{sharedType:'silence'}"/>
+        <form-list name="SharedSilences" list="sharedSilences" skip-form="true" paginate="false">
+            <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="id"><default-field title="ID"><display/></default-field></field>
+            <field name="detail"><default-field title="Window"><display/></default-field></field>
+            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+        </form-list>
+        <label text="Shared mute timings" type="h5"/>
+        <link url="shared" text="New mute timing" parameter-map="{sharedType:'muteTiming'}"/>
+        <form-list name="SharedMuteTimings" list="sharedMutes" skip-form="true" paginate="false">
+            <field name="title"><default-field><link url="shared" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="id"><default-field title="ID"><display/></default-field></field>
+            <field name="detail"><default-field title="Daily window"><display/></default-field></field>
+            <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
         </form-list>
         <form-list name="AlertInstances" list="alertInstances" skip-form="true">
             <field name="definitionId"><default-field title="Rule"><link url="rule" text="${definitionId}" link-type="anchor"><parameter name="definitionId"/></link></default-field></field>
