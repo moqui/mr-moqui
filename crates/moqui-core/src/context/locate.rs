@@ -127,9 +127,15 @@ pub(super) fn file_path(location: &str) -> Result<PathBuf, Error> {
         Some(rest) => {
             let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
             if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-                return Err(Error::new(format!("file resource has a non-local authority: {location}")));
+                return Err(Error::new(format!(
+                    "file resource has a non-local authority: {location}"
+                )));
             }
-            if path.is_empty() { "/".to_string() } else { format!("/{path}") }
+            if path.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{path}")
+            }
         }
         None => rest.to_string(),
     };

@@ -1248,7 +1248,10 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].location(), location);
         assert_eq!(resources.get(&location).unwrap().read_text().unwrap(), "local");
-        assert_eq!(resources.get(&location).unwrap().file_path().unwrap(), std::path::Path::new(&format!("{root}/nested/value.txt")));
+        assert_eq!(
+            resources.get(&location).unwrap().file_path().unwrap(),
+            std::path::Path::new(&format!("{root}/nested/value.txt"))
+        );
         assert!(resources.get("file://remote/tmp/a").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
