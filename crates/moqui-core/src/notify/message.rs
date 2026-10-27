@@ -727,17 +727,28 @@ fn send_emails(
             }
         };
         let email_message_id = out.get("emailMessageId").map(to_plain_string).unwrap_or_default();
+        let delivered = out.get("messageId").is_some_and(|id| !to_plain_string(id).is_empty());
         if email_message_id.is_empty() {
             continue;
         }
         if let Some(id) = notification_message_id.filter(|id| !id.is_empty()) {
-            if let Err(err) = store_email_message_id(facade, id, user_id, &email_message_id) {
+            if let Err(err) = store_email_message_id(facade, id, user_id, &email_message_id, delivered) {
                 tracing::warn!(user_id = %user_id, error = %err, "notification email id was not stored");
             }
         }
         sent_ids.insert(user_id.clone(), email_message_id);
     }
     log_new_email_errors(user_errors(&saved));
+    ExecutionContext::with_current(|ctx| {
+        for note in ctx
+            .message()
+            .messages()
+            .iter()
+            .filter(|note| !saved.messages.contains(note))
+        {
+            tracing::info!(message = %note, "notification email delivery note");
+        }
+    });
     restore_messages(saved);
     sent_ids
 }
@@ -749,6 +760,7 @@ fn store_email_message_id(
     notification_message_id: &str,
     user_id: &str,
     email_message_id: &str,
+    delivered: bool,
 ) -> Result<(), Error> {
     let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
     let existing = facade
@@ -760,7 +772,9 @@ fn store_email_message_id(
     row.set("notificationMessageId", Value::string(notification_message_id));
     row.set("userId", Value::string(user_id));
     row.set("emailMessageId", Value::string(email_message_id));
-    row.set("sentDate", now_value());
+    if delivered {
+        row.set("sentDate", now_value());
+    }
     if existing.is_some() {
         row.update(facade)?;
     } else {

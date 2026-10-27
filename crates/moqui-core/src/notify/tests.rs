@@ -574,6 +574,33 @@ fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
         .expect("NotificationMessageUser");
     assert_eq!(text(&row, "emailMessageId"), email_message_id);
     assert!(row.get("sentDate").is_some_and(|value| !value.is_null()));
+
+    // A draft id survives a skipped SMTP send, but is not evidence of delivery.
+    server.set("smtpHost", Value::string(""));
+    server.update(&facade).unwrap();
+    let mut skipped = NotificationMessage::new();
+    skipped
+        .topic(&topic)
+        .user_id(&user)
+        .title("SMTP disabled")
+        .persist(true)
+        .send()
+        .unwrap();
+    assert!(!skipped.email_message_id_by_user_id().get(&user).unwrap().is_empty());
+    let row = facade
+        .find(MESSAGE_USER)
+        .unwrap()
+        .eq(
+            "notificationMessageId",
+            Value::string(skipped.notification_message_id().unwrap()),
+        )
+        .eq("userId", Value::string(&user))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert!(!text(&row, "emailMessageId").is_empty());
+    assert!(row.get("sentDate").is_none_or(Value::is_null));
+    assert_eq!(sink.sent().len(), 1);
 }
 
 /// The app fields: a reason by its short name or id, the record, the actor and the app are stored on the
