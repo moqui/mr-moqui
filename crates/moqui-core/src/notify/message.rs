@@ -719,7 +719,15 @@ fn send_emails(
         params.insert("bodyParameters".to_string(), Value::Map(wrapped.clone()));
         params.insert("toUserId".to_string(), Value::string(user_id));
         params.insert("createEmailMessage".to_string(), Value::Bool(save));
-        let out = match crate::service::sync(EMAIL_SERVICE, &params) {
+        // A caller's error, or an earlier recipient's, must not suppress another independent send.
+        let out = match crate::service::call::sync_with(
+            EMAIL_SERVICE,
+            &params,
+            &crate::service::call::CallOptions {
+                ignore_previous_error: true,
+                ..Default::default()
+            },
+        ) {
             Ok(out) => out,
             Err(err) => {
                 tracing::warn!(user_id = %user_id, error = %err, "notification email was not sent");

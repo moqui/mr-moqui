@@ -538,6 +538,7 @@ fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
     account(&facade, &user, Some("bob@example.com"), None);
     let title = unique("Disk full");
     let sink = crate::service::SinkGuard::install();
+    ctx.message().add_error("caller-error");
     let mut note = NotificationMessage::new();
     note.topic(&topic)
         .user_id(&user)
@@ -546,7 +547,11 @@ fn email_notification_sends_the_screen_body_and_stores_the_email_message_id() {
         .persist(true)
         .send()
         .unwrap();
-    assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
+    assert_eq!(
+        ctx.message().errors(),
+        ["caller-error"],
+        "the caller's errors survive independent mail delivery"
+    );
     let sent = sink.sent();
     assert_eq!(sent.len(), 1);
     let mail = &sent[0];
