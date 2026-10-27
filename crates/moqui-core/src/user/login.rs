@@ -452,6 +452,26 @@ pub fn login_user_key(key: &str) -> Result<(), Error> {
     noting_invalid(check_login_key(key))
 }
 
+/// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
+/// Unknown, expired, revoked keys and disabled or terminated accounts have no user.
+///
+/// # Errors
+/// Returns a storage error when the credential cannot be checked.
+pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(row) = facade.find(USER_LOGIN_KEY)?.eq("loginKey", Value::string(hashed)).one()? else {
+        return Ok(None);
+    };
+    let now = now_millis();
+    if field_millis(&row, "thruDate").is_some_and(|thru| now > thru) {
+        return Ok(None);
+    }
+    let user_id = text_field(&row, "userId");
+    let Some(account) = find_user_id(&facade, &user_id)? else { return Ok(None) };
+    Ok((!user_id.is_empty() && !still_disabled(&account, now) && !terminated(&account, now)).then_some(user_id))
+}
+
 fn check_login_key(key: &str) -> Result<(), Error> {
     if key.is_empty() {
         return Err(Error::new(INVALID_LOGIN));

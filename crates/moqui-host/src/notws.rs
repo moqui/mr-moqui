@@ -58,6 +58,29 @@ fn sockets() -> &'static Mutex<HashMap<u64, Arc<Slot>>> {
 const SOCKET_QUEUE: usize = 256;
 /// A ping goes out this often, so a dead peer is noticed and proxies keep the connection.
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[derive(Clone)]
+enum Credential {
+    Session(String),
+    LoginKeyHash(String),
+}
+
+impl Credential {
+    fn user(&self, factory: Arc<ExecutionContextFactory>) -> Result<Option<String>, CoreError> {
+        match self {
+            Self::Session(id) => session_user(factory, id.clone()),
+            Self::LoginKeyHash(hash) => {
+                let hash = hash.clone();
+                let owner = Arc::clone(&factory);
+                let rx = factory.request_pool().try_submit(owner, move || {
+                    moqui_core::user::login_key_user_by_hash(&hash)
+                })?;
+                rx.recv().map_err(|_| CoreError::new("request worker stopped"))?
+            }
+        }
+    }
+}
 /// Set to `/notws` while this server serves the socket; the html and qvt clients (`Header.html.fancy`, `qapps.xml`)
 /// connect when it is.
 pub(crate) const ENDPOINT_PROPERTY: &str = "webapp_notification_endpoint";
@@ -110,7 +133,7 @@ pub(crate) async fn upgrade(
     }
     // A browser has its session cookie; the terminal client (`moqui tui --server`) has its login key, and no session.
     let factory = Arc::clone(&state.factory);
-    let (session_id, loaded) = match session_cookie(&headers) {
+    let (session_id, credential, loaded) = match session_cookie(&headers) {
         Some(cookie) => {
             let session_id = match verify_session_cookie(&cookie) {
                 Ok(Some(id)) if !id.is_empty() => id,
@@ -119,6 +142,7 @@ pub(crate) async fn upgrade(
             let lookup_id = session_id.clone();
             (
                 session_id,
+                Credential::Session(lookup_id.clone()),
                 tokio::task::spawn_blocking(move || session_user(factory, lookup_id)).await,
             )
         }
@@ -131,8 +155,13 @@ pub(crate) async fn upgrade(
             else {
                 return plain(401, "unauthorized");
             };
+            let hashed = match moqui_core::user::hash_login_key(&key) {
+                Ok(hash) => hash,
+                Err(_) => return plain(401, "unauthorized"),
+            };
             (
                 "login-key".to_string(),
+                Credential::LoginKeyHash(hashed),
                 tokio::task::spawn_blocking(move || key_user(factory, key)).await,
             )
         }
@@ -146,7 +175,7 @@ pub(crate) async fn upgrade(
     };
     let shutdown = state.shutdown.clone();
     let factory = Arc::clone(&state.factory);
-    ws.on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, shutdown))
+    ws.on_upgrade(move |socket| run_socket(socket, factory, session_id, user_id, credential, shutdown))
 }
 
 /// The origin a request was made to (scheme, host and port), as the screens' CORS check works it out
@@ -261,6 +290,7 @@ async fn run_socket(
     factory: Arc<ExecutionContextFactory>,
     session_id: String,
     user_id: String,
+    credential: Credential,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(SOCKET_QUEUE);
@@ -283,6 +313,7 @@ async fn run_socket(
     let mut last_heard = tokio::time::Instant::now();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
+    let mut check = tokio::time::interval(SESSION_CHECK);
     loop {
         tokio::select! {
             biased;
@@ -301,8 +332,22 @@ async fn run_socket(
                     .await;
                 break;
             }
+            _ = check.tick() => {
+                let lookup = Arc::clone(&factory);
+                let credential = credential.clone();
+                let current = tokio::task::spawn_blocking(move || credential.user(lookup)).await;
+                if !matches!(current, Ok(Ok(Some(ref user))) if user == &slot.user_id) {
+                    let _ = socket.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                        code: 1008,
+                        reason: "authentication is no longer valid".into(),
+                    }))).await;
+                    break;
+                }
+            }
             incoming = socket.recv() => {
-                last_heard = tokio::time::Instant::now();
+                if matches!(incoming, Some(Ok(Message::Text(_) | Message::Binary(_)))) {
+                    last_heard = tokio::time::Instant::now();
+                }
                 if !handle_incoming(&mut socket, &factory, &slot, incoming).await {
                     break;
                 }

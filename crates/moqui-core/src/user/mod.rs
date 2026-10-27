@@ -44,7 +44,7 @@ pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use login::{
     apply_header_keys, change_password, get_login_key, header_login_session, internal_login_user, login_anonymous,
     login_app_password, login_external_user, login_user, login_user_key, logout, logout_anonymous_only,
-    looks_like_app_password, new_app_password, note_header_login, now_value, with_client_ip,
+    looks_like_app_password, login_key_user_by_hash, new_app_password, note_header_login, now_value, with_client_ip,
 };
 pub(crate) use login::{now_effective_millis, now_effective_value, now_millis, value_millis};
 pub use password::{hash_login_key, hash_password};

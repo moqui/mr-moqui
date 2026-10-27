@@ -332,6 +332,33 @@ fn a_login_once_the_account_is_known_leaves_one_history_row_a_minute() {
 }
 
 #[test]
+fn a_socket_key_check_is_read_only_and_observes_expiry_revocation_and_user_changes() {
+    let (ctx, facade) = open_ctx();
+    let _entered = ctx.enter();
+    create_user(&facade, "socket", "Secret1!", |_| {});
+    internal_login_user("socket").unwrap();
+    let user = super::session::current_user_id().unwrap().unwrap();
+    let key = get_login_key(None).unwrap();
+    let hash = password::hash_login_key(&key).unwrap();
+    logout().unwrap();
+    for _ in 0..3 {
+        assert_eq!(login_key_user_by_hash(&hash).unwrap(), Some(user.clone()));
+        assert!(super::session::current_user_id().unwrap().is_none());
+    }
+    assert!(facade.find(USER_LOGIN_HISTORY).unwrap().list().unwrap().is_empty());
+    let mut row = facade.find(USER_LOGIN_KEY).unwrap().eq("loginKey", Value::string(&hash)).one().unwrap().unwrap();
+    row.set("thruDate", stamp(now_millis() - 1000));
+    row.update(&facade).unwrap();
+    assert!(login_key_user_by_hash(&hash).unwrap().is_none());
+    row.set("thruDate", Value::Null);
+    row.update(&facade).unwrap();
+    assert_eq!(login_key_user_by_hash(&hash).unwrap(), Some(user));
+    row.delete(&facade).unwrap();
+    assert!(login_key_user_by_hash(&hash).unwrap().is_none());
+    session::reset_session();
+}
+
+#[test]
 fn key_app_password_and_external_logins_leave_history_rows() {
     let (ctx, facade) = open_ctx();
     let _guard = ctx.enter();
