@@ -117,8 +117,12 @@ along with this software (see the LICENSE.md file). If not, see
                 kind: row.fontKindEnumId === 'SFK_MONO' ? 'mono' : row.fontKindEnumId === 'SFK_SERIF' ? 'serif' : 'sans',
                 family: row.fontFamily || '', stylesheet: row.stylesheetLocation || '' })
         }
+        // The theme's default color scheme (a STRT_DEFAULT_COLOR_SCHEME resource): the effective scheme when the user has no own
+        // choice, so a corporate look is the theme's default (js/README.md, Appearance)
+        const defaultSchemeValue = sri.getThemeValues('STRT_DEFAULT_COLOR_SCHEME')[0]
+        const defaultSchemeId = (defaultSchemeValue && colorSchemes.some((scheme) => scheme.id === defaultSchemeValue)) ? String(defaultSchemeValue) : ''
         const appearanceLinks = []
-        const chosenScheme = colorSchemes.find((scheme) => scheme.id === appearanceValues.THEME_COLOR_SCHEME)
+        const chosenScheme = colorSchemes.find((scheme) => scheme.id === (appearanceValues.THEME_COLOR_SCHEME || defaultSchemeId))
         if (chosenScheme && chosenScheme.custom) appearanceLinks.push({ id: 'm-color-scheme',
             href: '/apps/colorSchemeCss?colorSchemeId=' + encodeURIComponent(chosenScheme.id) + '&v=' + chosenScheme.version })
         for (const [key, role] of [['THEME_FONT_BODY', 'body'], ['THEME_FONT_HEADING', 'heading'], ['THEME_FONT_MONO', 'mono']]) {
@@ -143,7 +147,7 @@ along with this software (see the LICENSE.md file). If not, see
             // Assist (js/WebrootAssist.js): the agents are built and on, and the user may use them (AgentUse); else the drawer makes no request
             assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
             userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
-            appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, links: appearanceLinks },
+            appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, defaultSchemeId: defaultSchemeId, links: appearanceLinks },
             preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
             avatarUrl: avatarList.length ? String(avatarList[0]) : '',
             qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },

@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Theme (System): the look of the current screen theme, for a corporate branding without code. The resources are the
+    ScreenThemeResource rows of the theme: the shell's logo (STRT_HEADER_LOGO, the top left corner), its title and footer items,
+    and the STRT_DEFAULT_COLOR_SCHEME, the color scheme a user gets without an own choice (the THEME_COLOR_SCHEME preference). The
+    color schemes are the theme's ScreenColorScheme rows, with a ScreenColorSchemeColor per mode (light, dark) and token (the
+    names of webroot/screen/webroot/css/WebrootVue.qvt.css without their prefix: primary, page-bg, panel-bg, header-bg, ...); the
+    colorSchemeCss transition of the webroot apps screen sends them as one style sheet (webroot/screen/webroot/js/README.md,
+    Appearance). The generic CRUD services keep the rows; a change shows on the next page load, and a user's own choice of a
+    scheme or accent color wins over the theme's default. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Theme" default-menu-index="15" menu-image="sym_o_palette" menu-image-type="icon">
+
+    <transition name="createThemeResource">
+        <service-call name="create#moqui.screen.ScreenThemeResource"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateThemeResource">
+        <service-call name="update#moqui.screen.ScreenThemeResource"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteThemeResource">
+        <service-call name="delete#moqui.screen.ScreenThemeResource"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="createColorScheme">
+        <service-call name="create#moqui.screen.ScreenColorScheme"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateColorScheme">
+        <service-call name="update#moqui.screen.ScreenColorScheme"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteColorScheme">
+        <service-call name="delete#moqui.screen.ScreenColorScheme"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="createSchemeColor">
+        <service-call name="create#moqui.screen.ScreenColorSchemeColor"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateSchemeColor">
+        <service-call name="update#moqui.screen.ScreenColorSchemeColor"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteSchemeColor">
+        <service-call name="delete#moqui.screen.ScreenColorSchemeColor"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            // The Quasar theme of the shell (STT_INTERNAL_QUASAR), found the way the shell finds it (sri/theme.rs): the user's,
+            // a group's, the type's enumCode, else DEFAULT_QUASAR. This screen's own theme is the internal one, so the branding
+            // (the resources, the color schemes and their colors) is kept on the Quasar theme the shell renders
+            const themeType = 'STT_INTERNAL_QUASAR'
+            let quasarThemeId = ''
+            if (ec.user.userId) {
+                const userTheme = ec.entity.find('moqui.security.UserScreenTheme').condition('userId', ec.user.userId)
+                        .condition('screenThemeTypeEnumId', themeType).disableAuthz().useCache(true).one()
+                if (userTheme) quasarThemeId = userTheme.screenThemeId || ''
+            }
+            if (!quasarThemeId) {
+                const now = new Date()
+                const memberRows = ec.entity.find('moqui.security.UserGroupMember').condition('userId', ec.user.userId)
+                        .disableAuthz().useCache(true).list()
+                const groups = []
+                for (let i = 0; i < memberRows.length; i++) {
+                    const member = memberRows.get(i)
+                    const from = member.fromDate ? new Date(member.fromDate) : null
+                    const thru = member.thruDate ? new Date(member.thruDate) : null
+                    if ((!from || from <= now) && (!thru || thru > now)) groups.push(member.userGroupId)
+                }
+                groups.sort().reverse()  // ALL_USERS comes after the named groups
+                groups.push('ALL_USERS')
+                if (groups.length) {
+                    const groupThemes = ec.entity.find('moqui.security.UserGroupScreenTheme')
+                            .condition('userGroupId', 'in', groups).condition('screenThemeTypeEnumId', themeType)
+                            .orderBy('-sequenceNum', 'userGroupId').disableAuthz().useCache(true).list()
+                    if (groupThemes.length) quasarThemeId = groupThemes.get(0).screenThemeId || ''
+                }
+            }
+            if (!quasarThemeId) {
+                const typeEnum = ec.entity.find('moqui.basic.Enumeration').condition('enumId', themeType)
+                        .disableAuthz().useCache(true).one()
+                if (typeEnum && typeEnum.enumCode) quasarThemeId = typeEnum.enumCode
+            }
+            if (!quasarThemeId) quasarThemeId = 'DEFAULT_QUASAR'
+            themeId = quasarThemeId
+        ]]></script>
+        <entity-find entity-name="moqui.screen.ScreenThemeResource" list="themeResourceList" use-clone="true">
+            <econdition field-name="screenThemeId" value="${themeId}"/>
+            <search-form-inputs default-order-by="sequenceNum"/>
+        </entity-find>
+        <entity-find entity-name="moqui.screen.ScreenColorScheme" list="colorSchemeList" use-clone="true">
+            <econdition field-name="screenThemeId" value="${themeId}"/>
+            <search-form-inputs default-order-by="sequenceNum"/>
+        </entity-find>
+        <script><![CDATA[schemeIds = []
+            for (let i = 0; i < colorSchemeList.length; i++) schemeIds.push(colorSchemeList.get(i).colorSchemeId)]]></script>
+        <entity-find entity-name="moqui.screen.ScreenColorSchemeColor" list="schemeColorList" use-clone="true">
+            <econdition field-name="colorSchemeId" operator="in" from="schemeIds"/>
+            <search-form-inputs default-order-by="colorSchemeId,colorModeEnumId,colorName"/>
+        </entity-find>
+        <entity-find entity-name="moqui.basic.Enumeration" list="resourceTypeOptions" order-by="sequenceNum,enumId">
+            <econdition field-name="enumTypeId" value="ScreenThemeResourceType"/>
+        </entity-find>
+        <entity-find entity-name="moqui.basic.Enumeration" list="colorModeOptions" order-by="sequenceNum,enumId">
+            <econdition field-name="enumTypeId" value="ScreenColorMode"/>
+        </entity-find>
+        <script><![CDATA[
+            schemeOptions = colorSchemeList.map((scheme) => ({key: scheme.colorSchemeId, text: scheme.description || scheme.colorSchemeId}))
+            // the tokens of the style sheet (webroot/screen/webroot/css/WebrootVue.qvt.css), without their prefix
+            tokenOptions = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'page-bg', 'panel-bg',
+                'header-bg', 'header-fg', 'drawer-bg', 'text', 'text-muted', 'link', 'negative-text', 'border', 'divider']
+                    .map((name) => ({key: name, text: name}))
+        ]]></script>
+    </actions>
+
+    <widgets>
+        <label type="h5" text="Theme" style="q-mt-none q-mb-sm"/>
+        <label type="p" text="The look of the theme ${themeId}: its resources (the logo, the title, the footer, the default color scheme), its color schemes and their colors. A change shows on the next page load; a user's own choice of a scheme or accent color (Appearance in the account menu) wins over the theme's default." style="text-caption m-muted q-mb-md"/>
+        <container-row>
+            <row-col lg="6" md="12">
+                <container-box><box-header title="Resources"/><box-body>
+                    <label type="p" text="One row per resource of the theme. The default color scheme (type Default Color Scheme, a scheme id such as SLATE) is the scheme every user gets without an own choice." style="text-caption m-muted q-mb-sm"/>
+                    <container-dialog id="CreateResourceDialog" button-text="New Resource">
+                        <form-single name="CreateThemeResource" transition="createThemeResource">
+                            <field name="screenThemeId"><default-field><hidden default-value="${themeId}"/></default-field></field>
+                            <field name="sequenceNum"><default-field title="Sequence"><text-line size="5"/></default-field></field>
+                            <field name="resourceTypeEnumId"><default-field title="Type">
+                                <drop-down><list-options list="resourceTypeOptions" key="${enumId}" text="${description}"/></drop-down></default-field></field>
+                            <field name="resourceValue"><default-field title="Value"><text-area rows="3" cols="60"/></default-field></field>
+                            <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <form-list name="UpdateThemeResources" list="themeResourceList" transition="updateThemeResource" multi="true" paginate="false">
+                        <field name="screenThemeId"><default-field><hidden/></default-field></field>
+                        <field name="sequenceNum"><default-field title="Seq."><display/></default-field></field>
+                        <field name="resourceTypeEnumId"><default-field title="Type"><display field="resourceTypeEnum.description"/></default-field></field>
+                        <field name="resourceValue"><default-field title="Value"><text-area rows="2" cols="40"/></default-field></field>
+                        <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
+                        <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="delete">
+                            <header-field title="Find"><submit/></header-field>
+                            <default-field>
+                                <link text="Delete" url="deleteThemeResource">
+                                    <parameter name="screenThemeId"/><parameter name="sequenceNum"/>
+                                </link>
+                            </default-field>
+                        </field>
+                        <field name="update">
+                            <default-field title="Update"><submit/></default-field>
+                        </field>
+                    </form-list>
+                </box-body></container-box>
+            </row-col>
+            <row-col lg="6" md="12">
+                <container-box><box-header title="Color schemes"/><box-body>
+                    <label type="p" text="The schemes a user may choose (Appearance in the account menu). A scheme without colors is the theme's own; its extra CSS comes after the colors." style="text-caption m-muted q-mb-sm"/>
+                    <container-dialog id="CreateSchemeDialog" button-text="New Scheme">
+                        <form-single name="CreateColorScheme" transition="createColorScheme">
+                            <field name="colorSchemeId"><default-field title="Id"><text-line size="20"/></default-field></field>
+                            <field name="screenThemeId"><default-field><hidden default-value="${themeId}"/></default-field></field>
+                            <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
+                            <field name="sequenceNum"><default-field title="Sequence"><text-line size="5"/></default-field></field>
+                            <field name="extraCss"><default-field title="Extra CSS"><text-area rows="3" cols="60"/></default-field></field>
+                            <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <form-list name="UpdateColorSchemes" list="colorSchemeList" transition="updateColorScheme" multi="true" paginate="false">
+                        <field name="screenThemeId"><default-field><hidden/></default-field></field>
+                        <field name="colorSchemeId"><default-field title="Id"><display/></default-field></field>
+                        <field name="description"><default-field title="Description"><text-line size="25"/></default-field></field>
+                        <field name="sequenceNum"><default-field title="Seq."><display/></default-field></field>
+                        <field name="extraCss"><default-field title="Extra CSS"><text-area rows="2" cols="30"/></default-field></field>
+                        <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
+                        <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="delete">
+                            <header-field title="Find"><submit/></header-field>
+                            <default-field>
+                                <link text="Delete" url="deleteColorScheme">
+                                    <parameter name="colorSchemeId"/>
+                                </link>
+                            </default-field>
+                        </field>
+                        <field name="update">
+                            <default-field title="Update"><submit/></default-field>
+                        </field>
+                    </form-list>
+                </box-body></container-box>
+                <container-box><box-header title="Scheme colors"/><box-body>
+                    <label type="p" text="The colors of the theme's schemes, one row per mode and token. The token names are the ones of the style sheet without their prefix (primary, page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, ...); a CSS color value (#hex, rgb(), hsl(), oklch(), ...)." style="text-caption m-muted q-mb-sm"/>
+                    <container-dialog id="CreateColorDialog" button-text="New Color">
+                        <form-single name="CreateSchemeColor" transition="createSchemeColor">
+                            <field name="colorSchemeId"><default-field title="Scheme">
+                                <drop-down><list-options list="schemeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="colorModeEnumId"><default-field title="Mode">
+                                <drop-down><list-options list="colorModeOptions" key="${enumId}" text="${description}"/></drop-down></default-field></field>
+                            <field name="colorName"><default-field title="Token">
+                                <drop-down><list-options list="tokenOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="colorValue"><default-field title="Value"><text-line size="30"/></default-field></field>
+                            <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <form-list name="UpdateSchemeColors" list="schemeColorList" transition="updateSchemeColor" multi="true" paginate="false">
+                        <field name="colorSchemeId"><default-field title="Scheme"><display/></default-field></field>
+                        <field name="colorModeEnumId"><default-field title="Mode"><display field="colorModeEnum.description"/></default-field></field>
+                        <field name="colorName"><default-field title="Token"><display/></default-field></field>
+                        <field name="colorValue"><default-field title="Value"><text-line size="25"/></default-field></field>
+                        <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
+                        <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="delete">
+                            <header-field title="Find"><submit/></header-field>
+                            <default-field>
+                                <link text="Delete" url="deleteSchemeColor">
+                                    <parameter name="colorSchemeId"/><parameter name="colorModeEnumId"/><parameter name="colorName"/>
+                                </link>
+                            </default-field>
+                        </field>
+                        <field name="update">
+                            <default-field title="Update"><submit/></default-field>
+                        </field>
+                    </form-list>
+                </box-body></container-box>
+            </row-col>
+        </container-row>
+    </widgets>
+</screen>

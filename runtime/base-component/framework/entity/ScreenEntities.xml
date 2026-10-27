@@ -153,6 +153,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Header Account Component" enumId="STRT_HEADER_ACCOUNT_COMP" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Footer Item" enumId="STRT_FOOTER_ITEM" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Quasar Config (JSON: brand, notify, loadingBar)" enumId="STRT_QUASAR_CONFIG" enumTypeId="ScreenThemeResourceType"/>
+            <!-- The theme's default color scheme (a ScreenColorScheme id of the theme): the scheme a user gets without an own
+                THEME_COLOR_SCHEME preference, so a corporate look is the theme's default (webroot/screen/webroot/js/README.md, Appearance). -->
+            <moqui.basic.Enumeration description="Default Color Scheme (a ScreenColorScheme id of the theme)" enumId="STRT_DEFAULT_COLOR_SCHEME" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="HTML Body CSS Class" enumId="STRT_BODY_CLASS" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Theme Preview Screenshot" enumId="STRT_SCREENSHOT" enumTypeId="ScreenThemeResourceType"/>
             <!-- The suite shell of /qapps (m-qapps-root): an app suite such as IronStone BOSS names its screens and its counts service

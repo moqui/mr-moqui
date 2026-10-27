@@ -125,7 +125,9 @@
         else delete appearance.values[key];
         const fontRole = { THEME_FONT_BODY: "body", THEME_FONT_HEADING: "heading", THEME_FONT_MONO: "mono" }[key];
         if (key === "THEME_COLOR_SCHEME") {
-            setStyleLink("m-color-scheme", moqui.colorSchemeHref(appearance.colorSchemes.find((scheme) => scheme.id === text)));
+            // no own choice: the theme's default scheme (the server linked it already), else the first scheme
+            const schemeId = text || appearance.defaultSchemeId || (appearance.colorSchemes[0] && appearance.colorSchemes[0].id) || "";
+            setStyleLink("m-color-scheme", moqui.colorSchemeHref(appearance.colorSchemes.find((scheme) => scheme.id === schemeId)));
         } else if (fontRole) {
             const font = appearance.fonts.find((option) => option.id === text);
             setToken(html, "--m-font-" + fontRole, font && font.family);
@@ -8231,7 +8233,7 @@
             appearance() { return appearanceConfig(); },
             schemes() { return this.appearance.colorSchemes; },
             fonts() { return this.appearance.fonts; },
-            schemeId() { this.version; return this.value("THEME_COLOR_SCHEME") || (this.schemes[0] && this.schemes[0].id) || ""; },
+            schemeId() { this.version; return this.value("THEME_COLOR_SCHEME") || this.appearance.defaultSchemeId || (this.schemes[0] && this.schemes[0].id) || ""; },
             darkMode() { this.version; return this.$q.dark.mode; },
             density() { this.version; const config = qvt.config || moqui.config || {}; return config.density === "compact" ? "compact" : "comfortable"; },
             accentInput() {

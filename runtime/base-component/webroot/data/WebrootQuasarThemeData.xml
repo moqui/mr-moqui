@@ -200,6 +200,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Quasar configuration (JSON merged over the shell's defaults): brand colors, notify, loadingBar. For example:
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="50" resourceTypeEnumId="STRT_QUASAR_CONFIG"
             resourceValue="{&quot;brand&quot;:{&quot;primary&quot;:&quot;#1565c0&quot;,&quot;secondary&quot;:&quot;#00897b&quot;}}"/> -->
+    <!-- The theme's default color scheme (a ScreenColorScheme id of the theme): the scheme a user gets without an own choice, so a
+        corporate look is the theme's default (the System app's Theme screen keeps it too). For example:
+    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="51" resourceTypeEnumId="STRT_DEFAULT_COLOR_SCHEME"
+            resourceValue="SLATE"/> -->
 
     <!-- Logo, icon, body class -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="100" resourceTypeEnumId="STRT_HEADER_LOGO"
