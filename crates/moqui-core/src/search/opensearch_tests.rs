@@ -392,6 +392,24 @@ fn reads_bucket_responses() {
 }
 
 #[test]
+fn percentiles_read_the_key_opensearch_renders() {
+    let aggs = Agg::map_from_value(&moqui_lib::json::from_json(
+        &json!({"p":{"percentiles":{"field":"sum","percents":[50,99.95,0.0001]}}}),
+    ))
+    .unwrap();
+    // OpenSearch keys each percent by Java's Double.toString of the requested value.
+    let response = json!({"p":{"doc_count":3,"50":{"values":{"50.0":5.0}},"99.95":{"values":{"99.95":9.5}},
+        "0.0001":{"values":{"1.0E-4":1.0}}}});
+    let out = moqui_lib::json::to_json(&Value::Map(read_aggs(&aggs, &response)));
+    assert_eq!(out["p"]["50"].as_f64(), Some(5.0));
+    assert_eq!(out["p"]["99.95"].as_f64(), Some(9.5));
+    assert_eq!(out["p"]["0.0001"].as_f64(), Some(1.0));
+    let keyed_off = json!({"p":{"99.95":{"values":[{"key":99.95,"value":9.5}]}}});
+    let out = moqui_lib::json::to_json(&Value::Map(read_aggs(&aggs, &keyed_off)));
+    assert_eq!(out["p"]["99.95"].as_f64(), Some(9.5));
+}
+
+#[test]
 fn a_sort_resolves_against_every_type_and_names_an_unmapped_type() {
     let sales = sales();
     let mut party = sales.clone();

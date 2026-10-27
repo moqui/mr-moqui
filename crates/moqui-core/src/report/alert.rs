@@ -265,7 +265,53 @@ fn approved_labels(ec: &ExecutionContext, body: &Json) -> Result<BTreeSet<String
     Ok(approved)
 }
 
+/// The most series one rule tracks. New series past it are left out with a notice.
+const MAX_SERIES: usize = 500;
+/// Consecutive evaluations a series may be missing from a successful result before it is removed.
+const PRUNE_AFTER_MISSING: i64 = 10;
+
+fn validate_condition(body: &Json) -> Result<(), Error> {
+    let condition = &body["condition"];
+    if !condition.is_object() && !condition.is_null() {
+        return Err(fail("alert condition must be an object"));
+    }
+    let number = |key: &str| -> Result<Option<f64>, Error> {
+        match &condition[key] {
+            Json::Null => Ok(None),
+            value => value
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .map(Some)
+                .ok_or_else(|| fail(format!("alert condition {key} must be a number"))),
+        }
+    };
+    match text(condition, "type", "above") {
+        "above" | "below" => {
+            number("threshold")?;
+            number("recoveryThreshold")?;
+        }
+        "within" | "outside" => {
+            let (Some(min), Some(max)) = (number("min")?, number("max")?) else {
+                return Err(fail("a within or outside alert condition needs min and max"));
+            };
+            if min > max {
+                return Err(fail("alert condition min must not exceed max"));
+            }
+        }
+        other => {
+            return Err(fail(format!(
+                "unknown alert condition {other}; use above, below, within or outside"
+            )))
+        }
+    }
+    if !body["pruneAfterMissing"].is_null() && body["pruneAfterMissing"].as_i64().is_none_or(|n| n < 1) {
+        return Err(fail("pruneAfterMissing must be a positive whole number"));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_rule(ec: &ExecutionContext, body: &Json) -> Result<(), Error> {
+    validate_condition(body)?;
     validate_contacts(body)?;
     approved_labels(ec, body)?;
     if body["labels"].as_object().is_some_and(|labels| labels.len() > 32) {
@@ -651,7 +697,7 @@ fn notify(ec: &ExecutionContext, definition: &Json, events: &[Json], now: i64) -
     Ok(())
 }
 
-fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<usize, Error> {
+fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<(usize, Vec<Json>), Error> {
     let entity = ec
         .factory()
         .entity()
@@ -669,7 +715,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             .ok_or_else(|| fail("alert rule has no evaluation lock; save it again"))?
     };
     if now.saturating_sub(millis(rule_lock.get("lastEvaluated"))) < interval {
-        return Ok(0);
+        return Ok((0, Vec::new()));
     }
     let result = super::execute_query(ec, &body["query"]);
     let mut query_failed = result.is_err();
@@ -704,6 +750,9 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
         }
     };
     let has_actual_data = !series.is_empty();
+    // A series counts as missing only when the query ran and returned a complete result.
+    let observed = !query_failed && complete;
+    let prune_after = body["pruneAfterMissing"].as_i64().unwrap_or(PRUNE_AFTER_MISSING).max(1);
     let rows = {
         let _storage = ec.disable_authz();
         entity
@@ -723,6 +772,26 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             )
         })
         .collect();
+    let mut notices = Vec::new();
+    let fresh = series
+        .keys()
+        .filter(|key| !existing.contains_key(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let room = MAX_SERIES.saturating_sub(existing.len());
+    if fresh.len() > room {
+        for key in &fresh[room..] {
+            series.remove(key);
+        }
+        let dropped = fresh.len() - room;
+        tracing::warn!(
+            rule = id,
+            dropped,
+            "alert rule exceeds {MAX_SERIES} series; new series past it are not evaluated"
+        );
+        notices.push(json!({"level":"warning","code":"series_limit","rule":id,"message":format!("Alert rule {id} has more than {MAX_SERIES} series; {dropped} new series are not evaluated")}));
+    }
+    let reported = series.keys().cloned().collect::<BTreeSet<_>>();
     if series.is_empty() && existing.is_empty() {
         series.insert("__rule".into(), (json!({"rule":id}), None));
     }
@@ -738,10 +807,35 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
     }
     let mut events = Vec::new();
     let mut changed_count = 0;
+    let mut pruned = 0;
     for (key, (labels, value)) in series {
         let previous = existing.get(&key);
         let mut instance = previous.map(state_from_row).unwrap_or_default();
         if now.saturating_sub(instance.last_evaluated) < interval {
+            continue;
+        }
+        // The rule placeholder is missing only once real series exist.
+        let missing = observed && !reported.contains(&key) && (key != "__rule" || has_actual_data);
+        let missing_count = if missing {
+            previous
+                .and_then(|row| row.get("missingCount"))
+                .map(moqui_lib::object::to_plain_string)
+                .and_then(|count| count.parse::<i64>().ok())
+                .unwrap_or(0)
+                .saturating_add(1)
+        } else {
+            0
+        };
+        if missing_count >= prune_after {
+            if let Some(row) = previous {
+                let _storage = ec.disable_authz();
+                row.delete(&entity)?;
+            }
+            pruned += 1;
+            if instance.state != State::Normal {
+                // Removing a series that was not normal resolves it for its contacts.
+                events.push(json!({"seriesId":key,"state":"Normal","labels":labels,"value":Json::Null,"pruned":true}));
+            }
             continue;
         }
         let condition = &body["condition"];
@@ -794,6 +888,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
                 Value::string(if instance.previously_firing { "Y" } else { "N" }),
             ),
             ("labelsJson", Value::string(labels.to_string())),
+            ("missingCount", Value::I64(missing_count)),
         ] {
             row.set(k, v);
         }
@@ -820,13 +915,20 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
             events.push(json!({"seriesId":key,"state":state,"labels":labels,"value":value}));
         }
     }
+    if pruned > 0 {
+        tracing::info!(
+            rule = id,
+            pruned,
+            "alert series missing for {prune_after} evaluations were removed"
+        );
+    }
     notify(ec, definition, &events, now)?;
     rule_lock.set("lastEvaluated", stamp(now));
     {
         let _storage = ec.disable_authz();
         rule_lock.update(&entity)?;
     }
-    Ok(changed_count)
+    Ok((changed_count, notices))
 }
 
 /// Scheduled pass: definitions are loaded as system metadata, then each query runs in a fresh
@@ -875,11 +977,12 @@ pub fn evaluate_rules(
     };
     let mut evaluated = 0;
     let mut failed = invalid;
+    let mut notices = Vec::new();
     for definition in definitions {
         if definition["body"]["paused"] == true {
             continue;
         }
-        let result = (|| -> Result<usize, Error> {
+        let result = (|| -> Result<(usize, Vec<Json>), Error> {
             let owner = text(&definition, "ownerId", "");
             let account = {
                 let _authz = ec.disable_authz();
@@ -899,14 +1002,17 @@ pub fn evaluate_rules(
             })
         })();
         match result {
-            Ok(_) => evaluated += 1,
+            Ok((_, rule_notices)) => {
+                evaluated += 1;
+                notices.extend(rule_notices);
+            }
             Err(error) => {
                 failed += 1;
                 tracing::error!(rule=text(&definition,"id",""),%error,"alert rule failed, continuing");
             }
         }
     }
-    Ok(output(json!({"evaluated":evaluated,"failed":failed})))
+    Ok(output(json!({"evaluated":evaluated,"failed":failed,"notices":notices})))
 }
 
 #[cfg(test)]
@@ -955,6 +1061,28 @@ mod tests {
         assert!(labels.get("body").is_none());
         assert!(!labels.to_string().contains("private invoice text"));
         assert_eq!(*value, Some(9.0));
+    }
+    #[test]
+    fn conditions_need_a_known_type_and_ordered_bounds() {
+        for good in [
+            json!({}),
+            json!({"condition":{"type":"above","threshold":10,"recoveryThreshold":7}}),
+            json!({"condition":{"type":"below"}}),
+            json!({"condition":{"type":"within","min":1,"max":1}}),
+            json!({"condition":{"type":"outside","min":-5,"max":5},"pruneAfterMissing":3}),
+        ] {
+            assert!(validate_condition(&good).is_ok(), "{good}");
+        }
+        for bad in [
+            json!({"condition":{"type":"abvoe","threshold":10}}),
+            json!({"condition":{"type":"above","threshold":"ten"}}),
+            json!({"condition":{"type":"within","min":5,"max":1}}),
+            json!({"condition":{"type":"outside","min":1}}),
+            json!({"condition":5}),
+            json!({"condition":{"type":"above"},"pruneAfterMissing":0}),
+        ] {
+            assert!(validate_condition(&bad).is_err(), "{bad}");
+        }
     }
     #[test]
     fn document_queries_cannot_be_alert_sources() {

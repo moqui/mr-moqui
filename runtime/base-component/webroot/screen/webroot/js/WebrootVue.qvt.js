@@ -9136,8 +9136,7 @@
         created() {
             moqui.webrootVue = this;
             moqui.sessionToken = this.moquiSessionToken;
-            moqui.traceparent = config.traceparent || "";
-            moqui.tracestate = config.tracestate || "";
+            moqui.pageTraceId = config.pageTraceId || "";
             moqui.appRootPath = this.appRootPath;
             moqui.onSessionToken = (token) => { if (token !== this.moquiSessionToken) this.setSessionToken(token, true); };
             this.$q.dark.set(config.darkMode === "auto" ? "auto" : !!config.darkMode);

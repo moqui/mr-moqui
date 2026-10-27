@@ -361,7 +361,14 @@ fn field_json(mapping: &DocumentMapping, field: &FieldQuery, prefix: &str) -> Js
                 ("lte", &field.lte),
             ] {
                 if let Some(bound) = bound {
-                    bounds.insert(key.into(), value_json(kind, bound));
+                    // Relative dates resolve here, as on Postgres, so both backends read one instant.
+                    let rounded = (kind == Some(FieldKind::Date) && matches!(key, "gt" | "lte"))
+                        .then(|| super::postgres::compile::date_range_bound(bound, true))
+                        .flatten();
+                    bounds.insert(
+                        key.into(),
+                        rounded.map_or_else(|| value_json(kind, bound), |at| Json::from(at.as_millisecond())),
+                    );
                 }
             }
             json!({"range": {sent: bounds}})
@@ -717,8 +724,21 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
         }
         Agg::Metric { kind, .. } => match kind {
             super::agg::Metric::Percentile(p) => {
-                let key = format!("{p:.1}");
-                moqui_lib::json::from_json(part.get("values").and_then(|v| v.get(&key)).unwrap_or(&Json::Null))
+                // The key is Java's rendering of the requested double ("99.0", "99.95"); match it by
+                // value. Each request asks for one percent, so a lone entry is that percent.
+                let value = match part.get("values") {
+                    Some(Json::Object(values)) => values
+                        .iter()
+                        .find(|(key, _)| key.parse::<f64>().is_ok_and(|key| (key - p).abs() < 1e-9))
+                        .map(|(_, value)| value)
+                        .or_else(|| values.values().next().filter(|_| values.len() == 1)),
+                    Some(Json::Array(values)) => values
+                        .iter()
+                        .find(|entry| entry["key"].as_f64().is_some_and(|key| (key - p).abs() < 1e-9))
+                        .map(|entry| &entry["value"]),
+                    _ => None,
+                };
+                moqui_lib::json::from_json(value.unwrap_or(&Json::Null))
             }
             _ => moqui_lib::json::from_json(part.get("value").unwrap_or(&Json::Null)),
         },
@@ -1319,7 +1339,7 @@ impl SearchBackend for OpenSearchBackend {
             }
         }
         if bucket_count(&response["aggregations"]) > super::limits::buckets() {
-            return Err(Error::new("report query returned too many groups"));
+            return Err(super::limits::too_many_groups("report query returned too many groups"));
         }
         let mut result = read_aggs(aggs, response.get("aggregations").unwrap_or(&Json::Null));
         super::agg::fill_other_buckets(self, mapping, filter, aggs, &mut result)?;
@@ -1393,7 +1413,9 @@ impl SearchBackend for OpenSearchBackend {
             }
         }
         if count(&response["aggregations"]) > super::limits::buckets() {
-            return Err(Error::new("combined aggregation returned too many groups"));
+            return Err(super::limits::too_many_groups(
+                "combined aggregation returned too many groups",
+            ));
         }
         let identities = mappings
             .iter()

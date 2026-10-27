@@ -3,6 +3,7 @@
   "type": "dashboard",
   "title": "Monitor overview",
   "body": {
+    "folder": "Monitor",
     "panels": {
       "requests": {
         "title": "HTTP requests",
@@ -18,7 +19,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -57,7 +58,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -88,7 +89,20 @@
               }
             ]
           }
-        ]
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(total_duration|max_duration)$"
+              },
+              "config": {
+                "unit": "s",
+                "decimals": 3
+              }
+            }
+          ]
+        }
       },
       "jobs": {
         "title": "Job runs by outcome",
@@ -127,6 +141,154 @@
             ]
           }
         ]
+      },
+      "errors": {
+        "title": "Top error groups",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_errors",
+            "mode": "documents",
+            "pageSize": 10,
+            "sort": [
+              "-count"
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "organize",
+            "order": [
+              "message",
+              "exception.type",
+              "service.name",
+              "count",
+              "last_seen"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(fingerprint|first_seen|stacktrace|sample_trace_ids|service\\.instance\\.id|source\\.name|source\\.id|_id|_type)$"
+              },
+              "config": {
+                "hidden": true
+              }
+            },
+            {
+              "match": {
+                "name": "message"
+              },
+              "config": {
+                "displayName": "Error",
+                "link": "/apps/monitor/ErrorDetail?fingerprint=${fingerprint}&from=${first_seen}&thru=now"
+              }
+            },
+            {
+              "match": {
+                "name": "exception.type"
+              },
+              "config": {
+                "displayName": "Type"
+              }
+            },
+            {
+              "match": {
+                "name": "service.name"
+              },
+              "config": {
+                "displayName": "Service"
+              }
+            },
+            {
+              "match": {
+                "name": "count"
+              },
+              "config": {
+                "displayName": "Occurrences"
+              }
+            },
+            {
+              "match": {
+                "name": "last_seen"
+              },
+              "config": {
+                "displayName": "Last seen",
+                "type": "time"
+              }
+            }
+          ]
+        }
+      },
+      "loss": {
+        "title": "Telemetry lost (dropped and failed, since each instance started)",
+        "visualization": "stat",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "queryString": "name:\"moqui.telemetry.dropped\" OR name:\"moqui.telemetry.failed\"",
+            "aggregations": [
+              {
+                "id": "metric",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "name",
+                  "size": 10
+                }
+              },
+              {
+                "id": "instance",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.instance.id",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "lost",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              }
+            ],
+            "metricGranularity": "auto",
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "reduce",
+            "calculation": "sum"
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "metric",
+              "instance",
+              "count"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 0,
+            "noValue": "0"
+          }
+        }
       }
     }
   }

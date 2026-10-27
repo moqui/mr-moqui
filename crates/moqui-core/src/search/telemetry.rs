@@ -13,6 +13,18 @@ pub fn is_telemetry_index(name: &str) -> bool {
     TELEMETRY_INDEXES.contains(&name)
 }
 
+/// The field a report filters and buckets a telemetry index by.
+pub fn time_field(name: &str) -> Option<&'static str> {
+    Some(match name {
+        SPANS => "start",
+        LOGS => "timestamp",
+        METRICS => "bucket_start",
+        ERRORS => "last_seen",
+        ANNOTATIONS => "time",
+        _ => return None,
+    })
+}
+
 pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
     use FieldKind::{Boolean, Date, Double, Keyword, Long, Text};
     let fields: &[(&str, FieldKind)] = match name {

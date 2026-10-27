@@ -130,7 +130,7 @@ fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
         match kind {
             "panel" => panel(),
             "report" => {
-                json!({"dashboards":[],"orientation":"portrait","layout":"grid","appendix":false,"kind":"report","playlist":[],"seconds":30})
+                json!({"dashboards":[],"orientation":"portrait","paper":"letter","layout":"grid","appendix":false,"kind":"report","playlist":[],"seconds":30})
             }
             _ => json!({"panels":{},"variables":[],"layout":{"type":"autoGrid","items":[]},"refreshSeconds":0}),
         }
@@ -212,6 +212,7 @@ fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<Strin
             .map(str::to_string)
             .collect(),
         "orientation" => vec!["portrait".into(), "landscape".into()],
+        "paper" => vec!["letter".into(), "a4".into()],
         "op" => ["eq", "in", "exists", "prefix", "wildcard", "range"]
             .into_iter()
             .map(str::to_string)

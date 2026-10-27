@@ -14,7 +14,7 @@
             <field name="title"><default-field><link url="rule" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
             <field name="paused"><default-field><display text="${body.paused ? 'Paused' : 'Active'}"/></default-field></field>
-            <field name="evaluate"><default-field><link url="evaluate" text="Evaluate now" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="evaluate"><default-field><link url="evaluate" text="Evaluate now" link-type="hidden-form-link" confirmation="Evaluate this alert rule now? A state change notifies its contact points."><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <form-list name="AlertInstances" list="alertInstances" skip-form="true">
             <field name="definitionId"><default-field title="Rule"><link url="rule" text="${definitionId}" link-type="anchor"><parameter name="definitionId"/></link></default-field></field>

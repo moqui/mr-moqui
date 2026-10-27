@@ -1266,9 +1266,11 @@ fn reserve_closure(shared: &Arc<Shared>, run: ClosureFn) -> Result<mpsc::Receive
     let slot = ReservedSlot::take(shared, shared.workers)?;
     let factory = caller_factory(shared)?;
     let (tx, rx) = mpsc::channel();
+    let trace_context = crate::telemetry::capture();
     thread::Builder::new()
         .name("moqui-reserved".to_string())
         .spawn(move || {
+            let _trace = crate::telemetry::attach(trace_context);
             let _slot = slot;
             let outcome = {
                 let _cleanup = WorkCleanup::new(Some(Arc::clone(&factory)));
@@ -1378,6 +1380,27 @@ mod tests {
                 .call(|| Ok(crate::telemetry::capture()))
                 .unwrap(),
             None
+        );
+    }
+
+    /// A closure a service worker waits on runs on a reserved thread, in the caller's trace.
+    #[test]
+    fn a_reserved_closure_joins_the_callers_trace() {
+        let ctx = crate::context::ExecutionContextFactory::test_context_with("", ServicePools::bounded(1, 4));
+        let context =
+            crate::telemetry::TraceContext::extract("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "")
+                .unwrap();
+        let shared = ctx.factory().service_pools().shared_handle();
+        let run: super::ClosureFn =
+            Box::new(|| Ok(Box::new(crate::telemetry::capture()) as Box<dyn std::any::Any + Send>));
+        let reply = {
+            let _trace = crate::telemetry::attach(Some(context.clone()));
+            super::reserve_closure(&shared, run).unwrap()
+        };
+        let captured = reply.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(
+            *captured.downcast::<Option<crate::telemetry::TraceContext>>().unwrap(),
+            Some(context)
         );
     }
 

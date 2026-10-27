@@ -332,12 +332,34 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
     )
     .unwrap();
     assert!(csv.contains("17"), "{csv}");
+    // The histogram panels have data in the current, partial bucket. Dropping it is a warning,
+    // not missing data, so the report renders with the default drop_partial.
+    invoke(
+        "org.moqui.report.ReportServices.save#Definition",
+        json!({"definition":{"id":"chart-preview-dashboard","type":"dashboard","title":"Offline chart preview","body":{"panels":{"plot":{"title":"Report chart","visualization":"timeSeries","queries":[{"datasetId":"otel_logs","queryString":"body:scheduled-fixture","aggregations":[{"id":"time","type":"date_histogram","role":"x-axis","params":{"field":"timestamp","fixed_interval":"1m"}},{"id":"value","type":"sum","role":"metric","params":{"field":"severity_number"}}]}]}}}}}),
+    );
+    let Value::Map(metric) = moqui_lib::json::from_json(
+        &json!({"_id":"report-edge-metric","name":"http.server.request.duration","bucket_start":stamp,"bucket_end":stamp+60_000,"granularity":"minute","count":3,"sum":0.6,"max":0.4,"service.name":"report-edge"}),
+    ) else {
+        unreachable!()
+    };
+    search.index_entries("otel_metrics", vec![metric]).unwrap();
+    for definition in ["chart-preview-dashboard", "monitor-overview"] {
+        for mode in ["csv", "html"] {
+            let preview = invoke(
+                "org.moqui.report.ReportServices.preview#Report",
+                json!({"definitionId":definition,"renderMode":mode}),
+            );
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(preview["contentBase64"].as_str().unwrap())
+                .unwrap();
+            if mode == "html" {
+                assert!(bytes.starts_with(b"<!doctype"), "{definition} {mode}");
+            }
+        }
+    }
     let chart_renderer = moqui_core::screen::PdfRenderer::available();
     if chart_renderer {
-        invoke(
-            "org.moqui.report.ReportServices.save#Definition",
-            json!({"definition":{"id":"chart-preview-dashboard","type":"dashboard","title":"Offline chart preview","body":{"panels":{"plot":{"title":"Report chart","visualization":"timeSeries","queries":[{"datasetId":"otel_logs","queryString":"body:scheduled-fixture","aggregations":[{"id":"time","type":"date_histogram","role":"x-axis","params":{"field":"timestamp","fixed_interval":"1m","drop_partial":false}},{"id":"value","type":"sum","role":"metric","params":{"field":"severity_number"}}]}]}}}}}),
-        );
         for (mode, signature) in [
             ("png", b"\x89PNG\r\n\x1a\n".as_slice()),
             ("pdf", b"%PDF".as_slice()),

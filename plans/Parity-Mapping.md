@@ -148,8 +148,8 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-host/src/git_http.rs`, `git_bridge.rs`, `ssh/git.rs` | No Java basis: `/git` smart HTTP, Git LFS, and the SSH `git-upload-pack`/`git-receive-pack`/`git-lfs-authenticate` exec, streamed to the git pool. | Native |
 | `moqui-host/src/source_body.rs` | No Java basis: the body of a streamed file response, a window read when the client takes the last. | Native |
 | `moqui-core/src/context/cache.rs` | `CacheFacadeImpl` on one `MCache` per `<cache name>`. | Port |
-| `moqui-core/src/context/artifact.rs` | `ArtifactExecutionFacadeImpl` stack and `ArtifactExecutionInfoImpl`. Push and pop are tracing spans. | Partial |
-| `moqui-core/src/context/hits.rs` | `countArtifactHit`. The scheduler tick writes `ArtifactHit` and `ArtifactHitBin`. | Port |
+| `moqui-core/src/context/artifact.rs` | `ArtifactExecutionFacadeImpl` stack and `ArtifactExecutionInfoImpl`. Push and pop start and end an OpenTelemetry span and record `moqui.artifact.duration` (`telemetry/`). | Partial |
+| `moqui-core/src/telemetry/` | Replaces `countArtifactHit` with its `ArtifactHit` and `ArtifactHitBin` rows, and the `ElasticSearchLogger` shipping: OpenTelemetry spans, metrics and logs, sampling, the bounded export worker, the OTLP receiver's decoding and the OTLP exporter, rollups and retention ([Monitoring](Monitoring.md)). | Native |
 | `moqui-core/src/context/message.rs` | `MessageFacadeImpl`, `MessageFacade`, `MessageFacadeException`. | Port |
 | `moqui-core/src/l10n.rs` | `L10nFacadeImpl`, `L10nFacade`. Formatters are `moqui-lib`. | Port |
 | `moqui-core/src/context/status.rs` | `ExecutionContextFactoryImpl.getStatusMap` and `getComponentInfoList`. JVM management beans are process stats (`/proc/self/status`). Disk is not reported. | Partial |
@@ -374,7 +374,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 | `moqui-core/src/web/address.rs` | The client address behind `client-ip-header` (`WebFacadeImpl.getClientIp`), with `trusted-proxies` and CIDR ranges added. | Partial |
 | `moqui-core/src/outbound.rs` | Outbound HTTP for `remote-rest` and `http` resources. The server uses `moqui-lib` `RestClient`. The browser installs `fetch`. | Partial |
 | `moqui-host/src/http.rs` | The public HTTP and HTTPS listeners; `MoquiServlet` is the screen servlet of `web/servlet.rs` behind them. Screen work runs on the request pool. | Port |
-| `moqui-host/src/logging.rs` | `LoggerFacadeImpl`, `ElasticSearchLogger`, `ElasticRequestLogFilter` (ship `moqui_logs` and `moqui_http_log`). File names match Java. Console color is new. | Partial |
+| `moqui-host/src/logging.rs` | `LoggerFacadeImpl`. File names match Java. Console color is new. Log events go to the OpenTelemetry logger (`otel_logs`), not to `moqui_logs`; `ElasticRequestLogFilter`'s `moqui_http_log` became the request span in `http.rs`. | Partial |
 | `moqui-host/src/guard.rs` | Web protection at the edge (`web-protection` in the webapp conf): per-client connection caps, rate limits, bans, client, method, path and user-agent rules. Not the ArtifactTarpit. [Web-Protection](proposals/Web-Protection.md). | Native |
 | `moqui-host/src/notws.rs` | `NotificationEndpoint` at `GET /notws`. The socket does not hold an execution context. | Port |
 | `moqui-host/src/tls.rs` | Public HTTPS certificates from `runtime/cert`. Java terminated TLS at a proxy. | Native |
@@ -397,11 +397,13 @@ README redesigns 1 and 3. The design is [SearchFacade](archive/SearchFacade.md).
 | `search/query.rs` | The query tree scripts pass. Replaces Elastic query builders. | Redesign |
 | `search/parse.rs` | Lucene query-string subset the screens send. | Partial |
 | `search/es_json.rs` | Elastic query JSON still passed in `nestedQueryMap` to `search#DataDocuments`. | Partial |
-| `search/agg.rs` | Elastic aggregations the screens use (filter, date histogram, terms, metrics). | Partial |
+| `search/agg.rs` | Elastic aggregations (filter, date histogram, terms, metrics), plus those the report engine adds: percentiles, stats, top hits, histogram, range and filters buckets, Missing and Other, merged histogram buckets, across document types. | Partial |
 | `search/highlight.rs` | Elastic highlight fragments (`encoder: html`). | Port |
 | `search/feed.rs` | After-commit assembly and the receive service. Registration of the pending row stays `entity/load_feed/feed.rs`. | Redesign |
 | `search/fresh.rs` | Read-your-writes for a search that asks. No Java counterpart. | Native |
-| `search/logs.rs` | `ElasticSearchLogger` and `ElasticRequestLogFilter` index fields. The host ships the events. | Port |
+| `search/telemetry.rs` | The telemetry index mappings (`otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations`) on both backends. Replaces the `moqui_logs` and `moqui_http_log` fields. | Native |
+| `report/`, `report_schedule.rs` | No Java basis: datasets, report queries, frames and transformations, saved definitions, alerts and annotations for the Dashboards and Monitor apps; dashboard reports on `ScreenScheduled` (PDF, PNG, CSV, xlsx) with owner checks and leases. | Native |
+| `monitor.rs`, `moqui-host/src/monitor.rs` | No Java basis: ingest keys and source status (core), and the OTLP/HTTP receiver `/v1/{traces,logs,metrics,annotations}` (host). | Native |
 | `search/opensearch.rs` | `ElasticFacadeImpl.ElasticClientImpl` HTTP client. | Partial |
 | `moqui-host/src/search.rs` | Where the store lives, and `MoquiStart` launching a local OpenSearch install under `runtime/opensearch`. | Partial |
 | `search/postgres/mod.rs`, `search/postgres/compile.rs`, `search/postgres/agg.rs` | Postgres full-text and JSON backend. | Native |
@@ -595,7 +597,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `tools/MCacheToolFactory.java` | `context/cache.rs` | Port |
 | `tools/H2ServerToolFactory.groovy`, `JackrabbitRunToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
-| `util/ElasticSearchLogger.groovy` | `search/logs.rs`, `moqui-host/src/logging.rs` | Port |
+| `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](Monitoring.md)) | Redesign |
 | `util/ElFinderConnector.groovy` | `service/elfinder.rs` | Port |
 | `util/JdbcExtractor.java` | `moqui-host/src/db/jdbc_extract.rs` | Port |
 | `util/RestSchemaUtil.groovy` | `entity/schema.rs`, `screen/schema.rs` | Partial |
@@ -606,7 +608,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `webapp/MoquiAuthFilter.groovy` | `screen/mod.rs`, `runtime/base-component/webroot/script/AuthFilter.js` | Port |
 | `webapp/MoquiContextListener.groovy` | `moqui-host/src/lib.rs`, `web/servlet.rs` (servlets, filters, listeners, after-startup and before-shutdown) | Partial |
 | `webapp/NotificationEndpoint.groovy`, `NotificationWebSocketListener.groovy`, `MoquiAbstractEndpoint.groovy` | `moqui-host/src/notws.rs` | Port |
-| `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/logging.rs` | Port |
+| `webapp/ElasticRequestLogFilter.groovy` | `moqui-host/src/http.rs` (`log_http`: the request span in `otel_spans`; [Monitoring](Monitoring.md)) | Redesign |
 | `webapp/MoquiFopServlet.groovy` | `screen/mod.rs` (`/fop/<path>`: the screen as `html-print`, sent as PDF by `PdfRenderer`; PDF only) | Partial |
 | `webapp/GroovyShellEndpoint.groovy`, `LlmServlet.groovy`, `A2AServlet.groovy`, `A2ACardServlet.groovy` | — (their conf entries are removed) | Excluded |
 | `webapp/MoquiSessionListener.groovy` | `user/session.rs` does not copy session bytes | Excluded |

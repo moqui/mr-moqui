@@ -3,6 +3,7 @@
   "type": "dashboard",
   "title": "Artifacts",
   "body": {
+    "folder": "Monitor",
     "variables": [
       {
         "name": "artifactType",
@@ -331,7 +332,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -399,7 +400,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -517,7 +518,7 @@
                 "role": "x-axis",
                 "params": {
                   "field": "bucket_start",
-                  "fixed_interval": "5m",
+                  "fixed_interval": "auto",
                   "min_doc_count": 0
                 }
               },
@@ -612,6 +613,7 @@
               "latency.stddev": "stddev_estimated"
             },
             "order": [
+              "time",
               "artifact_type",
               "sub_type",
               "name",

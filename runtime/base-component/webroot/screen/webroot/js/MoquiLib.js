@@ -298,6 +298,8 @@
 
         sessionToken: "",
         appRootPath: "",
+        // the trace id of the page's own request: each later request is a trace of its own that names it
+        pageTraceId: "",
 
         // fetch with the session cookie and token. params is an object (a FormData, a string or a plain object). Resolves to
         // { ok, status, headers, text, json } and rejects with the same shape plus error on a network failure.
@@ -305,13 +307,10 @@
             const opts = options || {};
             const method = (opts.method || "GET").toUpperCase();
             const headers = Object.assign({ Accept: opts.accept || "application/json" }, opts.headers);
-            if (moqui.traceparent) {
+            if (moqui.pageTraceId) {
                 try {
                     const targetOrigin = new URL(url, root.location.href).origin;
-                    if (targetOrigin === root.location.origin) {
-                        headers.traceparent = moqui.traceparent;
-                        if (moqui.tracestate) headers.tracestate = moqui.tracestate;
-                    }
+                    if (targetOrigin === root.location.origin) headers["X-Moqui-Page-Trace"] = moqui.pageTraceId;
                 } catch (_) { /* the ordinary fetch path reports malformed URLs */ }
             }
             if (method !== "GET" && moqui.sessionToken && !headers["X-CSRF-Token"]) headers["X-CSRF-Token"] = moqui.sessionToken;

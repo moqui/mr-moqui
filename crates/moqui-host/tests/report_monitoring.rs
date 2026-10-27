@@ -166,7 +166,8 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
         .iter()
         .any(|notice| notice["code"] == "partial_buckets_excluded"
             && notice["observations"] == 1
-            && notice["complete"] == false));
+            && notice["level"] == "warning"
+            && notice["complete"] != false));
     partial["aggs"]["time"]["date_histogram"]["drop_partial"] = json!(false);
     let retained = report::execute_query(&context, &partial).unwrap();
     let fields = retained["frames"][0]["fields"].as_array().unwrap();
@@ -734,10 +735,14 @@ fn verify_nested_partial_filter_scope(context: &moqui_core::context::ExecutionCo
         excluded[0]["observations"], 2,
         "only A's two partial observations count, not B's two: {partial}"
     );
-    assert_eq!(excluded[0]["complete"], false);
+    assert_eq!(excluded[0]["level"], "warning");
+    assert!(
+        excluded[0]["complete"] != false,
+        "a dropped partial bucket is not missing data: {partial}"
+    );
     assert!(
         !partial["frames"].as_array().unwrap().is_empty(),
-        "completed selected-parent buckets are retained while incompleteness is explicit"
+        "completed selected-parent buckets are retained while the excluded observations are noted"
     );
     let kept = partial["frames"][0]["fields"]
         .as_array()
@@ -969,4 +974,60 @@ fn verify_saved_runtime_pills_and_csv(
         .map(|hit| hit["id"].as_str().unwrap())
         .collect::<BTreeSet<_>>();
     assert_eq!(ids, BTreeSet::from(["pill-B", "pill-Missing"]));
+    verify_tolerant_panels_and_single_panel_view(context, &stored);
+}
+
+/// One bad panel, library reference or variable is a notice on that piece; the data panel beside it
+/// still renders, and the single-panel view lays out only the chosen panel.
+fn verify_tolerant_panels_and_single_panel_view(context: &moqui_core::context::ExecutionContext, stored: &Json) {
+    let mut definition = stored.clone();
+    let body = &mut definition["body"];
+    body["variables"] = json!([{"name":"broken","kind":"query","datasetId":"no-such-dataset","field":"enumId"}]);
+    body["panels"]["badTime"] =
+        json!({"visualization":"table","time":{"shift":"sideways"},"queries":[{"datasetId":"report-fixture-dataset"}]});
+    body["panels"]["badLibrary"] = json!({"panelRef":"no-such-library-panel"});
+    body["panels"]["badShape"] = json!("not a panel");
+    body["panels"]["badQuery"] = json!({"visualization":"table","queries":[1,{"datasetId":"report-fixture-dataset","aggs":{"records":{"value_count":{"field":"enumId"}}}}]});
+    let rendered =
+        report::dashboard_frames_filtered(context, &definition, &json!({}), "now-1h", "now+1h", &json!([])).unwrap();
+    assert_eq!(
+        numeric_field(&rendered["panels"]["business"]["frames"][0], "records"),
+        3.0,
+        "the data panel renders beside the broken ones: {rendered}"
+    );
+    for panel in ["badTime", "badLibrary", "badShape"] {
+        assert_eq!(
+            rendered["panels"][panel]["notices"][0]["level"], "error",
+            "{panel}: {rendered}"
+        );
+        assert_eq!(rendered["panels"][panel]["notices"][0]["complete"], false, "{panel}");
+    }
+    let bad_query = &rendered["panels"]["badQuery"];
+    assert_eq!(bad_query["notices"][0]["level"], "error", "{bad_query}");
+    assert_eq!(
+        numeric_field(&bad_query["frames"][0], "records"),
+        3.0,
+        "a malformed query leaves its sibling query in the panel: {bad_query}"
+    );
+    assert!(rendered["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|notice| notice["code"] == "variable_error" && notice["variable"] == "broken"));
+    let single = result(
+        moqui_core::service::sync(
+            "org.moqui.report.ReportServices.render#Dashboard",
+            &parameters(
+                json!({"definitionId":"scoped-pills-dashboard","panelId":"logs","from":"now-1h","thru":"now+1h"}),
+            ),
+        )
+        .unwrap(),
+    );
+    let dashboard = &single["dashboard"];
+    assert_eq!(dashboard["panels"].as_object().unwrap().len(), 1, "{dashboard}");
+    assert_eq!(
+        dashboard["layout"],
+        json!({"type":"autoGrid","items":[{"panelId":"logs"}]}),
+        "the single-panel layout names no other panel"
+    );
 }

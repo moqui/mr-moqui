@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="definitionType"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
     <transition name="reference"><default-response url="//apps/dashboards/Definition"/></transition>
     <transition name="save" method="post" authz-action="update">
@@ -33,7 +33,7 @@
         ]]></script></actions><default-response url="//apps/dashboards/Home"/>
     </transition>
     <actions><script><![CDATA[
-        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:'otel_logs',mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
+        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:'otel_logs',mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
         definitionType = definition.type; definitionTitle = definition.title; definitionVersion = definition.version || 0; definitionUserGroupId = definition.userGroupId || null
         definitionJson = JSON.stringify(definition.body,null,2)
         definitionFolder=definition.body.folder || '';definitionTags=(definition.body.tags || []).join(', ')
@@ -75,7 +75,8 @@
                 <text-area rows="22" cols="100"/>
             </default-field></field>
             <field name="note"><default-field title="Version note"><text-line size="70"/></default-field></field>
-            <field name="save"><default-field><submit text="Save version"/></default-field></field>
+            <field name="save"><conditional-field condition="definition.readOnly"><display text="Shipped definitions are read only; use Save as copy below."/></conditional-field>
+                <default-field><submit text="Save version"/></default-field></field>
         </form-single>
         <section name="ExistingDefinition" condition="definitionId"><widgets>
             <link url="export" text="Export with references" parameter-map="{definitionId:definitionId}"/>

@@ -17,8 +17,136 @@ fn w3c_context_validates_and_restores() {
     assert_eq!(capture(), old);
     assert_eq!(
         TraceContext::extract(&context.traceparent(), context.tracestate()),
-        Some(context)
+        Some(context.clone())
     );
+    // An overlong or header-splitting tracestate is vendor data: it is dropped and the trace is kept.
+    for tracestate in [
+        "vendor=".to_string() + &"x".repeat(600),
+        "vendor=a\r\nX-Injected: 1".into(),
+    ] {
+        let kept = TraceContext::extract(&context.traceparent(), &tracestate).expect("the traceparent survives");
+        assert_eq!(
+            (kept.trace_id.as_str(), kept.span_id.as_str()),
+            (context.trace_id.as_str(), context.span_id.as_str())
+        );
+        assert_eq!(kept.tracestate(), "");
+    }
+}
+
+#[test]
+fn configuration_defaults_to_roots_and_warns_about_what_it_does_not_use() {
+    assert_eq!(Config::from_conf("<moqui-conf/>").sample_ratio, 0.0);
+    let config = Config::from_conf(
+        r#"<moqui-conf><telemetry sample-ratio="all" interval-seconds="5"/><server-stats stats-skip-condition="true"/></moqui-conf>"#,
+    );
+    assert_eq!(config.sample_ratio, 0.0, "an unparsable ratio keeps the default");
+    assert_eq!(config.interval, Duration::from_secs(5));
+    for part in ["sample-ratio [all]", "interval-seconds is 5", "stats-skip-condition"] {
+        assert!(
+            config.warnings.iter().any(|warning| warning.contains(part)),
+            "{part}: {:?}",
+            config.warnings
+        );
+    }
+    assert!(
+        Config::from_conf(r#"<moqui-conf><telemetry sample-ratio="0.5" interval-seconds="60"/></moqui-conf>"#)
+            .warnings
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_decision_cache_forgets_the_oldest_when_full_and_keeps_recent_entries() {
+    let mut recent = Recent::default();
+    let start = Instant::now();
+    for at in 0..MAX_DECISIONS + 10 {
+        recent.insert(
+            &format!("trace-{at}"),
+            at % 2 == 0,
+            start + Duration::from_millis(at as u64),
+        );
+    }
+    assert_eq!(recent.values.len(), MAX_DECISIONS);
+    assert_eq!(recent.get("trace-0"), None, "the oldest goes first");
+    assert_eq!(recent.get("trace-10"), Some(true));
+    assert_eq!(recent.get(&format!("trace-{}", MAX_DECISIONS + 9)), Some(false));
+    recent.insert("trace-10", false, start + Duration::from_millis(50_000));
+    recent.expire(start + RECENT_AGE + Duration::from_millis(20));
+    assert_eq!(recent.get("trace-12"), None, "expired");
+    assert_eq!(recent.get("trace-30"), Some(true));
+    assert_eq!(
+        recent.get("trace-10"),
+        Some(false),
+        "a key inserted again keeps its newer value"
+    );
+}
+
+#[test]
+fn a_store_that_persists_part_of_a_batch_counts_the_rest_failed_with_one_log_line() {
+    struct Partial;
+    impl Exporter for Partial {
+        fn export(&self, _: &str, documents: Vec<Document>) -> Result<usize, Error> {
+            // As the search facade does after its retries: the first reason, once for the batch.
+            note_write_error("2 of 3 otel_logs documents not persisted; first: document b: bad record");
+            Ok(documents.len() - 2)
+        }
+    }
+    struct Down;
+    impl Exporter for Down {
+        fn export(&self, _: &str, _: Vec<Document>) -> Result<usize, Error> {
+            Err(Error::new("connection refused"))
+        }
+    }
+    struct Panicking;
+    impl Exporter for Panicking {
+        fn export(&self, _: &str, _: Vec<Document>) -> Result<usize, Error> {
+            panic!("exporter fixture panic")
+        }
+    }
+    let (shared, _receiver) = admission_shared();
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        export_batch(
+            &shared,
+            &Partial,
+            "otel_logs",
+            vec![Document::new(); 3],
+            true,
+            &mut Recent::default(),
+        );
+    });
+    let counters = |shared: &Shared| {
+        let counters = &shared.counters;
+        (
+            counters.exported.load(Ordering::Relaxed),
+            counters.dropped.load(Ordering::Relaxed),
+            counters.failed.load(Ordering::Relaxed),
+        )
+    };
+    assert_eq!(counters(&shared), (1, 2, 2));
+    {
+        let lines = lock(&lines);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("first: document b: bad record"), "{lines:?}");
+    }
+    // A store that is down, and an exporter that panics, cost their batch only; the worker goes on.
+    export_batch(
+        &shared,
+        &Down,
+        "otel_logs",
+        vec![Document::new(); 4],
+        true,
+        &mut Recent::default(),
+    );
+    export_batch(
+        &shared,
+        &Panicking,
+        "otel_spans",
+        vec![Document::new(); 2],
+        true,
+        &mut Recent::default(),
+    );
+    assert_eq!(counters(&shared), (1, 8, 8));
 }
 
 #[test]
@@ -502,7 +630,7 @@ mod enabled {
             usage::{CallSource, Usage},
         };
         let context = ExecutionContextFactory::test_context_with_conf(
-            "<moqui-conf><telemetry><artifact type=\"AT_LLM\" spans=\"true\" metrics=\"true\"/></telemetry></moqui-conf>",
+            "<moqui-conf><telemetry sample-ratio=\"1\"><artifact type=\"AT_LLM\" spans=\"true\" metrics=\"true\"/></telemetry></moqui-conf>",
         );
         let _entered = context.enter();
         let telemetry = for_factory(context.factory());
@@ -639,6 +767,168 @@ mod enabled {
             .unwrap();
         assert_eq!(protobuf.documents, json.documents);
         assert_eq!(protobuf.documents.len(), 1);
+    }
+
+    #[test]
+    fn an_incoming_sampled_flag_keeps_the_trace_but_not_the_decision() {
+        for (ratio, flag, sampled) in [(0.0, "01", false), (1.0, "00", true)] {
+            let (telemetry, memory) = telemetry(ratio);
+            let parent = TraceContext::extract(
+                &format!("00-0123456789abcdef0123456789abcdef-0123456789abcdef-{flag}"),
+                "",
+            )
+            .unwrap();
+            let span = telemetry.start_span("request", SpanKind::Server, Some(parent.clone()));
+            let context = span.context().unwrap();
+            assert_eq!(context.trace_id, parent.trace_id);
+            assert_eq!(context.sampled, sampled, "ratio {ratio}, flag {flag}");
+            span.finish();
+            telemetry.flush();
+            let entries = lock(&memory.0);
+            let root = entries.iter().find(|(index, _)| index == "otel_spans").unwrap();
+            assert_eq!(text(&root.1, "parent_span_id"), parent.span_id);
+            assert_eq!(root.1.get("sampled"), Some(&Value::Bool(sampled)));
+            drop(entries);
+            telemetry.shutdown();
+        }
+    }
+
+    #[test]
+    fn an_error_that_ends_after_its_unsampled_root_is_kept() {
+        let (telemetry, memory) = telemetry(0.0);
+        let root = telemetry.start_span("request", SpanKind::Server, None);
+        let late = telemetry.start_span("late success", SpanKind::Internal, root.context());
+        let mut failed = telemetry.start_span("late failure", SpanKind::Internal, root.context());
+        root.finish();
+        telemetry.flush();
+        late.finish();
+        failed.set_error("queued work failed");
+        failed.finish();
+        telemetry.flush();
+        let entries = lock(&memory.0);
+        let names: Vec<_> = entries
+            .iter()
+            .filter(|(index, _)| index == "otel_spans")
+            .map(|(_, document)| text(document, "name"))
+            .collect();
+        assert!(names.contains(&"request".to_string()), "{names:?}");
+        assert!(names.contains(&"late failure".to_string()), "{names:?}");
+        assert!(!names.contains(&"late success".to_string()), "{names:?}");
+        drop(entries);
+        telemetry.shutdown();
+    }
+
+    fn entered(ratio: &str) -> (crate::context::ExecutionContext, Arc<Telemetry>, Arc<Memory>) {
+        let context = crate::context::ExecutionContextFactory::test_context_with_conf(&format!(
+            "<moqui-conf><telemetry sample-ratio=\"{ratio}\"/></moqui-conf>"
+        ));
+        let telemetry = for_factory(context.factory());
+        let memory = Arc::new(Memory::default());
+        telemetry.set_exporter(memory.clone());
+        (context, telemetry, memory)
+    }
+
+    /// An error is marked on the frames it was added under, not on frames popped after it, and the request counts
+    /// once in its error group however many of its spans carry it.
+    #[test]
+    fn one_failing_request_adds_one_to_its_error_group() {
+        let (context, telemetry, memory) = entered("1");
+        {
+            let _entered = context.enter();
+            let mut root = telemetry.start_span("request", SpanKind::Server, None);
+            {
+                let _trace = attach(root.context());
+                context.push("AT_SERVICE", "outer", "view");
+                context.push("AT_SERVICE", "failing", "view");
+                context.message().add_error("order 42 could not be shipped");
+                context.pop().unwrap();
+                context.push("AT_SERVICE", "later sibling", "view");
+                context.pop().unwrap();
+                context.pop().unwrap();
+            }
+            root.set_error("order 42 could not be shipped");
+            root.finish();
+        }
+        telemetry.flush();
+        let entries = lock(&memory.0);
+        let status = |name: &str| {
+            entries
+                .iter()
+                .find(|(index, document)| index == "otel_spans" && text(document, "name") == name)
+                .map(|(_, document)| text(document, "status_code"))
+                .unwrap_or_else(|| panic!("no span {name}: {entries:?}"))
+        };
+        assert_eq!(status("failing"), "ERROR");
+        assert_eq!(status("outer"), "ERROR");
+        assert_ne!(status("later sibling"), "ERROR");
+        assert_eq!(
+            entries.iter().filter(|(index, _)| index == "otel_errors").count(),
+            1,
+            "{entries:?}"
+        );
+        drop(entries);
+        telemetry.shutdown();
+    }
+
+    /// An untracked frame (a REST path, a screen's always-actions) has no span or metric of its own, and what runs
+    /// under it is a child of its parent. A `track-artifact-hit="false"` screen hides its whole subtree.
+    #[test]
+    fn untracked_frames_keep_their_children_and_a_suppressed_screen_hides_its_subtree() {
+        let (context, telemetry, memory) = entered("1");
+        let root_id;
+        {
+            let _entered = context.enter();
+            let root = telemetry.start_span("request", SpanKind::Server, None);
+            root_id = root.context().unwrap().span_id;
+            {
+                let _trace = attach(root.context());
+                context.push("AT_REST_PATH", "/moqui/basic/echo", "create");
+                context.untrack_hit();
+                context.push("AT_SERVICE", "echo.ping#Rest", "create");
+                context.pop().unwrap();
+                context.pop().unwrap();
+                context.push("AT_XML_SCREEN", "component://webroot/screen/webroot/sso.xml", "view");
+                context.suppress_descendant_telemetry();
+                context.push("AT_SERVICE", "hidden.service", "view");
+                context.pop().unwrap();
+                context.pop().unwrap();
+                context.push("AT_SERVICE", "after.screen", "view");
+                context.pop().unwrap();
+            }
+            root.finish();
+        }
+        telemetry.flush();
+        let entries = lock(&memory.0);
+        let spans: Vec<_> = entries
+            .iter()
+            .filter(|(index, _)| index == "otel_spans")
+            .map(|(_, document)| (text(document, "name"), text(document, "parent_span_id")))
+            .collect();
+        let parent = |name: &str| {
+            spans
+                .iter()
+                .find(|(span, _)| span == name)
+                .map(|(_, parent)| parent.clone())
+        };
+        assert_eq!(parent("echo.ping#Rest"), Some(root_id.clone()), "{spans:?}");
+        assert_eq!(parent("after.screen"), Some(root_id), "{spans:?}");
+        for hidden in [
+            "/moqui/basic/echo",
+            "component://webroot/screen/webroot/sso.xml",
+            "hidden.service",
+        ] {
+            assert_eq!(parent(hidden), None, "{hidden}: {spans:?}");
+        }
+        let measured: Vec<_> = entries
+            .iter()
+            .filter(|(index, document)| index == "otel_metrics" && text(document, "name") == "moqui.artifact.duration")
+            .map(|(_, document)| text(document, "moqui.artifact.name"))
+            .collect();
+        assert!(measured.contains(&"echo.ping#Rest".to_string()), "{measured:?}");
+        assert!(!measured.contains(&"hidden.service".to_string()), "{measured:?}");
+        assert!(!measured.contains(&"/moqui/basic/echo".to_string()), "{measured:?}");
+        drop(entries);
+        telemetry.shutdown();
     }
 }
 

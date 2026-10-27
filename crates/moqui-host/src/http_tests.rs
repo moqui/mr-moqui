@@ -114,12 +114,126 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
     assert_eq!(screen["user.id"].as_str(), Some("user-1"));
     assert_eq!(screen["moqui.visitor.id"].as_str(), Some("visitor-1"));
     assert!(!screen["url.query"].as_str().unwrap().contains("private"));
-    let health = entries
-        .iter()
-        .find(|entry| entry.get("url.path").and_then(Value::as_str) == Some("/health"))
-        .expect("health span");
-    assert!(!health.contains_key("user.id"));
-    assert!(!health.contains_key("session.id"));
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.get("url.path").and_then(Value::as_str) == Some("/health")),
+        "a health probe writes no request root"
+    );
+    drop(entries);
+    telemetry.shutdown();
+}
+
+/// A server error's root keeps the request's own error, and a page's later request is its own trace that names the
+/// page's: the client's traceparent sets the parent, not the sampling, and a bad page trace id is ignored.
+#[cfg(feature = "telemetry")]
+#[tokio::test]
+async fn request_roots_keep_real_errors_and_name_the_page_without_joining_its_trace() {
+    use moqui_core::{
+        entity::document::Document,
+        telemetry::{Exporter, Resource, Telemetry},
+    };
+    use moqui_lib::{error::Error, object::Value};
+    use tower::ServiceExt as _;
+    #[derive(Default)]
+    struct Capture(std::sync::Mutex<Vec<Document>>);
+    impl Exporter for Capture {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+    let exporter = Arc::new(Capture::default());
+    let telemetry = Arc::new(Telemetry::from_conf(
+        "<moqui-conf><telemetry sample-ratio=\"0\"/></moqui-conf>",
+        Resource::default(),
+    ));
+    telemetry.set_exporter(exporter.clone());
+    let failing = |message: Option<&'static str>| async move {
+        let mut response = axum::response::Response::new(axum::body::Body::from("failed"));
+        *response.status_mut() = axum::http::StatusCode::INTERNAL_SERVER_ERROR;
+        let mut identity = super::LoggedIdentity::default();
+        if let Some(message) = message {
+            identity
+                .attributes
+                .insert("exception.message".into(), Value::string(message));
+        }
+        response.extensions_mut().insert(identity);
+        response
+    };
+    let app = Router::new()
+        .route("/real", get(move || failing(Some("order 7 could not be shipped"))))
+        .route("/bare", get(move || failing(None)))
+        .route("/page", get(|| async { "ok" }))
+        .layer(axum::middleware::from_fn_with_state(
+            super::RequestTelemetry {
+                telemetry: Arc::clone(&telemetry),
+            },
+            super::log_http,
+        ));
+    let page = "0123456789abcdef0123456789abcdef";
+    for (path, page_header) in [
+        ("/real", page),
+        ("/bare", page),
+        ("/page", page),
+        ("/page?bad", "0123456789ABCDEF0123456789ABCDEF"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("x-moqui-page-trace", page_header)
+                    .header("traceparent", "00-34343434343434343434343434343434-5656565656565656-01")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+    }
+    telemetry.flush();
+    let entries = exporter.0.lock().unwrap();
+    let root = |path: &str, query: &str| {
+        entries
+            .iter()
+            .find(|entry| {
+                entry.get("url.path").and_then(Value::as_str) == Some(path)
+                    && entry.get("url.query").and_then(Value::as_str) == Some(query)
+            })
+            .unwrap_or_else(|| panic!("no root for {path}?{query}: {entries:?}"))
+    };
+    let real = root("/real", "");
+    assert_eq!(real["status_code"].as_str(), Some("ERROR"));
+    assert_eq!(real["exception.message"].as_str(), Some("order 7 could not be shipped"));
+    assert_eq!(
+        root("/bare", "")["exception.message"].as_str(),
+        Some("HTTP server error")
+    );
+    let page_trace = |entry: &Document| match entry.get("attributes") {
+        Some(Value::Map(attributes)) => attributes
+            .get("moqui.page.trace_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => None,
+    };
+    let named = root("/page", "");
+    assert_eq!(page_trace(named).as_deref(), Some(page));
+    assert_ne!(named["trace_id"].as_str(), Some(page), "the page trace is not a parent");
+    assert_eq!(
+        named["trace_id"].as_str(),
+        Some("34343434343434343434343434343434"),
+        "the client's traceparent still sets the parent"
+    );
+    assert_eq!(
+        named["sampled"],
+        Value::Bool(false),
+        "the client's sampled flag does not turn sampling on"
+    );
+    assert_eq!(page_trace(root("/page", "bad=")), None);
     drop(entries);
     telemetry.shutdown();
 }

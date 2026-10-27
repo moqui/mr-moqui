@@ -6,7 +6,7 @@ const VERSION: &str = "moqui.report.DefinitionVersion";
 const REFERENCE: &str = "moqui.report.DefinitionReference";
 #[derive(Default)]
 struct Shipped {
-    definitions: std::sync::RwLock<Option<Vec<Json>>>,
+    definitions: std::sync::RwLock<Option<std::sync::Arc<Vec<Json>>>>,
 }
 
 /// Load component files once at boot. A bad independent file is logged and skipped; named
@@ -15,7 +15,7 @@ pub fn load_shipped(factory: &crate::context::ExecutionContextFactory) -> Result
     let registry = factory.extension(|_| Shipped::default());
     let definitions = scan_shipped(factory);
     let count = definitions.len();
-    *registry.definitions.write().unwrap_or_else(|e| e.into_inner()) = Some(definitions);
+    *registry.definitions.write().unwrap_or_else(|e| e.into_inner()) = Some(std::sync::Arc::new(definitions));
     Ok(count)
 }
 
@@ -55,7 +55,7 @@ fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
     Ok(definition)
 }
 
-fn shipped(ec: &ExecutionContext) -> Vec<Json> {
+fn shipped(ec: &ExecutionContext) -> std::sync::Arc<Vec<Json>> {
     let registry = ec.factory().extension(|_| Shipped::default());
     {
         if let Some(definitions) = registry.definitions.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
@@ -63,10 +63,9 @@ fn shipped(ec: &ExecutionContext) -> Vec<Json> {
         }
     }
     let mut state = registry.definitions.write().unwrap_or_else(|e| e.into_inner());
-    if state.is_none() {
-        *state = Some(scan_shipped(ec.factory()));
-    }
-    state.as_ref().unwrap().clone()
+    state
+        .get_or_insert_with(|| std::sync::Arc::new(scan_shipped(ec.factory())))
+        .clone()
 }
 
 fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> {
@@ -118,6 +117,8 @@ fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> 
                 }
                 if definition["type"] == "alert" {
                     super::alert::validate_contacts(&definition["body"])?;
+                    // The evaluator reads only saved rules, which run as their owner.
+                    tracing::warn!(file=%path.display(),definition=%text(&definition,"id",""),"shipped alert rules are templates and are not evaluated; save a copy to enable one");
                 }
                 definition["readOnly"] = json!(true);
                 definition["component"] = json!(component.name);
@@ -148,24 +149,31 @@ pub(super) fn row_json(row: &crate::entity::EntityValue) -> Result<Json, Error> 
 }
 
 pub fn read(ec: &ExecutionContext, id: &str) -> Result<Json, Error> {
-    if let Some(definition) = shipped(ec).into_iter().find(|d| text(d, "id", "") == id) {
-        return visible(ec, definition);
+    read_optional(ec, id)?.ok_or_else(|| fail(format!("report definition {id} does not exist")))
+}
+
+/// A definition the viewer may read, or `None` when no shipped or saved definition has the id.
+pub fn read_optional(ec: &ExecutionContext, id: &str) -> Result<Option<Json>, Error> {
+    if let Some(definition) = shipped(ec).iter().find(|d| text(d, "id", "") == id) {
+        return visible(ec, definition.clone()).map(Some);
     }
-    let row = internal(ec, || {
+    let Some(row) = internal(ec, || {
         entity(ec)?.find(ENTITY)?.eq("definitionId", Value::string(id)).one()
     })?
-    .ok_or_else(|| fail(format!("report definition {id} does not exist")))?;
+    else {
+        return Ok(None);
+    };
     let definition = row_json(&row)?;
     if !readable(&definition)? {
         return Err(fail(format!("viewer may not read definition {id}")));
     }
-    visible(ec, definition)
+    visible(ec, definition).map(Some)
 }
 
 pub fn list(ec: &ExecutionContext, kind: Option<&str>) -> Result<Vec<Json>, Error> {
     let mut definitions = shipped(ec)
-        .into_iter()
-        .map(|definition| visible(ec, definition))
+        .iter()
+        .map(|definition| visible(ec, definition.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let rows = internal(ec, || entity(ec)?.find(ENTITY)?.list())?;
     for row in rows.iter() {
@@ -191,10 +199,7 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
             for (key, value) in map {
                 if matches!(key.as_str(), "definitionId" | "panelRef" | "datasetId" | "dashboardRef") {
                     if let Some(id) = value.as_str() {
-                        if !matches!(
-                            id,
-                            "otel_spans" | "otel_logs" | "otel_metrics" | "otel_errors" | "monitor_annotations"
-                        ) {
+                        if !crate::search::telemetry::is_telemetry_index(id) {
                             out.insert(id.into());
                         }
                     }
@@ -266,12 +271,8 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
         if reference == id {
             return Err(fail("definition cannot reference itself"));
         }
-        match read(ec, reference) {
-            Ok(_) => {}
-            Err(error) if error.message().contains("does not exist") => {
-                super::dataset(ec, reference)?;
-            }
-            Err(error) => return Err(error),
+        if read_optional(ec, reference)?.is_none() {
+            super::dataset(ec, reference)?;
         }
         let mut pending = vec![reference.clone()];
         let mut visited = BTreeSet::new();
@@ -550,13 +551,9 @@ pub fn export_definitions(
         if !visited.insert(id.clone()) {
             continue;
         }
-        let definition = match read(ec, &id) {
-            Ok(definition) => definition,
-            Err(error) if error.message().contains("does not exist") => {
-                super::dataset(ec, &id)?;
-                continue;
-            }
-            Err(error) => return Err(error),
+        let Some(definition) = read_optional(ec, &id)? else {
+            super::dataset(ec, &id)?;
+            continue;
         };
         let mut refs = BTreeSet::new();
         references(&definition["body"], &mut refs);
@@ -566,7 +563,8 @@ pub fn export_definitions(
             return Err(fail("definition export exceeds 1000 objects"));
         }
     }
-    tracing::info!(actor=%viewer()?,count=out.len(),"report definitions exported");
+    viewer()?;
+    super::audit_export("definitions", "json", text(&params, "definitionId", ""), out.len(), &[]);
     Ok(output(json!({"bundle":{"schemaVersion":1,"definitions":out}})))
 }
 
@@ -603,6 +601,9 @@ pub fn import_definitions(
     if definitions.len() > 1000 {
         return Err(fail("definition import exceeds 1000 objects"));
     }
+    if definitions.iter().any(|d| !d.is_object()) {
+        return Err(fail("each bundle definition must be an object"));
+    }
     let prefix = text(&params, "idPrefix", "import-");
     let ids: HashMap<_, _> = definitions
         .iter()
@@ -613,7 +614,9 @@ pub fn import_definitions(
         .map(|d| {
             let mut d = d.clone();
             d["id"] = json!(ids[text(&d, "id", "")]);
-            d.as_object_mut().unwrap().remove("version");
+            if let Some(map) = d.as_object_mut() {
+                map.remove("version");
+            }
             remap(&mut d["body"], &ids);
             d
         })

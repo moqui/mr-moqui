@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Annotations" default-menu-index="8">
+    <!-- Explore's links and forms resolve against this screen's URL, so its transitions run here, under this app's authorization. -->
+    <transition-include name="remember" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="trace" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="user" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="context" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="visit" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="tail" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="saveSearch" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="addPanel" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition-include name="split" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition name="create" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.create#Annotation" in-map="{time:annotationTime || null,timeEnd:annotationEnd || null,source:'user',text:annotationText,tags:String(annotationTags || '').split(',').map(tag=>tag.trim()).filter(Boolean),scope:annotationScope || null,serviceName:serviceName || null,instanceId:instanceId || null,dashboardId:dashboardId || null,panelId:panelId || null}"/></actions>
         <default-response url="."/>

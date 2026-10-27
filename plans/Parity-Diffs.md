@@ -336,3 +336,16 @@ What the framework's client specs (`runtime/base-component/framework/test/client
 |---|---|---|
 | service job run | With `errorHistoryOnly` Y, a run that finishes with no error deletes its `ServiceJobRun`. Java has no such field and keeps every run (`service/jobs.rs`, `finish_run`) | A job that runs every minute would keep a row a minute, for ninety days, for a sweep that usually finds nothing. The lock's `lastRunTime` still says the job ran, and `repeatCount` counts from `ServiceJobRunLock.runCount`. An error, a panic, a run abandoned at shutdown, and a run that could not be submitted stay, so the retry delay and the job error screen still have the row. Comment at `finish_run` |
 
+
+## Monitoring (2026-10-27)
+
+[Monitoring](Monitoring.md) replaced the artifact hit records and the log shipping with OpenTelemetry. Its "Retired and replaced" section maps each old function to its replacement; the user guide is [docs/Monitoring.md](../docs/Monitoring.md).
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| artifact hits | `ArtifactHit`, `ArtifactHitBin` and `ArtifactHitReport` are not entities. Each screen, transition, service and REST frame is a span in `otel_spans`, and its time a `moqui.artifact.duration` minute metric in `otel_metrics` (`telemetry/`, `context/artifact.rs`); Java writes a row per hit and a 15-minute bin | Spans carry the trace and sampling, and minute metrics roll up to hours and days. Old tables are left unused; the guide's "Upgrading" gives the optional drop |
+| log shipping | Log events go to `otel_logs` through the OpenTelemetry logger with their trace and span ids, and each request is a SERVER span; Java's `ElasticSearchLogger` and `ElasticRequestLogFilter` write `moqui_logs` and `moqui_http_log` | One store for logs, requests and traces. `ElasticRequestLogFilter enabled="false"` no longer turns anything off: request spans are always written |
+| screens | System Artifact Summary, Artifact Bins, Log Viewer and DataDocument Search are removed, with the hit REST resources; Monitor Artifacts, Monitor Logs and Dashboards Explore replace them | Monitoring.md "Retired and replaced" |
+| untracked frames | An untracked frame (`ExecutionContext::untrack_hit`: a REST path frame, the screens around always- and pre-actions, an authorization check) records no span or metric of its own; the frames it runs are recorded. A screen with `track-artifact-hit="false"` records nothing under it either (`Frames::hit_detail`, `screen/render.rs`) | Java's `setTrackArtifactHit(false)` skipped the hit row of that frame only. The screen attribute covers its subtree so sign-in and OAuth callbacks write no artifact telemetry; the request span is still written |
+| stats skip | `server-stats/@stats-skip-condition` is not read; Java skipped visit and hit records when it was true | Sampling replaces it for telemetry. The XSD marks it deprecated, and a conf that sets it gets a warning at start |
+| cleanup jobs | `clean#ArtifactData` and the `clean_ElasticSearch*Messages_daily` jobs are gone; `clean#TelemetryData` applies per-index retention, and startup pauses the old job registrations | `factory.rs` `retire_legacy_monitoring_jobs` |

@@ -125,10 +125,15 @@
         const name=field.name==='_type'?'_document':field.name;
         return {datasetId:query.datasetId,query:{field:{name,op:value==null?'exists':'eq',...(value==null?{}:{value})}},label:field.name+': '+report.format(value,field),negated:value==null?!negated:!!negated,disabled:false,pinned:false};
     };
+    // The shell the page is in (/qapps or /apps). Pages open in it; transition requests keep the server's /apps path.
+    report.appRoot=href=>/^\/qapps(?=\/|$)/.test(new root.URL(href || root.location.href).pathname)?'/qapps':'/apps';
+    report.appPath=(path,href)=>/^\/apps(?=[/?]|$)/.test(String(path || ''))?report.appRoot(href)+String(path).slice(5):String(path || '');
+    // The dashboard of a single-panel view (panelId) with all its panels.
+    report.allPanelsUrl=href=>{const url=new root.URL(href || root.location.href);url.searchParams.delete('panelId');return url.href;};
     report.filterUrl=(pill,options,href)=>{const url=new root.URL(href || root.location.href),pills=report.parsePills(options && options.filters || url.searchParams.get('filtersJson'));
         if(pills.length>=32)throw new Error('At most 32 filters');
         if(!pills.some(item=>JSON.stringify([item.datasetId,item.query,!!item.negated])===JSON.stringify([pill.datasetId,pill.query,!!pill.negated])))pills.push(pill);
-        if(!(options && options.dashboardId)){url.pathname=(url.pathname.startsWith('/qapps/')?'/qapps':'/apps')+'/dashboards/Explore';url.searchParams.set('datasetId',pill.datasetId);}
+        if(!(options && options.dashboardId)){url.pathname=report.appRoot(url.href)+'/dashboards/Explore';url.searchParams.set('datasetId',pill.datasetId);}
         url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');
         if(options && options.range){for(const key of ['from','thru'])if(options.range[key])url.searchParams.set(key,options.range[key]);}
         return url.href;
@@ -386,7 +391,7 @@
         methods:{write(body){if(!this.readOnly)this.mForm.fields[this.name]=JSON.stringify(body,null,2);},change(path,value){const copy=E.clone(this.body);E.set(copy,path,value);this.write(copy);}},
         render(){const h=root.Vue.h,body=this.body,disabled=this.readOnly;if(!body || typeof body!=='object')return h('p',{role:'alert'},'Correct the JSON to use the report editor');const rows=body.dashboards || [];
             if(body.kind==='playlist'){const items=body.playlist || [];return h('section',{class:'m-report-editor'},[h('h4','Playlist options'),E.control('Seconds per dashboard',body.seconds || 30,value=>this.change('seconds',value),'number',null,disabled),...items.map((entry,at)=>h('fieldset',{class:'m-report-editor-group'},[h('legend','Playlist item '+(at+1)),E.control('Dashboard',entry.definitionId,value=>this.change('playlist.'+at+'.definitionId',value),'select',this.dashboards.map(item=>({value:item.id,text:item.title || item.id})),disabled),...E.listControls(items,at,value=>this.change('playlist',value),disabled)])),E.button('Add playlist dashboard',()=>this.change('playlist',[...E.clone(items),{definitionId:this.dashboards[0] && this.dashboards[0].id || ''}]),disabled)]);}
-            return h('section',{class:'m-report-editor'},[h('h4','Report composition'),E.control('Orientation',body.orientation || 'portrait',value=>this.change('orientation',value),'select',['portrait','landscape'],disabled),E.control('Report layout',body.layout || 'grid',value=>this.change('layout',value),'select',['grid','rows'],disabled),E.control('Appendix',body.appendix,value=>this.change('appendix',value),'checkbox',null,disabled),
+            return h('section',{class:'m-report-editor'},[h('h4','Report composition'),E.control('Orientation',body.orientation || 'portrait',value=>this.change('orientation',value),'select',['portrait','landscape'],disabled),E.control('Paper',body.paper || 'letter',value=>this.change('paper',value),'select',[{value:'letter',text:'Letter'},{value:'a4',text:'A4'}],disabled),E.control('Report layout',body.layout || 'grid',value=>this.change('layout',value),'select',['grid','rows'],disabled),E.control('Appendix',body.appendix,value=>this.change('appendix',value),'checkbox',null,disabled),
                 ...rows.map((entry,at)=>h('fieldset',{class:'m-report-editor-group'},[h('legend','Dashboard '+(at+1)),E.control('Dashboard',entry.dashboardRef,value=>this.change('dashboards.'+at+'.dashboardRef',value),'select',this.dashboards.map(item=>({value:item.id,text:item.title || item.id})),disabled),E.control('From',entry.from,value=>this.change('dashboards.'+at+'.from',value),null,null,disabled),E.control('Through',entry.thru,value=>this.change('dashboards.'+at+'.thru',value),null,null,disabled),
                     ...Object.entries(entry.variables || {}).map(([name,value])=>h('div',{class:'row q-gutter-sm'},[E.control('Variable name',name,next=>{const variables=Object.assign({},entry.variables);delete variables[name];variables[next]=value;this.change('dashboards.'+at+'.variables',variables);},null,null,disabled),E.control('Value',Array.isArray(value)?value.join(','):value,next=>{const variables=Object.assign({},entry.variables);variables[name]=next;this.change('dashboards.'+at+'.variables',variables);},null,null,disabled),E.button('Remove variable',()=>{const variables=Object.assign({},entry.variables);delete variables[name];this.change('dashboards.'+at+'.variables',variables);},disabled)])),
                     E.button('Add dashboard variable',()=>{const variables=Object.assign({},entry.variables);let name='variable';while(name in variables)name+='-new';variables[name]='';this.change('dashboards.'+at+'.variables',variables);},disabled),...E.listControls(rows,at,value=>this.change('dashboards',value),disabled)])),
@@ -539,7 +544,7 @@
                     h("label", ["Layout ", h("select", { value: layout.type || "autoGrid", disabled: this.readOnly, onChange: (event) => this.layout(event.target.value) }, ["autoGrid", "grid", "rows", "tabs"].map((value) => h("option", { value }, value)))]) ]),
                 (this.panelOnly || this.queryOnly) ? null : h("div", { class: "q-py-sm" }, [h("label", ["Library panel ", h("select", { value: this.libraryId, onChange: (event) => { this.libraryId = event.target.value; } }, [h("option", { value: "" }, "Choose"), ...this.libraries.map((item) => h("option", { value: item.id }, item.title))])]),
                     h("button", { type: "button", disabled: this.readOnly || !this.libraryId, onClick: () => this.library(false) }, "Add library reference")]),
-                panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: "/apps/dashboards/Definition?definitionId=" + encodeURIComponent(panel.panelRef) }, "Edit library panel"), " ",
+                panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: report.appPath("/apps/dashboards/Definition?definitionId=" + encodeURIComponent(panel.panelRef)) }, "Edit library panel"), " ",
                     h("button", { type: "button", disabled: this.readOnly, onClick: () => this.library(true) }, "Unlink as copy")]) :
                     h("div", [h("input", { type: "search", placeholder: "Search panel options", value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } }), ...options]),
                 !this.queryOnly && !panel.panelRef && !this.optionSearch ? h('details',[h('summary','Field overrides, mappings and thresholds'),h(components['m-report-field-editor'],{value:panel.fieldConfig || {},disabled:this.readOnly,onChange:value=>this.update('fieldConfig',value)})]):null,
@@ -581,7 +586,7 @@
                         return h("details", { key: hit.documentId + ":" + hit.id, class: "q-py-xs" }, [
                             h("summary", { style: { color: Number(doc.severity_number) >= 17 ? "var(--q-negative)" : undefined } },
                                 report.format(doc.timestamp || doc.start, { type: "time" }) + " " + (doc.severity_text || "") + " " + String(doc.body || doc.name || "").slice(0, 500)),
-                            trace ? h("a", { href: "/apps/monitor/TraceDetail?traceId=" + encodeURIComponent(trace) }, "Open trace") : null,
+                            trace ? h("a", { href: report.appPath("/apps/monitor/TraceDetail?traceId=" + encodeURIComponent(trace)) }, "Open trace") : null,
                             h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(doc, null, 2)) ]);
                     }) : [h("p", "No new telemetry. This does not establish health.")]) : null ]);
         }
@@ -596,13 +601,13 @@
                 ...rows.map((row) => h("button", { type: "button", class: "full-width text-left q-pa-sm", key: row.span.span_id,
                     style: { display: "grid", gridTemplateColumns: "minmax(180px, 35%) 1fr", border: "0", background: "transparent", color: "inherit" },
                     onClick: () => { this.selected = row.span; this.$emit("select", row.span); },
-                    "aria-label": row.span.name + ", " + row.duration.toFixed(2) + " milliseconds" }, [
+                    "aria-label": row.span.name + (row.span.status_code === "ERROR" ? ", ERROR" : "") + ", " + row.duration.toFixed(2) + " milliseconds" }, [
                     h("span", { style: { paddingLeft: row.depth * 12 + "px", overflow: "hidden", textOverflow: "ellipsis" } },
                         row.span.name + (row.missingParent ? " (parent unavailable)" : "")),
                     h("span", { style: { position: "relative", height: "22px", borderBottom: "1px solid var(--q-secondary)" } }, [
                         h("span", { style: { position: "absolute", left: row.left + "%", width: row.width + "%", minWidth: "2px", height: "18px",
                             background: row.span.status_code === "ERROR" ? "var(--q-negative)" : "var(--q-primary)", borderRadius: "2px" } }),
-                        h("span", { style: { position: "relative", textShadow: "0 0 3px var(--q-dark)", paddingLeft: "4px" } }, row.duration.toFixed(2) + " ms") ]) ])),
+                        h("span", { style: { position: "relative", textShadow: "0 0 3px var(--m-panel-bg)", paddingLeft: "4px" } }, row.duration.toFixed(2) + " ms") ]) ])),
                 this.selected ? h("details", { open: true, class: "q-pa-sm" }, [h("summary", this.selected.name), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(this.selected, null, 2))]) : null ]);
         }
     };
@@ -618,13 +623,13 @@
                 h("button",{type:"button",onClick:()=>{this.at=(this.at+this.items.length-1)%this.items.length;}},"Previous"),
                 h("button",{type:"button",onClick:()=>{this.paused=!this.paused;}},this.paused?"Resume":"Pause"),
                 h("button",{type:"button",onClick:()=>{this.at=(this.at+1)%this.items.length;}},"Next"),
-                h("a",{href:report.safeLink(item.url)},item.title),h("span",(this.at+1)+" / "+this.items.length)]),
-                h("iframe",{key:this.at,src:report.safeLink(item.url),title:item.title,style:{width:"100%",height:"80vh",border:0},referrerpolicy:"same-origin"})]);
+                h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",(this.at+1)+" / "+this.items.length)]),
+                h("iframe",{key:this.at,src:report.safeLink(report.appPath(item.url)),title:item.title,style:{width:"100%",height:"80vh",border:0},referrerpolicy:"same-origin"})]);
         }
     };
     components["m-report-panel"] = {
         props: { frame: { type: Object, default: () => ({ fields: [] }) }, frames: Array, panel: { type: Object, default: () => ({}) },
-            title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]} },
+            title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]} },
         emits:["filter"],
         data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "" }),
         methods: {
@@ -633,7 +638,8 @@
                 try {
                     const parameters = new root.URLSearchParams(Object.assign({ definitionId: this.dashboardId, panelId: this.panelId,
                         from: this.range && this.range.from || "now-7d", thru: this.range && this.range.thru || "now", variables: JSON.stringify(this.variables || {}),filtersJson:JSON.stringify(this.filters || []) }, extra || {}));
-                    const response = await root.fetch("/apps/dashboards/Dashboard/" + action + "?" + parameters.toString(), { credentials: "same-origin", headers: { Accept: "application/json" } });
+                    // The transitions of the screen that renders the dashboard (the Monitor screens include them), at its server path.
+                    const response = await root.fetch((this.screenUrl || "/apps/dashboards/Dashboard") + "/" + action + "?" + parameters.toString(), { credentials: "same-origin", headers: { Accept: "application/json" } });
                     if (!response.ok) throw new Error("Request failed (" + response.status + ")");
                     const result = await response.json();
                     if (result.errors || result.error) throw new Error(result.errors || result.error);
@@ -663,12 +669,13 @@
             const h = root.Vue.h, frame = this.frames && this.frames[0] || this.frame;
             const fields = report.configuredFields(frame, this.panel), rows = report.rows(frame), visual = this.panel.visualization || this.panel.type || "table";
             const title = this.title || this.panel.title;
-            const header = h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, title || "Report"),
-                h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs" }, "CSV"),
-                this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs" }, "XLSX") : null,
-                h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs" }, "Inspect"),
+            const named = title || "Report";
+            const header = h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, named),
+                h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as CSV" }, "CSV"),
+                this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as XLSX" }, "XLSX") : null,
+                h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Inspect " + named, "aria-pressed": this.inspector }, "Inspect"),
                 this.dashboardId && (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric")) ?
-                    h("a", { href: "/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId) }, "New alert rule") : null]);
+                    h("a", { href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, "New alert rule") : null]);
             let content;
             if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: this.panel.text || "" });
             else if (!rows.length) content = h("p", { role: "status", class: "text-grey" }, "No data in this time range.");
@@ -710,8 +717,8 @@
                     h("tbody", sorted.map((row, at) => h("tr", { key: at }, visible.map(({ field, index }) => {
                         const value = row[index], text = report.cellText(value, field,row.sourceRow), record = Object.fromEntries(fields.map((item, i) => [item.name, row[i]]));
                         const link = field.link ? report.dataLink(field.link, value, record) : "";
-                        return h("td", { style: { color: report.thresholdColor(value, field), ...(field.frozen ? { position: "sticky", left: "0", background: "var(--q-dark)" } : {}) } },
-                            link ? h("a", { href: link }, text) : report.bucketPill(frame,this.panel,index,row.sourceRow,false) ? h('button',{type:'button',class:'m-report-cell-filter',title:'Filter for this value; Shift-click filters out',onClick:event=>this.filter(report.bucketPill(frame,this.panel,index,row.sourceRow,event.shiftKey))},text) : text.length > 240 ? h("details", [h("summary", text.slice(0, 200) + "…"), h("pre", { style: { whiteSpace: "pre-wrap" } }, text)]) : text);
+                        return h("td", { style: { color: report.thresholdColor(value, field), ...(field.frozen ? { position: "sticky", left: "0", background: "var(--m-panel-bg)" } : {}) } },
+                            link ? h("a", { href: report.appPath(link) }, text) : report.bucketPill(frame,this.panel,index,row.sourceRow,false) ? h('button',{type:'button',class:'m-report-cell-filter',title:'Filter for this value; Shift-click filters out',onClick:event=>this.filter(report.bucketPill(frame,this.panel,index,row.sourceRow,event.shiftKey))},text) : text.length > 240 ? h("details", [h("summary", text.slice(0, 200) + "…"), h("pre", { style: { whiteSpace: "pre-wrap" } }, text)]) : text);
                     })))),
                     this.panel.totals ? h("tfoot", [h("tr", visible.map(({ field, index }) => h("td", report.format(this.panel.totals[field.name] ?? null, field))))]) : null ]) ]);
             }
@@ -729,12 +736,15 @@
     };
     components["m-dashboard"] = {
         props: { dashboard: { type: Object, default: () => ({ panels: {} }) }, frames: { type: Object, default: () => ({}) } },
-        data: () => ({ syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: false, refreshSeconds: 0, timer: null }),
+        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null }; },
         mounted() {
             this.refreshSeconds = Number(this.dashboard.refreshSeconds) || 0;
             this.setRefresh();
             this.onKey = (event) => {
+                if (event.key === "Escape" && this.kiosk) { event.preventDefault(); this.kiosk = false; return; }
                 if (/INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable) return;
+                // Esc in an open dialog closes the dialog only.
+                if (event.key === "Escape" && this.dashboard.panelId && !event.defaultPrevented && !root.document.querySelector(".q-dialog")) { event.preventDefault(); this.allPanels(); return; }
                 if (event.key === "k" && event.altKey) { event.preventDefault(); this.kiosk = !this.kiosk;return; }
                 const prefix=Date.now()-this.keyAt<2000?this.keyPrefix:"";this.keyPrefix="";
                 if (prefix==='t') {const range=report.shiftRange(this.dashboard.absoluteTime,event.key);if(range){event.preventDefault();this.timeRange(range);return;}}
@@ -744,7 +754,7 @@
                 const panels=this.dashboard.panels || {},id=this.selectedPanel || Object.keys(panels)[0];
                 if (event.key==='i' && this.panelRefs[id]) {event.preventDefault();this.panelRefs[id].inspect();}
                 if (event.key==='v' && id && this.dashboard.definitionId) {event.preventDefault();const url=new root.URL(root.location.href);url.searchParams.set('panelId',id);root.location.assign(url.href);}
-                if (event.key==='e' && this.dashboard.definitionId) {event.preventDefault();root.location.assign('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboard.definitionId));}
+                if (event.key==='e' && this.dashboard.definitionId) {event.preventDefault();root.location.assign(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboard.definitionId)));}
             };
             root.document.addEventListener("keydown", this.onKey);
             this.onRange=(event)=>{if(event.detail.group!==this.syncGroup)return;const url=new root.URL(root.location.href);url.searchParams.set('from',event.detail.from);url.searchParams.set('thru',event.detail.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);};
@@ -752,6 +762,7 @@
         },
         beforeUnmount() { root.clearInterval(this.timer); root.document.removeEventListener("keydown", this.onKey);root.document.removeEventListener("moqui-report-range",this.onRange); },
         methods: {
+            allPanels(){root.location.assign(report.allPanelsUrl());},
             applyFilters(pills){const url=new root.URL(root.location.href);url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
             addFilter(pill){root.location.assign(report.filterUrl(pill,{dashboardId:this.dashboard.definitionId,filters:this.dashboard.filters,range:this.dashboard.absoluteTime}));},
             timeRange(range) {const url=new root.URL(root.location.href);url.searchParams.set('from',range.from);url.searchParams.set('thru',range.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
@@ -779,7 +790,7 @@
             const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
             const byId = Object.fromEntries(entries);
             const panel = (id, position) => byId[id] ? h("div", { key: id, style: position || {},onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
-                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
+                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,360px),1fr))", gap: "12px" } }, items);
             const layout = (node, path) => {
                 if (!node) return auto(entries.map(([id]) => panel(id)));
@@ -812,8 +823,10 @@
                 h("span", "Charts share a cursor. Drag a time range to zoom all panels; double click to reset chart zoom."),
                 h("button", { type: "button", class: "q-btn q-pa-xs", onClick: this.share }, "Copy absolute-time link"),
                 h("button", { type: "button", class: "q-btn q-pa-xs", onClick: () => { this.kiosk = true; } }, "Kiosk (Alt+K)") ]);
-            return h("div", { class: "m-report-dashboard", style: this.kiosk ? { position: "fixed", inset: "0", zIndex: "10000", overflow: "auto", background: "var(--q-dark,white)", padding: "12px" } : {} },
-                [toolbar, !this.kiosk && Object.keys(this.dashboard.datasetFields || {}).length ? h(components["m-dashboard-filters"],{dashboard:this.dashboard,onApply:this.applyFilters}):null, this.kiosk ? h("button", { type: "button", onClick: () => { this.kiosk = false; } }, "Exit kiosk") : null, layout(this.dashboard.layout, "root")]);
+            const single = !this.kiosk && this.dashboard.panelId ? h("p", { class: "row items-center q-gutter-sm" }, [h("span", "Showing panel " + ((byId[this.dashboard.panelId] || {}).title || this.dashboard.panelId) + "."),
+                h("button", { type: "button", class: "q-btn q-pa-xs", onClick: this.allPanels }, "All panels (Esc)")]) : null;
+            return h("div", { class: "m-report-dashboard", style: this.kiosk ? { position: "fixed", inset: "0", zIndex: "10000", overflow: "auto", background: "var(--m-panel-bg,white)", padding: "12px" } : {} },
+                [toolbar, single, !this.kiosk && Object.keys(this.dashboard.datasetFields || {}).length ? h(components["m-dashboard-filters"],{dashboard:this.dashboard,onApply:this.applyFilters}):null, this.kiosk ? h("button", { type: "button", onClick: () => { this.kiosk = false; } }, "Exit kiosk (Esc)") : null, layout(this.dashboard.layout, "root")]);
         }
     };
     if (moqui.qvt && moqui.qvt.registerLate) Object.entries(components).filter(([name]) => ["m-report-value-filter","m-dashboard-filters","m-report-transform-editor","m-report-field-editor","m-report-variable-editor","m-report-layout-editor","m-report-composition-editor","m-report-querybar", "m-report-playlist", "m-report-panel", "m-dashboard", "m-trace-waterfall", "m-log-tail", "m-report-definition-editor"].includes(name))

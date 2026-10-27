@@ -244,7 +244,8 @@ impl<'a> Compiler<'a> {
         }
         match query {
             Query::MatchAll => Ok(Sql::new("TRUE")),
-            // The log viewer's string: field:term, ranges, AND/OR/NOT, groups and phrases are in the facade grammar.
+            // The Explore and Monitor Logs query string: field:term, ranges, AND/OR/NOT, groups and phrases are in the
+            // facade grammar.
             Query::Lucene(text) => self.compile(&crate::search::parse::parse_query_string(text)?, scope),
             Query::Near {
                 terms,
@@ -1082,7 +1083,11 @@ fn field_leaf(config: &str, expr: &str, kind: FieldKind, query: &FieldQuery) -> 
                 ("<=", &query.lte),
             ] {
                 if let Some(bound) = bound {
-                    parts.push(compare(expr, kind, op, bound));
+                    let rounded = (kind == FieldKind::Date && matches!(op, ">" | "<="))
+                        .then(|| date_range_bound(bound, true))
+                        .flatten()
+                        .map(Value::Timestamp);
+                    parts.push(compare(expr, kind, op, rounded.as_ref().unwrap_or(bound)));
                 }
             }
             if parts.is_empty() {
@@ -1162,8 +1167,34 @@ pub fn typed_param(kind: FieldKind, value: &Value) -> Option<(Value, &'static st
 /// operators.
 const NEAR_PHRASE_LIMIT: u32 = 64;
 
-/// A date bound: a timestamp, a date (midnight UTC), epoch millis, ISO-8601, `now`, or the
-/// Moqui `yyyy-MM-dd HH:mm:ss.SSS` form read as UTC.
+/// A relative date (`now`, `now-30d`, `now/d`, `now-1M/M`), resolved here with the report time rules so
+/// Postgres and OpenSearch read the same instant. `round_up` is for an `lte` or `gt` bound: a rounded
+/// time is then the last millisecond of its unit, as Elastic date math has it.
+fn relative_bound(text: &str, round_up: bool) -> Option<Timestamp> {
+    let now = Timestamp::now().as_millisecond();
+    let at = match text.rsplit_once('/') {
+        Some((base, unit)) if round_up => {
+            let step = if unit == "fy" { "y" } else { unit };
+            crate::report::time::parse(&format!("{base}+1{step}/{unit}"), now)
+                .ok()?
+                .checked_sub(1)?
+        }
+        _ => crate::report::time::parse(text, now).ok()?,
+    };
+    Timestamp::from_millisecond(at).ok()
+}
+
+/// A range bound as [`parse_date_bound`] reads it, with an `lte` or `gt` (`round_up`) relative
+/// bound rounded up.
+pub fn date_range_bound(value: &Value, round_up: bool) -> Option<Timestamp> {
+    match value {
+        Value::String(text) if text.trim().starts_with("now") => relative_bound(text.trim(), round_up),
+        _ => parse_date_bound(value),
+    }
+}
+
+/// A date bound: a timestamp, a date (midnight UTC), epoch millis, ISO-8601, `now` or a relative
+/// date (`now-30d`, `now/d`), or the Moqui `yyyy-MM-dd HH:mm:ss.SSS` form read as UTC.
 pub fn parse_date_bound(value: &Value) -> Option<Timestamp> {
     match value {
         Value::Timestamp(at) => Some(*at),
@@ -1178,7 +1209,7 @@ pub fn parse_date_bound(value: &Value) -> Option<Timestamp> {
                 .ok()
                 .and_then(|millis| Timestamp::from_millisecond(millis).ok())
         }
-        Value::String(text) if text.trim() == "now" => Some(Timestamp::now()),
+        Value::String(text) if text.trim().starts_with("now") => relative_bound(text.trim(), false),
         Value::String(text) => parse_timestamp(text, &TimeZone::UTC),
         _ => None,
     }

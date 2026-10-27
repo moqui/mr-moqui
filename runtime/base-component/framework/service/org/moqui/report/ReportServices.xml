@@ -14,7 +14,7 @@
         <out-parameters><parameter name="frames" type="List"/><parameter name="notices" type="List"/><parameter name="range" type="Map"/><parameter name="previousRange" type="Map"/><parameter name="inspection" type="List"/><parameter name="request" type="Map"/><parameter name="requests" type="List"/><parameter name="sourceCount" type="Long"/><parameter name="nextCursor" type="Map"/></out-parameters>
     </service>
     <service verb="evaluate" noun="Alerts" type="rust" location="moqui_core::report::evaluate_rules">
-        <in-parameters><parameter name="definitionId"/></in-parameters><out-parameters><parameter name="evaluated" type="Integer"/><parameter name="failed" type="Integer"/></out-parameters>
+        <in-parameters><parameter name="definitionId"/></in-parameters><out-parameters><parameter name="evaluated" type="Integer"/><parameter name="failed" type="Integer"/><parameter name="notices" type="List"/></out-parameters>
     </service>
     <service verb="create" noun="Annotation" type="rust" location="moqui_core::report::create_annotation">
         <in-parameters><parameter name="time"/><parameter name="timeEnd"/><parameter name="source"/><parameter name="text" required="true"/><parameter name="tags" type="List"/><parameter name="scope"/><parameter name="serviceName"/><parameter name="instanceId"/><parameter name="dashboardId"/><parameter name="panelId"/><parameter name="version"/><parameter name="revision"/></in-parameters>
@@ -58,6 +58,10 @@
     </service>
     <service verb="import" noun="Definitions" type="rust" location="moqui_core::report::import_definitions">
         <in-parameters><parameter name="bundle" type="Map" required="true"/><parameter name="idPrefix"/></in-parameters><out-parameters><parameter name="definitions" type="List"/></out-parameters>
+    </service>
+    <service verb="audit" noun="Export" type="rust" allow-remote="false" location="moqui_core::report::audit_export">
+        <description>Records an export of report data done outside the report services, such as the Explore document download.</description>
+        <in-parameters><parameter name="kind"/><parameter name="format"/><parameter name="definitionId"/><parameter name="rowCount" type="Long"/></in-parameters>
     </service>
     <service verb="create" noun="Schedule" type="rust" location="moqui_core::report_schedule::create_schedule">
         <in-parameters><parameter name="definitionId" required="true"/><parameter name="cronExpression" required="true"/><parameter name="renderMode"/><parameter name="emailTemplateId"/><parameter name="userId"/><parameter name="userGroupId"/><parameter name="saveToLocation"/><parameter name="emailSubject"/></in-parameters><out-parameters><parameter name="screenScheduledId"/></out-parameters>

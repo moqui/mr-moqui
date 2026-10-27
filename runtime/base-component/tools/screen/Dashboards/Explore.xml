@@ -15,11 +15,12 @@
             let history=[];try{history=JSON.parse(ec.user.getPreference('REPORT_HISTORY_'+dataset) || '[]')}catch(_){}
             history=Array.isArray(history)?history:[]
             if (String(queryString || '').trim()) ec.user.setPreference('REPORT_HISTORY_'+dataset,JSON.stringify([queryString,...history.filter(query=>query!==queryString)].slice(0,20)))
-        ]]></script></actions><default-response url="//apps/dashboards/Explore" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
+        ]]></script></actions><default-response url="." parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
     </transition>
     <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
     <transition name="user"><default-response url="//apps/system/Security/UserAccount/UserAccountDetail"/></transition>
     <transition name="context"><default-response url="//apps/dashboards/LogContext"/></transition>
+    <transition name="visit"><default-response url="//apps/system/Visit/VisitList"/></transition>
     <transition name="tail" method="get" read-only="true">
         <actions><script><![CDATA[
             const options = {datasetId:datasetId || 'otel_logs',from:from || 'now-7d',thru:'now',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),pageSize:100,
@@ -38,7 +39,7 @@
     </transition>
     <transition name="saveSearch" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.save#Definition" in-map="{definition:{id:searchId,type:'search',title:searchTitle,body:{datasetId:datasetId,from:from,thru:thru,queryString:queryString,retrievalMode:retrievalMode || 'lexical',filters:JSON.parse(filtersJson || '[]')}},note:'Saved from Explore'}"/></actions>
-        <default-response url="//apps/dashboards/Explore"><parameter name="savedSearchId" from="searchId"/></default-response>
+        <default-response url="."><parameter name="savedSearchId" from="searchId"/></default-response>
     </transition>
     <transition name="addPanel" method="post" authz-action="update">
         <actions><script><![CDATA[
@@ -68,7 +69,8 @@
         savedSearches=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'search'}).call().definitions || []
         editableDashboards=(ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'dashboard'}).call().definitions || []).filter(definition=>!definition.readOnly && definition.ownerId===ec.user.userId)
         datasetList = ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
-        datasetInfo = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:datasetId || 'otel_logs'}).call().dataset
+        // A dataset the viewer may not read leaves its error as the message, not a render failure.
+        datasetInfo = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:datasetId || 'otel_logs'}).call().dataset || {id:datasetId || 'otel_logs',fields:[]}
         datasetFields = (datasetInfo.fields || []).filter(field=>field.aggregatable)
         datasetId = datasetId || 'otel_logs'
         if (historyQuery) queryString=historyQuery
@@ -114,7 +116,8 @@
                 if (!page.hits || !page.hits.length) break
                 allHits.push(...page.hits); next = page.nextCursor
             }
-            ec.logger.info('Report document export by '+String(ec.user.userId)+' for dataset '+datasetId+': '+allHits.length+' rows')
+            ec.service.sync().name('org.moqui.report.ReportServices.audit#Export').parameters({kind:'documents',
+                format:String(ec.web.parameters.renderMode || sri.getRenderMode() || 'csv'),definitionId:datasetId,rowCount:allHits.length}).call()
         }
         documentList = allHits.map(hit => Object.assign({},hit.body || {},{documentId:hit.id,documentType:hit.documentId,documentTitle:hit.documentTitle || '',authorizedLinks:hit.links || [],highlightsText:Object.values(hit.highlights || {}).flat().join(' · ')}))
         if (order === 'oldest') documentList.reverse()
@@ -230,7 +233,7 @@
         </form-single>
         <render-mode><text type="tui"><![CDATA[${JSON.stringify({t:'component',id:'ExploreQueryEditorNative',name:'report-query-editor',props:{value:queryString,filters:filterPills,form:'SearchOptions',field:'queryString',filtersField:'filtersJson',fields:datasetInfo.fields || [],values:autocompleteValues,datasetId:datasetId}})}]]></text></render-mode>
         <section name="AccessibleExploreFilters" condition="sri.getRenderMode() !== 'qvt'"><widgets>
-            <link url="//apps/dashboards/Explore/remember" text="Remember query and pinned filters" link-type="hidden-form-link" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
+            <link url="remember" text="Remember query and pinned filters" link-type="hidden-form-link" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
             <label text="Filter buttons update this search. Remember saves the query and pinned filters to your preferences." type="p"/>
             <form-single name="RecentExploreQueries" transition=".">
                 <field name="datasetId"><default-field><hidden/></default-field></field><field name="filtersJson"><default-field><hidden/></default-field></field>
@@ -274,8 +277,8 @@
         <link condition="nextCursor != null &amp;&amp; (!retrievalMode || retrievalMode === 'lexical')" url="." text="Next page using cursor" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,order:order,pageSize:pageSize,filtersJson:filtersJson,cursor:JSON.stringify(nextCursor)}"/>
         <label text="Exports use cursor paging, with a 50,000 row limit." type="p"/>
         <render-mode>
-            <text type="qvt"><![CDATA[<m-log-tail url="${WebUtilities.encodeHtml(sri.buildUrl('//apps/dashboards/Explore/tail').getUrlWithParams())}" :params="${WebUtilities.encodeHtml(JSON.stringify({datasetId:datasetId,queryString:queryString,filtersJson:filtersJson,from:from}))}"></m-log-tail>]]></text>
-            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'log-tail',props:{source:sri.buildUrl('//apps/dashboards/Explore/tail').addParameter('datasetId',datasetId).addParameter('queryString',queryString || '').addParameter('from',from).addParameter('filtersJson',filtersJson).getUrlWithParams()}})}]]></text>
+            <text type="qvt"><![CDATA[<m-log-tail url="${WebUtilities.encodeHtml(sri.buildUrl('tail').getUrlWithParams())}" :params="${WebUtilities.encodeHtml(JSON.stringify({datasetId:datasetId,queryString:queryString,filtersJson:filtersJson,from:from}))}"></m-log-tail>]]></text>
+            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'log-tail',props:{source:sri.buildUrl('tail').addParameter('datasetId',datasetId).addParameter('queryString',queryString || '').addParameter('from',from).addParameter('filtersJson',filtersJson).getUrlWithParams()}})}]]></text>
             <text type="html,html-print,text"><![CDATA[<p>Refresh this search to read new entries.</p>]]></text>
         </render-mode>
         <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
@@ -292,7 +295,7 @@
                 <section name="CellFiltershost" condition="['html','tui'].includes(sri.getRenderMode()) &amp;&amp; cellFilters['host'].allowed"><widgets><link url="." text="Filter for" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['host'].forJson}"/><link url="." text="Filter out" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['host'].outJson}"/></widgets></section></default-field></field>
             <field name="userId"><default-field title="User"><link condition="userId" url="user" text="${userId}" link-type="anchor"><parameter name="userId"/></link><render-mode><text type="qvt"><![CDATA[<m-report-value-filter v-if="${cellFilters['user'].allowed ? 'true' : 'false'}" hide-value dataset-id="${WebUtilities.encodeHtml(datasetId)}" field="${WebUtilities.encodeHtml(cellFilters['user'].field)}" :value="${WebUtilities.encodeHtml(JSON.stringify(cellFilters['user'].value))}" :filters="${WebUtilities.encodeHtml(JSON.stringify(filterPills))}" :range="${WebUtilities.encodeHtml(JSON.stringify({from,thru}))}"></m-report-value-filter>]]></text><text type="tui"><![CDATA[[]]]></text><text type="html,html-print,text"></text></render-mode>
                 <section name="CellFiltersuser" condition="['html','tui'].includes(sri.getRenderMode()) &amp;&amp; cellFilters['user'].allowed"><widgets><link url="." text="Filter for" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['user'].forJson}"/><link url="." text="Filter out" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['user'].outJson}"/></widgets></section></default-field></field>
-            <field name="visitorId"><default-field title="Visitor"><display/><render-mode><text type="qvt"><![CDATA[<m-report-value-filter v-if="${cellFilters['visitor'].allowed ? 'true' : 'false'}" hide-value dataset-id="${WebUtilities.encodeHtml(datasetId)}" field="${WebUtilities.encodeHtml(cellFilters['visitor'].field)}" :value="${WebUtilities.encodeHtml(JSON.stringify(cellFilters['visitor'].value))}" :filters="${WebUtilities.encodeHtml(JSON.stringify(filterPills))}" :range="${WebUtilities.encodeHtml(JSON.stringify({from,thru}))}"></m-report-value-filter>]]></text><text type="tui"><![CDATA[[]]]></text><text type="html,html-print,text"></text></render-mode>
+            <field name="visitorId"><default-field title="Visitor"><link condition="visitorId" url="visit" text="${visitorId}" link-type="anchor"><parameter name="visitorId"/></link><render-mode><text type="qvt"><![CDATA[<m-report-value-filter v-if="${cellFilters['visitor'].allowed ? 'true' : 'false'}" hide-value dataset-id="${WebUtilities.encodeHtml(datasetId)}" field="${WebUtilities.encodeHtml(cellFilters['visitor'].field)}" :value="${WebUtilities.encodeHtml(JSON.stringify(cellFilters['visitor'].value))}" :filters="${WebUtilities.encodeHtml(JSON.stringify(filterPills))}" :range="${WebUtilities.encodeHtml(JSON.stringify({from,thru}))}"></m-report-value-filter>]]></text><text type="tui"><![CDATA[[]]]></text><text type="html,html-print,text"></text></render-mode>
                 <section name="CellFiltersvisitor" condition="['html','tui'].includes(sri.getRenderMode()) &amp;&amp; cellFilters['visitor'].allowed"><widgets><link url="." text="Filter for" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['visitor'].forJson}"/><link url="." text="Filter out" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['visitor'].outJson}"/></widgets></section></default-field></field>
             <field name="logger"><default-field title="Logger"><display/><render-mode><text type="qvt"><![CDATA[<m-report-value-filter v-if="${cellFilters['logger'].allowed ? 'true' : 'false'}" hide-value dataset-id="${WebUtilities.encodeHtml(datasetId)}" field="${WebUtilities.encodeHtml(cellFilters['logger'].field)}" :value="${WebUtilities.encodeHtml(JSON.stringify(cellFilters['logger'].value))}" :filters="${WebUtilities.encodeHtml(JSON.stringify(filterPills))}" :range="${WebUtilities.encodeHtml(JSON.stringify({from,thru}))}"></m-report-value-filter>]]></text><text type="tui"><![CDATA[[]]]></text><text type="html,html-print,text"></text></render-mode>
                 <section name="CellFilterslogger" condition="['html','tui'].includes(sri.getRenderMode()) &amp;&amp; cellFilters['logger'].allowed"><widgets><link url="." text="Filter for" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['logger'].forJson}"/><link url="." text="Filter out" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:cellFilters['logger'].outJson}"/></widgets></section></default-field></field>

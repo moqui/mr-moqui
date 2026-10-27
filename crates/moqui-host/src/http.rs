@@ -952,10 +952,14 @@ pub(crate) fn internal_error(detail: &str) -> Response {
     plain(500, &format!("internal error, id {id}"))
 }
 
-/// One SERVER root span for every route, including refusals before the screen worker.
+/// One SERVER root span for every route but the OTLP receiver and probes, including refusals before the screen worker.
 async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, next: Next) -> Response {
-    // Instrumenting collector traffic would produce more telemetry for the collector to send back.
-    if matches!(request.uri().path(), "/v1/traces" | "/v1/logs" | "/v1/metrics") {
+    // Instrumenting collector traffic would produce more telemetry for the collector to send back, and probes and
+    // deploy markers would fill the request history with polling.
+    if matches!(
+        request.uri().path(),
+        "/v1/traces" | "/v1/logs" | "/v1/metrics" | "/v1/annotations" | "/health" | "/metrics"
+    ) {
         return next.run(request).await;
     }
     use moqui_core::telemetry::{SpanKind, TraceContext};
@@ -1001,6 +1005,16 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
         Value::string(moqui_core::telemetry::redact_text(&referrer)),
     );
     span.set_attribute("network.protocol.version", Value::string(format!("{version:?}")));
+    // A browser page's later requests name the page's trace; it is recorded, never used as a parent.
+    let page_trace = request_header(request.headers(), "x-moqui-page-trace");
+    if page_trace.len() == 32
+        && page_trace
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && page_trace.bytes().any(|byte| byte != b'0')
+    {
+        span.set_attribute("moqui.page.trace_id", Value::string(page_trace));
+    }
     let response = next.run(request).await;
     if let Some(length) = response
         .headers()
@@ -1030,12 +1044,14 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
         "http.response.status_code",
         Value::I64(i64::from(response.status().as_u16())),
     );
+    let mut has_error = false;
     if let Some(identity) = &identity {
         for (key, value) in &identity.attributes {
             span.set_attribute(key, value.clone());
         }
         if let Some(error) = identity.attributes.get("exception.message").and_then(Value::as_str) {
             span.set_error(error);
+            has_error = true;
         }
         if let Some(session) = &identity.session {
             span.set_attribute("session.id", Value::string(session));
@@ -1050,7 +1066,8 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
             span.set_attribute("moqui.visit.id", Value::string(visit));
         }
     }
-    if response.status().is_server_error() {
+    // A server error keeps the request's own error, which names its error group.
+    if response.status().is_server_error() && !has_error {
         span.set_error("HTTP server error");
     }
     // A response head is ready before a streamed body has been consumed. Keep the
@@ -1176,11 +1193,8 @@ fn redacted_query(query: &str) -> String {
     moqui_core::web::form_pairs(query)
         .into_iter()
         .map(|(name, value)| {
-            let lower = name.to_ascii_lowercase();
-            let value = if ["password", "secret", "token", "key", "credential", "authorization"]
-                .iter()
-                .any(|part| lower.contains(part))
-            {
+            // The framework's one secret-name rule: `api_key` is redacted, `primaryKeyId` is not.
+            let value = if moqui_core::telemetry::sensitive_key(&name) {
                 "[REDACTED]".into()
             } else {
                 value

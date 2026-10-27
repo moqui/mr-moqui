@@ -83,3 +83,15 @@ UPDATE artifact_group_member
 
 Use the same kind of update for `component://ironstone-boss/` to `component://mr-boss/`, and run it on each table and
 column that holds a location. Then clear the caches (or restart).
+
+A database moved from Moqui Java also keeps its `artifact_hit` and `artifact_hit_bin` tables. They are no longer
+entities here: OpenTelemetry spans and metrics replace them ([Monitoring](Monitoring.md)). The tables are left as they
+are, unused. Once you no longer need the old rows, and after a backup, drop them:
+
+```sql
+DROP TABLE IF EXISTS artifact_hit;
+DROP TABLE IF EXISTS artifact_hit_bin;
+```
+
+The old `clean_ArtifactData_daily` and `clean_ElasticSearch*Messages_daily` job registrations are paused at start;
+their past runs stay.

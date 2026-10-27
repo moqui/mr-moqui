@@ -15,25 +15,40 @@
 //! The aggregation tree, its map form, and calendar bucket arithmetic.
 //!
 //! ```text
-//! {filter:         {query: <query>, aggs: {..}}}
-//! {date_histogram: {field, unit: "day"|"week"|"month"|"quarter"|"year" (or d w M q y, 1w),
+//! {filter:         {query: <query>, aggs: {..}}}     or Elastic's {filter: <es query>}
+//! {filters:        {filters: {name: <query>, ..}, aggs: {..}}}
+//! {range:          {field, ranges: [{key?, from?, to?}], aggs: {..}}}     also date_range
+//! {date_histogram: {field, unit: "minute"|"hour"|"day"|"week"|"month"|"quarter"|"year" (or m h d w M q y, 1w;
+//!                   also calendar_interval or interval), fixed_interval: "5m" (epoch-aligned),
 //!                   time_zone, format: "dd MMM yyyy", offset: "+1d", order: "asc"|"desc",
-//!                   min_doc_count: 0, aggs: {..}}}
+//!                   min_doc_count: 0, extended_bounds: {min, max}, range_start, range_end,
+//!                   drop_partial: true, aggs: {..}}}
+//! {histogram:      {field, interval: 10, offset: 0, aggs: {..}}}
 //! {terms:          {field, size: 10, order: {totalSales: "desc"} | {_count: "desc"} | {_key: "asc"},
-//!                   aggs: {..}}}
+//!                   missing: "Missing", other_bucket: true, other_bucket_key: "Other",
+//!                   min_doc_count: 1 (at least 1), aggs: {..}}}
 //! {sum:            {field}}
 //! {min:            {field}}        also max; null over nothing
+//! {avg:            {field}}        also value_count, median
+//! {percentiles:    {field, percents: [50, 95, 99]}}
+//! {stats:          {field}}        count, sum, min, max and avg
 //! {count_distinct: {field}}        also "cardinality"
+//! {top_hits:       {size: 3 (at most 100), sort: ["-start"]}}
+//! {histogram_merge: {bounds: [..]}}  sums stored histogram buckets with these exact bounds
 //! ```
 //!
 //! Results are maps keyed by aggregation name:
 //!
-//! - a bucket aggregation is `{buckets: [{key, key_display?, doc_count, <sub>..}]}`;
-//! - a filter is `{doc_count, <sub>..}`;
-//! - a metric is a number. A sum over nothing is 0, and a distinct count is an exact integer.
+//! - a bucket aggregation is `{buckets: [{key, key_display?, doc_count, partial?, missing?, other?, <sub>..}]}`;
+//! - a filter is `{doc_count, <sub>..}`, and so are `percentiles` (keyed by the percent as given)
+//!   and `stats`;
+//! - a metric is a number. A sum over nothing is 0, and a distinct count is an exact integer;
+//! - `top_hits` is a list of `{id, documentId, body}` and `histogram_merge` is `{bounds, buckets}`.
 //!
 //! A date histogram with `min_doc_count` 0 has a bucket for every period between the first and
-//! last non-empty period, as Elastic does. It does not reach out to the filter's date range.
+//! last non-empty period, as Elastic does, widened to `extended_bounds` when given. With
+//! `range_start`/`range_end` a first or last bucket that reaches outside the range is partial:
+//! `drop_partial` leaves it out, otherwise it is marked `partial`.
 
 use indexmap::IndexMap;
 use jiff::civil::DateTime;
@@ -398,13 +413,16 @@ impl Agg {
                         .map(to_plain_string)
                         .unwrap_or_else(|| "Other".into())
                 }),
+                // At least 1: on OpenSearch 0 lists terms from documents outside the filter, which
+                // a dataset row filter must keep hidden.
                 min_doc_count: body
                     .get("min_doc_count")
                     .map(to_plain_string)
                     .map(|v| v.parse::<u64>())
                     .transpose()
                     .map_err(|_| Error::new("min_doc_count must be a whole number"))?
-                    .unwrap_or(1),
+                    .unwrap_or(1)
+                    .max(1),
             }),
             "avg" => Self::Metric {
                 field: field()?,
@@ -1197,5 +1215,20 @@ mod tests {
                 descending: true
             }
         );
+    }
+
+    #[test]
+    fn terms_min_doc_count_is_at_least_one_and_histograms_keep_zero() {
+        let aggs = Agg::map_from_value(&moqui_lib::json::from_json(&serde_json::json!({
+            "T":{"terms":{"field":"productId","min_doc_count":0}},
+            "H":{"date_histogram":{"field":"placedDate","fixed_interval":"1h","min_doc_count":0}}
+        })))
+        .unwrap();
+        let Agg::Terms(terms) = &aggs["T"] else { panic!("terms") };
+        assert_eq!(terms.min_doc_count, 1);
+        let Agg::DateHistogram(histogram) = &aggs["H"] else {
+            panic!("histogram")
+        };
+        assert_eq!(histogram.min_doc_count, 0);
     }
 }

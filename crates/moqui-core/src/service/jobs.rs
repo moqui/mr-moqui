@@ -554,6 +554,7 @@ pub(crate) fn run_job(job: JobRun) {
     let end = RunEnd {
         facade: &facade,
         job: &job,
+        telemetry: &telemetry,
         done: false,
     };
     let mut parameters = job.parameters.clone();
@@ -573,12 +574,13 @@ pub(crate) fn run_job(job: JobRun) {
             BTreeMap::new()
         }
     };
-    let (has_error, messages, errors) = {
+    let (has_error, messages, errors, first_error) = {
         let messages = context.message();
         (
             !messages.errors().is_empty(),
             clip(&messages.messages().join("\n")),
             clip(&messages.errors().join("\n")),
+            messages.errors().first().cloned(),
         )
     };
     let result_values: indexmap::IndexMap<String, Value> = results.into_iter().collect();
@@ -590,16 +592,19 @@ pub(crate) fn run_job(job: JobRun) {
         messages,
         errors,
     });
-    let mut attributes = crate::entity::document::Document::new();
-    attributes.insert(
-        "outcome".into(),
-        Value::string(if has_error { "error" } else { "success" }),
-    );
-    telemetry.add_counter("moqui.job.runs", 1, attributes);
-    if has_error {
-        span.set_error("service job failed");
+    count_job_run(&telemetry, if has_error { "error" } else { "success" });
+    // The job's first error, so its error group is the failure's, not one group for every failed job.
+    if let Some(error) = first_error {
+        span.set_error(&error);
     }
     span.finish();
+}
+
+/// `moqui.job.runs` by outcome: success, error, or panic.
+fn count_job_run(telemetry: &crate::telemetry::Telemetry, outcome: &str) {
+    let mut attributes = crate::entity::document::Document::new();
+    attributes.insert("outcome".into(), Value::string(outcome));
+    telemetry.add_counter("moqui.job.runs", 1, attributes);
 }
 
 /// What a job run produced, for [`finish_run`].
@@ -617,6 +622,7 @@ struct RunOutcome {
 struct RunEnd<'a> {
     facade: &'a EntityFacade,
     job: &'a JobRun,
+    telemetry: &'a crate::telemetry::Telemetry,
     done: bool,
 }
 
@@ -633,6 +639,8 @@ impl Drop for RunEnd<'_> {
             return;
         }
         tracing::error!(job = %self.job.job_name, run = %self.job.job_run_id, "service job panicked");
+        // The job's span records the panic as it unwinds.
+        count_job_run(self.telemetry, "panic");
         let outcome = RunOutcome {
             has_error: true,
             results: None,
@@ -1252,10 +1260,38 @@ mod tests {
         let _entered = ctx.enter();
         let _authz = ctx.disable_authz();
         let run = claimed(&ctx, &facade, "PanicJob", "R1");
+        let telemetry = crate::telemetry::for_factory(ctx.factory());
+        #[cfg(feature = "telemetry")]
+        let runs = {
+            #[derive(Default)]
+            struct Runs(std::sync::Mutex<Vec<String>>);
+            impl crate::telemetry::Exporter for Runs {
+                fn export(
+                    &self,
+                    index: &str,
+                    documents: Vec<crate::entity::document::Document>,
+                ) -> Result<usize, moqui_lib::error::Error> {
+                    let count = documents.len();
+                    for document in documents.iter().filter(|_| index == "otel_metrics") {
+                        if document.get("name").and_then(Value::as_str) == Some("moqui.job.runs") {
+                            self.0.lock().unwrap().push(text_of(document.get("outcome")));
+                        }
+                    }
+                    Ok(count)
+                }
+            }
+            fn text_of(value: Option<&Value>) -> String {
+                value.map(to_plain_string).unwrap_or_default()
+            }
+            let runs = std::sync::Arc::new(Runs::default());
+            telemetry.set_exporter(runs.clone());
+            runs
+        };
         let unwound = catch_unwind(AssertUnwindSafe(|| {
             let _end = RunEnd {
                 facade: &facade,
                 job: &run,
+                telemetry: &telemetry,
                 done: false,
             };
             // A frame the service began and never ended: the records must not join it.
@@ -1276,6 +1312,16 @@ mod tests {
             .one()
             .unwrap();
         assert!(kept.is_none(), "the panicked job's frame was committed");
+        #[cfg(feature = "telemetry")]
+        {
+            telemetry.flush();
+            assert_eq!(
+                *runs.0.lock().unwrap(),
+                ["panic"],
+                "a panicked run counts in moqui.job.runs"
+            );
+            telemetry.shutdown();
+        }
     }
 
     /// As Java's `filterByDate` and its paused check: both date ends are inclusive, and a `paused` that is not null or

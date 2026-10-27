@@ -42,7 +42,8 @@ use crate::search::query::Query;
 /// Runs one statement.
 pub type Runner<'r> = dyn FnMut(&Sql) -> Result<Vec<DbRow>, Error> + 'r;
 
-/// The most groups one level may return before Rust orders and trims them.
+/// The group cap of a level outside any report limits: [`crate::search::limits::buckets`] with none active.
+/// A level reads one row past the active cap, so it knows the cap was passed before Rust orders and trims.
 #[cfg(test)]
 const MAX_GROUPS: usize = 65_536;
 
@@ -165,7 +166,7 @@ fn run_level(
     let rows = (ctx.run)(&sql)?;
     let cap = crate::search::limits::buckets();
     if rows.len() > cap {
-        return Err(Error::new(format!(
+        return Err(crate::search::limits::too_many_groups(format!(
             "an aggregation level returned more than {cap} groups"
         )));
     }
@@ -792,7 +793,9 @@ fn histogram_buckets(
         while at <= last {
             guard += 1;
             if guard > crate::search::limits::buckets() {
-                return Err(Error::new("a date histogram would have too many buckets"));
+                return Err(crate::search::limits::too_many_groups(
+                    "a date histogram would have too many buckets",
+                ));
             }
             match existing.peek() {
                 Some((key, _)) if *key == at => {

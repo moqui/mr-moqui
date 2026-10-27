@@ -22,6 +22,8 @@ pub struct MessageFacade {
     errors: Vec<String>,
     validation_errors: Vec<ValidationError>,
     error_stack: Vec<(Vec<String>, Vec<ValidationError>)>,
+    /// Errors added so far, never taken back, whatever clears or isolates them: see [`Self::errors_added`].
+    added: u64,
 }
 
 /// How many errors a [`MessageFacade`] had, so the ones added after can be taken back out.
@@ -82,7 +84,8 @@ impl MessageFacade {
         if message.is_empty() {
             return;
         }
-        tracing::info!("{message}");
+        // A message can show the user a secret once (a new ingest key's token); the log keeps it masked.
+        tracing::info!("{}", crate::telemetry::redact_text(&message));
         self.messages.push(message);
         self.message_types
             .push(if kind.trim().is_empty() { "info" } else { kind.trim() }.to_string());
@@ -100,6 +103,7 @@ impl MessageFacade {
         }
         tracing::error!("{error}");
         self.errors.push(error);
+        self.added += 1;
     }
 
     pub fn add_validation_error(&mut self, form: &str, field: &str, service: &str, message: &str) {
@@ -109,6 +113,7 @@ impl MessageFacade {
         let text = message.to_string();
         tracing::error!("{text} (field {field})");
         self.errors.push(text);
+        self.added += 1;
         self.validation_errors.push(ValidationError {
             form: form.to_string(),
             field: field.to_string(),
@@ -127,6 +132,12 @@ impl MessageFacade {
 
     pub fn errors(&self) -> &[String] {
         &self.errors
+    }
+
+    /// How many errors and validation errors were ever added. An artifact frame compares it at its pop with its value
+    /// at the push, so only the frames an error was added under are marked failed, not those popped after it.
+    pub fn errors_added(&self) -> u64 {
+        self.added
     }
 
     /// The lines of Java's `getErrorsString`: the errors, then each validation error as `toStringPretty` writes it.

@@ -66,6 +66,34 @@ pub(crate) fn buckets() -> usize {
     ACTIVE.with(|active| active.borrow().map_or(65_536, |a| a.buckets))
 }
 
+/// The source of an error for a result over the bucket budget. A report reads it as an incomplete
+/// result, not a failed query, without matching the message text.
+#[derive(Debug)]
+pub struct TooManyGroups;
+impl std::fmt::Display for TooManyGroups {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the report bucket limit was reached")
+    }
+}
+impl std::error::Error for TooManyGroups {}
+
+#[track_caller]
+pub(crate) fn too_many_groups(message: impl Into<String>) -> Error {
+    Error::new(message).with_source(TooManyGroups)
+}
+
+/// Whether an error, or one it carries, is over the bucket budget.
+pub fn is_too_many_groups(error: &Error) -> bool {
+    let mut source = std::error::Error::source(error);
+    while let Some(error) = source {
+        if error.is::<TooManyGroups>() {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +123,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(buckets(), 65_536);
+    }
+    #[test]
+    fn too_many_groups_is_known_by_its_source_not_its_text() {
+        let error = too_many_groups("an aggregation level returned more than 5 groups");
+        assert!(is_too_many_groups(&error));
+        assert_eq!(error.message(), "an aggregation level returned more than 5 groups");
+        assert!(is_too_many_groups(&Error::new("report failed").with_source(error)));
+        assert!(!is_too_many_groups(&Error::new("too many groups")));
     }
 }

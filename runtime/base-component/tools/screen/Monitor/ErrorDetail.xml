@@ -3,18 +3,31 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Error detail">
     <parameter name="fingerprint" required="true"/><parameter name="from"/><parameter name="thru"/>
     <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="logs"><default-response url="//apps/monitor/Logs"/></transition>
     <actions><script><![CDATA[
         const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({datasetId:'otel_errors',
             queryString:'fingerprint:'+JSON.stringify(String(fingerprint)),from:from || 'now-7d',thru:thru || 'now',pageSize:1}).call()
         errorGroup = result.hits && result.hits.length ? result.hits[0].body : {}
         sampleTraces = errorGroup.sample_trace_ids || []
+        // The logs of the group: its exception type (else the start of its message) from a minute before it was first seen.
+        const millis = value => /^\d+$/.test(String(value)) ? Number(value) : Date.parse(String(value || ''))
+        const firstSeen = millis(errorGroup.first_seen), lastSeen = millis(errorGroup.last_seen)
+        logsFrom = Number.isFinite(firstSeen) ? new Date(firstSeen - 60000).toISOString() : from || 'now-7d'
+        logsThru = Number.isFinite(lastSeen) ? new Date(lastSeen + 60000).toISOString() : thru || 'now'
+        logsQueryString = errorGroup['exception.type'] ? 'exception.type:'+JSON.stringify(String(errorGroup['exception.type'])) :
+            errorGroup.message ? 'body:'+JSON.stringify(String(errorGroup.message).slice(0,100)) : ''
     ]]></script></actions>
     <widgets>
         <label text="${errorGroup.message || 'Error group not found in this time range'}" type="h4"/>
         <label text="Occurrences: ${errorGroup.count || 0}" type="p"/>
+        <link condition="logsQueryString" url="logs" text="Logs with this error" parameter-map="{queryString:logsQueryString,from:logsFrom,thru:logsThru}"/>
         <code-view text="${errorGroup.stacktrace || ''}" language="text"/>
         <section-iterate name="SampleTraces" list="sampleTraces" entry="sampleTrace"><widgets>
-            <link url="trace" text="Trace ${sampleTrace}" link-type="anchor" parameter-map="{traceId:sampleTrace,from:from,thru:thru}"/>
+            <container>
+                <link url="trace" text="Trace ${sampleTrace}" link-type="anchor" parameter-map="{traceId:sampleTrace,from:from,thru:thru}"/>
+                <label text=" · " type="span"/>
+                <link url="logs" text="Logs for this trace" link-type="anchor" parameter-map="{queryString:'trace_id:'+sampleTrace,from:from || 'now-7d',thru:thru || 'now'}"/>
+            </container>
         </widgets></section-iterate>
     </widgets>
 </screen>

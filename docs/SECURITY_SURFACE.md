@@ -35,6 +35,18 @@ Seed grants, from `runtime/base-component/tools/data/ToolsSecurityData.xml`:
 
 `user-facade` `authz` sets the privileged groups to `ADMIN` and `ADMIN_ADV`. Creating, updating, or deleting membership in those groups is allowed only when the caller is already a member. Seed and install, and a call with authorization disabled, skip that check. The sealed permissions are `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, `ADMIN_LOGIN_AS`, `ADMIN_PASSWORD`, `SearchRemote`, `DashboardRemote`, `REST_SCHEMA`, and `LlmGateway`. A `UserGroupPermission` row for one of those can be written only by a caller who already has that permission.
 
+From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring](Monitoring.md#security)), all granted to `ADMIN` only:
+
+| Group | Artifacts |
+| --- | --- |
+| `MONITOR_APP` | `component://tools/screen/Monitor.xml` (`inheritAuthz` Y), the `org.moqui.report.dataset.otel_*` datasets, `org.moqui.report.dataset.monitor_annotations`, `org.moqui.monitor.MonitorServices.*` |
+| `DASHBOARDS_APP` | `component://tools/screen/Dashboards.xml` and `/moqui/reports` (`inheritAuthz` Y), `org.moqui.report.ReportServices.*` |
+| `REPORT_DATASETS_ADMIN` | every `org.moqui.report.dataset.*`: unrestricted dataset access |
+| `REPORT_CONTACT_ADMIN` | `org.moqui.report.contact.webhook`: alert webhooks |
+| `REPORT_ALERT_EVALUATION` | `org.moqui.report.alert.evaluateAll`: the alert job evaluating every owner's rules |
+
+A report query is authorized on its dataset (`org.moqui.report.dataset.<id>`, plus `DataDocumentUserGroup` for a DataDocument) as the viewer, or as the owner for alerts and scheduled reports, with server-side row filters. The permissions `MONITOR_INGEST` (the owner of an ingest key) and `REPORT_SAVE_LOCATION` (scheduled report files on the server) are seeded on `ADMIN`.
+
 The proxy permissions are `SearchRemote` and `DashboardRemote`. Both are seeded on `ADMIN`.
 
 `AgentTypeData.xml` defines `AgentUse`, `AgentAdmin`, `AgentAudit`, `LlmGatewayUse`, `A2aServerUse`, `McpServerUse`, and `AgentSkillAuthor`. The `ADMIN` grant rows in that file are `AgentUse`, `AgentAdmin`, and `AgentSkillAuthor`. `A2aServerUse`, `McpServerUse`, and `LlmGatewayUse` are not among those rows. `AgentAudit` is not among them either. `SecurityTypeData.xml` grants `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, and `ADMIN_LOGIN_AS` to `ADMIN_ADV`, and `ADMIN_PASSWORD` to `ADMIN`.
@@ -150,7 +162,8 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | Surface | Path | Default | Authn | Authz | Considerations |
 | --- | --- | --- | --- | --- | --- |
 | Health | `GET /health` | on | TCP peer in `webapp_status_ips` (default `127.0.0.1`) plus `127.0.0.1`, `::1`, and `0:0:0:0:0:0:0:1`; otherwise 404 | that IP list | JSON `{"ready":true}` or `{"ready":false}` with 503 when pool stats are missing. The client-ip header is not used. |
-| Metrics | `GET /metrics` | on | same IP check | same list | Plain text pool, guard, and (when a search replica exists) replica-lag gauges. 503 when pool stats are missing. |
+| Metrics | `GET /metrics` | on | same IP check | same list | Plain text pool, guard, and (when a search replica exists) replica-lag gauges, and the telemetry queue, export, drop and failure counters. 503 when pool stats are missing. No request span is written for it or for `/health`. |
+| OTLP ingest | `POST /v1/traces`, `/v1/logs`, `/v1/metrics`, `/v1/annotations` | on in builds with `telemetry` unless `telemetry/receiver` `enabled="false"` | an ingest key as `Authorization: Bearer` or `api_key`; not a login credential | the key's owner must hold `MONITOR_INGEST` on every request; key revocation, expiry and the owner's enabled state are checked each time | Body limit 4 MiB, 600 requests per minute per key, 8 at once (`telemetry/receiver`). Redaction runs before indexing. The source recorded is the key's, never the sender's claim. No request span is written for these paths ([Monitoring](Monitoring.md)). |
 | Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |

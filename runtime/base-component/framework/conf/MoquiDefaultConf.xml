@@ -24,7 +24,9 @@
     <default-property name="webapp_https_port" value=""/>
     <default-property name="webapp_https_enabled" value="false"/>
     <default-property name="telemetry_enabled" value="true"/>
-    <default-property name="telemetry_sample_ratio" value="1.0"/>
+    <!-- The share of traces whose spans below the request or job root are kept, decided from the trace id. At 0 every
+        root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->
+    <default-property name="telemetry_sample_ratio" value="0"/>
     <!-- The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, "off" none.
         webapp_https_port above is the port clients see in generated URLs, which differs behind a reverse proxy. -->
     <default-property name="webapp_https_listen_port" value=""/>
@@ -304,8 +306,11 @@
     <telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
             span-retention-days="7" log-retention-days="7" error-retention-days="90"
             minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"/>
-    <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off.
-         SQL client spans remain enabled. Override per type using telemetry/artifact. -->
+    <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
+         spans are written inside a trace, so a scheduler poll or a data load writes none. Override per type using
+         telemetry/artifact. Which spans are kept is telemetry_sample_ratio above. -->
+    <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->
+    <report week-start="1" fiscal-start-month="1" fiscal-start-day="1"/>
     <server-stats visit-enabled="true" visit-ip-info-on-login="true" visitor-enabled="true"/>
 
     <webapp-list>
@@ -992,6 +997,9 @@
         <load-data location="component://framework/data/AgentTypeData.xml"/>
         <load-data location="component://framework/data/UnitData.xml"/>
         <load-data location="component://framework/data/MoquiSetupData.xml"/>
+        <load-data location="component://framework/data/TelemetryData.xml"/>
+        <load-data location="component://framework/data/ReportSetupData.xml"/>
+        <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>

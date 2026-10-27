@@ -4,7 +4,7 @@
 //! on a bounded worker, outside business transactions, and independent failed records are skipped.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -80,11 +80,15 @@ impl TraceContext {
             || !valid_hex(parts[3], 2)
             || parts[1].bytes().all(|b| b == b'0')
             || parts[2].bytes().all(|b| b == b'0')
-            || tracestate.len() > 512
-            || tracestate.contains(['\r', '\n'])
         {
             return None;
         }
+        // A tracestate that is too long or splits a header line is vendor data only: drop it, keep the trace.
+        let tracestate = if tracestate.len() > 512 || tracestate.contains(['\r', '\n']) {
+            ""
+        } else {
+            tracestate
+        };
         Some(Self {
             trace_id: parts[1].to_string(),
             span_id: parts[2].to_string(),
@@ -110,6 +114,23 @@ thread_local! {
     static CURRENT: RefCell<Option<TraceContext>> = const { RefCell::new(None) };
     static SUPPRESSED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static ARTIFACT_SUPPRESSED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// The first reason a store gave for not persisting part of the batch this thread is exporting.
+    static WRITE_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// A store that persisted only part of a telemetry batch names its first error here, rather than logging each
+/// document. The exporting worker logs it once, rate-limited, with the count of documents not persisted.
+pub(crate) fn note_write_error(error: &str) {
+    WRITE_ERROR.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(error.chars().take(1024).collect());
+        }
+    });
+}
+
+pub(crate) fn take_write_error() -> Option<String> {
+    WRITE_ERROR.with(|slot| slot.borrow_mut().take())
 }
 
 pub fn capture() -> Option<TraceContext> {
@@ -201,11 +222,14 @@ impl Default for Resource {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub enabled: bool,
+    /// The share of traces whose spans below the root are kept, decided from the trace id. At 0 only request and job
+    /// roots are kept, with the whole trace of an error or a slow root (the tail rule).
     pub sample_ratio: f64,
     pub slow_root: Duration,
     pub interval: Duration,
     pub artifact_types: HashMap<String, (bool, bool)>,
-    legacy_warning: bool,
+    /// Configuration problems, logged once when the factory's telemetry starts.
+    warnings: Vec<String>,
     legacy_slow_types: HashSet<String>,
 }
 
@@ -213,14 +237,14 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enabled: cfg!(feature = "telemetry"),
-            sample_ratio: 1.0,
+            sample_ratio: 0.0,
             slow_root: Duration::from_secs(1),
             interval: Duration::from_secs(60),
             artifact_types: HashMap::from([
                 ("AT_ENTITY".into(), (false, false)),
                 ("AT_XML_SCREEN_CONTENT".into(), (false, true)),
             ]),
-            legacy_warning: false,
+            warnings: Vec::new(),
             legacy_slow_types: HashSet::new(),
         }
     }
@@ -237,33 +261,59 @@ impl Config {
                 .map(|value| moqui_lib::env::expand(&value).unwrap_or(value))
         };
         if let Some(stats) = root.first_named("server-stats") {
+            if stats
+                .attribute("stats-skip-condition")
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                config.warnings.push(
+                    "server-stats stats-skip-condition is deprecated and not read; configure artifact telemetry under telemetry".into(),
+                );
+            }
+            let mut legacy = false;
             for item in stats.named_iter("artifact-stats") {
                 if let Some(kind) = item.attribute("type") {
                     let values = (
                         setting(&item, "persist-hit").as_deref() == Some("true"),
                         setting(&item, "persist-bin").as_deref() == Some("true"),
                     );
-                    config.legacy_warning = true;
+                    legacy = true;
                     if values == (false, true) {
                         config.legacy_slow_types.insert(kind.clone());
                     }
                     config.artifact_types.insert(kind, values);
                 }
             }
+            if legacy {
+                config.warnings.push(
+                    "artifact-stats is deprecated; configure artifact spans and metrics under telemetry instead".into(),
+                );
+            }
         }
         if let Some(node) = root.first_named("telemetry") {
             config.enabled &= setting(&node, "enabled").as_deref() != Some("false");
-            config.sample_ratio = setting(&node, "sample-ratio")
-                .and_then(|value| value.parse::<f64>().ok())
-                .filter(|value| value.is_finite())
-                .unwrap_or(1.0)
-                .clamp(0.0, 1.0);
+            if let Some(text) = setting(&node, "sample-ratio").filter(|text| !text.trim().is_empty()) {
+                match text.trim().parse::<f64>().ok().filter(|value| value.is_finite()) {
+                    Some(value) => config.sample_ratio = value.clamp(0.0, 1.0),
+                    None => config.warnings.push(format!(
+                        "telemetry sample-ratio [{text}] is not a number; using {}",
+                        config.sample_ratio
+                    )),
+                }
+            }
+            // Metric documents are minute documents: the rollups and the dashboards' buckets assume it, so another
+            // interval is for tests.
             config.interval = Duration::from_secs(
                 setting(&node, "interval-seconds")
                     .and_then(|value| value.parse::<u64>().ok())
                     .unwrap_or(60)
                     .max(1),
             );
+            if config.interval != Duration::from_secs(60) {
+                config.warnings.push(format!(
+                    "telemetry interval-seconds is {}; metric documents are minute documents, so use 60 outside tests",
+                    config.interval.as_secs()
+                ));
+            }
             for item in node.named_iter("artifact") {
                 if let Some(kind) = item.attribute("type") {
                     config.legacy_slow_types.remove(&kind);
@@ -304,8 +354,10 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         }
         Arc::new(Telemetry::from_conf(factory.conf_text(), resource))
     }));
-    if telemetry.shared.config.legacy_warning && !telemetry.shared.warned_legacy.swap(true, Ordering::Relaxed) {
-        tracing::warn!("artifact-stats is deprecated; configure artifact spans and metrics under telemetry instead");
+    if !telemetry.shared.config.warnings.is_empty() && !telemetry.shared.warned_legacy.swap(true, Ordering::Relaxed) {
+        for warning in &telemetry.shared.config.warnings {
+            tracing::warn!("{warning}");
+        }
     }
     telemetry
 }
@@ -335,17 +387,23 @@ pub trait Exporter: Send + Sync {
     }
 }
 
+/// `dropped` counts every record lost, for any reason, an error group's update among them. `failed` counts those of
+/// them an exporter did not persist (the store refused them, or the exporter failed or panicked), so an outage shows
+/// apart from overload.
 #[derive(Default)]
 struct Counters {
     queued: AtomicU64,
     exported: AtomicU64,
     dropped: AtomicU64,
     failed: AtomicU64,
+    /// Failed export calls, which rate-limit their log lines.
+    export_errors: AtomicU64,
     remote_exported: AtomicU64,
     remote_dropped: AtomicU64,
     remote_failed: AtomicU64,
 }
 
+/// See [`Counters`]: `failed` records are also in `dropped`.
 #[derive(Clone, Debug, Default)]
 pub struct CounterSnapshot {
     pub queued: u64,
@@ -401,7 +459,7 @@ struct Shared {
     drained: AtomicBool,
     warned_legacy: AtomicBool,
     gauges_registered: AtomicBool,
-    slow: Mutex<HashMap<String, RunningStats>>,
+    slow: Mutex<HashMap<u64, RunningStats>>,
 }
 
 pub struct Telemetry {
@@ -430,10 +488,17 @@ impl Telemetry {
         });
         let worker = if shared.config.enabled {
             let state = Arc::clone(&shared);
-            std::thread::Builder::new()
+            match std::thread::Builder::new()
                 .name("moqui-telemetry".to_string())
                 .spawn(move || worker(state, receiver))
-                .ok()
+            {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    // Recording stays nonblocking; the queue fills and counts what it drops.
+                    tracing::error!(%error, "telemetry worker did not start; telemetry will be dropped");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -562,10 +627,15 @@ impl Telemetry {
     }
 
     pub fn try_ingest(&self, index: &'static str, documents: Vec<Document>) -> Result<(), Error> {
-        if !self.shared.config.enabled || self.shared.stopped.load(Ordering::Acquire) {
+        if !self.accepting() {
             return Err(Error::new("telemetry is disabled"));
         }
         self.shared.try_enqueue(index, documents, false)
+    }
+
+    /// Whether telemetry is enabled and not shut down, so received records can be queued.
+    pub fn accepting(&self) -> bool {
+        self.shared.config.enabled && !self.shared.stopped.load(Ordering::Acquire)
     }
 
     pub fn counters(&self) -> CounterSnapshot {
@@ -637,10 +707,16 @@ impl Telemetry {
     }
 
     pub fn record_artifact(&self, kind: &str, name: &str, action: &str, sub_type: Option<&str>, seconds: f64) -> bool {
-        if self.artifact_enabled(kind) == (false, false) {
-            return false;
-        }
-        let key = format!("{kind}:{name}:{action}");
+        let (_, metrics) = match self.artifact_enabled(kind) {
+            (false, false) => return false,
+            enabled => enabled,
+        };
+        // A fixed hash of the parts keys the running statistics, so a frame allocates no key.
+        let key = {
+            use std::hash::BuildHasher;
+            std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+                .hash_one((kind, name, action))
+        };
         let slow = {
             let mut stats = lock(&self.shared.slow);
             if stats.len() >= MAX_SERIES && !stats.contains_key(&key) {
@@ -649,7 +725,7 @@ impl Telemetry {
                 stats.entry(key).or_default().record(seconds)
             }
         };
-        if self.artifact_enabled(kind).1 {
+        if metrics {
             let mut attributes = Document::new();
             attributes.insert("moqui.artifact.type".into(), Value::string(kind));
             attributes.insert("moqui.artifact.name".into(), Value::string(name));
@@ -1146,33 +1222,10 @@ fn redact_owned(value: String) -> String {
     }
 }
 
-pub(super) fn sensitive_key(key: &str) -> bool {
-    let lowered;
-    let key = if key.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        lowered = key.to_ascii_lowercase();
-        lowered.as_str()
-    } else {
-        key
-    };
-    if key.ends_with(".tokens") || key.ends_with("_tokens") || key.ends_with("token_count") {
-        return false;
-    }
-    [
-        "password",
-        "secret",
-        "token",
-        "authorization",
-        "cookie",
-        "credential",
-        "arguments",
-        "locals",
-        "api.key",
-        "api_key",
-        "apikey",
-        "private_key",
-    ]
-    .iter()
-    .any(|part| key.contains(part))
+/// Whether an attribute, parameter or query name names a secret: the framework's one rule,
+/// [`crate::context::secret_parameter`], which the HTTP log's query redaction uses too.
+pub fn sensitive_key(key: &str) -> bool {
+    crate::context::secret_parameter(key)
 }
 
 fn text(document: &Document, key: &str) -> String {
@@ -1253,6 +1306,54 @@ fn document_bytes(document: &Document) -> usize {
         .fold(128, usize::saturating_add)
 }
 
+/// How long a tail decision, or a counted error occurrence, is remembered for spans that end after their root.
+const RECENT_AGE: Duration = Duration::from_secs(120);
+
+/// Values by trace-derived key, remembered for [`RECENT_AGE`] and at most [`MAX_DECISIONS`]. Full, it forgets the
+/// oldest first, which is also the first to expire, so the recent entries of a busy instance stay.
+#[derive(Default)]
+struct Recent {
+    values: HashMap<String, (bool, Instant)>,
+    order: VecDeque<(String, Instant)>,
+}
+
+impl Recent {
+    fn get(&self, key: &str) -> Option<bool> {
+        self.values.get(key).map(|(value, _)| *value)
+    }
+
+    fn insert(&mut self, key: &str, value: bool, now: Instant) {
+        while self.values.len() >= MAX_DECISIONS || self.order.len() >= 2 * MAX_DECISIONS {
+            if !self.forget_oldest() {
+                break;
+            }
+        }
+        self.values.insert(key.to_string(), (value, now));
+        self.order.push_back((key.to_string(), now));
+    }
+
+    fn expire(&mut self, now: Instant) {
+        while self
+            .order
+            .front()
+            .is_some_and(|(_, at)| now.duration_since(*at) >= RECENT_AGE)
+        {
+            self.forget_oldest();
+        }
+    }
+
+    /// The order may hold an older entry of a key inserted again; that one leaves the value alone.
+    fn forget_oldest(&mut self) -> bool {
+        let Some((key, at)) = self.order.pop_front() else {
+            return false;
+        };
+        if self.values.get(&key).is_some_and(|(_, inserted)| *inserted == at) {
+            self.values.remove(&key);
+        }
+        true
+    }
+}
+
 fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
     let _suppressed = suppress();
     let mut exporter: Option<Arc<dyn Exporter>> = None;
@@ -1262,7 +1363,8 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
     let mut tail_bytes = 0_usize;
     let mut tail_count = 0_usize;
     let mut traces = HashMap::<String, (Instant, Vec<Document>)>::new();
-    let mut decisions = HashMap::<String, (bool, Instant)>::new();
+    let mut decisions = Recent::default();
+    let mut counted_errors = Recent::default();
     let mut next_command = None;
     let mut last_sweep = Instant::now();
     loop {
@@ -1305,7 +1407,8 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                             true
                         }
                     });
-                    decisions.retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(120));
+                    decisions.expire(now);
+                    counted_errors.expire(now);
                     last_sweep = now;
                 }
                 for document in documents {
@@ -1333,16 +1436,19 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                                     ready.extend(spans);
                                 }
                             }
-                            if decisions.len() >= MAX_DECISIONS {
-                                decisions.clear();
-                            }
-                            decisions.insert(trace.to_string(), (keep, Instant::now()));
+                            decisions.insert(trace, keep, Instant::now());
                             if mandatory_root || keep {
                                 ready.push(document);
                             }
-                        } else if sampled || decisions.get(trace).is_some_and(|(keep, _)| *keep) {
+                        } else if sampled || decisions.get(trace) == Some(true) {
                             ready.push(document);
-                        } else if !decisions.contains_key(trace) {
+                        } else if decisions.get(trace).is_some() {
+                            // The root was decided without this span. An error that ends after it, such as one
+                            // in work the request queued, is still kept.
+                            if has_exception(&document) {
+                                ready.push(document);
+                            }
+                        } else {
                             if traces.len() < MAX_TRACES || traces.contains_key(trace) {
                                 let (_, buffered) = traces
                                     .entry(trace.to_string())
@@ -1410,33 +1516,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                     if batch.is_empty() {
                         break;
                     }
-                    if index == "otel_spans" || index == "otel_logs" {
-                        for document in &batch {
-                            if has_exception(document) {
-                                if let Err(err) = exporter.upsert_error(error_document(document)) {
-                                    report_export_error(&shared, "otel_errors", &err);
-                                }
-                            }
-                        }
-                    }
-                    let count = batch.len() as u64;
-                    match if local {
-                        exporter.export(index, batch)
-                    } else {
-                        exporter.export_received(index, batch)
-                    } {
-                        Ok(done) => {
-                            shared.counters.exported.fetch_add(done as u64, Ordering::Relaxed);
-                            shared
-                                .counters
-                                .dropped
-                                .fetch_add(count.saturating_sub(done as u64), Ordering::Relaxed);
-                        }
-                        Err(err) => {
-                            shared.counters.dropped.fetch_add(count, Ordering::Relaxed);
-                            report_export_error(&shared, index, &err);
-                        }
-                    }
+                    export_batch(&shared, exporter.as_ref(), index, batch, local, &mut counted_errors);
                 }
             }
             pending_count = 0;
@@ -1455,11 +1535,82 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
     );
 }
 
-fn report_export_error(shared: &Shared, index: &str, error: &Error) {
-    let failures = shared.counters.failed.fetch_add(1, Ordering::Relaxed);
-    // The first and powers of two give useful outage diagnostics without flooding the log.
+/// Export one batch: its error groups, then its documents. A failing or panicking exporter costs this batch, which
+/// is counted and logged once; the worker goes on with the next.
+fn export_batch(
+    shared: &Shared,
+    exporter: &dyn Exporter,
+    index: &'static str,
+    batch: Vec<Document>,
+    local: bool,
+    counted_errors: &mut Recent,
+) {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    if index == "otel_spans" || index == "otel_logs" {
+        for document in &batch {
+            if !has_exception(document) {
+                continue;
+            }
+            let error = error_document(document);
+            // An error is one occurrence per trace, though every frame it unwinds through and the request root
+            // carry it, and they may reach the worker in different batches.
+            let trace = string_field(document, "trace_id");
+            if !trace.is_empty() {
+                let key = format!("{}\n{trace}", string_field(&error, "fingerprint"));
+                if counted_errors.get(&key).is_some() {
+                    continue;
+                }
+                counted_errors.insert(&key, true, Instant::now());
+            }
+            let outcome = catch_unwind(AssertUnwindSafe(|| exporter.upsert_error(error)))
+                .unwrap_or_else(|_| Err(Error::new("the telemetry exporter panicked")));
+            if let Err(error) = outcome {
+                shared.counters.dropped.fetch_add(1, Ordering::Relaxed);
+                report_export_error(shared, "otel_errors", 1, &error.to_string());
+            }
+        }
+    }
+    let count = batch.len() as u64;
+    let _ = take_write_error();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if local {
+            exporter.export(index, batch)
+        } else {
+            exporter.export_received(index, batch)
+        }
+    }))
+    .unwrap_or_else(|_| Err(Error::new("the telemetry exporter panicked")));
+    match outcome {
+        Ok(done) => {
+            let done = (done as u64).min(count);
+            shared.counters.exported.fetch_add(done, Ordering::Relaxed);
+            let lost = count - done;
+            if lost > 0 {
+                shared.counters.dropped.fetch_add(lost, Ordering::Relaxed);
+                let reason = take_write_error()
+                    .unwrap_or_else(|| "the store acknowledged fewer documents than it was sent".into());
+                report_export_error(shared, index, lost, &reason);
+            }
+        }
+        Err(error) => {
+            shared.counters.dropped.fetch_add(count, Ordering::Relaxed);
+            report_export_error(shared, index, count, &error.to_string());
+        }
+    }
+}
+
+/// Count `documents` an exporter did not persist, and log the failure: the first and then powers of two, which give
+/// useful outage diagnostics without flooding the log.
+fn report_export_error(shared: &Shared, index: &str, documents: u64, error: &str) {
+    shared.counters.failed.fetch_add(documents, Ordering::Relaxed);
+    let failures = shared.counters.export_errors.fetch_add(1, Ordering::Relaxed);
     if failures == 0 || failures.is_power_of_two() {
-        tracing::warn!(index, failures = failures + 1, "telemetry export failed: {error}");
+        tracing::warn!(
+            index,
+            documents,
+            failures = failures + 1,
+            "telemetry export failed: {error}"
+        );
     }
 }
 

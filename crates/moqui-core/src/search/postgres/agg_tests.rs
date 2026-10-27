@@ -153,6 +153,7 @@ fn a_level_past_the_group_cap_is_an_error() {
     )
     .unwrap_err();
     assert!(err.message().contains("more than 65536 groups"), "{err}");
+    assert!(crate::search::limits::is_too_many_groups(&err));
 }
 
 #[test]

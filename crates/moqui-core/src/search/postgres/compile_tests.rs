@@ -207,3 +207,38 @@ fn should_only_bool_needs_one() {
         "((COALESCE(\"f_partyId\" = ?, FALSE) OR COALESCE(\"f_partyId\" = ?, FALSE)))"
     );
 }
+
+#[test]
+fn a_relative_date_range_resolves_as_opensearch_date_math() {
+    let mapping = party();
+    let sql = Compiler::new(&mapping)
+        .where_sql(&Query::range(
+            "placedDate",
+            Some(Value::string("now-30d")),
+            Some(Value::string("now")),
+        ))
+        .unwrap();
+    assert_eq!(sql.params.len(), 2, "{}", sql.text);
+    let (Value::Timestamp(from), Value::Timestamp(thru)) = (&sql.params[0], &sql.params[1]) else {
+        panic!("{:?}", sql.params)
+    };
+    let width = thru.as_millisecond() - from.as_millisecond();
+    // Thirty calendar days, which a daylight-saving change may lengthen or shorten by an hour.
+    assert!((width - 30 * 86_400_000).abs() <= 3_600_000, "{width}");
+    // An `lte` rounded bound is the last millisecond of its unit, a `gte` one the first.
+    let sql = Compiler::new(&mapping)
+        .where_sql(&Query::range_full(
+            "placedDate",
+            None,
+            Some(Value::string("now-1d/d")),
+            None,
+            Some(Value::string("now-1d/d")),
+        ))
+        .unwrap();
+    let (Value::Timestamp(start), Value::Timestamp(end)) = (&sql.params[0], &sql.params[1]) else {
+        panic!("{:?}", sql.params)
+    };
+    let day = end.as_millisecond() + 1 - start.as_millisecond();
+    assert!((day - 86_400_000).abs() <= 3_600_000, "{day}");
+    assert!(parse_date_bound(&Value::string("now-bad")).is_none());
+}

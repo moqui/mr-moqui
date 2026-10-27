@@ -15,12 +15,29 @@ use super::{lock, LogRecord, Shared, Span, SpanKind, TraceContext};
 use crate::entity::document::Document;
 use moqui_lib::object::Value;
 
+const ARTIFACT_DURATION: &str = "moqui.artifact.duration";
+const DB_DURATION: &str = "db.client.operation.duration";
+const HTTP_DURATION: &str = "http.server.request.duration";
+
+/// Durations in seconds, with the semantic-convention boundaries, so documents of one series merge.
+fn duration_histogram(meter: &opentelemetry::metrics::Meter, name: &str) -> opentelemetry::metrics::Histogram<f64> {
+    meter
+        .f64_histogram(name.to_string())
+        .with_unit("s")
+        .with_boundaries(vec![
+            0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0,
+        ])
+        .build()
+}
+
 pub(super) struct Runtime {
     provider: SdkTracerProvider,
     tracer: SdkTracer,
     shared: Arc<Shared>,
     meter: opentelemetry::metrics::Meter,
     meter_provider: opentelemetry_sdk::metrics::SdkMeterProvider,
+    /// [`ARTIFACT_DURATION`], [`DB_DURATION`] and [`HTTP_DURATION`].
+    hot: [opentelemetry::metrics::Histogram<f64>; 3],
     histograms: Mutex<HashMap<String, opentelemetry::metrics::Histogram<f64>>>,
     counters: Mutex<HashMap<String, opentelemetry::metrics::Counter<u64>>>,
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
@@ -62,6 +79,7 @@ impl Runtime {
             .build();
         use opentelemetry::metrics::MeterProvider;
         let meter = meter_provider.meter("moqui");
+        let hot = [ARTIFACT_DURATION, DB_DURATION, HTTP_DURATION].map(|name| duration_histogram(&meter, name));
         let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
             .with_resource(resource)
             .with_simple_exporter(LocalLogExporter(Arc::clone(&shared)))
@@ -74,6 +92,7 @@ impl Runtime {
             shared,
             meter,
             meter_provider,
+            hot,
             histograms: Mutex::default(),
             counters: Mutex::default(),
             logger_provider,
@@ -103,14 +122,12 @@ impl Runtime {
         let mut span = self.tracer.build_with_context(builder, &parent_context);
         let span_context = span.span_context();
         let trace_id = span_context.trace_id().to_string();
-        let sampled = retain
-            || parent.as_ref().map_or_else(
-                || {
-                    let value = u64::from_str_radix(&trace_id[..16], 16).unwrap_or(0);
-                    (value as f64 / u64::MAX as f64) < self.shared.config.sample_ratio
-                },
-                |context| context.sampled,
-            );
+        // The configured ratio decides from the trace id, not a caller's sampled flag, so a client cannot turn full
+        // tracing on, and every span of a trace (and every service with the same ratio) decides alike.
+        let sampled = retain || {
+            let value = u64::from_str_radix(&trace_id[..16], 16).unwrap_or(0);
+            (value as f64 / u64::MAX as f64) < self.shared.config.sample_ratio
+        };
         let context = TraceContext {
             trace_id,
             span_id: span_context.span_id().to_string(),
@@ -131,6 +148,17 @@ impl Runtime {
         if !seconds.is_finite() || seconds < 0.0 {
             return;
         }
+        // The instruments every frame, statement and request records are fields, without the shared map's lock.
+        let hot = match name {
+            ARTIFACT_DURATION => Some(&self.hot[0]),
+            DB_DURATION => Some(&self.hot[1]),
+            HTTP_DURATION => Some(&self.hot[2]),
+            _ => None,
+        };
+        if let Some(instrument) = hot {
+            instrument.record(seconds, &metric_attributes(attributes));
+            return;
+        }
         let instrument = {
             let mut histograms = lock(&self.histograms);
             if let Some(instrument) = histograms.get(name) {
@@ -139,14 +167,7 @@ impl Runtime {
                 if histograms.len() >= 32 {
                     return;
                 }
-                let instrument = self
-                    .meter
-                    .f64_histogram(name.to_string())
-                    .with_unit("s")
-                    .with_boundaries(vec![
-                        0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0,
-                    ])
-                    .build();
+                let instrument = duration_histogram(&self.meter, name);
                 histograms.insert(name.to_string(), instrument.clone());
                 instrument
             }
@@ -279,13 +300,14 @@ pub(super) struct OwnedSpan {
 
 impl OwnedSpan {
     pub(super) fn set_attribute(&mut self, key: &str, value: Value) {
-        if super::sensitive_key(key) {
+        let safe = safe_key(key);
+        if !safe && super::sensitive_key(key) {
             return;
         }
-        let value = if let Value::String(value) = value {
-            Value::String(super::redact_owned(clip_owned(value, 4096)))
-        } else {
-            value
+        let value = match value {
+            Value::String(value) if safe => Value::String(clip_owned(value, 4096)),
+            Value::String(value) => Value::String(super::redact_owned(clip_owned(value, 4096))),
+            value => value,
         };
         self.span
             .set_attribute(KeyValue::new(attribute_key(key), sdk_value(value)));
@@ -323,6 +345,21 @@ impl Drop for OwnedSpan {
         }
         self.span.end();
     }
+}
+
+/// Keys whose values the framework sets from artifact names, ids and routes, never from a caller's text, so neither the
+/// secret-name rule nor the credential pattern needs to run on them for every frame.
+fn safe_key(key: &str) -> bool {
+    matches!(
+        key,
+        "moqui.artifact.type"
+            | "moqui.artifact.name"
+            | "moqui.artifact.action"
+            | "moqui.artifact.sub_type"
+            | "user.id"
+            | "moqui.visit.id"
+            | "http.route"
+    )
 }
 
 fn attribute_key(key: &str) -> opentelemetry::Key {
@@ -444,7 +481,7 @@ fn metric_attributes(attributes: Document) -> Vec<KeyValue> {
                 KeyValue::new(
                     *allowed,
                     sdk_value(match value {
-                        Value::String(value) => Value::String(super::redact_owned(value)),
+                        Value::String(value) if !safe_key(allowed) => Value::String(super::redact_owned(value)),
                         other => other,
                     }),
                 )
@@ -729,18 +766,46 @@ impl opentelemetry_sdk::metrics::exporter::PushMetricExporter for LocalMetricExp
         for metrics in &mut request.resource_metrics {
             metrics.resource = Some((&resource).into());
         }
-        if let Ok(json) = serde_json::to_vec(&request) {
-            if let Ok(mut decoded) = super::ingest::Decoder::default().decode(
-                super::ingest::Signal::Metrics,
-                "application/json",
-                &json,
-                "local",
-            ) {
+        // A collection that cannot be converted is lost: count its points and say why, once per collection.
+        let lost = |reason: String| {
+            let points = data_points(&request);
+            self.0
+                .counters
+                .dropped
+                .fetch_add(points, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(points, "telemetry metric collection dropped: {reason}");
+        };
+        let json = match serde_json::to_vec(&request) {
+            Ok(json) => json,
+            Err(error) => {
+                lost(format!("cannot encode it: {error}"));
+                return Ok(());
+            }
+        };
+        match super::ingest::Decoder::default().decode(
+            super::ingest::Signal::Metrics,
+            "application/json",
+            &json,
+            "local",
+        ) {
+            Ok(mut decoded) => {
+                if decoded.rejected > 0 {
+                    self.0
+                        .counters
+                        .dropped
+                        .fetch_add(decoded.rejected, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(
+                        points = decoded.rejected,
+                        "telemetry metric points dropped: {}",
+                        decoded.message
+                    );
+                }
                 for document in &mut decoded.documents {
                     self.0.add_resource(document);
                 }
                 self.0.enqueue("otel_metrics", decoded.documents);
             }
+            Err(error) => lost(format!("cannot decode it: {error}")),
         }
         Ok(())
     }
@@ -753,6 +818,24 @@ impl opentelemetry_sdk::metrics::exporter::PushMetricExporter for LocalMetricExp
     fn temporality(&self) -> opentelemetry_sdk::metrics::Temporality {
         opentelemetry_sdk::metrics::Temporality::Delta
     }
+}
+
+fn data_points(request: &opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest) -> u64 {
+    use opentelemetry_proto::tonic::metrics::v1::metric::Data;
+    request
+        .resource_metrics
+        .iter()
+        .flat_map(|resource| &resource.scope_metrics)
+        .flat_map(|scope| &scope.metrics)
+        .map(|metric| match &metric.data {
+            Some(Data::Gauge(data)) => data.data_points.len(),
+            Some(Data::Sum(data)) => data.data_points.len(),
+            Some(Data::Histogram(data)) => data.data_points.len(),
+            Some(Data::ExponentialHistogram(data)) => data.data_points.len(),
+            Some(Data::Summary(data)) => data.data_points.len(),
+            None => 0,
+        } as u64)
+        .sum()
 }
 
 struct LocalLogExporter(Arc<Shared>);

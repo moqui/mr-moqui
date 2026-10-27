@@ -174,6 +174,8 @@ struct Rendered {
     html: String,
     title: String,
     link: String,
+    /// Data rows across all frames, for the export audit.
+    rows: usize,
 }
 fn render(
     ec: &ExecutionContext,
@@ -201,6 +203,9 @@ fn render(
     for spec in specs {
         let mut dashboard =
             crate::report::definitions::read(ec, jtext(&spec, "dashboardRef", jtext(&spec, "definitionId", "")))?;
+        if !dashboard["body"].is_object() {
+            return Err(fail("dashboard body must be an object"));
+        }
         if let Some(layout) = spec.get("layout").filter(|value| !value.is_null()) {
             if !layout.is_array() && !layout.is_object() {
                 return Err(fail("report selection layout must be an object or list"));
@@ -208,7 +213,7 @@ fn render(
             dashboard["body"]["layout"] = layout.clone();
         }
         if !panel_id.is_empty() {
-            select_panel(&mut dashboard, panel_id)?;
+            crate::report::select_panel(&mut dashboard, panel_id)?;
         }
         let from = selection
             .map(|parameters| text(parameters, "from"))
@@ -286,6 +291,18 @@ fn render(
         }
     }
     let empty = frames_empty(&frames);
+    let rows = frames
+        .iter()
+        .map(|frame| {
+            frame["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|field| field["values"].as_array().map_or(0, Vec::len))
+                .max()
+                .unwrap_or(0)
+        })
+        .sum();
     if empty && skip_empty {
         return Ok(Rendered {
             bytes: Vec::new(),
@@ -295,6 +312,7 @@ fn render(
             html: String::new(),
             title: jtext(&definition, "title", "Report").to_string(),
             link,
+            rows,
         });
     }
     let title = jtext(&definition, "title", "Report");
@@ -326,6 +344,7 @@ fn render(
         html,
         title: title.to_string(),
         link,
+        rows,
     })
 }
 fn live_link(id: &str, dashboard: &Json) -> String {
@@ -373,15 +392,6 @@ fn live_link(id: &str, dashboard: &Json) -> String {
     }
     let root = crate::web::webapp_root_url("webroot", true, None);
     format!("{}{link}", root.trim_end_matches('/'))
-}
-fn select_panel(dashboard: &mut Json, panel_id: &str) -> Result<(), Error> {
-    let panel = dashboard["body"]["panels"]
-        .as_object()
-        .and_then(|panels| panels.get(panel_id))
-        .cloned()
-        .ok_or_else(|| fail("panel not found in the authorized dashboard"))?;
-    dashboard["body"]["panels"] = Json::Object(serde_json::Map::from_iter([(panel_id.to_string(), panel)]));
-    Ok(())
 }
 fn frames_empty(frames: &[Json]) -> bool {
     frames.iter().all(|frame| {
@@ -510,9 +520,10 @@ fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], optio
     } else {
         "portrait"
     };
+    let paper = if options["paper"] == "a4" { "A4" } else { "letter" };
     Ok(format!(
         r#"<!doctype html><html><head><meta charset="UTF-8"><meta name="moqui-report" content="1"><title>{}</title>
-<style>@page{{size:letter {orientation};margin:12mm}}:root{{--q-primary:#1976d2;--q-positive:#218838;--q-warning:#b8860b;--q-info:#008c9e;--q-negative:#c62828;--q-secondary:#687580;--q-accent:#8e44ad}}
+<style>@page{{size:{paper} {orientation};margin:12mm}}:root{{--q-primary:#1976d2;--q-positive:#218838;--q-warning:#b8860b;--q-info:#008c9e;--q-negative:#c62828;--q-secondary:#687580;--q-accent:#8e44ad}}
 body{{font:13px sans-serif;color:#222;background:white;color-scheme:light}}section,article{{break-inside:avoid;min-width:0}}.print-dashboard{{break-before:page}}.print-dashboard:first-child{{break-before:auto}}.print-auto{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}.print-grid{{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:12px}}.print-chart{{height:260px;overflow:hidden}}canvas{{max-width:100%;height:260px!important}}.m-report-panel{{padding:8px;border:1px solid #ddd;margin-bottom:12px}}.m-report-panel>div:first-child{{font-weight:bold;margin-bottom:8px}}.m-report-panel>div:first-child button,.m-report-panel>div:first-child a{{display:none}}.text-h4{{font-size:28px}}table{{border-collapse:collapse;width:100%;font-size:11px}}th,td{{border:1px solid #ddd;padding:4px;text-align:left;overflow-wrap:anywhere}}pre{{white-space:pre-wrap}}.range,.notice{{color:#555}}.appendix{{break-before:page}}</style>
 <script>window.moquiReportRendered=false;window.moqui={{}};window.moquiPrintData={data};window.addEventListener('error',event=>{{window.moquiReportError=String(event.message)}});</script>{scripts}</head><body><h1>{}</h1><div id="report"></div><script>{renderer}</script></body></html>"#,
         escape(title),
@@ -527,6 +538,17 @@ fn preview_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         text(p, "renderMode")
     };
     let result = render(ec, text(p, "definitionId"), mode, false, Some(p))?;
+    crate::report::audit_export(
+        if text(p, "panelId").is_empty() {
+            "report"
+        } else {
+            "panel"
+        },
+        result.extension,
+        text(p, "definitionId"),
+        result.rows,
+        &[],
+    );
     Ok(out(
         json!({"contentBase64":base64::engine::general_purpose::STANDARD.encode(&result.bytes),"contentType":result.mime,"filename":format!("report.{}",result.extension),"empty":result.empty}),
     ))
@@ -882,6 +904,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
         }
         let mut destination_errors = Vec::new();
         let mut destinations = 0;
+        let mut delivered = Vec::new();
         if let Some(location) = schedule
             .get("saveToLocation")
             .and_then(Value::as_str)
@@ -897,9 +920,12 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 attempted = true;
                 context.factory().resource().write_bytes(location, &rendered.bytes)
             })();
-            if let Err(error) = written {
-                tracing::error!(schedule=id,%error,"report file delivery failed; other destinations continue");
-                destination_errors.push(format!("file delivery: {error}"));
+            match written {
+                Ok(()) => delivered.push(format!("file:{location}")),
+                Err(error) => {
+                    tracing::error!(schedule=id,%error,"report file delivery failed; other destinations continue");
+                    destination_errors.push(format!("file delivery: {error}"));
+                }
             }
         }
         if let Some(template) = schedule
@@ -909,7 +935,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
         {
             destinations += 1;
             lease.check()?;
-            let emailed = (|| -> Result<(), Error> {
+            let emailed = (|| -> Result<Vec<String>, Error> {
                 let mut recipients = Vec::new();
                 let _authz = context.disable_authz();
                 if let Some(user) = schedule.get("userId").and_then(Value::as_str) {
@@ -1048,12 +1074,24 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 if mail.get("messageId").and_then(Value::as_str).is_none_or(str::is_empty) {
                     return Err(fail("report email did not produce a delivery message id"));
                 }
-                Ok(())
+                Ok(recipients)
             })();
-            if let Err(error) = emailed {
-                tracing::error!(schedule=id,template,%error,"report email delivery failed; other destinations continue");
-                destination_errors.push(format!("email delivery: {error}"));
+            match emailed {
+                Ok(recipients) => delivered.extend(recipients),
+                Err(error) => {
+                    tracing::error!(schedule=id,template,%error,"report email delivery failed; other destinations continue");
+                    destination_errors.push(format!("email delivery: {error}"));
+                }
             }
+        }
+        if !delivered.is_empty() {
+            crate::report::audit_export(
+                "scheduled",
+                rendered.extension,
+                definition_id,
+                rendered.rows,
+                &delivered,
+            );
         }
         if destinations == 0 {
             return Err(fail("report schedule has no delivery destination"));
@@ -1110,10 +1148,18 @@ mod tests {
 
     #[test]
     fn panel_exports_select_before_querying_and_links_keep_frozen_context() {
-        let mut dashboard = json!({"body":{"panels":{"selected":{"queries":[{"datasetId":"public"}]},"other":{"queries":[{"datasetId":"private"}]}}}});
-        select_panel(&mut dashboard, "selected").unwrap();
+        let mut dashboard = json!({"body":{"panels":{"selected":{"queries":[{"datasetId":"public"}]},"other":{"queries":[{"datasetId":"private"}]}},
+            "layout":{"type":"grid","items":[{"panelId":"other","x":0,"y":0,"w":12,"h":1},{"panelId":"selected","x":12,"y":0,"w":12,"h":1}]}}});
+        crate::report::select_panel(&mut dashboard, "selected").unwrap();
         assert_eq!(dashboard["body"]["panels"].as_object().unwrap().len(), 1);
         assert!(dashboard["body"]["panels"].get("other").is_none());
+        assert_eq!(
+            dashboard["body"]["layout"],
+            json!({"type":"autoGrid","items":[{"panelId":"selected"}]}),
+            "the single-panel layout names no other panel"
+        );
+        assert!(crate::report::select_panel(&mut dashboard, "missing").is_err());
+        assert!(crate::report::select_panel(&mut json!({"body":5}), "selected").is_err());
         let link = live_link(
             "id with%value",
             &json!({"range":{"from":"2026-10-26T00:00:00Z","thru":"2026-10-27T00:00:00Z"},"variableValues":{"status":["Approved","Held"],"literal":"%26"},"filters":[{"datasetId":"visible","query":{"field":{"name":"status","op":"eq","value":"Approved"}}}]}),

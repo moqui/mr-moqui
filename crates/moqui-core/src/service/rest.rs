@@ -492,6 +492,15 @@ impl Node {
             ));
         }
         let operation = &self.methods[method];
+        // The request's route is this endpoint, not the `rest.xml` transition it came through.
+        for (key, value) in [
+            ("type", Some(Value::string("AT_REST_PATH"))),
+            ("name", Some(Value::string(&self.full_path))),
+            ("action", Some(Value::string(action_from_method(method)))),
+            ("sub_type", None),
+        ] {
+            crate::web::set_attribute(&format!("moqui.telemetry.artifact.{key}"), value);
+        }
         match operation {
             Operation::Service {
                 name,

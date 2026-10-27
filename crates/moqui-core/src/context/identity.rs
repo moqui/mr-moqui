@@ -2,12 +2,42 @@
 use std::sync::OnceLock;
 const SECRET_PARAMETER_NAMES: &[&str] = &["code", "moquisessiontoken", "sessiontoken", "sql", "sharedsecret"];
 
+/// Parts that make any name a secret's, wherever they are in it.
+const SECRET_NAME_PARTS: &[&str] = &[
+    "password",
+    "secret",
+    "token",
+    "authorization",
+    "cookie",
+    "credential",
+    "arguments",
+    "locals",
+    "api.key",
+    "api-key",
+    "apikey",
+    "private_key",
+];
+
+/// Whether a parameter, URL query, header or telemetry attribute name names a credential or other secret, without
+/// case: the one rule for what request details, the HTTP log's query and telemetry attributes leave out. A count of
+/// tokens (`gen_ai.usage.input_tokens`) is not a secret, nor is a name that only holds "key" (`primaryKeyId`).
 pub(crate) fn secret_parameter(key: &str) -> bool {
-    let lower = key.to_ascii_lowercase();
-    crate::web::CREDENTIAL_PARAMETER_NAMES.contains(&lower.as_str())
-        || SECRET_PARAMETER_NAMES.contains(&lower.as_str())
-        || ["password", "secret", "token"].iter().any(|part| lower.contains(part))
-        || ["_key", "apikey", "loginkey"].iter().any(|end| lower.ends_with(end))
+    let lowered;
+    let lower = if key.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        lowered = key.to_ascii_lowercase();
+        lowered.as_str()
+    } else {
+        key
+    };
+    if lower.ends_with(".tokens") || lower.ends_with("_tokens") || lower.ends_with("token_count") {
+        return false;
+    }
+    crate::web::CREDENTIAL_PARAMETER_NAMES.contains(&lower)
+        || SECRET_PARAMETER_NAMES.contains(&lower)
+        || SECRET_NAME_PARTS.iter().any(|part| lower.contains(part))
+        || ["_key", "-key", ".key", "loginkey"]
+            .iter()
+            .any(|end| lower.ends_with(end))
 }
 
 pub(crate) fn server_address() -> &'static (String, String) {
@@ -47,10 +77,21 @@ mod tests {
             "code",
             "apiKey",
             "private_key",
+            "x-api-key",
+            "access_token",
+            "http.request.header.authorization",
+            "http.request.header.cookie",
+            "gen_ai.tool.call.arguments",
         ] {
             assert!(super::secret_parameter(name), "{name}");
         }
-        for name in ["orderId", "primaryKeyId", "monkeyId"] {
+        for name in [
+            "orderId",
+            "primaryKeyId",
+            "monkeyId",
+            "gen_ai.usage.input_tokens",
+            "moqui.artifact.name",
+        ] {
             assert!(!super::secret_parameter(name), "{name}");
         }
     }

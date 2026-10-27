@@ -26,7 +26,8 @@ along with this software (see the LICENSE.md file). If not, see
             visitRequestCounts = {};requestCountsAvailable = true
             if (visitList.length) {
                 try {
-                    const oldest = Math.max(Date.now()-3650*86400000,Math.min(...visitList.map(visit=>Number(visit.fromDate) || Date.now())))
+                    // A visit's first request span starts before its row is written: a minute of slack.
+                    const oldest = Math.max(Date.now()-3650*86400000,Math.min(...visitList.map(visit=>Number(visit.fromDate) || Date.now()))-60000)
                     const result = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{
                         datasetId:'otel_spans',from:new Date(oldest).toISOString(),thru:'now',
                         filters:[{field:{name:'kind',op:'eq',value:'SERVER'}},{field:{name:'moqui.visit.id',op:'in',values:visitList.map(visit=>String(visit.visitId))}}],

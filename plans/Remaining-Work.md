@@ -1,6 +1,6 @@
 # Remaining work
 
-Open items only, grouped by domain; trimmed and reorganized on 2026-10-25. Built: phases 0–12 and gates 1–4 of [Implementation-Phases](archive/Implementation-Phases.md), and Phase 13.1 to 13.14 of [LLM-A2A-Assist](LLM-A2A-Assist.md). Each item says what is missing and links to where the detail is; the build records are in the linked plans and guides, not here.
+Open items only, grouped by domain; trimmed and reorganized on 2026-10-25. Built: phases 0–12 and gates 1–4 of [Implementation-Phases](archive/Implementation-Phases.md), Phase 13.1 to 13.14 of [LLM-A2A-Assist](LLM-A2A-Assist.md), and M1–M7 of [Monitoring](Monitoring.md). Each item says what is missing and links to where the detail is; the build records are in the linked plans and guides, not here.
 
 What is not ported on purpose (JSON-RPC, the Groovy and Java runners, the database drivers not in this tree, `service-group`, Swagger 2.0 and RAML, Hazelcast, the embedded SMTP server, vuet and `/vapps`) is in [Parity-Mapping, Excluded on purpose](Parity-Mapping.md#excluded-on-purpose); the non-SQL entity datasources (`ElasticDatasourceFactory`, OrientDB) are a proposal in [Future-Plans](Future-Plans.md). Differences from Java that are kept on purpose are in [Parity-Diffs](Parity-Diffs.md).
 
@@ -37,6 +37,26 @@ Built through M5f: [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs
 | Sending | A held send goes at the job's next minute unless the client calls `send#DueDrafts` when its hold ends | `EmailClientServices` |
 | Accounts | `delete#EmailAccount` with deleteLocalCopies runs in the request (a job for large accounts) | `EmailClientServices` |
 | Capture | The mail capture records at the SMTP step of `send#EmailMessage`, so a send with no `EmailServer` or an empty SMTP host is not captured; IMAP and POP have no capture. mr-mantle `InboxThreads.spec.js` still makes a send fail and calls `record#SendResult`, which `ec.factory.getTool("MailCapture").enable()` would replace | `service/mail_capture.rs` |
+
+## Monitoring
+
+M1–M7 and the Oct 27 review pass are built ([Monitoring](Monitoring.md); guide [Monitoring](../docs/Monitoring.md)). The Later stages of the plan (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC) are not started.
+
+| Area | Item | Source |
+|---|---|---|
+| Metrics | Prometheus text on `/metrics` from the SDK readers; guard gauges; an attribute allow-list per instrument (one global list today); sampling per artifact type; configurable queue and tail capacity (constants in `telemetry/mod.rs`) | Monitoring.md "Signals" |
+| Export | The OTLP exporter sends JSON, one resource and scope per record, on the local worker thread: protobuf, grouped resources, and a remote export that a slow collector cannot stall | `telemetry/otlp.rs` |
+| Coverage | Outbound HTTP that bypasses `outbound.rs` gets no span or `traceparent`: `llm/remote.rs`, `llm/a2a/push.rs`, `service/chat_link.rs`, `service/git_hosting.rs`, `service/mail/oauth.rs`, `service/mail/discover.rs`, `llm/ai_task.rs` | review pass |
+| Overhead | No per-milestone overhead baselines were captured; production-scale concurrency, cardinality, long retention and rollup load, storage growth and a multi-host soak are not measured | Monitoring.md "Overhead" |
+| Alerts | Query and contact I/O run inside the rule's locking transaction, one rule after another; silences, mute timings and contact points live in each rule (no shared ones); no business alert template is shipped; a rule's query runs in a fresh owner context, so its relative range uses the wall clock rather than the evaluator's effective time (matters only in tests) | `report/alert.rs` |
+| Reports | One CSV of every panel frame and one generic xlsx sheet per frame, not a file per table panel | `report_schedule.rs` |
+| Report engine | Week buckets always start Monday (a Sunday `week-start` misaligns `now/w`); no round-up for `thru` or math after rounding (`now/d+8h`); Postgres TopHits runs one query per bucket; transformations take one calculation per step, filter has no gte, lte, range or regex | `report/time.rs`, `search/postgres/agg.rs`, `report/frame.rs` |
+| Dashboards | A time picker with quick and recent ranges; the full panel menu (view, edit, share, explore, duplicate, remove); visualization suggestions; table footer totals and sparkline cells; variables in text panels; a latency heatmap from histogram buckets; embedding a saved panel or dashboard on any screen by `definition-id` | Monitoring.md "Panels", "Dashboards" |
+| TUI | Bar, pie, donut, heatmap and state timeline draw as tables; gauges as sparklines; no currency format; no kiosk or auto refresh | `moqui-tui/src/components/report.rs` |
+| Monitor | A metric picker with group-by on Metrics; structured search (service, name, status, duration, user) on Traces; errors over time on Errors; drill-down data links and an instance breakdown on Services; RED charts per version in Split | Monitoring.md "Monitor app" |
+| Components | mr-mantle `mantle-sales` dataset field defaults (status and enumeration labels, currency); mr-l10n strings for the removed screens and the new labels | separate repos |
+| Access | Monitor Logs links to LogContext ("Surrounding entries") and Split ("Compare"), which are Dashboards screens, so a user with only `MONITOR_APP` needs `DASHBOARDS_APP` for them. BOSS Insights links into the Dashboards app too: a BOSS screen that includes `Dashboards/Dashboard.xml` with `transition-include` of `edit`, `setVariable`, `exportPanel` and `inspectPanel` would keep users in the BOSS shell | review pass, mr-boss `Insights/Dashboards.xml` |
+| Scripts | `JSON.stringify` of a decimal host value gives `{}`; `Dashboard.xml` converts decimals to numbers before handing them to the widgets, but a `toJSON` on the decimal type (`script/runtime/decimal.rs`) would fix it everywhere | review pass |
 
 ## Chat and presence
 

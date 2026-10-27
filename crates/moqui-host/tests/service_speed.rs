@@ -26,7 +26,9 @@
 //! columns. Each call builds its parameter map, as a caller does, so a few allocations per call are the test's.
 //! `SPEED_PG_HOST` runs it on a new database of an external Postgres instead of the embedded one (`speed::SpeedDb`).
 //!
-//! Authorization is disabled, as `ec.artifactExecution.disableAuthz()`; artifact hits are counted. Two modes:
+//! Authorization is disabled, as `ec.artifactExecution.disableAuthz()`. Artifact telemetry is recorded as configured:
+//! the duration metric for every call, spans as `telemetry_sample_ratio` keeps them (0 by default, so none below a
+//! root), and nothing with `telemetry_enabled=false`. Two modes:
 //!
 //! - **one transaction** matches `SpeedTest.xml` (`begin-transaction="true"`): every call joins the batch's
 //!   transaction, which commits once after the timed rows.

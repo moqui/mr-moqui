@@ -108,10 +108,11 @@ async fn ingest(
         .conf_number::<usize>("telemetry/receiver", "concurrent-requests", 8)
         .clamp(1, 4096);
     let budget = state.factory.extension(|_| tokio::sync::Semaphore::new(maximum));
+    // A refused request is the sender's to retry, so it is not counted as dropped records: the decoded records
+    // that are rejected or do not fit the queue are, one by one.
     let permit = match budget.try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
-            moqui_core::telemetry::for_factory(&state.factory).note_dropped(1);
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "telemetry receiver is busy",
@@ -120,23 +121,23 @@ async fn ingest(
         }
     };
     let auth_factory = Arc::clone(&state.factory);
-    let auth_token = token.clone();
+    // Authenticated once, before the body is read; the key and source go on to the decode.
     let authenticated = tokio::task::spawn_blocking(move || {
         let _suppressed = moqui_core::telemetry::suppress();
         let ec = auth_factory.new_context();
         let _entered = ec.enter();
-        let (key, _) = moqui_core::monitor::authenticate(&ec, &auth_token).map_err(authentication_error)?;
+        let (key, source) = moqui_core::monitor::authenticate(&ec, &token).map_err(authentication_error)?;
         let rate = auth_factory.extension(|_| RateLimit::default());
         let max = auth_factory.conf_number("telemetry/receiver", "requests-per-minute", 600_usize);
         if !rate.allow(&key, max) {
-            moqui_core::telemetry::for_factory(&auth_factory).note_dropped(1);
             return Err((429, "ingest key rate limit exceeded".to_string()));
         }
-        Ok(permit)
+        let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+        Ok((permit, key, source, username))
     })
     .await;
-    let permit = match authenticated {
-        Ok(Ok(permit)) => permit,
+    let (permit, key, source, username) = match authenticated {
+        Ok(Ok(authenticated)) => authenticated,
         Ok(Err((status, message))) => {
             return (
                 axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::UNAUTHORIZED),
@@ -163,7 +164,6 @@ async fn ingest(
     {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(_)) => {
-            moqui_core::telemetry::for_factory(&state.factory).note_dropped(1);
             return (
                 axum::http::StatusCode::PAYLOAD_TOO_LARGE,
                 "ingest body exceeds the configured limit",
@@ -171,7 +171,6 @@ async fn ingest(
                 .into_response();
         }
         Err(_) => {
-            moqui_core::telemetry::for_factory(&state.factory).note_dropped(1);
             return (axum::http::StatusCode::REQUEST_TIMEOUT, "ingest body timed out").into_response();
         }
     };
@@ -182,19 +181,19 @@ async fn ingest(
         let _suppressed = moqui_core::telemetry::suppress();
         let ec = factory.new_context();
         let _entered = ec.enter();
-        let (key, source) = moqui_core::monitor::authenticate(&ec, &token).map_err(authentication_error)?;
+        // The key's owner, whom the authentication above logged in and checked, writes what the request carries.
+        moqui_core::user::internal_login_user(&username).map_err(|error| {
+            tracing::warn!(%error, "ingest key owner could not be logged in");
+            (503, "ingest authorization is unavailable".to_string())
+        })?;
         let body = if encoding == "gzip" {
             use std::io::Read;
             let mut bytes = Vec::new();
             flate2::read::MultiGzDecoder::new(body.as_ref())
                 .take((limit as u64).saturating_add(1))
                 .read_to_end(&mut bytes)
-                .map_err(|_| {
-                    moqui_core::telemetry::for_factory(&factory).note_dropped(1);
-                    (400, "invalid gzip OTLP body".to_string())
-                })?;
+                .map_err(|_| (400, "invalid gzip OTLP body".to_string()))?;
             if bytes.len() > limit {
-                moqui_core::telemetry::for_factory(&factory).note_dropped(1);
                 return Err((413, "decompressed ingest body exceeds the configured limit".into()));
             }
             bytes
@@ -222,15 +221,16 @@ async fn ingest(
                 .map_err(|error| (400, error.to_string()))?;
             return Ok((0, String::new()));
         }
+        let telemetry = moqui_core::telemetry::for_factory(&factory);
+        if !telemetry.accepting() {
+            return Err((503, "telemetry is disabled".into()));
+        }
         let decoder = factory.extension(|_| Decoder::default());
         let decoded = decoder
             .decode_scoped(signal, &content_type, &body, &key, &source)
-            .map_err(|e| {
-                moqui_core::telemetry::for_factory(&factory).note_dropped(1);
-                (400, e.to_string())
-            })?;
-        let telemetry = moqui_core::telemetry::for_factory(&factory);
+            .map_err(|e| (400, e.to_string()))?;
         telemetry.note_dropped(decoded.rejected);
+        // The queue counts each record it cannot take.
         telemetry
             .try_ingest(decoded.index, decoded.documents)
             .map_err(|_| (503, "telemetry queue is full".to_string()))?;

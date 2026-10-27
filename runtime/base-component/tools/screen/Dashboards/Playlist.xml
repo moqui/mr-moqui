@@ -19,10 +19,12 @@
         const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
         if (definition.type!=='report' || definition.body.kind!=='playlist') throw new Error('Choose a dashboard playlist')
         playlistTitle=definition.title;playlistSeconds=definition.body.seconds || 30;playlistEntries=[]
+        // The browser opens these in the shell it is in; kiosk=true starts the dashboard without the app chrome.
+        const dashboardPath=sri.buildUrl('//apps/dashboards/Dashboard').path
         for (const item of (definition.body.playlist || []).slice(0,50)) {
             try {
                 const dashboard=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:item.definitionId}).call().definition
-                if (dashboard.type==='dashboard') playlistEntries.push({title:dashboard.title,url:'/apps/dashboards/Dashboard?definitionId='+encodeURIComponent(dashboard.id)+'&from='+encodeURIComponent(from || 'now-7d')+'&thru='+encodeURIComponent(thru || 'now')})
+                if (dashboard.type==='dashboard') playlistEntries.push({title:dashboard.title,url:dashboardPath+'?definitionId='+encodeURIComponent(dashboard.id)+'&from='+encodeURIComponent(from || 'now-7d')+'&thru='+encodeURIComponent(thru || 'now')+'&kiosk=true'})
             } catch (error) { ec.logger.error('Playlist dashboard '+item.definitionId+' unavailable: '+String(error)) }
         }
     ]]></script></actions>

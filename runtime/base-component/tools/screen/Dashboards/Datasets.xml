@@ -1,6 +1,49 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="5">
-    <pre-actions><set field="definitionType" value="dataset"/></pre-actions>
-    <widgets><include-screen location="component://tools/screen/Dashboards/Home.xml" share-scope="true"/></widgets>
+    <parameter name="datasetId"/>
+    <transition name="explore"><default-response url="//apps/dashboards/Explore"/></transition>
+    <transition name="definition"><default-response url="//apps/dashboards/Definition"/></transition>
+    <actions><script><![CDATA[
+        // Every dataset this user may query: the telemetry datasets, saved dataset definitions and the DataDocument indexes.
+        const telemetry = ['otel_spans','otel_logs','otel_metrics','otel_errors','monitor_annotations']
+        datasetList = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []).map(dataset => Object.assign({}, dataset, {
+            title: dataset.title || dataset.id,
+            kind: telemetry.includes(dataset.id) ? 'Telemetry' : String(dataset.id).startsWith('index:') ? 'Document index' : 'Saved dataset',
+            saved: !telemetry.includes(dataset.id) && !String(dataset.id).startsWith('index:')
+        }))
+        fieldList = []; fieldNotice = ''; selectedTimeField = ''
+        if (datasetId) {
+            try {
+                const dataset = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId}).call().dataset || {}
+                fieldList = (dataset.fields || []).map(field => ({name:field.name,type:field.type,kind:field.kind || '',
+                    searchable:field.searchable === false ? 'N' : 'Y',aggregatable:field.aggregatable ? 'Y' : 'N'}))
+                selectedTimeField = dataset.timeField || ''
+            } catch (error) { ec.logger.error('Dataset '+datasetId+' fields unavailable: '+String(error)); fieldNotice = String(error) }
+        }
+    ]]></script></actions>
+    <widgets>
+        <link url="definition" text="New dataset" parameter-map="{definitionType:'dataset'}"/>
+        <label text="Datasets are the telemetry indexes, saved dataset definitions with their row filters, and the DataDocument indexes. Queries run with your dataset permissions." type="p"/>
+        <form-list name="DatasetList" list="datasetList" skip-form="true" paginate="false">
+            <field name="title"><default-field title="Dataset"><link url="." text="${title}" link-type="anchor" parameter-map="{datasetId:id}"/></default-field></field>
+            <field name="id"><default-field title="ID"><display/></default-field></field>
+            <field name="kind"><default-field><display/></default-field></field>
+            <field name="timeField"><default-field title="Time field"><display/></default-field></field>
+            <field name="explore"><default-field title=""><link url="explore" text="Explore" link-type="anchor" parameter-map="{datasetId:id}"/></default-field></field>
+            <field name="edit"><default-field title=""><link condition="saved" url="definition" text="Definition" link-type="anchor" parameter-map="{definitionId:id}"/></default-field></field>
+        </form-list>
+        <section name="DatasetFields" condition="datasetId"><widgets>
+            <label text="Fields of ${datasetId}" type="h5"/>
+            <label condition="fieldNotice" text="${fieldNotice}" type="p" style="text-negative"/>
+            <label condition="!fieldNotice" text="Time field: ${selectedTimeField}" type="p"/>
+            <form-list name="DatasetFieldList" list="fieldList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Field"><display/></default-field></field>
+                <field name="type"><default-field><display/></default-field></field>
+                <field name="kind"><default-field title="Index type"><display/></default-field></field>
+                <field name="searchable"><default-field><display/></default-field></field>
+                <field name="aggregatable"><default-field title="Aggregatable"><display/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
 </screen>

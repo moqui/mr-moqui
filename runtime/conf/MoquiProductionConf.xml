@@ -5,8 +5,6 @@
     https://github.com/moqui/moqui-framework/blob/master/framework/src/main/resources/MoquiDefaultConf.xml -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
 
-    <server-stats stats-skip-condition="pathInfo?.startsWith('/rest') || pathInfo?.startsWith('/status')"/>
-
     <!-- NOTE: using the environment variable is relatively secure in a container environment, but for more security set it here instead -->
     <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true">
         <!-- add datasource elements here to configure databases -->

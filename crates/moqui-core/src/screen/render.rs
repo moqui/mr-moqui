@@ -1328,7 +1328,8 @@ pub(super) struct Frames {
 }
 
 impl Frames {
-    /// Frames that are not counted as artifact hits, Java's `setTrackArtifactHit(false)`.
+    /// Frames that are not artifact hits, Java's `setTrackArtifactHit(false)`: they record no spans or metrics of their
+    /// own, while the actions run under them (always- and pre-actions, a check's lookups) still record theirs.
     pub(super) fn untracked() -> Self {
         Self {
             untracked: true,
@@ -1374,12 +1375,13 @@ impl Frames {
         Ok(())
     }
 
-    /// The hit sub-type of the frame pushed last, and whether it is counted at all.
+    /// The hit sub-type of the frame pushed last, and whether it is tracked: `track-artifact-hit="false"` turns off the
+    /// artifact spans and metrics of the screen and everything under it.
     pub(super) fn hit_detail(&self, sub_type: Option<&str>, track: bool) {
         ExecutionContext::with_current(|ec| {
             ec.set_hit_detail(sub_type, None);
             if !track {
-                ec.untrack_hit();
+                ec.suppress_descendant_telemetry();
             }
         });
     }
