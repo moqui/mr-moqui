@@ -1048,3 +1048,56 @@ fn i64_field(value: &EntityValue, field: &str) -> i64 {
 fn stamp(millis: i64) -> Value {
     moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
 }
+
+#[test]
+fn ending_a_visit_continues_after_one_session_delete_fails() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    set_user("ada", "ada");
+    let mut visit = facade.make_value(VISIT).unwrap();
+    visit.set("visitId", Value::string("independent"));
+    visit.set("userId", Value::string("ada"));
+    visit.create(&facade).unwrap();
+    for id in ["a", "b", "c"] {
+        let mut row = facade.make_value(HTTP_SESSION).unwrap();
+        row.set("sessionId", Value::string(id));
+        row.set("visitId", Value::string("independent"));
+        row.create(&facade).unwrap();
+    }
+    let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = Arc::clone(&published);
+    let _subscription = crate::notify::subscribe(crate::notify::SESSION_END, Arc::new(move |message| {
+        if message.body["sessionIds"].as_array().is_some_and(|ids| ids.iter().any(|id| id == "a")) {
+            captured.lock().unwrap().push(message.body.clone());
+        }
+    })).unwrap();
+    let attempted = std::cell::RefCell::new(Vec::new());
+    let tx = facade.transactions_for(VISIT).unwrap();
+    tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+        let ended = end_user_visit_using("independent", |facade, id| {
+            attempted.borrow_mut().push(id.to_string());
+            if id == "b" {
+                Err(Error::new("injected delete failure"))
+            } else {
+                delete_session_row(facade, id)
+            }
+        })
+        .unwrap();
+        assert_eq!(ended, 2);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(*attempted.borrow(), ["a", "b", "c"]);
+    assert_eq!(published.lock().unwrap().as_slice(), &[serde_json::json!({"sessionIds":["a","c"]})]);
+    assert!(load_session_optional(&facade, "a").is_none());
+    assert!(load_session_optional(&facade, "b").is_some());
+    assert!(load_session_optional(&facade, "c").is_none());
+    let visit = facade
+        .find(VISIT)
+        .unwrap()
+        .eq("visitId", Value::string("independent"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert!(visit.get("thruDate").is_some_and(|value| !value.is_null()));
+}

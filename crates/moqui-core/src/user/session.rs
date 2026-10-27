@@ -516,6 +516,13 @@ pub(crate) fn rotate_on_password_login() -> Result<(), Error> {
 ///
 /// Returns an error with nobody signed in, for the current visit, and for a visit that is not the user's (or not there).
 pub fn end_user_visit(visit_id: &str) -> Result<usize, Error> {
+    end_user_visit_using(visit_id, delete_session_row)
+}
+
+fn end_user_visit_using(
+    visit_id: &str,
+    delete: impl Fn(&EntityFacade, &str) -> Result<(), Error>,
+) -> Result<usize, Error> {
     let visit_id = visit_id.trim();
     let Some(user_id) = current_user_id()?.filter(|id| !id.is_empty()) else {
         return Err(Error::new("A session is ended only by its signed in user"));
@@ -565,20 +572,22 @@ pub fn end_user_visit(visit_id: &str) -> Result<usize, Error> {
         }
     }
     let bound = with_session(|session| session.bound_id.clone());
-    let mut ended = 0;
+    let mut ended_ids = Vec::new();
     for id in ids.iter().filter(|id| Some(id.as_str()) != bound.as_deref()) {
         // a flush of the session under way would write the row back after the delete
         let _claim = FlushClaim::wait(&factory, id);
-        delete_session_row(&facade, id)?;
+        if let Err(error) = delete(&facade, id) {
+            tracing::error!(session_id = %id, visit_id = %visit_id, %error, "could not end session; continuing");
+            continue;
+        }
         retire_old(&factory, id);
-        ended += 1;
+        ended_ids.push(id);
     }
-    if ended > 0 {
+    if !ended_ids.is_empty() {
         // another server may hold one of them live, and would go on serving it (and write its row back)
-        let ended_ids: Vec<&String> = ids.iter().filter(|id| Some(id.as_str()) != bound.as_deref()).collect();
         publish_session_end(&facade, &ended_ids);
     }
-    Ok(ended)
+    Ok(ended_ids.len())
 }
 
 /// Tell every server of the cluster (this one too) that the sessions `ids` ended, so none serves its live copy again.
