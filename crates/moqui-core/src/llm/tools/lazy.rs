@@ -889,15 +889,13 @@ fn approval_request(
     let args = args_json(&checked.cleaned);
     let record = checked.record.clone().or_else(|| {
         checked.service.entity_noun().and_then(|entity| {
-            catalog::entity_record(facade, &entity, &checked.cleaned).unwrap_or_else(
-                |error| {
-                    tracing::warn!(
-                        "the record of {} could not be read for its approval: {error}",
-                        entry.name
-                    );
-                    None
-                },
-            )
+            catalog::entity_record(facade, &entity, &checked.cleaned).unwrap_or_else(|error| {
+                tracing::warn!(
+                    "the record of {} could not be read for its approval: {error}",
+                    entry.name
+                );
+                None
+            })
         })
     });
     let verb = checked.service.verb().to_string();
@@ -1053,9 +1051,7 @@ fn execute(
                     .collect()
             })
             .unwrap_or_default();
-        let now = catalog::entity_record(facade, entity, &key)
-            .ok()
-            .flatten();
+        let now = catalog::entity_record(facade, entity, &key).ok().flatten();
         let changed = match &now {
             Some(record) => record.stamp.as_deref() != Some(asked_stamp),
             None => true,

@@ -92,6 +92,20 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
         (ran, effects)
     };
     let changes = cache::sim_changes(&facade);
+    // A privileged service can write a row the caller cannot read. Its simulated after-values
+    // need the same view check as production values, before leaving the overlay.
+    let visible_after: Vec<bool> = match &changes {
+        Ok(changes) => changes.iter().take(MAX_ROWS).map(|change| {
+            change.values.is_none() || match production_row(&facade, change) {
+                Ok(row) => row.is_some(),
+                Err(error) => {
+                    tracing::warn!(entity = %change.entity, error = %error, "preview after-values could not be authorized");
+                    false
+                }
+            }
+        }).collect(),
+        Err(_) => Vec::new(),
+    };
     let poisoned = cache::sim_poisoned();
     if let Err(error) = cache::exit_sim(&facade) {
         tracing::error!(
@@ -111,7 +125,18 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
     }
     let changes = changes?;
     let more = changes.len() > MAX_ROWS;
-    let rows: Vec<Json> = changes.iter().take(MAX_ROWS).map(|change| compared(&facade, change)).collect();
+    let rows: Vec<Json> = changes
+        .iter()
+        .take(MAX_ROWS)
+        .zip(visible_after)
+        .map(|(change, visible)| {
+            if visible {
+                compared(&facade, change)
+            } else {
+                json!({"entity": change.entity, "action": "unavailable", "error": "values are not visible to the user"})
+            }
+        })
+        .collect();
     Ok(json!({"ok": true, "rows": rows, "more": more}))
 }
 
@@ -184,13 +209,16 @@ fn compared(facade: &EntityFacade, change: &SimChange) -> Json {
         .iter()
         .map(|(name, value)| (name.clone(), Json::String(value.clone())))
         .collect();
-    let production = production_row(facade, change).unwrap_or_else(|error| {
-        tracing::warn!(
-            "the production row of {} could not be read for a preview: {error}",
-            change.entity
-        );
-        None
-    });
+    let production = match production_row(facade, change) {
+        Ok(row) => row,
+        Err(error) => {
+            tracing::warn!(entity = %change.entity, error = %error, "preview production values could not be authorized");
+            return json!({"entity": change.entity, "action": "unavailable", "error": "production values could not be read"});
+        }
+    };
+    if change.values.is_none() && production.is_none() {
+        return json!({"entity": change.entity, "action": "unavailable", "error": "deleted row is not visible to the user"});
+    }
     let text = |value: Option<&Value>| value.filter(|value| !value.is_null()).map(to_plain_string);
     // an encrypted or secret-named field is shown changed, never its value
     let hidden: Vec<String> = facade
@@ -300,6 +328,42 @@ pub fn preview_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deleted_row_without_visible_production_does_not_disclose_its_key() {
+        let facade = crate::testing::open();
+        let shown = compared(
+            &facade,
+            &SimChange {
+                entity: "moqui.security.UserAccount".into(),
+                key: vec![("userId".into(), "private-key".into())],
+                values: None,
+            },
+        );
+        assert_eq!(shown["action"], "unavailable");
+        assert!(!shown.to_string().contains("private-key"));
+    }
+
+    #[test]
+    fn a_denied_preview_read_does_not_fall_back_to_showing_simulated_values() {
+        let context = ExecutionContextFactory::test_context_with_conf(
+            r#"<moqui-conf><artifact-execution-facade><artifact-execution type="AT_ENTITY" authz-enabled="true"/></artifact-execution-facade></moqui-conf>"#,
+        );
+        let facade = crate::testing::open();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        crate::user::session::set_user("unprivileged", "unprivileged");
+        let change = SimChange {
+            entity: "moqui.security.UserAccount".into(),
+            key: vec![("userId".into(), "private-user".into())],
+            values: Some(BTreeMap::from([("userFullName".into(), Value::string("private-name"))])),
+        };
+        let shown = compared(&facade, &change);
+        assert_eq!(shown["action"], "unavailable", "{shown}");
+        assert!(!shown.to_string().contains("private-name"));
+        assert!(shown.get("fields").is_none());
+        crate::user::session::reset_session();
+    }
 
     /// An encrypted or secret-named field of a previewed row is shown changed, never its value.
     #[test]

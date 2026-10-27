@@ -113,8 +113,13 @@ struct Bed {
 
 fn bed(name: &str) -> Bed {
     let endpoint = format!("lazy-{name}");
+    let authz = if matches!(name, "existence" | "revoked") {
+        r#"<artifact-execution-facade><artifact-execution type="AT_ENTITY" authz-enabled="true"/></artifact-execution-facade>"#
+    } else {
+        ""
+    };
     let conf = format!(
-        r#"<moqui-conf><llm-facade>
+        r#"<moqui-conf>{authz}<llm-facade>
             <endpoint id="{endpoint}" protocol="fake"/>
             <model id="{endpoint}" endpoint="{endpoint}" name="fake-1" context-window="32768"/>
             <bind feature="assist" model="{endpoint}" reasoning="none"/>
@@ -931,6 +936,115 @@ fn a_catalog_entrys_calls_per_run_limit_counts_its_run_tool_calls() {
         [Some("enum_find".to_string()), None, Some("test_lazy".to_string())],
         "only the calls that ran are counted"
     );
+}
+
+#[test]
+fn entity_permission_is_rechecked_after_an_approval_waits() {
+    let bed = bed("revoked");
+    let _entered = bed.ctx.enter();
+    {
+        let _authz = bed.ctx.disable_authz();
+        row(
+            &bed.facade,
+            "moqui.security.ArtifactGroupMember",
+            &[
+                ("artifactGroupId", "EDIT_ENUM"),
+                ("artifactName", "moqui.basic.Enumeration"),
+                ("artifactTypeEnumId", "AT_ENTITY"),
+            ],
+        );
+        row(
+            &bed.facade,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "EDIT_ENUM"),
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "EDIT_ENUM"),
+                ("authzTypeEnumId", "AUTHZT_ALLOW"),
+                ("authzActionEnumId", "AUTHZA_ALL"),
+            ],
+        );
+    }
+    let (run_id, approval_id) = paused(
+        &bed,
+        json!({"name":"enum_update", "parameters":{"enumId":"LAZY_E1", "description":"Never saved"}}),
+    );
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut permission = bed
+            .facade
+            .find("moqui.security.ArtifactAuthz")
+            .unwrap()
+            .eq("artifactAuthzId", Value::string("EDIT_ENUM"))
+            .one()
+            .unwrap()
+            .unwrap();
+        permission.set("authzTypeEnumId", Value::string("AUTHZT_DENY"));
+        permission.update(&bed.facade).unwrap();
+    }
+    decide(&bed, &approval_id, &Decision::Approve { arguments: None });
+    assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    let _authz = bed.ctx.disable_authz();
+    assert_eq!(description(&bed, "LAZY_E1").as_deref(), Some("Old"));
+    assert_eq!(
+        approval::load(&bed.facade, &approval_id).unwrap().unwrap().status,
+        ApprovalStatus::Failed
+    );
+    assert!(results(&bed).last().unwrap().contains("not_allowed"));
+}
+
+#[test]
+fn a_refused_entity_tool_does_not_reveal_whether_its_key_exists() {
+    let bed = bed("existence");
+    let _entered = bed.ctx.enter();
+    {
+        let _authz = bed.ctx.disable_authz();
+        row(
+            &bed.facade,
+            "moqui.security.ArtifactGroupMember",
+            &[
+                ("artifactGroupId", "NO_ENUM"),
+                ("artifactName", "moqui.basic.Enumeration"),
+                ("artifactTypeEnumId", "AT_ENTITY"),
+            ],
+        );
+        row(
+            &bed.facade,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "NO_ENUM"),
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "NO_ENUM"),
+                ("authzTypeEnumId", "AUTHZT_DENY"),
+                ("authzActionEnumId", "AUTHZA_ALL"),
+            ],
+        );
+    }
+    let run_id = start(
+        &bed,
+        USER,
+        vec![
+            tool_step(
+                "existing",
+                "run_tool",
+                json!({"name":"enum_update", "parameters":{"enumId":"LAZY_E1", "description":"x"}}),
+            ),
+            tool_step(
+                "absent",
+                "run_tool",
+                json!({"name":"enum_update", "parameters":{"enumId":"NO_SUCH", "description":"x"}}),
+            ),
+            fake::Reply::text("Done."),
+        ],
+    );
+    assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    let outcomes = results(&bed);
+    assert_eq!(outcomes.len(), 2);
+    for outcome in outcomes {
+        assert!(outcome.contains("not_allowed"), "{outcome}");
+        assert!(!outcome.contains("not_found") && !outcome.contains("Old"), "{outcome}");
+    }
+    assert_eq!(approvals(&bed), 0);
 }
 
 #[test]
