@@ -765,6 +765,32 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
     );
     let (_, readme) = ops::resolve(&store, &tree, &path("readme.md")).unwrap().unwrap();
     assert_eq!(ops::object(&store, &readme, Kind::Blob).unwrap(), b"# Site\n");
+    assert_eq!(
+        provider.blob_at("site", "HEAD", &path("images/logo.png")).unwrap(),
+        Some(image.clone())
+    );
+    let listing = provider.tree("site", "HEAD", &path("images")).unwrap().unwrap();
+    assert_eq!(listing.entries[0].size, Some(image.len() as u64));
+    assert_eq!(listing.entries[0].lfs_oid.as_deref(), Some(oid.as_str()));
+    let unlinked = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 999999\n",
+        "0".repeat(64)
+    );
+    resources
+        .write_bytes("git://site/unlinked.txt", unlinked.as_bytes())
+        .unwrap();
+    assert_eq!(
+        provider.blob_at("site", "HEAD", &path("unlinked.txt")).unwrap(),
+        Some(unlinked.as_bytes().to_vec())
+    );
+    let listing = provider.tree("site", "HEAD", &[]).unwrap().unwrap();
+    let unlinked_entry = listing
+        .entries
+        .iter()
+        .find(|entry| entry.name == "unlinked.txt")
+        .unwrap();
+    assert_eq!(unlinked_entry.size, Some(unlinked.len() as u64));
+    assert!(unlinked_entry.lfs_oid.is_none());
 
     // read, stat and open give the content
     assert_eq!(

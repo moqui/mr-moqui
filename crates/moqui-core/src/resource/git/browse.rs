@@ -222,7 +222,13 @@ impl GitProvider {
     ) -> Result<Option<Vec<u8>>, Error> {
         let repo = self.repo(repository_id)?;
         match self.resolve_commit(repository_id, revision)? {
-            Some(id) => ops::read_at(repo.store.as_ref(), &id, path),
+            Some(id) => {
+                let commit = ops::read_commit(repo.store.as_ref(), &id)?;
+                match ops::resolve(repo.store.as_ref(), &commit.tree, path)? {
+                    Some((mode, blob)) if !mode.is_tree() => self.file_content(&repo, &blob).map(Some),
+                    _ => Ok(None),
+                }
+            }
             None => Ok(None),
         }
     }

@@ -493,6 +493,7 @@ pub(crate) fn version_date(seconds: i64) -> Value {
 }
 
 /// The bytes of the file at `path` in commit `commit`, or `None` when it is not a file there.
+#[cfg(test)]
 pub(crate) fn read_at(store: &dyn GitStore, commit: &ObjectId, path: &[String]) -> Result<Option<Vec<u8>>, Error> {
     let commit = read_commit(store, commit)?;
     match resolve(store, &commit.tree, path)? {

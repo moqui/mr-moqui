@@ -189,13 +189,9 @@ impl GitProvider {
             let mut lfs_oid = None;
             if matches!(kind, "file" | "executable" | "link") {
                 size = store.object_size(&entry.oid)?;
-                if size.is_some_and(|size| size <= super::server::lfs::MAX_POINTER) {
-                    if let Some((_, data)) = store.find(&entry.oid)? {
-                        if let Some((oid, content_size)) = super::server::lfs::pointer(&data) {
-                            lfs_oid = Some(oid);
-                            size = Some(content_size);
-                        }
-                    }
+                if let Some(content) = self.lfs_content(&repo, &entry.oid)? {
+                    lfs_oid = Some(content.id);
+                    size = Some(content.size);
                 }
             }
             let last = match last {
