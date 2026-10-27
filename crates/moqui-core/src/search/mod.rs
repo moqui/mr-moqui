@@ -261,6 +261,68 @@ pub struct ReplicaStatus {
     pub primary_fallbacks: u64,
 }
 
+fn retry_telemetry_batch(
+    documents: &[(String, Document)],
+    mut write: impl FnMut(&[(String, Document)]) -> Result<Vec<TelemetryItem>, Error>,
+    mut wait: impl FnMut(std::time::Duration),
+    index: &str,
+) -> Result<usize, Error> {
+    let mut pending = documents.to_vec();
+    let mut accepted = 0;
+    for attempt in 0..3 {
+        if attempt > 0 {
+            wait(std::time::Duration::from_millis(if attempt == 1 { 100 } else { 500 }));
+        }
+        let outcomes = match write(&pending) {
+            Ok(outcomes) if outcomes.len() == pending.len() => outcomes,
+            Ok(_) => pending
+                .iter()
+                .map(|_| TelemetryItem::Retryable("invalid batch acknowledgement".into()))
+                .collect(),
+            Err(error) => pending
+                .iter()
+                .map(|_| TelemetryItem::Retryable(error.to_string()))
+                .collect(),
+        };
+        let mut retry = Vec::new();
+        for (document, outcome) in pending.into_iter().zip(outcomes) {
+            match outcome {
+                TelemetryItem::Accepted => accepted += 1,
+                TelemetryItem::Retryable(_) if attempt < 2 => retry.push(document),
+                TelemetryItem::Retryable(error) | TelemetryItem::Rejected(error) => {
+                    tracing::error!(index, id = %document.0, %error, "telemetry document not persisted; continuing");
+                }
+            }
+        }
+        if retry.is_empty() {
+            break;
+        }
+        pending = retry;
+    }
+    Ok(accepted)
+}
+
+/// Per-input acknowledgement for local telemetry persistence. Positions always refer to the submitted batch.
+#[derive(Debug)]
+pub enum TelemetryItem {
+    Accepted,
+    Retryable(String),
+    Rejected(String),
+}
+
+pub(crate) fn telemetry_record_error(error: &Error) -> bool {
+    [
+        "invalid input",
+        "out of range",
+        "cannot cast",
+        "violates",
+        "not JSON",
+        "bulk index failed",
+    ]
+    .iter()
+    .any(|reason| error.message().contains(reason))
+}
+
 /// One search store. The facade resolves targets and mappings; a backend compiles and runs.
 pub trait SearchBackend: Send + Sync {
     fn name(&self) -> &'static str;
@@ -278,6 +340,30 @@ pub trait SearchBackend: Send + Sync {
     ) -> Result<usize, Error> {
         self.index_documents(mapping, documents)
     }
+    /// Input-position outcomes let telemetry retry a partial bulk write without replaying accepted records.
+    fn index_telemetry_batch(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+    ) -> Result<Vec<TelemetryItem>, Error> {
+        match self.index_telemetry_documents(mapping, documents) {
+            Ok(count) if count == documents.len() => Ok(documents.iter().map(|_| TelemetryItem::Accepted).collect()),
+            Ok(_) => Err(Error::new("telemetry backend returned an incomplete acknowledgement")),
+            Err(error) if telemetry_record_error(&error) => Ok(documents
+                .iter()
+                .map(
+                    |document| match self.index_telemetry_documents(mapping, std::slice::from_ref(document)) {
+                        Ok(1) => TelemetryItem::Accepted,
+                        Ok(_) => TelemetryItem::Retryable("incomplete acknowledgement".into()),
+                        Err(error) if telemetry_record_error(&error) => TelemetryItem::Rejected(error.to_string()),
+                        Err(error) => TelemetryItem::Retryable(error.to_string()),
+                    },
+                )
+                .collect()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Atomically add a nonnegative counter while retaining the earliest/latest observation.
     /// A backend must not implement this with a read-modify-write pair.
     fn upsert_counter(
@@ -606,50 +692,30 @@ impl SearchFacade {
                 (id, body)
             })
             .collect();
-        let index_documents = |documents: &[(String, Document)]| {
-            if deferred_refresh {
-                self.backend.index_telemetry_documents(&mapping, documents)
-            } else {
-                self.backend.index_documents(&mapping, documents)
-            }
-        };
-        match index_documents(&documents) {
-            Ok(count) => Ok(count),
-            Err(error) => {
-                let record_failure = [
-                    "invalid input",
-                    "out of range",
-                    "cannot cast",
-                    "violates",
-                    "not JSON",
-                    "bulk index failed",
-                ]
-                .iter()
-                .any(|reason| error.message().contains(reason));
-                if !record_failure {
-                    return Err(error);
-                }
-                // The first failed transaction has rolled back; stable ids also make retries safe
-                // after an OpenSearch bulk response that accepted only some independent documents.
-                let mut indexed = 0;
-                let mut failed = 0;
-                for document in &documents {
-                    match index_documents(std::slice::from_ref(document)) {
-                        Ok(count) => indexed += count,
-                        Err(error) => {
-                            failed += 1;
-                            if failed <= 5 {
-                                tracing::error!(index,id=%document.0,%error,"telemetry document rejected; continuing");
+        if !deferred_refresh {
+            return match self.backend.index_documents(&mapping, &documents) {
+                Ok(count) => Ok(count),
+                Err(error) if telemetry_record_error(&error) => {
+                    let mut indexed = 0;
+                    for document in &documents {
+                        match self.backend.index_documents(&mapping, std::slice::from_ref(document)) {
+                            Ok(count) => indexed += count,
+                            Err(error) => {
+                                tracing::error!(index, id = %document.0, %error, "telemetry document rejected; continuing")
                             }
                         }
                     }
+                    Ok(indexed)
                 }
-                if failed > 5 {
-                    tracing::error!(index, failed, "additional telemetry documents rejected");
-                }
-                Ok(indexed)
-            }
+                Err(error) => Err(error),
+            };
         }
+        retry_telemetry_batch(
+            &documents,
+            |batch| self.backend.index_telemetry_batch(&mapping, batch),
+            std::thread::sleep,
+            index,
+        )
     }
 
     pub fn upsert_counter(&self, index: &str, id: &str, document: &Document, counter: &str) -> Result<(), Error> {

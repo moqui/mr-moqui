@@ -226,3 +226,70 @@ fn a_document_the_model_fails_on_is_marked_and_the_rest_embed() {
     assert!(result.unwrap_err().message().contains("cannot read poison"));
     assert!(stored.is_empty() && failed.is_empty());
 }
+
+#[test]
+fn telemetry_retries_only_unacknowledged_items_with_stable_ids() {
+    let documents = ["accepted", "transient", "poison"].map(|id| (id.into(), Document::new()));
+    let mut calls = Vec::new();
+    let mut waits = Vec::new();
+    let persisted = retry_telemetry_batch(
+        &documents,
+        |batch| {
+            calls.push(batch.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+            Ok(batch
+                .iter()
+                .map(|(id, _)| match (id.as_str(), calls.len()) {
+                    ("poison", _) => TelemetryItem::Rejected("bad record".into()),
+                    ("transient", 1) => TelemetryItem::Retryable("offline".into()),
+                    _ => TelemetryItem::Accepted,
+                })
+                .collect())
+        },
+        |delay| waits.push(delay.as_millis()),
+        "otel_logs",
+    )
+    .unwrap();
+    assert_eq!(persisted, 2);
+    assert_eq!(calls, vec![vec!["accepted", "transient", "poison"], vec!["transient"]]);
+    assert_eq!(waits, [100]);
+}
+
+#[test]
+fn ambiguous_telemetry_writes_are_idempotent_and_retries_are_capped() {
+    let documents = [("stable-id".into(), Document::new())];
+    let mut stored = std::collections::HashSet::new();
+    let mut calls = 0;
+    let persisted = retry_telemetry_batch(
+        &documents,
+        |batch| {
+            calls += 1;
+            stored.extend(batch.iter().map(|(id, _)| id.clone()));
+            if calls < 3 {
+                Err(Error::new("response lost after commit"))
+            } else {
+                Ok(vec![TelemetryItem::Accepted])
+            }
+        },
+        |_| {},
+        "otel_logs",
+    )
+    .unwrap();
+    assert_eq!((persisted, stored.len(), calls), (1, 1, 3));
+    calls = 0;
+    let mut waits = Vec::new();
+    assert_eq!(
+        retry_telemetry_batch(
+            &documents,
+            |_| {
+                calls += 1;
+                Err(Error::new("offline"))
+            },
+            |delay| waits.push(delay.as_millis()),
+            "otel_logs"
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(calls, 3);
+    assert_eq!(waits, [100, 500]);
+}

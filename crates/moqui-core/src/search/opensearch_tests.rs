@@ -526,3 +526,22 @@ fn a_failing_manual_mapping_service_fails_the_ensure_and_is_tried_again() {
     let errors = ctx.message().errors().to_vec();
     assert!(errors.is_empty(), "{errors:?}");
 }
+
+#[test]
+fn telemetry_bulk_acknowledges_individual_inputs_and_rejects_incomplete_responses() {
+    let (url, server) = serve(vec![
+        (200, json!({"errors":true,"items":[
+            {"index":{"status":201}},
+            {"index":{"status":429,"error":{"reason":"busy"}}},
+            {"index":{"status":400,"error":{"reason":"bad timestamp"}}}
+        ]})),
+        (200, json!({"errors":false,"items":[]})),
+    ]);
+    let backend = backend(&url);
+    let mapping = crate::search::telemetry::telemetry_mapping("otel_logs").unwrap();
+    let documents: Vec<_> = ["good", "retry", "bad"].iter().map(|id| (id.to_string(), Document::new())).collect();
+    let outcomes = backend.index_telemetry_batch(&mapping, &documents).unwrap();
+    assert!(matches!(outcomes.as_slice(), [super::super::TelemetryItem::Accepted, super::super::TelemetryItem::Retryable(_), super::super::TelemetryItem::Rejected(_)]));
+    assert!(backend.index_telemetry_batch(&mapping, &documents[..1]).is_err());
+    assert_eq!(server.join().unwrap(), ["POST /_bulk HTTP/1.1", "POST /_bulk HTTP/1.1"]);
+}

@@ -786,6 +786,7 @@ impl OpenSearchBackend {
         documents: &[(String, Document)],
         read_at: Option<Timestamp>,
         deferred_refresh: bool,
+        outcomes: Option<&mut Vec<super::TelemetryItem>>,
     ) -> Result<usize, Error> {
         if documents.is_empty() {
             return Ok(0);
@@ -829,6 +830,26 @@ impl OpenSearchBackend {
             "_bulk?refresh=wait_for"
         };
         let response = self.checked("POST", path, Some(Body::NdJson(text)))?;
+        if let Some(outcomes) = outcomes {
+            let items = response
+                .get("items")
+                .and_then(Json::as_array)
+                .filter(|items| items.len() == documents.len())
+                .ok_or_else(|| Error::new("OpenSearch bulk response has incomplete item acknowledgements"))?;
+            for item in items {
+                let item = &item["index"];
+                let status = item["status"].as_u64().unwrap_or(0);
+                let error = item["error"].to_string();
+                outcomes.push(if (200..300).contains(&status) {
+                    super::TelemetryItem::Accepted
+                } else if status == 0 || matches!(status, 408 | 429) || status >= 500 {
+                    super::TelemetryItem::Retryable(error)
+                } else {
+                    super::TelemetryItem::Rejected(error)
+                });
+            }
+            return Ok(documents.len());
+        }
         if response.get("errors").and_then(Json::as_bool) == Some(true) {
             // A version conflict is a document already stored from a later read; it stays.
             let first = response.get("items").and_then(Json::as_array).and_then(|items| {
@@ -1086,7 +1107,7 @@ impl SearchBackend for OpenSearchBackend {
         documents: &[(String, Document)],
         read_at: Option<Timestamp>,
     ) -> Result<usize, Error> {
-        self.index_documents_with_refresh(mapping, documents, read_at, false)
+        self.index_documents_with_refresh(mapping, documents, read_at, false, None)
     }
 
     fn index_telemetry_documents(
@@ -1097,7 +1118,20 @@ impl SearchBackend for OpenSearchBackend {
         if !super::telemetry::is_telemetry_index(&mapping.document_id) {
             return Err(Error::new("deferred refresh is restricted to telemetry indexes"));
         }
-        self.index_documents_with_refresh(mapping, documents, None, true)
+        self.index_documents_with_refresh(mapping, documents, None, true, None)
+    }
+
+    fn index_telemetry_batch(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+    ) -> Result<Vec<super::TelemetryItem>, Error> {
+        if !super::telemetry::is_telemetry_index(&mapping.document_id) {
+            return Err(Error::new("telemetry batch requires a telemetry index"));
+        }
+        let mut outcomes = Vec::with_capacity(documents.len());
+        self.index_documents_with_refresh(mapping, documents, None, true, Some(&mut outcomes))?;
+        Ok(outcomes)
     }
 
     fn delete_document(&self, mapping: &DocumentMapping, id: &str) -> Result<bool, Error> {

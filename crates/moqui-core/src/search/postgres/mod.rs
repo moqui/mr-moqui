@@ -1013,6 +1013,50 @@ impl SearchBackend for PostgresBackend {
         Ok(documents.len())
     }
 
+    fn index_telemetry_batch(
+        &self,
+        mapping: &DocumentMapping,
+        documents: &[(String, Document)],
+    ) -> Result<Vec<super::TelemetryItem>, Error> {
+        let columns = insert_columns(mapping);
+        let now = Timestamp::now();
+        let mut outcomes: Vec<_> = documents.iter().map(|_| super::TelemetryItem::Accepted).collect();
+        let mut valid = Vec::new();
+        let mut positions = Vec::new();
+        for (position, document) in documents.iter().enumerate() {
+            match push_insert_params(mapping, &columns, &document.0, now, &document.1, &mut Vec::new()) {
+                Ok(()) => {
+                    valid.push(document.clone());
+                    positions.push(position);
+                }
+                Err(error) => outcomes[position] = super::TelemetryItem::Rejected(error.to_string()),
+            }
+        }
+        if valid.is_empty() {
+            return Ok(outcomes);
+        }
+        match self.index_documents(mapping, &valid) {
+            Ok(_) => {}
+            Err(error) if super::telemetry_record_error(&error) => {
+                for (position, document) in positions.into_iter().zip(&valid) {
+                    outcomes[position] = match self.index_documents(mapping, std::slice::from_ref(document)) {
+                        Ok(_) => super::TelemetryItem::Accepted,
+                        Err(error) if super::telemetry_record_error(&error) => {
+                            super::TelemetryItem::Rejected(error.to_string())
+                        }
+                        Err(error) => super::TelemetryItem::Retryable(error.to_string()),
+                    };
+                }
+            }
+            Err(error) => {
+                for position in positions {
+                    outcomes[position] = super::TelemetryItem::Retryable(error.to_string());
+                }
+            }
+        }
+        Ok(outcomes)
+    }
+
     fn delete_document(&self, mapping: &DocumentMapping, id: &str) -> Result<bool, Error> {
         let table = self.table(mapping);
         let count = self.tx.run(TransactionAttribute::UseOrBegin, None, || {
