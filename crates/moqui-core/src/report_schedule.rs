@@ -167,7 +167,8 @@ fn validate_mode(mode: &str) -> Result<(), Error> {
 }
 
 struct Rendered {
-    bytes: Vec<u8>,
+    /// The output files, named: one per table panel for CSV, otherwise one.
+    files: Vec<(String, Vec<u8>)>,
     mime: &'static str,
     extension: &'static str,
     empty: bool,
@@ -305,7 +306,7 @@ fn render(
         .sum();
     if empty && skip_empty {
         return Ok(Rendered {
-            bytes: Vec::new(),
+            files: Vec::new(),
             mime: "application/octet-stream",
             extension: "",
             empty: true,
@@ -317,10 +318,30 @@ fn render(
     }
     let title = jtext(&definition, "title", "Report");
     let html = print_document(ec, title, &dashboards, &definition["body"])?;
+    let tables = export_tables(&dashboards);
     let (bytes, mime, extension) = match mode {
-        "csv" => (csv_frames(&frames).into_bytes(), "text/csv", "csv"),
+        "csv" => {
+            let files = tables
+                .iter()
+                .map(|table| (format!("{}.csv", table.file), csv_frames(&table.frames).into_bytes()))
+                .collect::<Vec<_>>();
+            return Ok(Rendered {
+                files: if files.is_empty() {
+                    vec![("report.csv".into(), Vec::new())]
+                } else {
+                    files
+                },
+                mime: "text/csv",
+                extension: "csv",
+                empty,
+                html,
+                title: title.to_string(),
+                link,
+                rows,
+            });
+        }
         "xlsx" => (
-            xlsx_frames(&frames)?,
+            xlsx_tables(&tables)?,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "xlsx",
         ),
@@ -337,7 +358,7 @@ fn render(
         ),
     };
     Ok(Rendered {
-        bytes,
+        files: vec![(format!("report.{extension}"), bytes)],
         mime,
         extension,
         empty,
@@ -452,19 +473,173 @@ fn csv_frames(frames: &[Json]) -> String {
     }
     out
 }
+/// One table of a data export: a table panel's frames, with a file name and a sheet name unique in the export.
+struct ExportTable {
+    file: String,
+    sheet: String,
+    frames: Vec<Json>,
+}
+
+/// The panel ids of a layout, in the order the layout lists them.
+fn layout_order(layout: &Json, out: &mut Vec<String>) {
+    match layout {
+        Json::Object(map) => {
+            if let Some(id) = map.get("panelId").and_then(Json::as_str) {
+                if !out.iter().any(|seen| seen == id) {
+                    out.push(id.to_owned());
+                }
+            }
+            for value in map.values() {
+                layout_order(value, out);
+            }
+        }
+        Json::Array(items) => {
+            for item in items {
+                layout_order(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The tables a CSV or xlsx export writes, in layout order: each table panel, or, for dashboards with no table
+/// panel, each panel with data, so a chart-only dashboard still exports its numbers.
+fn export_tables(dashboards: &[Json]) -> Vec<ExportTable> {
+    let mut panels = Vec::new();
+    for dashboard in dashboards {
+        let Some(map) = dashboard["panels"].as_object() else {
+            continue;
+        };
+        let mut order = Vec::new();
+        layout_order(&dashboard["layout"], &mut order);
+        order.retain(|id| map.contains_key(id));
+        for id in map.keys() {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        for id in order {
+            let panel = &map[&id];
+            panels.push((id, panel));
+        }
+    }
+    let kind = |panel: &Json| jtext(panel, "visualization", jtext(panel, "type", "")).to_owned();
+    let has_frames = |panel: &Json| panel["frames"].as_array().is_some_and(|frames| !frames.is_empty());
+    let any_table = panels.iter().any(|(_, panel)| kind(panel) == "table");
+    let mut files = std::collections::BTreeSet::new();
+    let mut sheets = std::collections::BTreeSet::new();
+    let mut tables = Vec::new();
+    for (id, panel) in panels {
+        let wanted = if any_table {
+            kind(panel) == "table"
+        } else {
+            has_frames(panel)
+        };
+        if !wanted {
+            continue;
+        }
+        let title = jtext(panel, "title", &id).trim().to_owned();
+        let title = if title.is_empty() { id.clone() } else { title };
+        let stem = title
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+            .chars()
+            .take(60)
+            .collect::<String>();
+        let file = unique(if stem.is_empty() { "table" } else { &stem }, &mut files, 64);
+        // Excel sheet names are at most 31 characters, without : \ / ? * [ or ].
+        let sheet = title
+            .chars()
+            .map(|c| if ":\\/?*[]".contains(c) { ' ' } else { c })
+            .collect::<String>()
+            .trim()
+            .chars()
+            .take(31)
+            .collect::<String>();
+        let sheet = unique(if sheet.is_empty() { "Table" } else { &sheet }, &mut sheets, 31);
+        tables.push(ExportTable {
+            file,
+            sheet,
+            frames: panel["frames"].as_array().cloned().unwrap_or_default(),
+        });
+    }
+    tables
+}
+
+/// `name`, or `name` with a number added, not yet in `taken` (compared without case) and at most `limit` characters.
+fn unique(name: &str, taken: &mut std::collections::BTreeSet<String>, limit: usize) -> String {
+    let mut candidate = name.chars().take(limit).collect::<String>();
+    let mut number = 1;
+    while taken.contains(&candidate.to_lowercase()) {
+        number += 1;
+        let suffix = format!("-{number}");
+        let keep = limit.saturating_sub(suffix.chars().count());
+        candidate = format!("{}{suffix}", name.chars().take(keep).collect::<String>());
+    }
+    taken.insert(candidate.to_lowercase());
+    candidate
+}
+
+/// Where one file of a multi-file export is saved: the location's name with the table's file name added.
+fn file_location(location: &str, file: &str, count: usize) -> String {
+    if count <= 1 {
+        return location.to_owned();
+    }
+    let name = file.rsplit_once('.').map_or(file, |(name, _)| name);
+    match location.rsplit_once('.') {
+        Some((stem, extension)) if !extension.contains('/') && !stem.is_empty() && !stem.ends_with('/') => {
+            format!("{stem}-{name}.{extension}")
+        }
+        _ => format!("{location}-{file}"),
+    }
+}
+
+/// Several export files as one zip, for a single download.
+fn zip_files(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>, Error> {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, bytes) in files {
+        zip.start_file(
+            name.as_str(),
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+        )
+        .map_err(fail)?;
+        zip.write_all(bytes).map_err(fail)?;
+    }
+    Ok(zip.finish().map_err(fail)?.into_inner())
+}
+
+/// One sheet per table, named for its panel. A panel with several frames stacks them, a blank row between.
 #[cfg(feature = "xlsx")]
-fn xlsx_frames(frames: &[Json]) -> Result<Vec<u8>, Error> {
+fn xlsx_tables(tables: &[ExportTable]) -> Result<Vec<u8>, Error> {
     let mut book = rust_xlsxwriter::Workbook::new();
-    for (index, frame) in frames.iter().enumerate() {
+    for table in tables {
         let sheet = book.add_worksheet();
-        sheet.set_name(format!("Table{}", index + 1)).map_err(fail)?;
-        if let Some(fields) = frame["fields"].as_array() {
+        sheet.set_name(&table.sheet).map_err(fail)?;
+        let mut top = 0u32;
+        for frame in &table.frames {
+            let Some(fields) = frame["fields"].as_array() else {
+                continue;
+            };
+            let mut height = 0;
             for (col, field) in fields.iter().enumerate() {
                 let col = u16::try_from(col).map_err(fail)?;
-                sheet.write_string(0, col, jtext(field, "name", "")).map_err(fail)?;
+                sheet.write_string(top, col, jtext(field, "name", "")).map_err(fail)?;
                 if let Some(values) = field["values"].as_array() {
+                    height = height.max(values.len());
                     for (row, value) in values.iter().enumerate() {
-                        let row = u32::try_from(row + 1).map_err(fail)?;
+                        let row = top + u32::try_from(row + 1).map_err(fail)?;
                         if let Some(number) = value.as_f64() {
                             sheet.write_number(row, col, number).map_err(fail)?;
                         } else {
@@ -475,15 +650,16 @@ fn xlsx_frames(frames: &[Json]) -> Result<Vec<u8>, Error> {
                     }
                 }
             }
+            top += u32::try_from(height + 2).map_err(fail)?;
         }
     }
-    if frames.is_empty() {
+    if tables.is_empty() {
         book.add_worksheet();
     }
     book.save_to_buffer().map_err(fail)
 }
 #[cfg(not(feature = "xlsx"))]
-fn xlsx_frames(_: &[Json]) -> Result<Vec<u8>, Error> {
+fn xlsx_tables(_: &[ExportTable]) -> Result<Vec<u8>, Error> {
     Err(fail("xlsx is not built into this host"))
 }
 fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], options: &Json) -> Result<String, Error> {
@@ -549,8 +725,15 @@ fn preview_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         result.rows,
         &[],
     );
+    let names: Vec<_> = result.files.iter().map(|(name, _)| name.clone()).collect();
+    // Several CSV tables download together as one zip; one file downloads as itself.
+    let (bytes, mime, filename) = match result.files.as_slice() {
+        [(name, bytes)] => (bytes.clone(), result.mime, name.clone()),
+        [] => (Vec::new(), result.mime, format!("report.{}", result.extension)),
+        files => (zip_files(files)?, "application/zip", "report.zip".to_owned()),
+    };
     Ok(out(
-        json!({"contentBase64":base64::engine::general_purpose::STANDARD.encode(&result.bytes),"contentType":result.mime,"filename":format!("report.{}",result.extension),"empty":result.empty}),
+        json!({"contentBase64":base64::engine::general_purpose::STANDARD.encode(&bytes),"contentType":mime,"filename":filename,"files":names,"empty":result.empty}),
     ))
 }
 fn send_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
@@ -918,10 +1101,28 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
                 require_file_delivery()?;
                 attempted = true;
-                context.factory().resource().write_bytes(location, &rendered.bytes)
+                // Each file is its own write: one that fails is reported and the others are still saved.
+                let mut written = Vec::new();
+                let mut failed = Vec::new();
+                for (name, bytes) in &rendered.files {
+                    let target = file_location(location, name, rendered.files.len());
+                    match context.factory().resource().write_bytes(&target, bytes) {
+                        Ok(()) => written.push(format!("file:{target}")),
+                        Err(error) => {
+                            tracing::error!(schedule=id,location=%target,%error,"report file delivery failed; other files and destinations continue");
+                            failed.push(format!("{target}: {error}"));
+                        }
+                    }
+                }
+                Ok::<_, Error>((written, failed))
             })();
             match written {
-                Ok(()) => delivered.push(format!("file:{location}")),
+                Ok((written, failed)) => {
+                    delivered.extend(written);
+                    if !failed.is_empty() {
+                        destination_errors.push(format!("file delivery: {}", failed.join("; ")));
+                    }
+                }
                 Err(error) => {
                     tracing::error!(schedule=id,%error,"report file delivery failed; other destinations continue");
                     destination_errors.push(format!("file delivery: {error}"));
@@ -1002,8 +1203,8 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 if recipients.is_empty() {
                     return Err(fail("report has no deliverable email recipients"));
                 }
-                let image = if rendered.extension == "png" {
-                    rendered.bytes.clone()
+                let image = if let Some((_, bytes)) = rendered.files.first().filter(|_| rendered.extension == "png") {
+                    bytes.clone()
                 } else {
                     crate::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
                 };
@@ -1014,14 +1215,17 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                     ("contentType".into(), Value::string("image/png")),
                     ("contentBytes".into(), Value::Bytes(image)),
                 ]));
-                let attachment = Value::Map(indexmap::IndexMap::from([
-                    (
-                        "fileName".into(),
-                        Value::string(format!("report.{}", rendered.extension)),
-                    ),
-                    ("contentType".into(), Value::string(rendered.mime)),
-                    ("contentBytes".into(), Value::Bytes(rendered.bytes.clone())),
-                ]));
+                let attachments = rendered
+                    .files
+                    .iter()
+                    .map(|(name, bytes)| {
+                        Value::Map(indexmap::IndexMap::from([
+                            ("fileName".into(), Value::string(name)),
+                            ("contentType".into(), Value::string(rendered.mime)),
+                            ("contentBytes".into(), Value::Bytes(bytes.clone())),
+                        ]))
+                    })
+                    .collect();
                 lease.check()?;
                 attempted = true;
                 let mail = crate::service::call::sync_checked(
@@ -1029,7 +1233,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                     &BTreeMap::from([
                         ("emailTemplateId".into(), Value::string(template)),
                         ("toAddresses".into(), Value::string(recipients.join(","))),
-                        ("attachments".into(), Value::List(vec![attachment])),
+                        ("attachments".into(), Value::List(attachments)),
                         ("inlineAttachments".into(), Value::List(vec![inline])),
                         ("createEmailMessage".into(), Value::Bool(false)),
                         (
@@ -1265,5 +1469,76 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    fn table_dashboards() -> Vec<Json> {
+        let frame = |name: &str, value: i64| json!({"fields":[{"name":name,"values":["a","b"]},{"name":"total","values":[value,2]}]});
+        vec![
+            json!({"layout":{"type":"grid","items":[{"panelId":"z-orders"},{"panelId":"chart"},{"panelId":"a-items"}]},"panels":{
+                "a-items":{"title":"Items / day","visualization":"table","frames":[frame("item",1),frame("store",9)]},
+                "chart":{"title":"Trend","visualization":"timeseries","frames":[frame("time",3)]},
+                "z-orders":{"title":"Orders","visualization":"table","frames":[frame("order",5)]}}}),
+            json!({"panels":{"again":{"title":"Orders","visualization":"table","frames":[frame("order",7)]}}}),
+        ]
+    }
+
+    #[test]
+    fn exports_write_one_table_per_table_panel_in_layout_order() {
+        let tables = export_tables(&table_dashboards());
+        let files: Vec<_> = tables.iter().map(|table| table.file.as_str()).collect();
+        assert_eq!(files, ["Orders", "Items-day", "Orders-2"]);
+        let sheets: Vec<_> = tables.iter().map(|table| table.sheet.as_str()).collect();
+        assert_eq!(sheets, ["Orders", "Items   day", "Orders-2"]);
+        assert_eq!(tables[1].frames.len(), 2, "a panel keeps all of its frames");
+        // Without a table panel every panel with data is exported, so a chart dashboard still has numbers.
+        let charts = export_tables(&[
+            json!({"panels":{"chart":{"visualization":"bar","frames":[{"fields":[]}]},"note":{"visualization":"text","frames":[]}}}),
+        ]);
+        assert_eq!(charts.len(), 1);
+        assert_eq!(charts[0].file, "chart");
+        let long = unique(
+            &"x".repeat(40),
+            &mut std::collections::BTreeSet::from(["x".repeat(31)]),
+            31,
+        );
+        assert_eq!(long.chars().count(), 31);
+        assert!(long.ends_with("-2"));
+    }
+
+    #[test]
+    fn multi_file_exports_save_beside_the_location_and_zip_for_download() {
+        assert_eq!(
+            file_location("dbresource://r/sales.csv", "Orders.csv", 1),
+            "dbresource://r/sales.csv"
+        );
+        assert_eq!(
+            file_location("dbresource://r/sales.csv", "Orders.csv", 2),
+            "dbresource://r/sales-Orders.csv"
+        );
+        assert_eq!(
+            file_location("dbresource://r.d/sales", "Orders.csv", 2),
+            "dbresource://r.d/sales-Orders.csv"
+        );
+        let zipped = zip_files(&[("a.csv".into(), b"1".to_vec()), ("b.csv".into(), b"2".to_vec())]).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zipped)).unwrap();
+        assert_eq!(archive.len(), 2);
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("b.csv").unwrap(), &mut text).unwrap();
+        assert_eq!(text, "2");
+    }
+
+    #[cfg(feature = "xlsx")]
+    #[test]
+    fn xlsx_has_one_named_sheet_per_table_panel() {
+        use calamine::Reader;
+        let bytes = xlsx_tables(&export_tables(&table_dashboards())).unwrap();
+        let mut book = calamine::open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(book.sheet_names(), ["Orders", "Items   day", "Orders-2"]);
+        let items = book.worksheet_range("Items   day").unwrap();
+        assert_eq!(items.get_value((0, 0)).unwrap().to_string(), "item");
+        assert_eq!(items.get_value((1, 1)).unwrap().to_string(), "1");
+        // The second frame starts after the first frame's two rows and a blank row.
+        assert_eq!(items.get_value((4, 0)).unwrap().to_string(), "store");
+        assert_eq!(items.get_value((5, 1)).unwrap().to_string(), "9");
     }
 }

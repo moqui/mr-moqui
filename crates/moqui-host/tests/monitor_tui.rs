@@ -156,7 +156,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             json!({"id":"tui-dashboard","type":"dashboard","title":"TUI acceptance dashboard","body":{"variables":[{"name":"service","kind":"custom","label":"Service","datasetId":"tui-dataset","field":"service.name","options":["monitor-tui"],"default":"monitor-tui"}],"panels":{"a-total":{"title":"TUI severity total","visualization":"stat","queries":[aggregate.clone()],"transformations":[{"type":"organize","order":["severity_total"]}]},"b-library":{"panelRef":"tui-panel"},"c-notes":{"title":"TUI notes","visualization":"text","text":"TUI offline instructions"}},"layout":{"type":"autoGrid"}}}),
             json!({"id":"tui-dashboard-second","type":"dashboard","title":"TUI second dashboard","body":{"panels":{"notes":{"title":"Second dashboard notes","visualization":"text","text":"Rotation reached this dashboard"}},"layout":{"type":"autoGrid"}}}),
             json!({"id":"tui-search","type":"search","title":"TUI saved search","body":{"datasetId":"tui-dataset","queryString":"body:tui-marker","from":"now-1h","thru":"now"}}),
-            json!({"id":"tui-alert","type":"alert","title":"TUI paused alert","body":{"query":aggregate,"field":"severity_total","reduce":"last","condition":{"type":"above","threshold":0},"intervalSeconds":60,"paused":true}}),
+            json!({"id":"tui-contact","type":"contactPoint","title":"TUI shared contact","body":{"type":"notification","topic":"ReportAlert","userId":"EX_JOHN_DOE"}}),
+            json!({"id":"tui-alert","type":"alert","title":"TUI paused alert","body":{"query":aggregate,"field":"severity_total","reduce":"last","condition":{"type":"above","threshold":0},"intervalSeconds":60,"paused":true,"contactPointRefs":["tui-contact"]}}),
             json!({"id":"tui-report","type":"report","title":"TUI report","body":{"dashboards":[{"definitionId":"tui-dashboard"}]}}),
             json!({"id":"tui-playlist","type":"report","title":"TUI playlist","body":{"kind":"playlist","seconds":5,"playlist":[{"definitionId":"tui-dashboard"},{"definitionId":"tui-dashboard-second"}]}}),
         ] {
@@ -216,6 +217,10 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         (
             "Dashboards/AlertRule",
             "/apps/dashboards/AlertRule?definitionId=tui-alert",
+        ),
+        (
+            "Dashboards/AlertShared",
+            "/apps/dashboards/AlertShared?definitionId=tui-contact",
         ),
         ("Dashboards/Reports", "/apps/dashboards/Reports"),
         (

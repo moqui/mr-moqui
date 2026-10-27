@@ -13,7 +13,7 @@
         <in-parameters><parameter name="query" type="Map" required="true"/></in-parameters>
         <out-parameters><parameter name="frames" type="List"/><parameter name="notices" type="List"/><parameter name="range" type="Map"/><parameter name="previousRange" type="Map"/><parameter name="inspection" type="List"/><parameter name="request" type="Map"/><parameter name="requests" type="List"/><parameter name="sourceCount" type="Long"/><parameter name="nextCursor" type="Map"/></out-parameters>
     </service>
-    <service verb="evaluate" noun="Alerts" type="rust" location="moqui_core::report::evaluate_rules">
+    <service verb="evaluate" noun="Alerts" type="rust" transaction="ignore" location="moqui_core::report::evaluate_rules">
         <in-parameters><parameter name="definitionId"/></in-parameters><out-parameters><parameter name="evaluated" type="Integer"/><parameter name="failed" type="Integer"/><parameter name="notices" type="List"/></out-parameters>
     </service>
     <service verb="create" noun="Annotation" type="rust" location="moqui_core::report::create_annotation">
@@ -68,7 +68,7 @@
     </service>
     <service verb="list" noun="Schedules" type="rust" location="moqui_core::report_schedule::list_schedules"><out-parameters><parameter name="schedules" type="List"/></out-parameters></service>
     <service verb="pause" noun="Schedule" type="rust" location="moqui_core::report_schedule::pause_schedule"><in-parameters><parameter name="screenScheduledId" required="true"/><parameter name="paused" type="Boolean"/></in-parameters></service>
-    <service verb="preview" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::preview_report"><in-parameters><parameter name="definitionId" required="true"/><parameter name="renderMode"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/><parameter name="variables" type="Map"/><parameter name="filters" type="List"/></in-parameters><out-parameters><parameter name="contentBase64"/><parameter name="contentType"/><parameter name="filename"/><parameter name="empty" type="Boolean"/></out-parameters></service>
+    <service verb="preview" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::preview_report"><in-parameters><parameter name="definitionId" required="true"/><parameter name="renderMode"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/><parameter name="variables" type="Map"/><parameter name="filters" type="List"/></in-parameters><out-parameters><parameter name="contentBase64"/><parameter name="contentType"/><parameter name="filename"/><parameter name="files" type="List"/><parameter name="empty" type="Boolean"/></out-parameters></service>
     <service verb="send" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::send_report"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
     <service verb="run" noun="ScheduledReport" type="rust" authenticate="anonymous-all" allow-remote="false" transaction="ignore" location="moqui_core::report_schedule::run_scheduled"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
 </services>
