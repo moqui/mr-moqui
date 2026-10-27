@@ -54,7 +54,7 @@ fn a_monitor_lucene_string_compiles_as_the_facade_grammar() {
     assert!(lucene.text.contains("f_timestamp"), "{}", lucene.text);
     assert!(Compiler::new(&mapping)
         .where_sql(&Query::Lucene("slow~".into()))
-        .is_err());
+        .is_ok());
 }
 
 #[test]

@@ -154,19 +154,56 @@ pub enum Query {
     Suggest {
         text: String,
     },
-    /// A Lucene query string sent to OpenSearch as written. A log index search makes one (the log
-    /// viewer); its map form is `{lucene: text}`. The Postgres backend reads it with the facade query-string grammar, which covers
-    /// fields, ranges, AND/OR/NOT, groups and phrases, and rejects the rest.
+    /// Native typo recovery on selected mapped textual fields; omitted fuzzy fields retain the title-only API.
+    FuzzyIn {
+        terms: String,
+        fields: TextFields,
+    },
+    /// Relevance multiplier; matching is exactly the inner query's matching.
+    Boost {
+        query: Box<Query>,
+        weight: f64,
+    },
+    /// Legacy `{lucene: text}` wrapper. The facade normalizes it through the shared query-string parser before backend dispatch.
     Lucene(String),
 }
 
 impl Query {
+    /// Resolve legacy query-string wrappers before capability checks and backend dispatch.
+    pub(crate) fn normalized(&self) -> Result<Self, Error> {
+        Ok(match self {
+            Self::Lucene(text) => super::parse::parse_query_string(text)?,
+            Self::Boost { query, weight } => {
+                if !weight.is_finite() || *weight <= 0.0 {
+                    return Err(Error::new("boost weight must be positive and finite"));
+                }
+                Self::Boost {
+                    query: Box::new(query.normalized()?),
+                    weight: *weight,
+                }
+            }
+            Self::Bool {
+                all,
+                any,
+                none,
+                min_any,
+            } => Self::Bool {
+                all: all.iter().map(Self::normalized).collect::<Result<_, _>>()?,
+                any: any.iter().map(Self::normalized).collect::<Result<_, _>>()?,
+                none: none.iter().map(Self::normalized).collect::<Result<_, _>>()?,
+                min_any: *min_any,
+            },
+            Self::Child { path, query } => Self::child(path, query.normalized()?),
+            other => other.clone(),
+        })
+    }
+
     /// The capabilities this tree needs, each once.
     pub fn capabilities(&self) -> Vec<super::Capability> {
         fn walk(query: &Query, out: &mut Vec<super::Capability>) {
             let need = match query {
                 Query::Near { .. } => Some(super::Capability::Proximity),
-                Query::Fuzzy { .. } => Some(super::Capability::Fuzzy),
+                Query::Fuzzy { .. } | Query::FuzzyIn { .. } => Some(super::Capability::Fuzzy),
                 Query::Suggest { .. } => Some(super::Capability::Autocomplete),
                 Query::Bool { all, any, none, .. } => {
                     for item in all.iter().chain(any).chain(none) {
@@ -174,7 +211,7 @@ impl Query {
                     }
                     None
                 }
-                Query::Child { query, .. } => {
+                Query::Child { query, .. } | Query::Boost { query, .. } => {
                     walk(query, out);
                     None
                 }
@@ -417,9 +454,35 @@ impl Query {
                             distance,
                         })
                     }
-                    "fuzzy" => Ok(Self::Fuzzy {
-                        terms: string_at(body_map()?, "terms").unwrap_or_default(),
-                    }),
+                    "fuzzy" => {
+                        let inner = body_map()?;
+                        let terms = string_at(inner, "terms").unwrap_or_default();
+                        let fields = match inner.get("fields") {
+                            None | Some(Value::Null) => return Ok(Self::Fuzzy { terms }),
+                            Some(Value::String(text)) if text == "all" => TextFields::All,
+                            Some(Value::String(text)) => TextFields::Only(vec![text.clone()]),
+                            Some(Value::List(items)) => TextFields::Only(items.iter().map(to_plain_string).collect()),
+                            _ => return Err(Error::new("fuzzy fields must be all or names")),
+                        };
+                        if matches!(&fields, TextFields::Only(names) if names.iter().any(|name| name.starts_with("attributes.")))
+                        {
+                            return Err(Error::new("attributes support keyword filters, not fuzzy matching"));
+                        }
+                        Ok(Self::FuzzyIn { terms, fields })
+                    }
+                    "boost" => {
+                        let inner = body_map()?;
+                        let weight = inner
+                            .get("weight")
+                            .map(to_plain_string)
+                            .and_then(|v| v.parse::<f64>().ok())
+                            .filter(|v| v.is_finite() && *v > 0.0)
+                            .ok_or_else(|| Error::new("boost weight must be positive and finite"))?;
+                        Ok(Self::Boost {
+                            query: Box::new(Self::from_value(inner.get("query").unwrap_or(&Value::Null))?),
+                            weight,
+                        })
+                    }
                     "suggest" => Ok(Self::Suggest {
                         text: string_at(body_map()?, "text").unwrap_or_default(),
                     }),
@@ -472,6 +535,25 @@ impl Query {
                 inner.insert("terms".into(), Value::string(terms));
                 wrap("fuzzy", inner)
             }
+            Self::FuzzyIn { terms, fields } => {
+                let mut inner = IndexMap::new();
+                inner.insert("terms".into(), Value::string(terms));
+                inner.insert(
+                    "fields".into(),
+                    match fields {
+                        TextFields::All => Value::string("all"),
+                        TextFields::Only(names) => Value::List(names.iter().map(Value::string).collect()),
+                    },
+                );
+                wrap("fuzzy", inner)
+            }
+            Self::Boost { query, weight } => wrap(
+                "boost",
+                IndexMap::from_iter([
+                    ("query".into(), query.to_value()),
+                    ("weight".into(), Value::F64(*weight)),
+                ]),
+            ),
             Self::Suggest { text } => {
                 let mut inner = IndexMap::new();
                 inner.insert("text".into(), Value::string(text));
@@ -581,6 +663,32 @@ fn list_at(map: &IndexMap<String, Value>, key: &str) -> Result<Vec<Query>, Error
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::List(items)) => items.iter().map(Query::from_value).collect(),
         Some(other) => Ok(vec![Query::from_value(other)?]),
+    }
+}
+
+/// Explicit/all-field fuzzy matching excludes the internal keyword attribute representation.
+pub(crate) fn fuzzy_field_names(mapping: &super::DocumentMapping, fields: &TextFields) -> Vec<String> {
+    mapping
+        .textual_fields()
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            !name.starts_with("__attributes.")
+                && match fields {
+                    TextFields::All => true,
+                    TextFields::Only(names) => names.contains(name),
+                }
+        })
+        .collect()
+}
+
+pub(crate) fn has_score_extensions(query: &Query) -> bool {
+    match query {
+        Query::Boost { .. } | Query::FuzzyIn { .. } => true,
+        Query::Bool { all, any, none, .. } => all.iter().chain(any).chain(none).any(has_score_extensions),
+        Query::Child { query, .. } => has_score_extensions(query),
+        Query::Lucene(text) => super::parse::parse_query_string(text).is_ok_and(|query| has_score_extensions(&query)),
+        _ => false,
     }
 }
 

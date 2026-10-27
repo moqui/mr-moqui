@@ -835,7 +835,11 @@ impl SearchFacade {
             return Ok(None);
         }
         let mut body = self.backend.get_document(&mapping, id)?;
-        if telemetry::is_telemetry_index(data_document_id) { if let Some(body) = &mut body { body.shift_remove(telemetry::ATTRIBUTE_VALUES); } }
+        if telemetry::is_telemetry_index(data_document_id) {
+            if let Some(body) = &mut body {
+                body.shift_remove(telemetry::ATTRIBUTE_VALUES);
+            }
+        }
         Ok(body)
     }
 
@@ -859,6 +863,9 @@ impl SearchFacade {
     ///
     /// Returns an error when the query does not compile against the documents, or the read fails.
     pub fn search(&self, target: &Target, request: &SearchRequest) -> Result<SearchPage, Error> {
+        let mut normalized = request.clone();
+        normalized.query = request.query.normalized()?;
+        let request = &normalized;
         if let Some(after) = &request.search_after {
             if request.offset != 0
                 || after.len() != request.sort.len()
@@ -945,6 +952,8 @@ impl SearchFacade {
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<std::time::Instant>,
     ) -> Result<IndexMap<String, Value>, Error> {
+        let normalized = filter.normalized()?;
+        let filter = &normalized;
         let ids = self.target_documents(target)?;
         if let Some(results) = self.document_facets(&ids, filter, aggs, fresh_by)? {
             return Ok(results);

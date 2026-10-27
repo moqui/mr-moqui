@@ -122,12 +122,35 @@ fn postgres_backend_exports_telemetry_through_the_search_facade() {
         0,
         "keys and values must correlate"
     );
-    let mut bad = record("phase3-poison", "bad timestamp", serde_json::json!({}));
-    bad.insert("timestamp".into(), Value::string("not-a-date"));
-    assert_eq!(facade.index_entries_deferred_refresh("otel_logs", vec![
-        record("phase3-before", "independent before", serde_json::json!({})), bad,
-        record("phase3-after", "independent after", serde_json::json!({})),
-    ]).unwrap(), 2);
+    assert!(query("body:timeout~").hits.iter().any(|hit| hit.id == "phase3-a"));
+    let ranked = query("attributes.tenant.id:* AND (body:timeout OR (body:failure)^10)");
+    assert_eq!(ranked.hits[0].id, "phase3-b");
+    let mut sorted = SearchRequest::new(
+        moqui_core::search::parse::parse_query_string("attributes.tenant.id:* AND (body:timeout OR (body:failure)^10)")
+            .unwrap(),
+    );
+    sorted.sort = vec![moqui_core::search::SortField::parse("body").unwrap()];
+    let sorted = facade.search(&Target::Index("otel_logs".into()), &sorted).unwrap();
+    assert_eq!(
+        sorted.hits[0].id, "phase3-a",
+        "explicit sorts take precedence over boosts"
+    );
+
+    let mut bad = record("phase3-poison", "bad counter", serde_json::json!({}));
+    bad.insert("severity_number".into(), Value::string("999999999999999999999"));
+    assert_eq!(
+        facade
+            .index_entries_deferred_refresh(
+                "otel_logs",
+                vec![
+                    record("phase3-before", "independent before", serde_json::json!({})),
+                    bad,
+                    record("phase3-after", "independent after", serde_json::json!({})),
+                ]
+            )
+            .unwrap(),
+        2
+    );
     assert!(facade.get_document("otel_logs", "phase3-before").unwrap().is_some());
     assert!(facade.get_document("otel_logs", "phase3-after").unwrap().is_some());
     assert!(facade.get_document("otel_logs", "phase3-poison").unwrap().is_none());

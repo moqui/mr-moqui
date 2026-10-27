@@ -325,3 +325,26 @@ fn attribute_pairs_keep_scalar_arrays_literal_dotted_keys_and_original_values() 
         assert!(opensearch::query_json(&mapping, &query).to_string().contains("nested"));
     }
 }
+
+#[test]
+fn query_suffixes_round_trip_and_preserve_group_weights_and_capabilities() {
+    for text in [
+        "body:timout~",
+        "(body:timeout OR body:failure)^4",
+        "body:timout~^2",
+        "(first OR second^2)^3",
+    ] {
+        let query = parse::parse_query_string(text).unwrap();
+        assert_eq!(Query::from_value(&query.to_value()).unwrap(), query);
+        let mapping = telemetry::telemetry_mapping("otel_logs").unwrap();
+        assert!(postgres::compile::Compiler::new(&mapping).where_sql(&query).is_ok());
+        let json = opensearch::query_json(&mapping, &query).to_string();
+        if text.contains('~') {
+            assert!(json.contains("AUTO"));
+            assert!(query.capabilities().contains(&Capability::Fuzzy));
+        }
+        if text.contains('^') {
+            assert!(json.contains("boost"));
+        }
+    }
+}

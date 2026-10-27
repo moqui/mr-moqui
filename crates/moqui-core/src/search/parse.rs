@@ -29,7 +29,7 @@
 //! only optional clauses needs one of them. `_exists_:field`, `field:*`, `*:*`, and a lone `*` are
 //! the existence and match-all forms. `*:term` searches every field, as a bare term does.
 //!
-//! Fuzzy (`~`), boost (`^`), and regex (`/re/`) are errors that name the clause.
+//! Bare fuzzy (`term~`) and positive boosts (`clause^2`) are supported. Numbered fuzziness, phrase slop and regex are errors.
 
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
@@ -60,6 +60,8 @@ enum Token {
     Not,
     Plus,
     Minus,
+    Fuzzy,
+    Boost(String),
     /// A word and whether it had a quote. Escapes are already removed; `wild` marks unescaped
     /// wildcard characters by position.
     Word {
@@ -149,7 +151,6 @@ fn tokenize(input: &str) -> Result<Vec<(Token, usize)>, Error> {
                         }
                     }
                 }
-                reject_suffix(input, &chars, index, start)?;
                 let wild = vec![false; text.chars().count()];
                 tokens.push((
                     Token::Word {
@@ -182,7 +183,43 @@ fn tokenize(input: &str) -> Result<Vec<(Token, usize)>, Error> {
                 ));
                 index = close + 1;
             }
-            '^' | '~' => return Err(clause_error(input, start, "boost and fuzzy matching are not supported")),
+            '~' => {
+                index += 1;
+                if chars.get(index).is_some_and(|c| c.is_ascii_digit() || *c == '.') {
+                    return Err(clause_error(
+                        input,
+                        start,
+                        "numbered fuzziness and phrase slop are not supported",
+                    ));
+                }
+                if chars
+                    .get(index)
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, ')' | '^'))
+                {
+                    return Err(clause_error(input, start, "bare fuzzy suffix must end the term"));
+                }
+                tokens.push((Token::Fuzzy, start));
+            }
+            '^' => {
+                index += 1;
+                let number_start = index;
+                while chars
+                    .get(index)
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, ')' | '(' | '^' | '~'))
+                {
+                    index += 1;
+                }
+                let number: String = chars[number_start..index].iter().collect();
+                if number
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .is_none()
+                {
+                    return Err(clause_error(input, start, "boost weight must be positive and finite"));
+                }
+                tokens.push((Token::Boost(number), start));
+            }
             ']' | '}' => return Err(clause_error(input, start, "unexpected range close")),
             '/' => return Err(clause_error(input, start, "regular expressions are not supported")),
             ':' => return Err(clause_error(input, start, "a field name is missing before ':'")),
@@ -214,7 +251,6 @@ fn tokenize(input: &str) -> Result<Vec<(Token, usize)>, Error> {
                     tokens.push((Token::Field(text), start));
                     continue;
                 }
-                reject_suffix(input, &chars, index, start)?;
                 let token = match text.as_str() {
                     "AND" => Token::And,
                     "OR" => Token::Or,
@@ -230,13 +266,6 @@ fn tokenize(input: &str) -> Result<Vec<(Token, usize)>, Error> {
         }
     }
     Ok(tokens)
-}
-
-fn reject_suffix(input: &str, chars: &[char], index: usize, start: usize) -> Result<(), Error> {
-    match chars.get(index) {
-        Some('^') | Some('~') => Err(clause_error(input, start, "boost and fuzzy matching are not supported")),
-        _ => Ok(()),
-    }
 }
 
 fn at_clause_start(tokens: &[(Token, usize)]) -> bool {
@@ -327,6 +356,40 @@ impl Parser<'_> {
     }
 
     fn clause(&mut self, field: Option<&str>, depth: usize) -> Result<Query, Error> {
+        let fuzzy_word = matches!(self.tokens.get(self.pos), Some((Token::Word { quoted: false, wild, .. }, _)) if !wild.iter().any(|v| *v));
+        let mut query = self.atom(field, depth)?;
+        if matches!(self.tokens.get(self.pos), Some((Token::Fuzzy, _))) {
+            if !fuzzy_word || field.is_some_and(|name| name.starts_with("attributes.")) {
+                return Err(self.error_at("fuzzy suffix needs an unquoted term on a mapped textual field"));
+            }
+            let Query::Text {
+                terms,
+                fields,
+                kind: TextMatch::Term,
+            } = query
+            else {
+                return Err(self.error_at("fuzzy suffix needs a term"));
+            };
+            query = Query::FuzzyIn { terms, fields };
+            self.pos += 1;
+        }
+        if let Some((Token::Boost(number), _)) = self.tokens.get(self.pos) {
+            let weight = number
+                .parse::<f64>()
+                .map_err(|_| self.error_at("invalid boost weight"))?;
+            query = Query::Boost {
+                query: Box::new(query),
+                weight,
+            };
+            self.pos += 1;
+        }
+        if matches!(self.tokens.get(self.pos), Some((Token::Fuzzy | Token::Boost(_), _))) {
+            return Err(self.error_at("invalid repeated suffix"));
+        }
+        Ok(query)
+    }
+
+    fn atom(&mut self, field: Option<&str>, depth: usize) -> Result<Query, Error> {
         let Some((token, _)) = self.tokens.get(self.pos).cloned() else {
             return Err(self.error_at("a clause is missing"));
         };
@@ -391,6 +454,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 Ok(word_query(field, &text, quoted, &wild))
             }
+            Token::Fuzzy | Token::Boost(_) => Err(self.error_at("a suffix needs a clause before it")),
             Token::Close => Err(self.error_at("unexpected ')'")),
             Token::And | Token::Or | Token::Not | Token::Plus | Token::Minus => {
                 Err(self.error_at("an operator needs a clause after it"))
@@ -574,7 +638,21 @@ mod tests {
     #[test]
     fn errors_name_the_clause() {
         for bad in [
-            "john~", "name^2", "(a OR b", "a)", "AND b", "/re/", "x:[1 TO]", "\"open",
+            "john~test",
+            "john~1",
+            "name^0",
+            "name^NaN",
+            "name^",
+            "name^^2",
+            "\"two words\"~",
+            "a*~",
+            "attributes.custom:hello~",
+            "(a OR b",
+            "a)",
+            "AND b",
+            "/re/",
+            "x:[1 TO]",
+            "\"open",
         ] {
             let err = parse_query_string(bad).unwrap_err().to_string();
             assert!(err.contains("position"), "{bad}: {err}");

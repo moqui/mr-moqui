@@ -238,7 +238,9 @@ impl<'a> Compiler<'a> {
 
     fn compile(&self, query: &Query, scope: &Scope<'a>) -> Result<Sql, Error> {
         if matches!(scope, Scope::Root) {
-            if let Some(query) = crate::search::telemetry::attribute_query(self.mapping, query) { return self.compile(&query, scope); }
+            if let Some(query) = crate::search::telemetry::attribute_query(self.mapping, query) {
+                return self.compile(&query, scope);
+            }
         }
         match query {
             Query::MatchAll => Ok(Sql::new("TRUE")),
@@ -250,6 +252,8 @@ impl<'a> Compiler<'a> {
                 distance,
             } => self.near(scope, terms, fields, *distance),
             Query::Fuzzy { terms } => Ok(self.fuzzy(scope, terms)),
+            Query::FuzzyIn { terms, fields } => self.fuzzy_in(scope, terms, fields),
+            Query::Boost { query, .. } => self.compile(query, scope),
             Query::Suggest { text } => Ok(self.suggest(scope, text)),
             Query::Text { terms, fields, kind } => self.text(scope, terms, fields, *kind),
             Query::Field(field)
@@ -589,6 +593,114 @@ impl<'a> Compiler<'a> {
         out.param(Value::string(terms.trim()))
             .push(&format!(") <% {NORM_TITLE}"));
         out
+    }
+
+    fn fuzzy_in(&self, scope: &Scope<'a>, terms: &str, fields: &TextFields) -> Result<Sql, Error> {
+        if terms.trim().is_empty() {
+            return Ok(Sql::new("FALSE"));
+        }
+        let fields = match (scope, fields) {
+            (Scope::Element { prefix, .. }, TextFields::Only(names)) => TextFields::Only(
+                names
+                    .iter()
+                    .map(|name| {
+                        if name.starts_with(prefix) {
+                            name.clone()
+                        } else {
+                            format!("{prefix}{name}")
+                        }
+                    })
+                    .collect(),
+            ),
+            _ => fields.clone(),
+        };
+        let mut parts = Vec::new();
+        for name in crate::search::query::fuzzy_field_names(self.mapping, &fields) {
+            parts.push(self.on_field(scope, &name, |expr, field| {
+                if !field.kind.is_textual() {
+                    return Ok(Sql::new("FALSE"));
+                }
+                let mut out = Sql::new(format!("{}(", self.text.fold));
+                out.param(Value::string(terms.trim()))
+                    .push(&format!(") <% {}({expr})", self.text.fold));
+                Ok(out)
+            })?);
+        }
+        Ok(or_all(parts))
+    }
+
+    /// Recursive scores retain group boosts. Predicates gate each contribution so optional nonmatches score zero.
+    pub fn score_sql(&self, query: &Query, rank: crate::search::Rank) -> Result<Sql, Error> {
+        if let Query::Lucene(text) = query {
+            return self.score_sql(&crate::search::parse::parse_query_string(text)?, rank);
+        }
+        let mut out = Sql::new("(CASE WHEN ");
+        out.append(self.where_sql(query)?).push(" THEN (");
+        match query {
+            Query::Boost { query, weight } => {
+                out.append(self.score_sql(query, rank)?)
+                    .push(" * ")
+                    .param(Value::F64(*weight));
+            }
+            Query::Bool { all, any, .. } => {
+                if all.is_empty() && any.is_empty() {
+                    out.push("0");
+                }
+                for (i, query) in all.iter().chain(any).enumerate() {
+                    if i > 0 {
+                        out.push(" + ");
+                    }
+                    out.append(self.score_sql(query, rank)?);
+                }
+            }
+            Query::FuzzyIn { terms, fields } => {
+                out.push("GREATEST(0.0");
+                for name in crate::search::query::fuzzy_field_names(self.mapping, fields) {
+                    if let Located::Field { expr, arrays, .. } = self.locate_root(&name) {
+                        let mut part = Sql::new(format!("COALESCE(word_similarity({}(", self.text.fold));
+                        part.param(Value::string(terms.trim()))
+                            .push(&format!("), {}({expr})),0)", self.text.fold));
+                        out.push(", ");
+                        if arrays.is_empty() {
+                            out.append(part);
+                        } else {
+                            out.push("COALESCE((SELECT MAX(").append(part).push(") FROM ");
+                            for (i, (var, source)) in arrays.iter().enumerate() {
+                                if i > 0 {
+                                    out.push(", ");
+                                }
+                                out.push(&format!("{source} AS {var}"));
+                            }
+                            out.push("),0)");
+                        }
+                    }
+                }
+                out.push(")");
+            }
+            _ => {
+                if let Some(query) = self.rank_query(query) {
+                    let function = if rank == crate::search::Rank::CoverDensity {
+                        "ts_rank_cd"
+                    } else {
+                        "ts_rank"
+                    };
+                    let vector =
+                        if rank == crate::search::Rank::CoverDensity && !self.mapping.display.weights.is_empty() {
+                            RANKED_TEXT
+                        } else {
+                            "all_text"
+                        };
+                    out.push(&format!("{function}({vector}, ")).append(query).push(")");
+                } else {
+                    out.push("1.0");
+                }
+                for extra in self.extra_score(query) {
+                    out.push(" + ").append(extra);
+                }
+            }
+        }
+        out.push(") ELSE 0.0 END)");
+        Ok(out)
     }
 
     /// `Suggest`: the folded title starts with the text, or each word starts a title word.

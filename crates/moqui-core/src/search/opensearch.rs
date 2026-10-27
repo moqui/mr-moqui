@@ -231,6 +231,24 @@ fn compile(mapping: &DocumentMapping, query: &Query, prefix: &str) -> Json {
                 json!({"bool": {"should": should, "minimum_should_match": 1}})
             }
         }
+        Query::Boost { query, weight } => {
+            json!({"function_score":{"query":compile(mapping, query, prefix),"boost":weight}})
+        }
+        Query::FuzzyIn { terms, fields } => {
+            let fields = match fields {
+                TextFields::Only(names) => TextFields::Only(names.iter().map(|name| full(prefix, name)).collect()),
+                TextFields::All => TextFields::All,
+            };
+            let fields = super::query::fuzzy_field_names(mapping, &fields)
+                .into_iter()
+                .filter(|name| prefix.is_empty() || name.starts_with(prefix))
+                .collect::<Vec<_>>();
+            if fields.is_empty() {
+                json!({"match_none":{}})
+            } else {
+                json!({"multi_match":{"query":terms,"fields":fields,"fuzziness":"AUTO","operator":"and"}})
+            }
+        }
         Query::Fuzzy { terms } => match mapping.display.role("title") {
             Some(title) if prefix.is_empty() && !terms.trim().is_empty() => {
                 json!({"match": {title: {"query": terms.trim(), "fuzziness": "AUTO", "operator": "and"}}})

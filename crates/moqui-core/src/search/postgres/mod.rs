@@ -1357,30 +1357,34 @@ pub fn search_sql(
             literal(&mapping.physical_name)
         ));
         part.push("(");
-        match compiler.rank_query(&request.query) {
-            // Cover density over the weighted vector when the document has weights, else all text.
-            Some(rank) if request.rank == Rank::CoverDensity => {
-                let vector = if mapping.display.weights.is_empty() {
-                    "all_text"
-                } else {
-                    RANKED_TEXT
-                };
-                part.push(&format!("ts_rank_cd({vector}, "));
-                part.append(rank);
-                part.push(")");
+        if crate::search::query::has_score_extensions(&request.query) {
+            part.append(compiler.score_sql(&request.query, request.rank)?);
+        } else {
+            match compiler.rank_query(&request.query) {
+                // Cover density over the weighted vector when the document has weights, else all text.
+                Some(rank) if request.rank == Rank::CoverDensity => {
+                    let vector = if mapping.display.weights.is_empty() {
+                        "all_text"
+                    } else {
+                        RANKED_TEXT
+                    };
+                    part.push(&format!("ts_rank_cd({vector}, "));
+                    part.append(rank);
+                    part.push(")");
+                }
+                Some(rank) => {
+                    part.push("ts_rank(all_text, ");
+                    part.append(rank);
+                    part.push(")");
+                }
+                None => {
+                    part.push("0");
+                }
             }
-            Some(rank) => {
-                part.push("ts_rank(all_text, ");
-                part.append(rank);
-                part.push(")");
+            for extra in compiler.extra_score(&request.query) {
+                part.push(" + ");
+                part.append(extra);
             }
-            None => {
-                part.push("0");
-            }
-        }
-        for extra in compiler.extra_score(&request.query) {
-            part.push(" + ");
-            part.append(extra);
         }
         part.push(")::float8 AS score");
         for (index, (sort, kind)) in request.sort.iter().zip(&sort_kinds).enumerate() {

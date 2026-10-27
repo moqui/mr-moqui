@@ -98,7 +98,7 @@ fn collect(query: &Query, negated: bool, out: &mut Vec<Term>) {
                 collect(item, !negated, out);
             }
         }
-        Query::Child { query, .. } => collect(query, negated, out),
+        Query::Child { query, .. } | Query::Boost { query, .. } => collect(query, negated, out),
         _ => {}
     }
 }
