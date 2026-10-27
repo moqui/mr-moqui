@@ -9276,12 +9276,16 @@
         qvt.config = config;
         moqui.config = config;
         moqui.setNumberSeparators(config.locale);
+        let catalogReady = Promise.resolve();
         if (moqui.l10n) {
             moqui.l10n.setLocale(config.locale);
             moqui.l10n.setTimeZone(config.timeZone);
             if (config.currencies) moqui.l10n.setCurrencies(config.currencies);
             const catalogUrl = (config.appRootPath || "") + "/apps/l10nCatalog?locale=" + encodeURIComponent((config.locale || "en").replace("-", "_"));
-            moqui.l10n.loadCatalog(config.locale, () => moqui.request(catalogUrl).then((result) => result.json)).catch((err) => console.warn("no locale catalog", err));
+            // The catalog is not reactive, so the app mounts once it is in (or failed, or is slow): text the browser
+            // localizes in the first render is then in the user's language.
+            const loading = moqui.l10n.loadCatalog(config.locale, () => moqui.request(catalogUrl).then((result) => result.json)).catch((err) => console.warn("no locale catalog", err));
+            catalogReady = Promise.race([loading, new Promise((resolve) => root.setTimeout(resolve, 3000))]);
         }
         // A confirmation is a data-confirm attribute on the button or link. It is asked before any other handler runs.
         doc.addEventListener("click", (event) => {
@@ -9314,9 +9318,11 @@
         app.config.globalProperties.$router = qvt.makeRouter();
         Object.defineProperty(app.config.globalProperties, "$route", { get: () => (moqui.webrootVue ? moqui.webrootVue.getRoute() : { matched: [], params: {} }) });
         app.config.errorHandler = (err, instance, info) => { console.error("Vue error (" + info + ")", err); };
-        moqui.webrootVue = app.mount("#apps-root");
-        root.addEventListener("popstate", () => { moqui.webrootVue.setUrl(root.location.pathname + root.location.search, null, null, false); });
-        return moqui.webrootVue;
+        return catalogReady.then(() => {
+            moqui.webrootVue = app.mount("#apps-root");
+            root.addEventListener("popstate", () => { moqui.webrootVue.setUrl(root.location.pathname + root.location.search, null, null, false); });
+            return moqui.webrootVue;
+        });
     };
 
     // The application starts when the shell is there and the libraries are. A test or another page can load this file alone.

@@ -179,6 +179,7 @@ pub fn localize_in(original: &str, locale: &str) -> Result<String, Error> {
         .and_then(Result::ok)
         .flatten();
     if let Some(cache) = &cache {
+        clear_after_message_write(cache)?;
         if let Some(found) = cache.get(&key)? {
             return Ok(moqui_lib::object::to_plain_string(&found));
         }
@@ -190,6 +191,28 @@ pub fn localize_in(original: &str, locale: &str) -> Result<String, Error> {
         }
     }
     Ok(result)
+}
+
+/// The `LocalizedEntityField`/`LocalizedMessage` write count the message cache was last filled at, kept with the entity
+/// facade.
+#[derive(Default)]
+struct MessageGeneration(std::sync::atomic::AtomicU64);
+
+/// Clear the message cache once a `LocalizedMessage` has been written since it was filled, here or on a cluster peer, so
+/// a translation loaded or edited on a running server shows without waiting for the cache to expire (an original with
+/// no row is cached as itself).
+fn clear_after_message_write(cache: &moqui_lib::cache::MCache<String, Value>) -> Result<(), Error> {
+    let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
+        return Ok(());
+    };
+    let generation = crate::entity::cache::localized_generation(&facade);
+    let seen = facade.with_slot_read(MessageGeneration::default, |seen| {
+        seen.0.swap(generation, std::sync::atomic::Ordering::AcqRel)
+    });
+    if seen != generation {
+        cache.clear()?;
+    }
+    Ok(())
 }
 
 /// The message, and whether it is safe to cache (false when there was no entity facade).

@@ -1212,10 +1212,10 @@
             if (st.accordion) {
                 st.accIndex++;
                 const active = String(st.accIndex) === st.accActive;
-                w("<q-expansion-item" + A({ dense: true, "expand-separator": true, "switch-toggle-side": true, "header-class": "text-weight-medium", group: st.accordion, label: title || "Fields", "default-opened": active ? true : null }) +
+                w("<q-expansion-item" + A({ dense: true, "expand-separator": true, "switch-toggle-side": true, "header-class": "text-weight-medium", group: st.accordion, label: title || L("Fields"), "default-opened": active ? true : null }) +
                     '><div class="' + cls("q-pa-sm", at(n, "style") || null) + '">');
             } else if (at(n, "box") === "true") {
-                w("<m-container-box" + A({ type: "default", title: title || "Fields" }) + "><div" + A({ class: at(n, "style") || null }) + ">");
+                w("<m-container-box" + A({ type: "default", title: title || L("Fields") }) + "><div" + A({ class: at(n, "style") || null }) + ">");
             } else {
                 w('<div class="' + cls("form-single-field-group", at(n, "style") || null) + '">' + (title ? '<div class="text-subtitle1 text-weight-medium q-px-xs q-pt-xs">' + t(title) + "</div>" : ""));
             }

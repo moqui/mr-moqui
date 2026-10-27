@@ -154,6 +154,55 @@ fn menu_data_lists_what_the_user_may_view_and_runs_the_pre_actions_for_titles() 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The titles of the subscreens (the qapps tabs and drawer) are in the user's locale, as those of the screens on the path.
+#[test]
+fn menu_data_titles_are_in_the_users_locale() {
+    let (dir, root) = tree("l10n");
+    let world = World::open(screen_authz_conf());
+    world.user("admin", Some("ADMIN"));
+    for (id, file) in [
+        ("OPEN_VIEW", "Root/App/Open.xml"),
+        ("SECRET_VIEW", "Root/App/Secret.xml"),
+    ] {
+        allow(&world, id, "ADMIN", &dir.join(file).to_string_lossy());
+    }
+    let mut account = world
+        .facade
+        .find("moqui.security.UserAccount")
+        .unwrap()
+        .eq("userId", moqui_lib::object::Value::string("admin"))
+        .one()
+        .unwrap()
+        .unwrap();
+    account.set("locale", moqui_lib::object::Value::string("es_MX"));
+    account.update(&world.facade).unwrap();
+    for (original, localized) in [("Secret", "Secreto"), ("The App", "La Aplicación")] {
+        let mut row = world.facade.make_value("moqui.basic.LocalizedMessage").unwrap();
+        row.set("original", moqui_lib::object::Value::string(original));
+        row.set("locale", moqui_lib::object::Value::string("es"));
+        row.set("localized", moqui_lib::object::Value::string(localized));
+        row.create(&world.facade).unwrap();
+    }
+    let (status, menu) = get_menu(&world, &root, Some("admin"), "/menuData/App/Open");
+    assert_eq!(status, 200, "{menu}");
+    let title = |name: &str| {
+        menu[0]["subscreens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .map(|item| item["title"].clone())
+    };
+    assert_eq!(title("Secret").unwrap(), "Secreto", "{menu}");
+    assert_eq!(
+        title("Open").unwrap(),
+        "Open Sesame",
+        "expanded after the lookup: {menu}"
+    );
+    assert_eq!(menu[0]["title"], "La Aplicación");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A subscreen that does not parse, and one whose actions are not JavaScript, are logged by location and left out of the
 /// menu data and of the html menu, and their siblings and the parent still render (AGENTS.md failure tolerance).
 #[test]

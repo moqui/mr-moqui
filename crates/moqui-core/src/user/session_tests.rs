@@ -148,6 +148,58 @@ fn set_and_get_locale_and_time_zone_on_the_inserted_user() {
 }
 
 #[test]
+fn an_account_locale_change_shows_on_the_next_request() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+    set_account(&facade, "ada", Some("en_US"), None);
+    let guard = bind(&factory, None, None, false).unwrap();
+    login::login_user("ada", "Secret1!").unwrap();
+    assert_eq!(crate::l10n::locale(), "en_US");
+    let cookie = guard.session_cookie_header().unwrap();
+    flush_dirty(&factory).unwrap();
+    drop(guard);
+
+    // As the Account screen saves it: the UserAccount row only, not ec.user.setLocale.
+    set_account(&facade, "ada", Some("es"), Some("America/Mexico_City"));
+    let guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+    assert_eq!(crate::l10n::locale(), "es");
+    assert_eq!(crate::l10n::time_zone().iana_name(), Some("America/Mexico_City"));
+    flush_dirty(&factory).unwrap();
+    drop(guard);
+
+    // Unchanged, the columns stay clean, so the session row is not written again.
+    let guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+    assert_eq!(crate::l10n::locale(), "es");
+    let dirty = with_session(|session| {
+        session.dirty_columns.contains(&Column::Locale) || session.dirty_columns.contains(&Column::TimeZone)
+    });
+    assert!(!dirty);
+    drop(guard);
+
+    // Cleared on the account, the session's goes too and the request's language applies.
+    set_account(&facade, "ada", None, None);
+    let _guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+    assert!(locale().unwrap().is_none());
+    assert!(time_zone().unwrap().is_none());
+    login::logout().unwrap();
+}
+
+fn set_account(facade: &EntityFacade, user_id: &str, locale: Option<&str>, zone: Option<&str>) {
+    let mut account = facade
+        .find(USER_ACCOUNT)
+        .unwrap()
+        .eq("userId", Value::string(user_id))
+        .one()
+        .unwrap()
+        .unwrap();
+    account.set("locale", locale.map_or(Value::Null, Value::string));
+    account.set("timeZone", zone.map_or(Value::Null, Value::string));
+    account.update(facade).unwrap();
+}
+
+#[test]
 fn a_bad_mac_is_an_unknown_session() {
     let (_lock, ctx, _facade, _key) = setup();
     let _entered = ctx.enter();

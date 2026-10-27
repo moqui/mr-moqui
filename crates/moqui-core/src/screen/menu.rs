@@ -123,7 +123,10 @@ pub(super) fn subscreen_entry(
     };
     let mut entry = Item::new();
     entry.insert("name".into(), text(&item.name));
-    entry.insert("title".into(), text(&script::expand(&item.menu_title)?));
+    entry.insert(
+        "title".into(),
+        text(&script::expand(&l10n::localize(&item.menu_title)?)?),
+    );
     entry.insert("path".into(), text(&screen_path));
     entry.insert("pathWithParams".into(), text(&path_with_params(&url)));
     entry.insert("image".into(), image);
@@ -238,7 +241,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         let (image, image_type) = menu_image(state, sui.menu_image.as_ref());
         let localized = l10n::localize(&ssi.menu_title)?;
         let title = if localized.is_empty() {
-            cur_screen.default_menu_title.clone()
+            l10n::localize(&cur_screen.default_menu_title)?
         } else {
             localized
         };
@@ -289,7 +292,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         None => String::new(),
     };
     let mut last_title = if localized.is_empty() {
-        info.target_screen.default_menu_title.clone()
+        l10n::localize(&info.target_screen.default_menu_title)?
     } else {
         localized
     };

@@ -55,6 +55,20 @@ fn localize_walks_the_locale_chain_then_default() {
 }
 
 #[test]
+fn a_message_added_after_a_lookup_shows_on_the_next_one() {
+    let context = entity_context();
+    let _entered = context.enter();
+    let cache = context.factory().cache().get_or_create("l10n.message").expect("cache");
+    assert_eq!(localize_in("Late Words", "es").unwrap(), "Late Words");
+    assert!(
+        cache.get(&"Late Words::es".to_string()).unwrap().is_some(),
+        "the miss is cached"
+    );
+    message(&context, "Late Words", "es", "Palabras tardías");
+    assert_eq!(localize_in("Late Words", "es").unwrap(), "Palabras tardías");
+}
+
+#[test]
 fn a_text_over_255_characters_is_returned_as_it_is() {
     let context = entity_context();
     let _entered = context.enter();
@@ -305,11 +319,7 @@ fn spanish_catalog_files_match_the_message_keys() {
             if original == "UserAuthcOtpMessage" {
                 assert!(localized.contains("${code}"), "{localized}");
             } else if !original_placeholders.is_empty() {
-                assert_eq!(
-                    original_placeholders,
-                    dollar_placeholders(&localized),
-                    "{original}"
-                );
+                assert_eq!(original_placeholders, dollar_placeholders(&localized), "{original}");
             }
             let key = (original.clone(), locale.clone());
             assert!(
@@ -370,4 +380,227 @@ fn spanish_catalog_files_match_the_message_keys() {
             );
         }
     }
+}
+
+/// `${...}` with quoted text removed, so a translated literal still matches the expression.
+fn mask_quotes(expr: &str) -> String {
+    let mut out = String::new();
+    let mut chars = expr.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\'' || ch == '"' {
+            out.push(ch);
+            while let Some(inner) = chars.next() {
+                if inner == '\\' {
+                    chars.next();
+                    continue;
+                }
+                if inner == ch {
+                    break;
+                }
+            }
+            out.push(ch);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn quoted_literals(expr: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut rest = expr;
+    while let Some(start) = rest.find(['\'', '"']) {
+        let quote = rest[start..].chars().next().unwrap();
+        let after = &rest[start + quote.len_utf8()..];
+        let Some(end) = after.find(quote) else {
+            break;
+        };
+        found.push(&after[..end]);
+        rest = &after[end + quote.len_utf8()..];
+    }
+    found
+}
+
+/// Format patterns and other non-words stay byte for byte. A sentence inside quotes may change.
+fn frozen_literal(literal: &str) -> bool {
+    let text = literal.trim();
+    if text.is_empty() {
+        return true;
+    }
+    let format_marks = text.contains('#') || text.contains("yyyy") || text.contains("MMM");
+    format_marks && !text.chars().any(|ch| ch.is_ascii_alphabetic() && ch != 'E')
+        || text.contains("yyyy")
+        || text.contains("MMM")
+}
+
+fn brace_marks(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    for mark in ["{0}", "{1}", "{2}", "{3}", "{2,choice,0#|1#"] {
+        let mut rest = text;
+        while let Some(start) = rest.find(mark) {
+            found.push(mark);
+            rest = &rest[start + mark.len()..];
+        }
+    }
+    found
+}
+
+/// Simplified Chinese mirrors the Spanish keys: locale `zh` only, placeholders intact, and the
+/// mainland wording from the mr-l10n README.
+#[test]
+fn chinese_catalog_files_match_the_message_keys() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use moqui_lib::node::MNode;
+
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/component/mr-l10n/data");
+    let es_root = data.join("es");
+    let zh_root = data.join("zh");
+    let locked = [
+        "Add",
+        "Create",
+        "Delete",
+        "Description",
+        "Find",
+        "Name",
+        "Status",
+        "Type",
+        "Update",
+    ];
+    let reject = [
+        "軟體", "資訊", "預設", "檔案", "設定", "網路", "視窗", "螢幕", "滑鼠", "資料", "嘅", "喺", "唔", "佢", "咗",
+        "啲", "帐户", "定单", "装运",
+    ];
+
+    let mut es_originals: BTreeSet<String> = BTreeSet::new();
+    for entry in std::fs::read_dir(&es_root).expect("es data directory") {
+        let path = entry.expect("entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("xml") {
+            continue;
+        }
+        let node = MNode::parse_file(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        for child in node.children() {
+            if child.attribute("locale").as_deref() == Some("es") {
+                es_originals.insert(child.attribute("original").expect("original"));
+            }
+        }
+    }
+
+    let mut unchanged: BTreeSet<String> = BTreeSet::new();
+    for entry in std::fs::read_dir(&zh_root).expect("zh data directory") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if !(name.starts_with("unchanged-") && name.ends_with(".txt")) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            assert!(unchanged.insert(line.to_string()), "duplicate unchanged {line}");
+        }
+    }
+
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    let mut files = 0u32;
+    for entry in std::fs::read_dir(&zh_root).expect("zh data directory") {
+        let path = entry.expect("entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("xml") {
+            continue;
+        }
+        files += 1;
+        let node = MNode::parse_file(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        assert!(node.has_name("entity-facade-xml"), "{}", path.display());
+        assert_eq!(node.attribute("type").as_deref(), Some("zh"), "{}", path.display());
+        for child in node.children() {
+            assert!(
+                child.has_name("moqui.basic.LocalizedMessage"),
+                "{} {}",
+                path.display(),
+                child.name()
+            );
+            let original = child.attribute("original").expect("original");
+            let locale = child.attribute("locale").expect("locale");
+            let localized = child.attribute("localized").expect("localized");
+            assert_eq!(locale, "zh", "{original}");
+            assert!(original.chars().count() <= 255, "{original}");
+            assert!(
+                localized.chars().count() <= 255 && !localized.trim().is_empty(),
+                "{original}"
+            );
+            assert_ne!(localized, original, "identity row {original}");
+            assert!(!locked.contains(&original.as_str()), "{original}");
+            assert!(
+                !unchanged.contains(&original),
+                "translated and listed unchanged: {original}"
+            );
+            let original_placeholders = dollar_placeholders(&original);
+            if original == "UserAuthcOtpMessage" {
+                assert!(localized.contains("${code}"), "{localized}");
+            } else if !original_placeholders.is_empty() {
+                let localized_placeholders = dollar_placeholders(&localized);
+                assert_eq!(original_placeholders.len(), localized_placeholders.len(), "{original}");
+                for (src, dst) in original_placeholders.iter().zip(&localized_placeholders) {
+                    assert_eq!(mask_quotes(src), mask_quotes(dst), "{original}");
+                    for literal in quoted_literals(src) {
+                        if frozen_literal(literal) {
+                            assert!(dst.contains(literal), "{original} lost {literal}");
+                        }
+                    }
+                }
+            }
+            assert_eq!(brace_marks(&original), brace_marks(&localized), "{original}");
+            let without_equation = localized.replace("方程式", "");
+            assert!(!without_equation.contains("程式"), "{original} -> {localized}");
+            for word in reject {
+                assert!(!localized.contains(word), "{original} -> {localized}");
+            }
+            assert!(
+                seen.insert(original.clone(), localized).is_none(),
+                "duplicate {original}"
+            );
+        }
+    }
+    assert_eq!(files, 46, "catalog files {files}");
+
+    for original in &es_originals {
+        if !seen.contains_key(original) {
+            assert!(unchanged.contains(original), "missing {original}");
+        }
+    }
+    for original in seen.keys() {
+        assert!(es_originals.contains(original), "extra {original}");
+    }
+    for original in &unchanged {
+        assert!(
+            es_originals.contains(original),
+            "unchanged key is not in es: {original}"
+        );
+        assert!(!seen.contains_key(original), "unchanged key was translated: {original}");
+    }
+
+    let zh = |original: &str| seen.get(original).map(String::as_str);
+    assert_eq!(zh("Save"), Some("保存"));
+    assert_eq!(zh("Cancel"), Some("取消"));
+    assert_eq!(zh("Settings"), Some("设置"));
+    assert_eq!(zh("File"), Some("文件"));
+    assert_eq!(zh("Invoice"), Some("发票"));
+    assert_eq!(zh("Order"), Some("订单"));
+    assert_eq!(zh("Shipment"), Some("发货单"));
+    assert_eq!(zh("Party"), Some("参与方"));
+    assert_eq!(zh("Active"), Some("有效"));
+    assert_eq!(zh("Password"), Some("密码"));
+    assert_eq!(zh("Email"), Some("电子邮件"));
+    assert_eq!(zh("Germany"), Some("德国"));
+    assert_eq!(zh("United States"), Some("美国"));
+    assert_eq!(zh("Mobile"), Some("手机"));
+    let choice =
+        "Value entered ({0}) could not be converted to a {1}{2,choice,0#|1# using format [}{3}{2,choice,0#|1#]}";
+    let choice_zh = zh(choice).unwrap_or_else(|| panic!("missing choice message"));
+    assert_ne!(choice_zh, choice);
+    assert!(choice_zh.contains("{0}") && choice_zh.contains("{1}") && choice_zh.contains("{3}"));
+    assert_eq!(choice_zh.matches("{2,choice,0#|1#").count(), 2);
 }

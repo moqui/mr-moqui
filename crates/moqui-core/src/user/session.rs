@@ -359,7 +359,7 @@ pub fn bind(
     } else {
         Ok(())
     };
-    if let Err(err) = visit.and_then(|_| forget_user_logged_out_elsewhere()) {
+    if let Err(err) = visit.and_then(|_| refresh_from_account()) {
         unbind_current();
         if created {
             lock_sessions(factory).sessions.remove(&id);
@@ -1500,7 +1500,10 @@ fn install_thread(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<()
     Ok(())
 }
 
-fn forget_user_logged_out_elsewhere() -> Result<(), Error> {
+/// The signed-in user's `UserAccount` as of this request: a logout elsewhere ends the login here, and the account's
+/// locale and time zone replace the session's, so a change saved on the Account screen shows on the next request as in
+/// Java, where each request reads the account again.
+fn refresh_from_account() -> Result<(), Error> {
     let Some(user_id) = current_user_id()? else {
         return Ok(());
     };
@@ -1527,6 +1530,22 @@ fn forget_user_logged_out_elsewhere() -> Result<(), Error> {
         .is_some_and(|flag| flag == "Y");
     if logged_out {
         clear_login();
+        return Ok(());
+    }
+    let text = |name: &str| {
+        account
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let (locale, zone) = (text("locale"), text("timeZone"));
+    // Only a change marks the columns, so an unchanged session row is not written back each request.
+    if with_session(|session| session.locale != locale) {
+        set_locale(locale.as_deref());
+    }
+    if with_session(|session| session.time_zone != zone) {
+        set_time_zone(zone.as_deref());
     }
     Ok(())
 }
