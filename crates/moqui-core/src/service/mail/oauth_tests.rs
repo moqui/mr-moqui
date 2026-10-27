@@ -1029,6 +1029,36 @@ fn xoauth2_for_the_sync_the_server_test_and_a_send() {
         vec!["XOAUTH2 refused".to_string(), "XOAUTH2 ok".to_string()]
     );
     assert_eq!(state.messages.len(), 2);
+    drop(state);
+    // The delivery notice uses raw SMTP with a null reverse path, sharing the same early-revoke retry.
+    let next = format!("at-{}", lock(&fake.state).next_number());
+    {
+        let mut state = lock(&smtp.state);
+        state.tokens = vec![next.clone()];
+        state.auths.clear();
+    }
+    let account = facade
+        .find(ACCOUNT)
+        .unwrap()
+        .eq("emailAccountId", text(&account_id))
+        .one()
+        .unwrap()
+        .unwrap();
+    let server_id = field(&account, "emailServerId");
+    super::implementation::send_built(
+        &facade,
+        &server_id,
+        "",
+        "carol@example.com",
+        "Delivered",
+        b"Subject: Delivered\r\n\r\nAccepted\r\n",
+    )
+    .unwrap();
+    let state = lock(&smtp.state);
+    assert_eq!(state.auths, vec!["XOAUTH2 refused", "XOAUTH2 ok"]);
+    assert_eq!(state.messages.len(), 3);
+    assert!(state.messages[2].0.is_empty());
+    assert!(state.messages[2].2.contains("Accepted"));
 }
 
 /// A POP3 account signs in with AUTH XOAUTH2 (no USER or PASS): its sign-in asks for the provider's POP scope and

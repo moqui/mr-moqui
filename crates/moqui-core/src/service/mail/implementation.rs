@@ -1286,11 +1286,9 @@ pub(super) fn send_built(
         .parse::<lettre::Address>()
         .map_err(|err| Error::new(format!("{to} is not an address: {err}")))?;
     let envelope = lettre::address::Envelope::new(None, vec![recipient]).map_err(|err| Error::new(err.to_string()))?;
-    let auth = smtp_auth(facade, &server, None)?;
-    let transport = smtp_transport(&server, &auth, Some(Duration::from_secs(30)))?;
-    lettre::Transport::send_raw(&transport, &envelope, raw)
-        .map(|_| ())
-        .map_err(|err| Error::new(err.to_string()))
+    smtp_send_retry(facade, &server, Some(Duration::from_secs(30)), |transport| {
+        lettre::Transport::send_raw(transport, &envelope, raw).map(|_| ())
+    })
 }
 
 /// Whether a test sink or `mail_capture_sends` kept `letter` instead of sending it.
@@ -1324,24 +1322,32 @@ fn captured(letter: &Letter) -> bool {
 
 fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
     let message = build_lettre(letter)?;
+    smtp_send_retry(facade, server, None, |transport| {
+        lettre::Transport::send(transport, &message).map(|_| ())
+    })
+}
+
+/// Authentication refusal happens before SMTP accepts the message, so only that failure is safe to retry.
+fn smtp_send_retry(
+    facade: &EntityFacade,
+    server: &EntityValue,
+    timeout: Option<Duration>,
+    send: impl Fn(&lettre::SmtpTransport) -> Result<(), lettre::transport::smtp::Error>,
+) -> Result<(), Error> {
     let auth = smtp_auth(facade, server, None)?;
-    let transport = smtp_transport(server, &auth, None)?;
-    match lettre::Transport::send(&transport, &message) {
-        Ok(_) => Ok(()),
-        // an access token the server refused (revoked, or ended early): once more with a new one, which is safe
-        // before the server took the message
+    let transport = smtp_transport(server, &auth, timeout)?;
+    match send(&transport) {
+        Ok(()) => Ok(()),
         Err(err) if matches!(auth, SmtpAuth::OAuth(..)) && smtp_auth_refused(&err) => {
             let SmtpAuth::OAuth(_, rejected) = &auth else {
-                return Err(Error::new(err.to_string()));
+                unreachable!()
             };
             let fresh = smtp_auth(facade, server, Some(rejected))?;
             if matches!(&fresh, SmtpAuth::OAuth(_, token) if token == rejected) {
                 return Err(Error::new(err.to_string()));
             }
-            let transport = smtp_transport(server, &fresh, None)?;
-            lettre::Transport::send(&transport, &message)
-                .map(|_| ())
-                .map_err(|err| Error::new(err.to_string()))
+            let transport = smtp_transport(server, &fresh, timeout)?;
+            send(&transport).map_err(|err| Error::new(err.to_string()))
         }
         Err(err) => Err(Error::new(err.to_string())),
     }
