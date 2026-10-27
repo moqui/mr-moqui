@@ -36,6 +36,7 @@ return function render(_ctx, _cache) {
                 name: "ItemForm",
                 id: "ItemForm",
                 action: "/Items/saveItem",
+                disable: _ctx.$scope['mqDisable_cd5a8b388beaa866']!==false,
                 "read-only": "",
                 "fields-initial": {'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.str(_ctx.$scope['price']),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.str(_ctx.$scope['mode']):_ctx.$mq.str(_ctx.$scope['mode'])),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
               }, {
@@ -139,7 +140,7 @@ return function render(_ctx, _cache) {
                   ])
                 ]),
                 _: 1
-              }, 8, ["fields-initial"])
+              }, 8, ["disable", "fields-initial"])
             ])
           ]),
           _: 1
@@ -157,17 +158,23 @@ return function render(_ctx, _cache) {
       }, null, 8, ["textContent"]))
     }), 128)),
     _createElementVNode("a", {
-      href: _ctx.$mq.url('/Items/viewItem',{'itemId':(_ctx.item.itemId)},_ctx.$mq.merge({'pageIndex':_ctx.$scope['pageIndex']},null)),
-      class: "m-link-text"
+      href: (_ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false)?undefined:(_ctx.$mq.url('/Items/viewItem',{'itemId':(_ctx.item.itemId)},_ctx.$mq.merge({'pageIndex':_ctx.$scope['pageIndex']},null))),
+      disable: _ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false,
+      class: "m-link-text",
+      "aria-disabled": _ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false,
+      tabindex: (_ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false)?-1:undefined,
+      onClick: $event => ((_ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false) && $event.preventDefault())
     }, [
       _createElementVNode("span", {
         textContent: _toDisplayString(_ctx.ec.resource.expand('View ${item.itemId}',{'item.itemId':()=>(_ctx.item.itemId)}))
       }, null, 8, ["textContent"])
-    ], 8, ["href"]),
+    ], 8, ["href", "disable", "aria-disabled", "tabindex", "onClick"]),
     _createVNode(_component_m_static_form_list, {
       name: "ItemList",
       id: "ItemList",
       action: "/Items/saveItem",
+      disable: _ctx.$scope['mqDisable_433fe014be392965']!==false,
+      "disable-key": "mqDisable_433fe014be392965",
       "list-name": "itemList",
       "row-initial": (_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'price':_ctx.$mq.str(_ctx.$scope['price']),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00')}),
       "default-columns": [['itemId'],['name'],['price'],['go']],
@@ -351,11 +358,13 @@ return function render(_ctx, _cache) {
         ])
       ]),
       _: 1
-    }, 8, ["row-initial", "column-fields"]),
+    }, 8, ["disable", "row-initial", "column-fields"]),
     _createVNode(_component_m_static_form_list, {
       name: "ItemMulti",
       id: "ItemMulti",
       action: "/Items/saveItem",
+      disable: _ctx.$scope['mqDisable_3a76ce2e76385fe0']!==false,
+      "disable-key": "mqDisable_3a76ce2e76385fe0",
       "list-name": "itemList",
       multi: "",
       "row-initial": (_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name'])})
@@ -440,7 +449,7 @@ return function render(_ctx, _cache) {
         ], 2)
       ]),
       _: 1
-    }, 8, ["row-initial"])
+    }, 8, ["disable", "row-initial"])
   ], 64))
 }
 };})();

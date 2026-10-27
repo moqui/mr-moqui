@@ -49,13 +49,17 @@ return function render(_ctx, _cache) {
     }, null, 8, ["textContent"]),
     _createTextVNode(),
     _createElementVNode("a", {
-      href: _ctx.$mq.url('/Parity/viewProduct',{},null),
-      class: "m-link-text"
+      href: (_ctx.$scope['mqDisable_4ce04899c696a45']!==false)?undefined:(_ctx.$mq.url('/Parity/viewProduct',{},null)),
+      disable: _ctx.$scope['mqDisable_4ce04899c696a45']!==false,
+      class: "m-link-text",
+      "aria-disabled": _ctx.$scope['mqDisable_4ce04899c696a45']!==false,
+      tabindex: (_ctx.$scope['mqDisable_4ce04899c696a45']!==false)?-1:undefined,
+      onClick: $event => ((_ctx.$scope['mqDisable_4ce04899c696a45']!==false) && $event.preventDefault())
     }, [
       _createElementVNode("span", {
         textContent: _toDisplayString(_ctx.ec.resource.expand('View ${productName}',{'productName':()=>(_ctx.$mq.inMap((_ctx.product),'productName')?_ctx.$mq.inMap((_ctx.product),'productName',true):(_ctx.productName))}))
       }, null, 8, ["textContent"])
-    ], 8, ["href"]),
+    ], 8, ["href", "disable", "aria-disabled", "tabindex", "onClick"]),
     _createVNode(_component_q_btn_dropdown, {
       dense: "",
       unelevated: "",
@@ -76,13 +80,17 @@ return function render(_ctx, _cache) {
                 _createVNode(_component_q_item_section, null, {
                   default: _withCtx(() => [
                     _createElementVNode("a", {
-                      href: _ctx.$mq.url('/Parity/viewProduct',{},null),
-                      class: "m-link-text"
+                      href: (_ctx.$scope['mqDisable_d14bcc72f43629e9']!==false)?undefined:(_ctx.$mq.url('/Parity/viewProduct',{},null)),
+                      disable: _ctx.$scope['mqDisable_d14bcc72f43629e9']!==false,
+                      class: "m-link-text",
+                      "aria-disabled": _ctx.$scope['mqDisable_d14bcc72f43629e9']!==false,
+                      tabindex: (_ctx.$scope['mqDisable_d14bcc72f43629e9']!==false)?-1:undefined,
+                      onClick: $event => ((_ctx.$scope['mqDisable_d14bcc72f43629e9']!==false) && $event.preventDefault())
                     }, [
                       _createElementVNode("span", {
                         textContent: _toDisplayString(_ctx.ec.l10n.localize('View it'))
                       }, null, 8, ["textContent"])
-                    ], 8, ["href"])
+                    ], 8, ["href", "disable", "aria-disabled", "tabindex", "onClick"])
                   ]),
                   _: 1
                 })
@@ -149,6 +157,7 @@ return function render(_ctx, _cache) {
             name: "ProductForm",
             id: "ProductForm",
             action: "/Parity/saveProduct",
+            disable: _ctx.$scope['mqDisable_793d9afdc084181c']!==false,
             "read-only": "",
             "fields-initial": {'productName':_ctx.$mq.str(_ctx.$scope['productName']),'price':_ctx.$mq.str(_ctx.$scope['price']),'note':_ctx.$mq.str(_ctx.$scope['note']),'moquiFormName':'ProductForm'}
           }, {
@@ -227,7 +236,7 @@ return function render(_ctx, _cache) {
               }, 1024)
             ]),
             _: 1
-          }, 8, ["fields-initial"])
+          }, 8, ["disable", "fields-initial"])
         ])
       ]),
       _: 1
@@ -236,6 +245,8 @@ return function render(_ctx, _cache) {
       name: "EditList",
       id: "EditList",
       action: "/Parity/saveProduct",
+      disable: _ctx.$scope['mqDisable_6e8ee364ab4dc5de']!==false,
+      "disable-key": "mqDisable_6e8ee364ab4dc5de",
       "list-name": "itemsForEdit",
       "special-rows": {first:{action:'/Parity/createItem',initial:(_ctx) => ({'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.str(_ctx.$mq.dflt(_ctx.$scope['secret'],'S1'))})},last:{action:null,initial:(_ctx) => ({'name':_ctx.$mq.str(_ctx.$scope['name']),'name_display':_ctx.ec.l10n.localize('the last row')})}}
     }, {
@@ -272,6 +283,7 @@ return function render(_ctx, _cache) {
             name: 'EditList_'+_ctx.rowIndex,
             id: 'EditList_'+_ctx.rowIndex,
             action: "/Parity/saveProduct",
+            disable: _ctx.$scope['mqDisable_6e8ee364ab4dc5de']!==false,
             "fields-initial": {'itemId':_ctx.$mq.str(_ctx.$scope['itemId']),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'secret':_ctx.$mq.str(_ctx.$scope['secret']),'moquiFormName':'EditList','pageIndex':_ctx.$mq.str(_ctx.$scope['pageIndex']||0)}
           }, {
             default: _withCtx((formProps) => [
@@ -325,7 +337,7 @@ return function render(_ctx, _cache) {
               ])
             ]),
             _: 1
-          }, 8, ["name", "id", "fields-initial"])
+          }, 8, ["name", "id", "disable", "fields-initial"])
         ], 2)
       ]),
       row_first: _withCtx((_ctx) => [
@@ -409,11 +421,13 @@ return function render(_ctx, _cache) {
         ])
       ]),
       _: 1
-    }, 8, ["special-rows"]),
+    }, 8, ["disable", "special-rows"]),
     _createVNode(_component_m_static_form_list, {
       name: "PickList",
       id: "PickList",
       action: "/Parity",
+      disable: _ctx.$scope['mqDisable_18154e833286d13f']!==false,
+      "disable-key": "mqDisable_18154e833286d13f",
       "list-name": "itemsForEdit",
       "skip-form": "",
       "selection-id-field": "itemId",
@@ -522,6 +536,7 @@ return function render(_ctx, _cache) {
                                 name: "ArchiveForm",
                                 id: "ArchiveForm",
                                 action: "/Parity/archiveItems",
+                                disable: _ctx.$scope['mqDisable_c0bb22d3017c0d42']!==false,
                                 "read-only": "",
                                 "fields-initial": {'reason':_ctx.$mq.str(_ctx.$scope['reason']),'moquiFormName':'ArchiveForm'},
                                 "parent-checkbox-set": mqSelSet
@@ -561,7 +576,7 @@ return function render(_ctx, _cache) {
                                   ])
                                 ]),
                                 _: 1
-                              }, 8, ["fields-initial", "parent-checkbox-set"])
+                              }, 8, ["disable", "fields-initial", "parent-checkbox-set"])
                             ])
                           ]),
                           _: 2
@@ -579,11 +594,13 @@ return function render(_ctx, _cache) {
         }, 1024)
       ]),
       _: 1
-    }),
+    }, 8, ["disable"]),
     _createVNode(_component_m_static_form_list, {
       name: "OrderList",
       id: "OrderList",
       action: "/Parity",
+      disable: _ctx.$scope['mqDisable_2fd76e652ef1d296']!==false,
+      "disable-key": "mqDisable_2fd76e652ef1d296",
       "list-name": "orderLines",
       "skip-form": ""
     }, {
@@ -708,7 +725,7 @@ return function render(_ctx, _cache) {
         ])
       ]),
       _: 1
-    }),
+    }, 8, ["disable"]),
     (_ctx.$scope['linesCount'])
       ? (_openBlock(), _createBlock(_component_m_form_paginate, {
           key: 4,

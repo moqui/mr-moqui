@@ -924,10 +924,20 @@
         };
 
         // The way a link is written: a screen link, a plain link, or a form that posts a transition.
+        const disableKeyOf = (n) => {
+            const literal = hostLit(n);
+            literal.children = kids(n, "parameter").map((child) => ({ name: child.name, attrs: child.attrs || {} }));
+            return sri.staticDisableKey(literal);
+        };
+        const disableOf = (n, found) => {
+            if (found && !found.exists && !isDynamic(at(n, "url") || at(n, "transition"))) return "true";
+            return scopeRef(disableKeyOf(n)) + "!==false";
+        };
         const link = (n, inField) => {
             const urlType = at(n, "url-type") || "transition";
             const query = urlType === "transition" || urlType === "screen" ? splitQuery(at(n, "url")) : { path: at(n, "url"), extra: null };
             const found = urlType === "transition" || urlType === "screen" ? sri.staticUrl(query.path, urlType) : null;
+            const disable = disableOf(n, found);
             const img = first(n, "image");
             const linkType = at(n, "link-type");
             // read-only="true" overrides hasActions: the target is a GET anchor (Parity-Diffs P3-03).
@@ -962,19 +972,25 @@
                 const tag = toScreen ? "m-link" : "a";
                 // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons.
                 const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
-                const attrs = Object.assign({ ":href": href, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
+                const attrs = Object.assign({ ":href": href, ":disable": disable, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
+                if (!toScreen) {
+                    attrs[":href"] = "(" + disable + ")?undefined:(" + href + ")";
+                    attrs[":aria-disabled"] = disable;
+                    attrs[":tabindex"] = "(" + disable + ")?-1:undefined";
+                    attrs["@click"] = "(" + disable + ") && $event.preventDefault()";
+                }
                 plainAttr(attrs, "id", at(n, "id"), n);
-                out = "<" + tag + A(attrs) + ">" + (textLink ? tooltip + body : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true }, btnKindOf(n, "m-link", style))) + ">" + tooltip + body + "</q-btn>") + "</" + tag + ">";
+                out = "<" + tag + A(attrs) + ">" + (textLink ? tooltip + body : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true, ":disable": disable }, btnKindOf(n, "m-link", style))) + ">" + tooltip + body + "</q-btn>") + "</" + tag + ">";
             } else {
                 const fieldsInitial = allParams(n, query.extra, found && !noParam ? found.parameters : null);
                 const isForm = found ? !found.isScreen : true;
                 const tag = isForm ? "m-form" : "m-form-link";
                 const hiddenLink = linkType === "hidden-form-link";
                 const button = img ?
-                    "<input" + A({ type: "image", ":src": exp(at(img, "url"), img, "url", false), ":alt": exp(at(img, "alt") || "image", img, "alt", true) }) + ">" :
-                    "<q-btn" + A(Object.assign({ dense: true, "no-caps": true, type: "submit", flat: hiddenLink ? true : null, unelevated: hiddenLink ? null : true },
+                    "<input" + A({ type: "image", ":disabled": disable, ":src": exp(at(img, "url"), img, "url", false), ":alt": exp(at(img, "alt") || "image", img, "alt", true) }) + ">" :
+                    "<q-btn" + A(Object.assign({ dense: true, "no-caps": true, type: "submit", ":disable": disable, flat: hiddenLink ? true : null, unelevated: hiddenLink ? null : true },
                         hiddenLink ? btnTextOf(n, "m-link", "m-link-left", style) : btnKindOf(n, "m-link", style), confirmAttr)) + ">" + tooltip + body + "</q-btn>";
-                const attrs = { action: found && !dynamic ? found.path : at(n, "url"), ":fields-initial": fieldsInitial, "v-slot:default": "formProps", "read-only": isForm && found && found.readOnly ? true : null, target: at(n, "target-window") || null };
+                const attrs = { ":disable": disable, action: found && !dynamic ? found.path : at(n, "url"), ":fields-initial": fieldsInitial, "v-slot:default": "formProps", "read-only": isForm && found && found.readOnly ? true : null, target: at(n, "target-window") || null };
                 if (dynamic) {
                     delete attrs.action;
                     attrs[":action"] = dynamicPath(n, "url");
@@ -1148,7 +1164,7 @@
             const fields = kids(n, "field");
             const initial = layeredInitial([passThroughOf(n), hiddenEntries(n), initialOf(fields, "r", [["moquiFormName", sq(at(n, "name"))]])]);
             const attrs = {
-                name: at(n, "name"), id: at(n, "name"), action: found.path, method: isForm && found.method === "get" ? "GET" : null, "read-only": isForm && found.readOnly ? true : null,
+                name: at(n, "name"), id: at(n, "name"), action: found.path, ":disable": disableOf(n, found), method: isForm && found.method === "get" ? "GET" : null, "read-only": isForm && found.readOnly ? true : null,
                 "focus-field": at(n, "focus-field") || null, "exclude-empty-fields": at(n, "exclude-empty-fields") === "true" ? true : null,
                 "submit-message": isForm && at(n, "background-message") ? at(n, "background-message") : null,
                 "submit-reload-id": isForm ? at(n, "background-reload-id") || null : null, "submit-hide-id": isForm ? at(n, "background-hide-id") || null : null,
@@ -1250,7 +1266,7 @@
             const multi = !skipForm && at(n, "multi") === "true";
             st.multi = multi;
             const attrs = {
-                name, id: name, action: found.path, "list-name": at(n, "list"), "skip-form": skipForm || null,
+                name, id: name, action: found.path, ":disable": disableOf(n, found), "disable-key": disableKeyOf(n), "list-name": at(n, "list"), "skip-form": skipForm || null,
                 "skip-header": at(n, "skip-header") === "true" || null, class: at(n, "style") || null, multi: multi || null
             };
             // A form that posts every row: the component makes one m-form, and each row's values start it under name_rowIndex.
@@ -1306,7 +1322,7 @@
             // The rows of a multi form bind to the one m-form of the list; formProps in the row scope maps a name to name_rowIndex.
             if (st.multi) return false;
             const initial = layeredInitial([hiddenEntries(n), initialOf(fields, "r", [["moquiFormName", sq(name)], ["pageIndex", "$mq.str(" + scopeRef("pageIndex") + "||0)"]])]);
-            w("<m-form" + A({ ":name": sq(name + "_") + "+rowIndex", ":id": sq(name + "_") + "+rowIndex", action: opened.found.path, ":fields-initial": initial, "v-slot:default": "formProps" }) + ">");
+            w("<m-form" + A({ ":name": sq(name + "_") + "+rowIndex", ":id": sq(name + "_") + "+rowIndex", action: opened.found.path, ":disable": disableOf(n, opened.found), ":fields-initial": initial, "v-slot:default": "formProps" }) + ">");
             return true;
         };
 
@@ -1593,7 +1609,7 @@
                 w("</m-container-dialog>");
             }
             // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
-            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ ":href": href, target: target || null }) + '><q-item-section><span v-text="' + e(loc(text)) + '"></span></q-item-section></q-item>';
+            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ ":href": href, ":disable": disable, target: target || null }) + '><q-item-section><span v-text="' + e(loc(text)) + '"></span></q-item-section></q-item>';
             if (flags.csv || flags.xlsx || flags.text || flags.pdf) {
                 w('<q-btn-dropdown dense flat no-caps icon="download"' + A({ ":label": loc("Export") }) + "><q-list dense>");
                 if (flags.csv) w(exportItem("nv.exportUrl('csv')", "CSV"));

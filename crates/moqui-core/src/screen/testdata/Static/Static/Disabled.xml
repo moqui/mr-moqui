@@ -1,0 +1,18 @@
+<screen require-authentication="false" server-static="qvt">
+    <parameter name="allowed"/>
+    <actions>
+        <set field="canUse" from="allowed === 'yes'"/>
+        <set field="rows" from="[{id:'A', rowAllowed:true}, {id:'B', rowAllowed:false}]"/>
+    </actions>
+    <transition name="conditional"><condition><expression>canUse === true</expression></condition><default-response type="none"/></transition>
+    <transition name="rowAction"><condition><expression>rowAllowed === true</expression></condition><default-response type="none"/></transition>
+    <widgets>
+        <link url="conditional" text="Conditional"/>
+        <link url="missing" text="Missing"/>
+        <form-single name="Edit" transition="conditional"><field name="save"><default-field><submit text="Save"/></default-field></field></form-single>
+        <form-list name="Rows" list="rows" transition="rowAction">
+            <field name="id"><default-field><display/></default-field></field>
+            <field name="action"><default-field><link url="rowAction" text="Act"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

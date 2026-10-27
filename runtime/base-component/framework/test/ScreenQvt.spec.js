@@ -167,7 +167,7 @@ feature('server-static forms also separate Saved Finds from Find Options', { exp
         anyMacros: () => ({}), allElements: [], opaqueElements: []
     });
     let html = '';
-    const context = { sri: { write: text => { html += text; }, staticUrl: () => ({ path: '/qapps/FindThing' }) } };
+    const context = { sri: { write: text => { html += text; }, staticUrl: () => ({ path: '/qapps/FindThing', exists: true }), staticDisableKey: () => 'mqDisable_test' } };
     runInContext(module.runtime, context);
     context.$mqQvtS.formList({ attrs: { name: 'PaymentList', list: 'payments', 'saved-finds': 'true', 'header-dialog': 'true' }, children: [] }, [], []);
     assert.match(dialog(html, 'PaymentList_sfdialog'), /icon="find_in_page"/);

@@ -875,7 +875,7 @@
     component("m-static-form-list", {
         name: "mStaticFormList",
         inject: { mqScope: { default: null }, mqScreen: { default: null } },
-        props: { name: { type: String, required: true }, id: String, action: String, listName: String, multi: Boolean, skipForm: Boolean, skipHeader: Boolean,
+        props: { disable: Boolean, disableKey: String, name: { type: String, required: true }, id: String, action: String, listName: String, multi: Boolean, skipForm: Boolean, skipHeader: Boolean,
             rowInitial: Function, hiddenInitial: Function, formLocation: String, findAction: String, defaultColumns: Array, columnFields: Array, columnsAction: String,
             headerInitial: Function, subFields: Array, specialRows: Object, selectionIdField: String, selectionParameter: String, selectionListMode: Boolean,
             views: [Array, String], board: Object, calendar: Object, tree: Object, peek: Object, viewsLocation: String },
@@ -1059,7 +1059,7 @@
                 if (multiProps || this.skipForm) return h("div", { class: rowClass, key: this.generation + "_" + rowIndex }, [selCell(rowIndex)].concat(cellsOf(this.rowScope(rowIndex, formScope, multiProps, null))));
                 const initial = Object.assign({}, this.rowInitial ? this.rowInitial(this.rowScope(rowIndex, formScope, null, null)) : {},
                     { moquiFormName: this.name, pageIndex: String((this.pkg && this.pkg.pageIndex) || 0) });
-                return h("div", { class: rowClass, key: this.generation + "_" + rowIndex }, [selCell(rowIndex), h(V.resolveComponent("m-form"), { name: this.idVal + "_" + rowIndex, id: this.idVal + "_" + rowIndex, action: this.action, fieldsInitial: initial },
+                return h("div", { class: rowClass, key: this.generation + "_" + rowIndex }, [selCell(rowIndex), h(V.resolveComponent("m-form"), { name: this.idVal + "_" + rowIndex, id: this.idVal + "_" + rowIndex, action: this.action, disable: this.disableKey ? this.rows[rowIndex][this.disableKey] !== false : this.disable, fieldsInitial: initial },
                     { default: (formProps) => cellsOf(this.rowScope(rowIndex, formScope, null, formProps)) })]);
             };
             // The sub-rows of an aggregated row, under it: each entry of its aggregateSubList as a row of the sub columns.
@@ -1098,7 +1098,7 @@
             };
             const empty = [h("div", { class: "tr" }, [h("div", { class: "td" }, moqui.l10n.localize("No results found"))])];
             const body = multiForm
-                ? h(V.resolveComponent("m-form"), { key: "multi_" + this.generation, name: this.idVal, id: this.idVal, action: this.action, fieldsInitial: this.multiFields(formScope),
+                ? h(V.resolveComponent("m-form"), { key: "multi_" + this.generation, name: this.idVal, id: this.idVal, action: this.action, disable: this.disable, fieldsInitial: this.multiFields(formScope),
                     parentCheckboxSet: sel || undefined, checkboxOptional: true },
                     { default: (multiProps) => (this.rows.length || this.loading ? rowsOf(multiProps) : empty) })
                 : rowNodes.length || this.loading ? rowNodes : empty;
@@ -1156,10 +1156,11 @@
     // is a plain anchor the browser follows.
     component("m-link", {
         name: "mLink",
-        props: { href: { type: String, required: true }, loadId: String, confirmation: String },
-        template: '<a :href="linkHref" @click="go" class="q-link"><slot></slot></a>',
+        props: { href: { type: String, required: true }, loadId: String, confirmation: String, disable: Boolean },
+        template: '<a :href="disable ? undefined : linkHref" :aria-disabled="disable || undefined" :tabindex="disable ? -1 : undefined" @click="go" class="q-link"><slot></slot></a>',
         methods: {
             go(event) {
+                if (this.disable) { event.preventDefault(); return; }
                 if (this.external) {
                     if (this.confirmation && this.confirmation.length && !root.confirm(this.confirmation)) event.preventDefault();
                     return;
@@ -1772,7 +1773,7 @@
         // a dialog that closes when a form in it submits without errors and has no submit-hide-id (the shell's quick create), and
         // the wizard whose step this form may be (m-subscreens-wizard: its answer moves the wizard on)
         inject: { mSubmitHide: { default: null }, mWizard: { default: null } },
-        props: { fieldsInitial: Object, action: { type: String, required: true }, method: { type: String, default: "POST" }, readOnly: { type: Boolean, default: false },
+        props: { disable: Boolean, fieldsInitial: Object, action: { type: String, required: true }, method: { type: String, default: "POST" }, readOnly: { type: Boolean, default: false },
             submitMessage: String, submitReloadId: String, submitHideId: String, focusField: String, noValidate: Boolean, excludeEmptyFields: Boolean,
             parentCheckboxSet: Object, checkboxOptional: Boolean, bodyParameterNames: Array, validationErrorsInitial: Array },
         // submitted: after a background submit whose answer has no errors, with the answer (the JSON, or the text), so a .qvue host can react
@@ -1798,13 +1799,14 @@
         },
         template:
             '<q-form ref="qForm" @submit.prevent="submitForm" @reset.prevent="resetForm" autocapitalize="off" autocomplete="off">' +
-                '<slot :fields="fields" :checkboxAllState="checkboxAllState" :setCheckboxAllState="setCheckboxAllState"' +
+                '<fieldset :disabled="disable" style="border:0;padding:0;margin:0;min-width:0"><slot :fields="fields" :checkboxAllState="checkboxAllState" :setCheckboxAllState="setCheckboxAllState"' +
                     ' :checkboxStates="checkboxStates" :clickCheckbox="clickCheckbox" :addCheckboxParameters="addCheckboxParameters"' +
                     ' :blurSubmitForm="blurSubmitForm" :hasFieldsChanged="hasFieldsChanged" :fieldChanged="fieldChanged"></slot>' +
-            '</q-form>',
+            '</fieldset></q-form>',
         computed: { hasFieldsChanged() { return moqui.fieldValuesDiff(this.fields, this.fieldsOriginal); } },
         methods: {
             submitForm() {
+                if (this.disable) return;
                 if (this.noValidate) this.submitGo();
                 else this.$refs.qForm.validate().then((success) => {
                     if (success) this.submitGo();
@@ -1828,6 +1830,7 @@
                 this.fieldErrorValues = values;
             },
             submitGo() {
+                if (this.disable) return;
                 this.fieldErrors = {};
                 this.answerTold = false;
                 const formEl = this.$refs.qForm.$el;
@@ -1950,19 +1953,21 @@
     // A form that goes to a screen: its fields become the query of the URL.
     component("m-form-link", {
         name: "mFormLink",
-        props: { fieldsInitial: Object, action: { type: String, required: true }, focusField: String, noValidate: Boolean, bodyParameterNames: Array },
+        props: { disable: Boolean, fieldsInitial: Object, action: { type: String, required: true }, focusField: String, noValidate: Boolean, bodyParameterNames: Array },
         data() { return { fields: Object.assign({}, this.fieldsInitial), fieldsOriginal: Object.assign({}, this.fieldsInitial) }; },
         provide() { return { mForm: this }; },
         template:
             '<q-form ref="qForm" @submit.prevent="submitForm" @reset.prevent="resetForm" autocapitalize="off" autocomplete="off">' +
-                '<slot :clearForm="clearForm" :fields="fields" :hasFieldsChanged="hasFieldsChanged" :fieldChanged="fieldChanged"></slot></q-form>',
+                '<fieldset :disabled="disable" style="border:0;padding:0;margin:0;min-width:0"><slot :clearForm="clearForm" :fields="fields" :hasFieldsChanged="hasFieldsChanged" :fieldChanged="fieldChanged"></slot></fieldset></q-form>',
         computed: { hasFieldsChanged() { return moqui.fieldValuesDiff(this.fields, this.fieldsOriginal); } },
         methods: {
             submitForm() {
+                if (this.disable) return;
                 if (this.noValidate) this.submitGo();
                 else this.$refs.qForm.validate().then((success) => { if (success) this.submitGo(); });
             },
             submitGo() {
+                if (this.disable) return;
                 const formEl = this.$refs.qForm.$el;
                 const button = submitButton(formEl, null);
                 let btnName = null;

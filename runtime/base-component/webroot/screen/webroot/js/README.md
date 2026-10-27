@@ -914,6 +914,12 @@ a script and `X-Moqui-Qvt: static-template`, `Cache-Control: max-age=86400, must
 (a CSP without `unsafe-eval` allows that and not `fetch` and `new Function`), and the component it makes fetches `<path>/actions` (the
 screen package, `private, no-store`) and shows the render function over it.
 
+Links and forms receive their availability from each actions response, including separate values for list rows.
+The server uses the same permission and transition-condition checks as a merged render. A missing target is disabled
+in the template; other controls stay disabled until their request data arrives. Shared link and form components also
+guard navigation and submission, including keyboard and programmatic submissions. The cached template contains no
+user-specific permission decisions.
+
 - **Scope chain.** Every free name in a template expression is `_ctx.name`. The root `_ctx` is `qvt.makeScope(package, ...)`. `m-scope` (form-single
   map, with `mqExtra_{form}` on top) and the `row` slot of `m-static-form-list` declare their own `_ctx` (`v-slot="_ctx"`), so the innermost map wins,
   as the context stack does on the server. A `section-iterate` is a `v-for` whose entry is a local. `$scope` is the scope itself, `ec` the host below.

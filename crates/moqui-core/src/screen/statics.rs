@@ -446,6 +446,62 @@ fn lit_down(node: &MNode) -> NodeLit {
     }
 }
 
+fn sorted_attrs(node: &NodeLit) -> std::collections::BTreeMap<&str, &str> {
+    node.attrs
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect()
+}
+
+/// A widget's stable identity, shared by the template and its per-request package.
+pub(crate) fn disable_key(node: &NodeLit) -> String {
+    let parameters: Vec<_> = node
+        .children
+        .iter()
+        .filter(|child| child.name == "parameter")
+        .map(sorted_attrs)
+        .collect();
+    let mut parents = Vec::new();
+    let mut parent = node.parent.as_deref();
+    let mut in_field = false;
+    while let Some(up) = parent {
+        in_field |= up.name == "field";
+        parents.push((up.name.as_str(), sorted_attrs(up)));
+        if matches!(up.name.as_str(), "form-single" | "form-list") {
+            break;
+        }
+        parent = up.parent.as_deref();
+    }
+    if !in_field {
+        parents.clear();
+    }
+    let text = serde_json::to_vec(&(node.name.as_str(), sorted_attrs(node), parameters, parents)).unwrap_or_default();
+    format!("mqDisable_{:x}", fnv1a(&text))
+}
+
+fn disabled(state: &RenderState, node: &MNode) -> bool {
+    let lit = lit_of(node, true);
+    let (target, kind) = if node.has_name("link") {
+        (
+            lit.attr("url"),
+            if lit.attr("url-type").is_empty() {
+                "transition"
+            } else {
+                lit.attr("url-type")
+            },
+        )
+    } else {
+        (lit.attr("transition"), "transition")
+    };
+    match super::urls::make_url_by_type(state, target, kind, Some(&lit), false).and_then(|url| url.disable_link()) {
+        Ok(disabled) => disabled,
+        Err(err) => {
+            tracing::warn!(target, error = %err, "static control disabled: its target could not be checked");
+            true
+        }
+    }
+}
+
 fn json_error(status: u16, message: &str) {
     web::send_json_error(status, message);
 }
@@ -531,6 +587,10 @@ fn walk_widgets(state: &RenderState, owner: &Arc<ScreenDef>, node: &MNode, depth
     for child in node.child_iter() {
         let name = child.name();
         match name.as_str() {
+            "link" => {
+                let key = disable_key(&lit_of(&child, true));
+                script::set_context_name(&key, Value::Bool(disabled(state, &child)))?;
+            }
             "section" | "section-iterate" => {
                 let section_name = child.attribute("name").unwrap_or_default();
                 match owner.sections.get(&section_name) {
@@ -771,6 +831,12 @@ fn collect_widget(
     widget_index: usize,
     out: &mut serde_json::Map<String, serde_json::Value>,
 ) {
+    if widget.has_name("link") {
+        out.insert(
+            disable_key(&lit_of(widget, true)),
+            serde_json::Value::Bool(disabled(state, widget)),
+        );
+    }
     match &*widget.name_rc() {
         "display-entity" => match sri::get_field_entity_value(&lit_of(widget, true)) {
             Ok(text) => {
@@ -806,6 +872,17 @@ fn screen_package(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error
     prepare_screen(state, def)?;
     let mut package = unwrap_context();
     for (name, definition) in &def.forms {
+        if !definition.dynamic {
+            match form::assemble(&state.facade, &state.factory, def, name).and_then(|instance| instance.shared_node()) {
+                Ok(node) => {
+                    package.insert(
+                        disable_key(&lit_of(&node, true)),
+                        serde_json::Value::Bool(disabled(state, &node)),
+                    );
+                }
+                Err(err) => tracing::warn!(form = name, error = %err, "static form target could not be checked"),
+            }
+        }
         if definition.list || definition.dynamic {
             continue;
         }
@@ -994,14 +1071,14 @@ fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result
         .collect();
     for (index, row) in rows.iter_mut().enumerate() {
         let row_frame = sri::form_list_row_frame(state, handle, index)?;
-        let extras = row_extras(&node, name, &|_| true);
+        let extras = row_extras(state, &node, name, &|_| true);
         // the sub-rows of an aggregated row get the lookups and sets of the sub-list fields, each over the row
         if extras.is_ok() && !sub_fields.is_empty() {
             if let Some(Value::List(entries)) = row.get_mut("aggregateSubList") {
                 for (sub, entry) in entries.iter_mut().enumerate() {
                     let sub_extras = {
                         let _sub_frame = sri::form_list_sub_row_frame(state, handle, index, sub)?;
-                        row_extras(&node, name, &|field| {
+                        row_extras(state, &node, name, &|field| {
                             sub_fields.contains(&field.attribute("name").unwrap_or_default())
                         })
                     };
@@ -1057,7 +1134,7 @@ fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result
         };
         let extras = {
             let _frame = sri::single_form_map_frame(&map);
-            row_extras_of(&node, name, &|_| true, &[tag.as_str()])
+            row_extras_of(state, &node, name, &|_| true, &[tag.as_str()])
         };
         let mut fields = script::value_map(&map).unwrap_or_default();
         fields.extend(extras?);
@@ -1270,21 +1347,24 @@ fn page_keys(form: &MNode, rows: usize) -> Result<Option<PageKeys>, Error> {
 
 /// For one row, in the row's frame: the text of its `display-entity` fields and the fields its `set` elements make.
 fn row_extras(
+    state: &RenderState,
     node: &MNode,
     form_name: &str,
     include: &dyn Fn(&MNode) -> bool,
 ) -> Result<IndexMap<String, Value>, Error> {
-    row_extras_of(node, form_name, include, &["default-field", "conditional-field"])
+    row_extras_of(state, node, form_name, include, &["default-field", "conditional-field"])
 }
 
 /// [`row_extras`] for the widgets of the named sub-nodes of each field.
 fn row_extras_of(
+    state: &RenderState,
     node: &MNode,
     form_name: &str,
     include: &dyn Fn(&MNode) -> bool,
     subs: &[&str],
 ) -> Result<IndexMap<String, Value>, Error> {
     let mut extras = IndexMap::new();
+    extras.insert(disable_key(&lit_of(node, true)), Value::Bool(disabled(state, node)));
     for field in node.children_named("field").into_iter().filter(|field| include(field)) {
         let field_name = field.attribute("name").unwrap_or_default();
         for sub in field
@@ -1300,6 +1380,12 @@ fn row_extras_of(
                 }
             }
             for widget in sub.child_iter() {
+                if widget.has_name("link") {
+                    extras.insert(
+                        disable_key(&lit_of(&widget, true)),
+                        Value::Bool(disabled(state, &widget)),
+                    );
+                }
                 let entity_text = widget.has_name("display-entity")
                     || (widget.has_name("link")
                         && widget.attribute("entity-name").is_some_and(|text| !text.is_empty()));

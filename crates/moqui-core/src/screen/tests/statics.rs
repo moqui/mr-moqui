@@ -75,6 +75,59 @@ fn header<'a>(output: &'a RenderOutput, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no {name} in {:?}", output.headers))
 }
 
+#[test]
+fn cached_templates_get_request_and_row_specific_disabled_controls() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let factory = context.factory();
+    crate::user::session::set_user("first", "first");
+    let first = render(factory, "/Disabled.qvt", &[("allowed", "yes")]);
+    assert_eq!(first.status, 200, "{}", first.body_text());
+    let html = html_of(factory, "Disabled", "/Disabled");
+    assert!(
+        html.contains(":disable=\"true\""),
+        "a missing target is disabled in the template: {html}"
+    );
+    let values = |output: RenderOutput| -> serde_json::Value {
+        assert_eq!(output.status, 200, "{}", output.body_text());
+        serde_json::from_str(&output.body_text()).unwrap()
+    };
+    let yes = values(render(factory, "/Disabled/actions", &[("allowed", "yes")]));
+    let rows = values(render(factory, "/Disabled/actions/Rows", &[("allowed", "yes")]));
+    let disables = |row: &serde_json::Value| -> Vec<bool> {
+        row.as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.starts_with("mqDisable_"))
+            .map(|(_, value)| value.as_bool().unwrap())
+            .collect()
+    };
+    assert!(!disables(&yes).is_empty());
+    assert!(disables(&yes).contains(&false));
+    let row_keys: Vec<_> = rows["rows"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|key| key.starts_with("mqDisable_"))
+        .collect();
+    assert!(row_keys.len() >= 2, "the row form and its link each have state");
+    for key in row_keys {
+        assert!(html.contains(key), "the template reads the package key {key}");
+    }
+    assert!(disables(&rows["rows"][0]).iter().all(|value| !value));
+    assert!(disables(&rows["rows"][1]).iter().all(|value| *value));
+    crate::user::session::set_user("second", "second");
+    let second = render(factory, "/Disabled.qvt", &[("allowed", "no")]);
+    assert_eq!(
+        first.body_text(),
+        second.body_text(),
+        "both users share the same template"
+    );
+    let no = values(render(factory, "/Disabled/actions", &[("allowed", "no")]));
+    assert!(disables(&no).iter().all(|value| *value));
+    crate::user::session::reset_session();
+}
+
 /// The service the number fields of the `Number` screen name, for the browser rules of a number field.
 fn number_service() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/screen/testdata/Static/service/NumberService.xml")

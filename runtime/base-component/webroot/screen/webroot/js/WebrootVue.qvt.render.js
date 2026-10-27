@@ -3606,8 +3606,8 @@
               }, 16, ["use-chips", "counter", "label", "model-value", "onUpdate:modelValue", "name", "for", "size", "multiple", "accept", "form", "disable", "bg-color"]))
             }
         } },
-        "m-form": { hash: "ffcdd952", make: function (Vue) {
-            const { renderSlot: _renderSlot, resolveComponent: _resolveComponent, withModifiers: _withModifiers, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
+        "m-form": { hash: "8ee42ca5", make: function (Vue) {
+            const { renderSlot: _renderSlot, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withModifiers: _withModifiers, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_form = _resolveComponent("q-form")
@@ -3620,17 +3620,22 @@
                 autocomplete: "off"
               }, {
                 default: _withCtx(() => [
-                  _renderSlot(_ctx.$slots, "default", {
-                    fields: _ctx.fields,
-                    checkboxAllState: _ctx.checkboxAllState,
-                    setCheckboxAllState: _ctx.setCheckboxAllState,
-                    checkboxStates: _ctx.checkboxStates,
-                    clickCheckbox: _ctx.clickCheckbox,
-                    addCheckboxParameters: _ctx.addCheckboxParameters,
-                    blurSubmitForm: _ctx.blurSubmitForm,
-                    hasFieldsChanged: _ctx.hasFieldsChanged,
-                    fieldChanged: _ctx.fieldChanged
-                  })
+                  _createElementVNode("fieldset", {
+                    disabled: _ctx.disable,
+                    style: {"border":"0","padding":"0","margin":"0","min-width":"0"}
+                  }, [
+                    _renderSlot(_ctx.$slots, "default", {
+                      fields: _ctx.fields,
+                      checkboxAllState: _ctx.checkboxAllState,
+                      setCheckboxAllState: _ctx.setCheckboxAllState,
+                      checkboxStates: _ctx.checkboxStates,
+                      clickCheckbox: _ctx.clickCheckbox,
+                      addCheckboxParameters: _ctx.addCheckboxParameters,
+                      blurSubmitForm: _ctx.blurSubmitForm,
+                      hasFieldsChanged: _ctx.hasFieldsChanged,
+                      fieldChanged: _ctx.fieldChanged
+                    })
+                  ], 8, ["disabled"])
                 ]),
                 _: 3
               }, 8, ["onSubmit", "onReset"]))
@@ -3902,8 +3907,8 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-form-link": { hash: "815e6a35", make: function (Vue) {
-            const { renderSlot: _renderSlot, resolveComponent: _resolveComponent, withModifiers: _withModifiers, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
+        "m-form-link": { hash: "a0151030", make: function (Vue) {
+            const { renderSlot: _renderSlot, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withModifiers: _withModifiers, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_form = _resolveComponent("q-form")
@@ -3916,12 +3921,17 @@
                 autocomplete: "off"
               }, {
                 default: _withCtx(() => [
-                  _renderSlot(_ctx.$slots, "default", {
-                    clearForm: _ctx.clearForm,
-                    fields: _ctx.fields,
-                    hasFieldsChanged: _ctx.hasFieldsChanged,
-                    fieldChanged: _ctx.fieldChanged
-                  })
+                  _createElementVNode("fieldset", {
+                    disabled: _ctx.disable,
+                    style: {"border":"0","padding":"0","margin":"0","min-width":"0"}
+                  }, [
+                    _renderSlot(_ctx.$slots, "default", {
+                      clearForm: _ctx.clearForm,
+                      fields: _ctx.fields,
+                      hasFieldsChanged: _ctx.hasFieldsChanged,
+                      fieldChanged: _ctx.fieldChanged
+                    })
+                  ], 8, ["disabled"])
                 ]),
                 _: 3
               }, 8, ["onSubmit", "onReset"]))
@@ -4213,17 +4223,19 @@
               ], 8, ["data-state", "data-blocked"]))
             }
         } },
-        "m-link": { hash: "449c1400", make: function (Vue) {
+        "m-link": { hash: "52f8ba4d", make: function (Vue) {
             const { renderSlot: _renderSlot, openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
 
             return function render(_ctx, _cache) {
               return (_openBlock(), _createElementBlock("a", {
-                href: _ctx.linkHref,
+                href: _ctx.disable ? undefined : _ctx.linkHref,
+                "aria-disabled": _ctx.disable || undefined,
+                tabindex: _ctx.disable ? -1 : undefined,
                 onClick: _ctx.go,
                 class: "q-link"
               }, [
                 _renderSlot(_ctx.$slots, "default")
-              ], 8, ["href", "onClick"]))
+              ], 8, ["href", "aria-disabled", "tabindex", "onClick"]))
             }
         } },
         "m-list-tree": { hash: "f5d4492", make: function (Vue) {
