@@ -453,11 +453,9 @@ mod enabled {
             .find(|(_, document)| text(document, "name") == "service")
             .unwrap();
         assert_eq!(text(&child.1, "parent_span_id"), context.span_id);
-        assert!(
-            first
-                .iter()
-                .any(|(index, document)| index == "otel_logs" && text(document, "trace_id") == context.trace_id)
-        );
+        assert!(first
+            .iter()
+            .any(|(index, document)| index == "otel_logs" && text(document, "trace_id") == context.trace_id));
         let metrics: Vec<_> = first.iter().filter(|(index, _)| index == "otel_metrics").collect();
         assert_eq!(metrics.len(), 1, "{first:?}");
         assert_eq!(number(&metrics[0].1, "count"), 2.0);
@@ -545,12 +543,10 @@ mod enabled {
         );
         assert!(telemetry.sdk.is_none());
         assert!(lock(&telemetry.worker).is_none());
-        assert!(
-            telemetry
-                .start_span("disabled", SpanKind::Server, None)
-                .context()
-                .is_none()
-        );
+        assert!(telemetry
+            .start_span("disabled", SpanKind::Server, None)
+            .context()
+            .is_none());
         telemetry.flush();
         assert_eq!(telemetry.counters().queued, 0);
     }
@@ -573,11 +569,9 @@ mod enabled {
     #[test]
     fn oversized_ingest_batches_are_rejected_without_entering_the_queue() {
         let (telemetry, _) = telemetry(1.0);
-        assert!(
-            telemetry
-                .try_ingest("otel_logs", vec![Document::new(); MAX_QUEUE + 1])
-                .is_err()
-        );
+        assert!(telemetry
+            .try_ingest("otel_logs", vec![Document::new(); MAX_QUEUE + 1])
+            .is_err());
         assert_eq!(telemetry.counters().queued, 0);
         assert_eq!(telemetry.counters().dropped, (MAX_QUEUE + 1) as u64);
         assert_eq!(telemetry.shared.queued_records.load(Ordering::Relaxed), 0);
@@ -625,7 +619,7 @@ mod enabled {
     fn gen_ai_spans_capture_usage_without_prompt_or_response_contents() {
         use crate::llm::{
             conf::{EndpointConf, ModelConf, ProtocolId, ReasoningLevel},
-            provider::{self, CallOptions, Message, ModelRequest, fake},
+            provider::{self, fake, CallOptions, Message, ModelRequest},
             registry::Target,
             usage::{CallSource, Usage},
         };
@@ -1104,8 +1098,11 @@ fn sdk_processors_expose_every_record_to_the_core_queue_and_account_for_overload
     let counters = telemetry.counters();
     assert!(counters.queued <= (MAX_QUEUE + 1) as u64);
     assert!(counters.dropped >= 32);
-    assert_eq!(counters.queued + counters.dropped, (MAX_QUEUE + 33) as u64,
-        "reserved root capacity can reject ordinary logs earlier; every SDK record is accounted for");
+    assert_eq!(
+        counters.queued + counters.dropped,
+        (MAX_QUEUE + 33) as u64,
+        "reserved root capacity can reject ordinary logs earlier; every SDK record is accounted for"
+    );
     release.send(()).unwrap();
     telemetry.shutdown();
     assert_eq!(exporter.records.load(Ordering::Relaxed), counters.queued);
@@ -1217,7 +1214,7 @@ fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot
     let mut ready = vec![child.clone(); MAX_QUEUE];
     ready.push(admission_root(false));
     let (mut count, mut bytes) = (0, 0);
-    let dropped = admit_ready(&mut ready, true, &mut count, &mut bytes);
+    let dropped = admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes);
     assert!(dropped > 0);
     assert_eq!(ready.iter().filter(|document| mandatory_root(document)).count(), 1);
     assert_eq!(ready.len(), count);
@@ -1225,7 +1222,10 @@ fn mixed_normalized_spans_preserve_completion_order_and_promoted_children_cannot
     assert_eq!(dropped + ready.len(), MAX_QUEUE + 1);
     let mut ready = vec![child, admission_root(true)];
     let (mut count, mut bytes) = (0, MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES);
-    assert_eq!(admit_ready(&mut ready, true, &mut count, &mut bytes), 1);
+    assert_eq!(
+        admit_ready(&mut ready, true, &Capacity::default(), &mut count, &mut bytes),
+        1
+    );
     assert_eq!(ready.len(), 1);
     assert!(
         mandatory_root(&ready[0]),
@@ -1350,12 +1350,10 @@ fn histogram_merging_keeps_exact_large_counts_and_rejects_overflow() {
         vec![precise as u64 + 1, 0]
     );
     let overflow = vec![point(vec![Value::String(u64::MAX.to_string()), Value::I64(1)])];
-    assert!(
-        maintenance::merge_histogram_buckets(&overflow)
-            .unwrap_err()
-            .message()
-            .contains("overflows")
-    );
+    assert!(maintenance::merge_histogram_buckets(&overflow)
+        .unwrap_err()
+        .message()
+        .contains("overflows"));
     let across = vec![point(vec![Value::I64(i64::MAX), Value::I64(0)]); 3];
     assert!(maintenance::merge_histogram_buckets(&across).is_err());
     for invalid in [Value::I64(-1), Value::F64(1.5), Value::String("not-a-count".into())] {
@@ -1384,4 +1382,227 @@ fn flush_barrier_waits_for_full_queue_capacity_and_bounds_its_deadline() {
     assert!(super::flush_barrier(&queue, std::time::Duration::from_secs(1)));
     worker.join().unwrap();
     assert!(!super::flush_barrier(&queue, std::time::Duration::from_millis(2)));
+}
+
+#[test]
+fn capacity_sampling_and_metric_attributes_come_from_the_conf_and_bad_values_keep_defaults() {
+    let defaults = Config::from_conf("<moqui-conf><telemetry/></moqui-conf>");
+    assert_eq!(defaults.capacity, Capacity::default());
+    assert_eq!(
+        defaults.capacity.ordinary(),
+        (
+            MAX_QUEUE - ROOT_RESERVED_RECORDS,
+            MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES
+        ),
+        "the default reserve is unchanged"
+    );
+    let config = Config::from_conf(
+        r#"<moqui-conf><telemetry sample-ratio="0.1" queue-records="256" queue-bytes="2097152" tail-traces="8"
+            tail-trace-spans="4"><artifact type="AT_SERVICE" sample-ratio="0.5"/><artifact type="AT_REST_PATH" sample-ratio="2"/>
+            <artifact type="AT_XML_SCREEN" sample-ratio="some"/>
+            <metric name="http.server.request.duration" attributes=" http.route , http.request.method"/>
+            <metric name="moqui.artifact.duration" attributes=""/></telemetry></moqui-conf>"#,
+    );
+    assert_eq!(
+        config.capacity,
+        Capacity {
+            queue_records: 256,
+            queue_bytes: 2097152,
+            tail_traces: 8,
+            tail_trace_spans: 4
+        }
+    );
+    assert_eq!(config.artifact_sample_ratio("AT_SERVICE"), 0.5);
+    assert_eq!(config.artifact_sample_ratio("AT_REST_PATH"), 1.0, "clamped");
+    assert_eq!(
+        config.artifact_sample_ratio("AT_XML_SCREEN"),
+        0.1,
+        "unparsable falls back"
+    );
+    assert_eq!(config.artifact_sample_ratio("AT_ENTITY"), 0.1);
+    assert_eq!(
+        config.metric_attributes["http.server.request.duration"],
+        vec!["http.route".to_string(), "http.request.method".to_string()]
+    );
+    assert!(config.metric_attributes["moqui.artifact.duration"].is_empty());
+    assert!(
+        config
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("AT_XML_SCREEN sample-ratio [some]")),
+        "{:?}",
+        config.warnings
+    );
+    let bad = Config::from_conf(
+        r#"<moqui-conf><telemetry queue-records="10" queue-bytes="lots" tail-traces="0"/></moqui-conf>"#,
+    );
+    assert_eq!(bad.capacity, Capacity::default());
+    for part in ["queue-records [10]", "queue-bytes [lots]", "tail-traces [0]"] {
+        assert!(
+            bad.warnings.iter().any(|warning| warning.contains(part)),
+            "{part}: {:?}",
+            bad.warnings
+        );
+    }
+}
+
+#[test]
+fn a_configured_queue_bounds_admission_with_its_own_root_reserve() {
+    let (shared, _receiver) = admission_shared();
+    let shared = Shared {
+        config: Config::from_conf(r#"<moqui-conf><telemetry queue-records="64"/></moqui-conf>"#),
+        ..shared
+    };
+    shared
+        .try_enqueue("otel_logs", vec![Document::new(); 60], true)
+        .unwrap();
+    assert!(
+        shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err(),
+        "60 of 64 are ordinary"
+    );
+    shared
+        .try_enqueue("otel_spans", vec![admission_root(false); 4], true)
+        .unwrap();
+    assert!(shared
+        .try_enqueue("otel_spans", vec![admission_root(true)], true)
+        .is_err());
+    assert_eq!(shared.queued_records.load(Ordering::Relaxed), 64);
+}
+
+#[cfg(feature = "telemetry")]
+mod configured {
+    use super::*;
+
+    #[derive(Default)]
+    struct Memory(Mutex<Vec<(String, Document)>>);
+    impl Exporter for Memory {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
+            let count = documents.len();
+            lock(&self.0).extend(documents.into_iter().map(|document| (index.to_string(), document)));
+            Ok(count)
+        }
+    }
+
+    fn telemetry(telemetry: &str) -> (Telemetry, Arc<Memory>) {
+        let telemetry = Telemetry::from_conf(&format!("<moqui-conf>{telemetry}</moqui-conf>"), Resource::default());
+        let memory = Arc::new(Memory::default());
+        telemetry.set_exporter(memory.clone());
+        (telemetry, memory)
+    }
+
+    fn span_names(memory: &Memory) -> Vec<String> {
+        lock(&memory.0)
+            .iter()
+            .filter(|(index, _)| index == "otel_spans")
+            .map(|(_, document)| text(document, "name"))
+            .collect()
+    }
+
+    #[test]
+    fn an_artifact_type_ratio_keeps_its_spans_apart_from_the_global_ratio() {
+        let (telemetry, memory) =
+            telemetry(r#"<telemetry sample-ratio="0"><artifact type="AT_SERVICE" sample-ratio="1"/></telemetry>"#);
+        let root = telemetry.start_span("request", SpanKind::Server, None);
+        {
+            let _guard = attach(root.context());
+            let service = telemetry.start_artifact_span("AT_SERVICE", "kept.service", SpanKind::Internal);
+            assert!(service.context().unwrap().sampled);
+            let screen = telemetry.start_artifact_span("AT_XML_SCREEN", "unkept.screen", SpanKind::Internal);
+            assert!(!screen.context().unwrap().sampled);
+            screen.finish();
+            service.finish();
+        }
+        root.finish();
+        telemetry.flush();
+        let names = span_names(&memory);
+        assert!(names.contains(&"kept.service".to_string()), "{names:?}");
+        assert!(!names.contains(&"unkept.screen".to_string()), "{names:?}");
+        telemetry.shutdown();
+    }
+
+    #[test]
+    fn a_configured_tail_buffer_drops_the_spans_of_traces_past_its_bound() {
+        for (conf, dropped) in [("<telemetry/>", 0), (r#"<telemetry tail-traces="1"/>"#, 1)] {
+            let (telemetry, _memory) = telemetry(conf);
+            let first = telemetry.start_span("first", SpanKind::Server, None);
+            let second = telemetry.start_span("second", SpanKind::Server, None);
+            telemetry
+                .start_span("first.child", SpanKind::Internal, first.context())
+                .finish();
+            telemetry
+                .start_span("second.child", SpanKind::Internal, second.context())
+                .finish();
+            first.finish();
+            second.finish();
+            telemetry.flush();
+            assert_eq!(telemetry.counters().dropped, dropped, "{conf}");
+            telemetry.shutdown();
+        }
+    }
+
+    #[test]
+    fn prometheus_text_has_cumulative_instruments_with_per_instrument_attributes() {
+        let (telemetry, _memory) = telemetry(
+            r#"<telemetry><metric name="http.server.request.duration" attributes="http.route"/>
+                <metric name="moqui.test.count" attributes="moqui.tenant"/></telemetry>"#,
+        );
+        let attributes = |pairs: &[(&str, &str)]| {
+            Document::from_iter(
+                pairs
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), Value::string(*value))),
+            )
+        };
+        let request = attributes(&[("http.route", "/apps"), ("http.request.method", "GET")]);
+        telemetry.record_duration("http.server.request.duration", 0.02, request.clone());
+        telemetry.record_duration("http.server.request.duration", 3.0, request);
+        telemetry.record_duration(
+            "db.client.operation.duration",
+            0.001,
+            attributes(&[("db.system.name", "postgresql"), ("moqui.tenant", "dropped")]),
+        );
+        telemetry.add_counter(
+            "moqui.test.count",
+            2,
+            attributes(&[("moqui.tenant", "a\"b"), ("outcome", "dropped")]),
+        );
+        telemetry.observe_gauge("moqui.test.gauge", || Some(3.5));
+        let text = telemetry.prometheus_text().expect("the SDK collects");
+        for line in [
+            "# TYPE http_server_request_duration_seconds histogram",
+            "http_server_request_duration_seconds_bucket{http_route=\"/apps\",le=\"0.005\"} 0",
+            "http_server_request_duration_seconds_bucket{http_route=\"/apps\",le=\"0.025\"} 1",
+            "http_server_request_duration_seconds_bucket{http_route=\"/apps\",le=\"+Inf\"} 2",
+            "http_server_request_duration_seconds_sum{http_route=\"/apps\"} 3.02",
+            "http_server_request_duration_seconds_count{http_route=\"/apps\"} 2",
+            "db_client_operation_duration_seconds_count{db_system_name=\"postgresql\"} 1",
+            "# TYPE moqui_test_count_total counter",
+            "moqui_test_count_total{moqui_tenant=\"a\\\"b\"} 2",
+            "# TYPE moqui_test_gauge gauge",
+            "moqui_test_gauge 3.5",
+            "# TYPE target_info gauge",
+        ] {
+            assert!(text.lines().any(|candidate| candidate == line), "{line}\n{text}");
+        }
+        assert!(!text.contains("http_request_method"), "{text}");
+        // A minute collection does not reset a scrape's totals.
+        telemetry.flush();
+        telemetry.add_counter("moqui.test.count", 1, attributes(&[("moqui.tenant", "a\"b")]));
+        let text = telemetry.prometheus_text().unwrap();
+        assert!(
+            text.contains("moqui_test_count_total{moqui_tenant=\"a\\\"b\"} 3\n"),
+            "{text}"
+        );
+        telemetry.shutdown();
+        assert!(
+            telemetry.prometheus_text().is_none(),
+            "a stopped reader answers nothing"
+        );
+    }
+
+    #[test]
+    fn disabled_telemetry_has_no_prometheus_text() {
+        let (telemetry, _memory) = telemetry(r#"<telemetry enabled="false"/>"#);
+        assert!(telemetry.prometheus_text().is_none());
+    }
 }

@@ -155,6 +155,24 @@ along with this software (see the LICENSE.md file). If not, see
                 except AT_ENTITY (neither) and AT_XML_SCREEN_CONTENT (metrics only).</xs:documentation></xs:annotation>
             <xs:attribute name="type" type="xs:string" use="required"/><xs:attribute name="spans" type="boolean"/>
             <xs:attribute name="metrics" type="boolean"/>
+            <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of traces,
+                0 to 1, in which this type's spans are kept, in place of the telemetry sample-ratio, decided from the
+                trace id in the same way: a type at 0.5 under a telemetry ratio of 0.1 keeps its own spans in half the
+                traces and the other spans in a tenth. Roots and the tail rule are unchanged. Default: the telemetry
+                sample-ratio. A value that is not a number is warned about and ignored.</xs:documentation>
+            </xs:annotation></xs:attribute>
+        </xs:complexType></xs:element>
+        <xs:element name="metric" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
+            <xs:annotation><xs:documentation>The attributes one instrument keeps on its points (for example
+                http.server.request.duration, moqui.artifact.duration, db.client.operation.duration), in place of the
+                global list: moqui.artifact.type, moqui.artifact.name, moqui.artifact.action, moqui.artifact.sub_type,
+                http.request.method, http.route, http.response.status_code, db.system.name and outcome. Each kept
+                attribute multiplies the instrument's series, which are capped at 20000.</xs:documentation>
+            </xs:annotation>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="attributes" type="xs:string"><xs:annotation><xs:documentation>Comma-separated
+                attribute names; empty keeps none. Values of names the framework does not set from artifact names and
+                routes are redacted as the global list's are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="receiver" minOccurs="0"><xs:complexType>
             <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics, and the
@@ -180,6 +198,18 @@ along with this software (see the LICENSE.md file). If not, see
             of an error or a slow root, so 0 keeps the roots plus the traces worth looking at. A value that is not a
             number is warned about and the default, 0, is used.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="service-name" type="xs:string"/>
+        <xs:attribute name="queue-records" type="xs:positiveInteger"><xs:annotation><xs:documentation>Records waiting
+            for the exporter; more are dropped and counted. The last 1/16 is kept for request and job roots. The tail
+            buffer (spans waiting for their root) shares this bound. Default 8192, at least 64.</xs:documentation>
+        </xs:annotation></xs:attribute>
+        <xs:attribute name="queue-bytes" type="xs:positiveInteger"><xs:annotation><xs:documentation>Estimated bytes
+            waiting for the exporter, with the same 1/16 root reserve, shared by the tail buffer. Default 33554432
+            (32 MiB), at least 1048576.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="tail-traces" type="xs:positiveInteger"><xs:annotation><xs:documentation>Traces whose
+            unsampled spans wait for the root's tail decision; spans of further traces are dropped. Default 1024.
+            </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="tail-trace-spans" type="xs:positiveInteger"><xs:annotation><xs:documentation>Spans one
+            trace may hold while it waits. Default 512.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="interval-seconds" type="xs:positiveInteger"><xs:annotation><xs:documentation>How often
             metrics are collected. Metric documents are minute documents, which the rollups and dashboards assume, so
             anything but 60 is for tests and is warned about.</xs:documentation></xs:annotation></xs:attribute>

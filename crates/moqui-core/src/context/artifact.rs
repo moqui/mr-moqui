@@ -130,7 +130,7 @@ impl ArtifactStack {
             });
         let mut telemetry_span = telemetry
             .filter(|telemetry| telemetry.artifact_enabled(&artifact_type).0)
-            .map(|telemetry| telemetry.start_span(&name, crate::telemetry::SpanKind::Internal, None))
+            .map(|telemetry| telemetry.start_artifact_span(&artifact_type, &name, crate::telemetry::SpanKind::Internal))
             .unwrap_or_else(crate::telemetry::Span::noop);
         if telemetry_span.is_recording() {
             telemetry_span.set_attribute("moqui.artifact.type", Value::string(artifact_type.as_ref()));

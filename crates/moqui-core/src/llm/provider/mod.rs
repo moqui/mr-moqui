@@ -907,7 +907,7 @@ pub fn call(target: &Target, request: &ModelRequest, options: &mut CallOptions<'
         .as_ref()
         .filter(|telemetry| telemetry.artifact_enabled("AT_LLM").0)
         .map(|telemetry| {
-            let mut span = telemetry.start_span(&name, crate::telemetry::SpanKind::Client, None);
+            let mut span = telemetry.start_artifact_span("AT_LLM", &name, crate::telemetry::SpanKind::Client);
             for (key, value) in [
                 ("moqui.artifact.type", "AT_LLM"),
                 ("moqui.artifact.name", name.as_str()),

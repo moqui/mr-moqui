@@ -782,6 +782,14 @@ impl Guard {
 
     /// The `/metrics` lines.
     pub(crate) fn metrics(&self) -> String {
+        self.values()
+            .iter()
+            .map(|(name, value)| format!("{name} {value}\n"))
+            .collect()
+    }
+
+    /// The `/metrics` line names and values, in their order; the telemetry gauges observe the same values.
+    pub(crate) fn values(&self) -> [(&'static str, u64); 9] {
         let now = self.now();
         let banned: usize = self
             .shards
@@ -794,19 +802,17 @@ impl Guard {
             })
             .sum();
         let count = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
-        format!(
-            "edge_connections_refused {}\nedge_denied {}\nedge_rate_limited {}\nedge_banned_clients {banned}\n\
-             edge_tracked_clients {}\nedge_untracked {}\nrequest_queue_full {}\nrequest_queue_expired {}\n\
-             request_abandoned {}\n",
-            count(&self.counts.connections_refused),
-            count(&self.counts.denied),
-            count(&self.counts.rate_limited),
-            self.tracked.load(Ordering::Relaxed),
-            count(&self.counts.untracked),
-            count(&self.counts.queue_full),
-            count(&self.counts.queue_expired),
-            count(&self.counts.abandoned),
-        )
+        [
+            ("edge_connections_refused", count(&self.counts.connections_refused)),
+            ("edge_denied", count(&self.counts.denied)),
+            ("edge_rate_limited", count(&self.counts.rate_limited)),
+            ("edge_banned_clients", banned as u64),
+            ("edge_tracked_clients", self.tracked.load(Ordering::Relaxed) as u64),
+            ("edge_untracked", count(&self.counts.untracked)),
+            ("request_queue_full", count(&self.counts.queue_full)),
+            ("request_queue_expired", count(&self.counts.queue_expired)),
+            ("request_abandoned", count(&self.counts.abandoned)),
+        ]
     }
 
     /// Log at startup what is on, and a forwarding header that is believed from anyone.
