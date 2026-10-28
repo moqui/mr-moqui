@@ -262,8 +262,13 @@ feature('Monitor Logs follows a trace link and the surrounding entries of a row'
         page.goto(logs).status==200
         page.waitFor(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent.trim()==='Surrounding entries'))
         page.evaluate(()=>{Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Surrounding entries').click();return true})
-        page.waitFor(()=>location.pathname.endsWith('/dashboards/LogContext'))
+        // The Monitor mount, so a user with only MONITOR_APP can follow it.
+        page.waitFor(()=>location.pathname.endsWith('/monitor/LogContext'))
+        page.waitFor(()=>document.body.innerText.includes('Entries surrounding'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto(logs).status==200
+        page.waitFor(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent.trim()==='Compare ranges or versions'))
+        page.evaluate(()=>Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Compare ranges or versions').getAttribute('href')).includes('/monitor/Split')
     },
 })
 feature('the Monitor overview inspects and exports a panel through its own transitions',{
@@ -303,5 +308,54 @@ feature('the dashboard time form keeps the variables and the single-panel view',
         const kept=page.evaluate(()=>({values:JSON.parse(document.querySelector('#DashboardTime input[name="variableValuesJson"]').value),panelId:document.querySelector('#DashboardTime input[name="panelId"]').value}))
         kept.values.service=='browser-variable'
         kept.panelId=='summary'
+    },
+})
+feature('the Metrics picker lists the metric names and charts one grouped by an attribute',{
+    expect(){
+        const page=monitoringPage()
+        // Explore shows a metric document's highlights in the sandboxed html-view frame; Chromium reports its blocked script as a console error.
+        page.allowProblems(/Blocked script execution in 'about:srcdoc'/)
+        page.goto('/qapps/monitor/Sources').status==200
+        page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
+        const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
+        const metric=fixture.marker+'.json'
+        page.goto('/qapps/monitor/Metrics?from=now-1h&thru=now&metricStat=last&groupBy=service.instance.id&metricName='+encodeURIComponent(metric)).status==200
+        page.waitFor((title)=>document.body.innerText.includes(title),{arg:metric+' · last by service.instance.id'})
+        page.evaluate((metric)=>Array.from(document.querySelectorAll('select[name="metricName"] option')).some(option=>option.value===metric),metric)
+        page.evaluate(()=>Array.from(document.querySelectorAll('select[name="groupBy"] option')).some(option=>option.value==='service.instance.id'))
+        // The picked metric is the Explore query below the chart.
+        page.evaluate(()=>!!document.querySelector('input[aria-label="Search query"]'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+    },
+})
+feature('Traces searches by service, name, status and duration',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/Sources').status==200
+        page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
+        const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
+        const base='/qapps/monitor/Traces?from=now-1h&thru=now&serviceName='+encodeURIComponent(fixture.marker)
+        page.goto(base+'&spanName='+encodeURIComponent(fixture.marker+'.js*')+'&maxDuration=1000').status==200
+        page.waitFor((marker)=>document.body.innerText.includes(marker+'.json'),{arg:fixture.marker})
+        !page.text().includes(fixture.marker+'.protobuf')
+        page.goto(base+'&statusCode=ERROR').status==200
+        page.waitFor(()=>document.body.innerText.includes('Search traces by service'))
+        !page.text().includes(fixture.marker+'.json')
+        page.goto(base+'&minDuration=abc').status==200
+        page.waitFor(()=>document.body.innerText.includes('Minimum duration is not a number of milliseconds and is ignored.'))
+    },
+})
+feature('Errors, Services and Compare render their charts',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/Errors?from=now-1h&thru=now').status==200
+        page.waitFor(()=>document.body.innerText.includes('Failed requests and jobs over time'))
+        page.goto('/qapps/monitor/Services?from=now-1h&thru=now').status==200
+        page.waitFor(()=>!!document.querySelector('.m-report-dashboard'))
+        page.waitFor(()=>['Endpoints','Instances','Request rate','Duration percentiles','Busiest artifacts'].every(text=>document.body.innerText.includes(text)))
+        page.goto('/qapps/monitor/Split?from=now-1h&thru=now').status==200
+        page.waitFor(()=>['Requests · all versions','Server errors (5xx) · all versions','Duration percentiles · all versions'].every(text=>document.body.innerText.includes(text)))
+        page.evaluate(()=>!!document.querySelector('select[name="leftVersion"]') && !!document.querySelector('select[name="rightVersion"]'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
     },
 })

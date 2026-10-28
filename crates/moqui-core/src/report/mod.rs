@@ -2096,9 +2096,17 @@ pub fn dashboard_frames_filtered(
             return;
         }
         for variable in definitions {
-            let Some(value) = values.get(text(variable, "name", "")) else {
+            let name = text(variable, "name", "");
+            let Some(value) = values.get(name) else {
                 continue;
             };
+            // A query over documents without the variable's field (an artifact metric has no http.route) opts out by name.
+            if query["ignoreVariables"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|ignored| ignored == name))
+            {
+                continue;
+            }
             let kind = text(variable, "kind", "custom");
             if kind == "constant" || value.is_null() {
                 continue;

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Log context" default-menu-include="false">
+    <!-- The Dashboards screen mounted under Monitor, so the Logs screen's "Surrounding entries" needs only this app's authorization. -->
+    <transition-include name="trace" location="component://tools/screen/Dashboards/LogContext.xml"/>
+    <widgets><include-screen location="component://tools/screen/Dashboards/LogContext.xml" share-scope="true"/></widgets>
+</screen>

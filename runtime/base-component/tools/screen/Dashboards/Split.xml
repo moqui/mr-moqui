@@ -2,9 +2,11 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-include="false">
     <parameter name="datasetId"/><parameter name="queryString"/><parameter name="from"/><parameter name="thru"/>
-    <parameter name="compareFrom"/><parameter name="compareThru"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
+    <parameter name="compareFrom"/><parameter name="compareThru"/><parameter name="leftVersion"/><parameter name="rightVersion"/><parameter name="serviceName"/>
     <actions><script><![CDATA[
-        datasetId=datasetId || 'otel_spans';from=from || 'now-7d';thru=thru || 'now';compareFrom=compareFrom || 'now-14d';compareThru=compareThru || 'now-7d'
+        datasetId=datasetId || 'otel_spans';from=from || 'now-7d';thru=thru || 'now'
+        // Two versions usually run in the same range (a canary or a rolling deploy), so the second range defaults to the first then.
+        compareFrom=compareFrom || (rightVersion ? from : 'now-14d');compareThru=compareThru || (rightVersion ? thru : 'now-7d')
         const query=(start,end,version)=>({datasetId,mode:'documents',from:start,thru:end,queryString:queryString || '',pageSize:1000,
             filters:version?[{field:{name:'service.version',op:'eq',value:version}}]:[]})
         leftFrame={fields:[]};rightFrame={fields:[]};compareNotices=[]
@@ -16,6 +18,45 @@
                 compareNotices.push(...(result.notices || []).map(notice=>side+': '+(notice.message || String(notice))))
             } catch (error) { ec.logger.error('Explore comparison '+side+' failed: '+String(error));compareNotices.push(side+': '+String(error)) }
         }
+        // RED (rate, errors, duration) per side from the request duration metric, split by service.version.
+        const bounds=[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10]
+        const time={id:'time',type:'date_histogram',role:'x-axis',params:{field:'bucket_start',fixed_interval:'auto',min_doc_count:0}}
+        const red={
+            rate:{title:'Requests',aggregations:[time,{id:'requests',type:'sum',role:'metric',params:{field:'count'}}],hide:['count']},
+            errors:{title:'Server errors (5xx)',status:true,aggregations:[time,{id:'errors',type:'sum',role:'metric',params:{field:'count'}}],hide:['count']},
+            duration:{title:'Duration percentiles',unit:'s',aggregations:[time,{id:'latency',type:'histogram_merge',role:'metric',params:{bounds}}],
+                hide:['count','latency.stddev',...bounds.map((_,index)=>'latency.bucket.'+index),'latency.bucket.'+bounds.length]}
+        }
+        redFrames={left:{},right:{}};redPanels={left:{},right:{}};versionOptions=[]
+        const versions=new Set()
+        for (const [side,start,end,version] of [['left',from,thru,leftVersion],['right',compareFrom,compareThru,rightVersion]]) {
+            const base=[...(version?[{field:{name:'service.version',op:'eq',value:String(version)}}]:[]),...(serviceName?[{field:{name:'service.name',op:'eq',value:String(serviceName)}}]:[])]
+            for (const [id,chart] of Object.entries(red)) {
+                const filters=[...base,...(chart.status?[{field:{name:'http.response.status_code',op:'range',gte:500}}]:[])]
+                redPanels[side][id]={title:chart.title+' · '+(version || 'all versions'),visualization:'timeSeries',queries:[{aggregations:chart.aggregations}],
+                    fieldConfig:{defaults:chart.unit?{unit:chart.unit,decimals:3}:{}}}
+                redFrames[side][id]={fields:[]}
+                try {
+                    const result=ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_metrics',metricGranularity:'auto',
+                        from:start,thru:end,queryString:'name:"http.server.request.duration"',filters,aggregations:chart.aggregations,
+                        transformations:[{type:'organize',hide:chart.hide}]}}).call()
+                    redFrames[side][id]=(result.frames || [])[0] || {fields:[]}
+                } catch (error) { ec.logger.error('Version comparison '+side+' '+id+' failed: '+String(error));compareNotices.push(side+' '+chart.title+': '+String(error)) }
+            }
+            try {
+                const found=ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_metrics',from:start,thru:end,
+                    queryString:'name:"http.server.request.duration"',filters:serviceName?[{field:{name:'service.name',op:'eq',value:String(serviceName)}}]:[],
+                    aggregations:[{id:'version',type:'terms',role:'x-axis',params:{field:'service.version',size:50}}]}}).call()
+                const field=(((found.frames || [])[0] || {}).fields || []).find(field=>field.name==='version')
+                for (const value of field ? field.values : []) if (value != null && value !== '') versions.add(String(value))
+            } catch (error) { ec.logger.error('Version options '+side+' failed: '+String(error));compareNotices.push(side+': '+String(error)) }
+        }
+        for (const version of [leftVersion,rightVersion]) if (version) versions.add(String(version))
+        versionOptions=Array.from(versions).sort().map(value=>({value,text:value}))
+        // A fractional number comes back from the service as a decimal, which JSON.stringify writes as {}; the widgets take numbers.
+        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
+            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
+        redFrames=plain(redFrames)
     ]]></script></actions>
     <widgets>
         <form-single name="CompareOptions" transition=".">
@@ -25,11 +66,19 @@
             <field name="thru"><default-field title="First range through"><text-line/></default-field></field>
             <field name="compareFrom"><default-field title="Second range from"><text-line/></default-field></field>
             <field name="compareThru"><default-field title="Second range through"><text-line/></default-field></field>
-            <field name="leftVersion"><default-field title="First version (optional)"><text-line/></default-field></field>
-            <field name="rightVersion"><default-field title="Second version (optional)"><text-line/></default-field></field>
+            <field name="leftVersion"><default-field title="First version (optional)"><drop-down allow-empty="true"><list-options list="versionOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="rightVersion"><default-field title="Second version (optional)"><drop-down allow-empty="true"><list-options list="versionOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="serviceName"><default-field title="Service for the request charts (optional)"><text-line/></default-field></field>
             <field name="compare"><default-field><submit text="Compare"/></default-field></field>
         </form-single>
         <section-iterate name="CompareNotices" list="compareNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <label text="Request rate, server errors and duration for each side, from the HTTP request metric. With a second version and no second range, both sides use the first range." type="p"/>
+        <container-row><row-col md="6"><report-panel frame="redFrames.left.rate" panel="redPanels.left.rate"/></row-col>
+            <row-col md="6"><report-panel frame="redFrames.right.rate" panel="redPanels.right.rate"/></row-col></container-row>
+        <container-row><row-col md="6"><report-panel frame="redFrames.left.errors" panel="redPanels.left.errors"/></row-col>
+            <row-col md="6"><report-panel frame="redFrames.right.errors" panel="redPanels.right.errors"/></row-col></container-row>
+        <container-row><row-col md="6"><report-panel frame="redFrames.left.duration" panel="redPanels.left.duration"/></row-col>
+            <row-col md="6"><report-panel frame="redFrames.right.duration" panel="redPanels.right.duration"/></row-col></container-row>
         <label text="Each pane shows at most 1,000 documents. Missing telemetry does not establish health." type="p"/>
         <container-row><row-col md="6"><report-panel frame="leftFrame" panel="{title:'First range',visualization:'table'}"/></row-col>
             <row-col md="6"><report-panel frame="rightFrame" panel="{title:'Second range',visualization:'table'}"/></row-col></container-row>

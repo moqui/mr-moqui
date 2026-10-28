@@ -1095,6 +1095,40 @@ fn verify_tolerant_panels_and_single_panel_view(context: &moqui_core::context::E
         .unwrap()
         .iter()
         .any(|notice| notice["code"] == "variable_error" && notice["variable"] == "broken"));
+    // A query names the variables it ignores, so a field one query has does not empty another's panel.
+    let mut narrowed = stored.clone();
+    let body = &mut narrowed["body"];
+    body["variables"] = json!([{"name":"endpoint","kind":"custom","datasetId":"report-fixture-dataset","field":"enumId","options":["no-such-enum"]}]);
+    let mut ignoring = body["panels"]["business"].clone();
+    ignoring["queries"][0]["ignoreVariables"] = json!(["endpoint"]);
+    body["panels"]["ignoring"] = ignoring;
+    let rendered = report::dashboard_frames_filtered(
+        context,
+        &narrowed,
+        &json!({"endpoint":"no-such-enum"}),
+        "now-1h",
+        "now+1h",
+        &json!([]),
+    )
+    .unwrap();
+    assert_eq!(
+        numeric_field(&rendered["panels"]["ignoring"]["frames"][0], "records"),
+        3.0,
+        "{rendered}"
+    );
+    assert!(
+        rendered["panels"]["business"]["frames"][0]["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|field| field["name"] != "records"
+                || field["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|value| value.as_f64().unwrap_or(0.0) == 0.0)),
+        "the variable still narrows the other panel: {rendered}"
+    );
     let single = result(
         moqui_core::service::sync(
             "org.moqui.report.ReportServices.render#Dashboard",

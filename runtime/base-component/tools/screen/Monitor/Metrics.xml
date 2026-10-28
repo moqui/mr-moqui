@@ -1,16 +1,111 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Metrics" default-menu-index="6">
+    <parameter name="metricName"/><parameter name="groupBy"/><parameter name="metricStat"/>
     <!-- Explore's links and forms resolve against this screen's URL, so its transitions run here, under this app's authorization. -->
     <transition-include name="remember" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="trace" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="user" location="component://tools/screen/Dashboards/Explore.xml"/>
-    <transition-include name="context" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition name="context"><default-response url="//apps/monitor/LogContext"/></transition>
     <transition-include name="visit" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="tail" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="saveSearch" location="component://tools/screen/Dashboards/Explore.xml"/>
     <transition-include name="addPanel" location="component://tools/screen/Dashboards/Explore.xml"/>
-    <transition-include name="split" location="component://tools/screen/Dashboards/Explore.xml"/>
+    <transition name="split"><default-response url="//apps/monitor/Split"/></transition>
     <pre-actions><set field="datasetId" from="datasetId || 'otel_metrics'"/></pre-actions>
-    <widgets><include-screen location="component://tools/screen/Dashboards/Explore.xml" share-scope="true"/></widgets>
+    <actions><script><![CDATA[
+        from = from || 'now-7d'; thru = thru || 'now'
+        // A fractional number comes back from the service as a decimal, which JSON.stringify writes as {}; the widgets take numbers.
+        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
+            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
+        // The picker and the Explore search below share the query: a picked metric becomes name:"...", and a query of that form picks it back.
+        const named = /^name:"((?:[^"\\]|\\.)*)"$/.exec(String(queryString || '').trim())
+        if (!metricName && named && datasetId === 'otel_metrics') metricName = JSON.parse('"'+named[1]+'"')
+        if (metricName && !queryString && datasetId === 'otel_metrics') queryString = 'name:'+JSON.stringify(String(metricName))
+        metricStat = metricStat || 'count'
+        metricNames = []; groupByOptions = []; metricFrame = {fields:[]}; metricPanel = null; metricNotices = []; metricUnit = ''
+        try {
+            const names = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_metrics',from,thru,
+                aggregations:[{id:'metric',type:'terms',role:'x-axis',params:{field:'name',size:500}}]}}).call()
+            const frame = (names.frames || [])[0] || {fields:[]}, field = (frame.fields || []).find(field=>field.name==='metric')
+            metricNames = (field ? field.values : []).filter(value=>value != null).map(value=>({value:String(value),text:String(value)})).sort((a,b)=>a.value.localeCompare(b.value))
+        } catch (error) { ec.logger.error('Metric names failed: '+String(error)); metricNotices.push(String(error)) }
+        if (metricName && !metricNames.some(item=>item.value===metricName)) metricNames.unshift({value:metricName,text:metricName})
+        // Group by the attribute columns of the metrics dataset; with a metric picked, only those its documents carry.
+        const valueFields = new Set(['name','series_fingerprint','bucket_start','bucket_end','granularity','aggregation','unit','count','sum','min','max','last','last_time'])
+        let attributeFields = []
+        try {
+            const dataset = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:'otel_metrics'}).call().dataset || {fields:[]}
+            attributeFields = (dataset.fields || []).filter(field=>field.aggregatable && field.type !== 'time' && !valueFields.has(field.name)).map(field=>field.name)
+        } catch (error) { ec.logger.error('Metric attribute fields failed: '+String(error)); metricNotices.push(String(error)) }
+        let sample = null
+        if (metricName) {
+            try {
+                const found = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({datasetId:'otel_metrics',from,thru,
+                    queryString:'name:'+JSON.stringify(String(metricName)),sort:['-bucket_start'],pageSize:1}).call()
+                sample = found.hits && found.hits.length ? found.hits[0].body || {} : null
+            } catch (error) { ec.logger.error('Metric sample failed: '+String(error)); metricNotices.push(String(error)) }
+            if (!sample) metricNotices.push('No documents for '+metricName+' in this time range.')
+        }
+        const carried = sample ? attributeFields.filter(name=>sample[name] != null) : attributeFields
+        groupByOptions = carried.map(name=>({value:name,text:name}))
+        if (groupBy && !groupByOptions.some(item=>item.value===groupBy)) groupByOptions.unshift({value:groupBy,text:groupBy})
+        metricUnit = sample && sample.unit ? String(sample.unit) : ''
+        const bounds = sample && Array.isArray(sample.bounds) ? sample.bounds.map(plain).map(Number).filter(Number.isFinite) : []
+        if (metricName && sample) {
+            const percentile = /^p(50|95|99)$/.test(metricStat)
+            if (percentile && !bounds.length) metricNotices.push('Percentiles need histogram buckets; '+metricName+' has none, so the chart shows the count.')
+            const stat = percentile && !bounds.length ? 'count' : metricStat
+            const aggregations = [{id:'time',type:'date_histogram',role:'x-axis',params:{field:'bucket_start',fixed_interval:'auto',min_doc_count:0}}]
+            if (groupBy) aggregations.push({id:'group',type:'terms',role:'series',params:{field:groupBy,size:10,missing:'(missing)'}})
+            const hide = ['count']
+            const transformations = []
+            if (stat === 'count') aggregations.push({id:'value',type:'sum',role:'metric',params:{field:'count'}})
+            else if (stat === 'sum') aggregations.push({id:'value',type:'sum',role:'metric',params:{field:'sum'}})
+            else if (stat === 'min') aggregations.push({id:'value',type:'min',role:'metric',params:{field:'min'}})
+            else if (stat === 'max') aggregations.push({id:'value',type:'max',role:'metric',params:{field:'max'}})
+            else if (stat === 'last') aggregations.push({id:'value',type:'max',role:'metric',params:{field:'last'}})
+            else if (stat === 'avg') {
+                aggregations.push({id:'total',type:'sum',role:'metric',params:{field:'sum'}},{id:'measurements',type:'sum',role:'metric',params:{field:'count'}})
+                transformations.push({type:'calculate',left:'total',right:'measurements',operator:'/',name:'value'})
+                hide.push('total','measurements')
+            } else {
+                aggregations.push({id:'latency',type:'histogram_merge',role:'metric',params:{bounds}})
+                for (const name of ['p50','p95','p99'].filter(name=>name !== stat)) hide.push('latency.'+name)
+                for (let index = 0; index <= bounds.length; index++) hide.push('latency.bucket.'+index)
+                hide.push('latency.stddev')
+            }
+            transformations.push({type:'organize',hide})
+            const query = {datasetId:'otel_metrics',metricGranularity:'auto',from,thru,queryString:'name:'+JSON.stringify(String(metricName)),aggregations,transformations}
+            try {
+                const output = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query}).call()
+                metricFrame = (output.frames || [])[0] || {fields:[]}
+                metricNotices.push(...(output.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
+            } catch (error) { ec.logger.error('Metric chart '+metricName+' failed: '+String(error)); metricNotices.push(String(error)) }
+            const unit = stat === 'count' ? '' : metricUnit
+            metricPanel = {title:metricName+' · '+stat+(groupBy ? ' by '+groupBy : ''),visualization:'timeSeries',queries:[{aggregations}],
+                fieldConfig:{defaults:unit ? {unit} : {}}}
+        }
+        metricFrame = plain(metricFrame)
+    ]]></script></actions>
+    <widgets>
+        <form-single name="MetricPicker" transition=".">
+            <field name="datasetId" from="'otel_metrics'"><default-field><hidden/></default-field></field>
+            <field name="metricName"><default-field title="Metric"><drop-down allow-empty="true"><list-options list="metricNames" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="metricStat"><default-field title="Statistic"><drop-down>
+                <option key="count" text="Count"/><option key="sum" text="Sum"/><option key="avg" text="Average"/><option key="min" text="Minimum"/>
+                <option key="max" text="Maximum"/><option key="last" text="Last value"/><option key="p50" text="p50"/><option key="p95" text="p95"/><option key="p99" text="p99"/>
+            </drop-down></default-field></field>
+            <field name="groupBy"><default-field title="Group by"><drop-down allow-empty="true"><list-options list="groupByOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="from"><default-field title="From"><text-line/></default-field></field>
+            <field name="thru"><default-field title="Through"><text-line/></default-field></field>
+            <field name="chart"><default-field><submit text="Chart metric"/></default-field></field>
+        </form-single>
+        <label condition="!metricName" text="Pick a metric to chart it over time. Group by splits the chart by an attribute, showing the ten largest groups." type="p"/>
+        <section-iterate name="MetricNotices" list="metricNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <section name="MetricChart" condition="metricPanel"><widgets>
+            <report-panel frame="metricFrame" panel="metricPanel"/>
+        </widgets></section>
+        <include-screen location="component://tools/screen/Dashboards/Explore.xml" share-scope="true"/>
+    </widgets>
 </screen>
