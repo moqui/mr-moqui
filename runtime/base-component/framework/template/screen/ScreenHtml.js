@@ -2164,6 +2164,7 @@
     const macros = Object.assign({}, tableOfFormNoops, S.anyMacros(MODE), {
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
+        "report-embed": reportWidget,
         "screen": stmt((node, children) => children),
         "widgets": widgetsMacro("widgets"),
         "fail-widgets": widgetsMacro("fail-widgets"),

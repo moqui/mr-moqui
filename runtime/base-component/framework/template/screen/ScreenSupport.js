@@ -40,7 +40,7 @@
         "tree", "tree-node", "tree-sub-node", "label", "link", "image", "parameter", "dialog",
         "render-dynamic-form", "dynamic-form", "form-list-user-columns", "context", "dashboard", "number-card",
         "chatter", "record-files", "container-split", "split-side", "split-main", "html-view", "status-bar", "markdown-view",
-        "code-view", "report-panel", "report-dashboard"
+        "code-view", "report-panel", "report-dashboard", "report-embed"
     ];
     const formElements = [
         "form-single", "form-list", "row-actions", "field", "header-field", "first-row-field", "second-row-field",
@@ -82,10 +82,34 @@
 
     // Report attributes holding data are expressions, just like a form's list. The server computes and authorizes
     // frames before a widget renders; no renderer queries a dataset or executes transformations itself.
-    const reportPropsExpr = (node) => node.name === "report-dashboard" ?
+    // A report-embed: the saved dashboard or library panel definition-id, rendered for the viewer as report-dashboard props, or
+    // null. Nothing renders without a signed-in viewer (an anonymous visitor of a public site sees nothing), and a definition
+    // or query the viewer may not read logs a warning and renders nothing, so the rest of the screen is unaffected.
+    const reportEmbedFn = String(function (ec, definitionId, panelId, from, thru, variables) {
+        if (!definitionId || !ec.user.userId) return null;
+        try {
+            const rendered = ec.service.sync().name("org.moqui.report.ReportServices.render#Dashboard").throwOnError(true).parameters({definitionId,
+                panelId: panelId || undefined, from: from || "now-7d", thru: thru || "now", variables: variables || {}, filters: []}).call().dashboard;
+            const plain = value => value == null || typeof value !== "object" ? value : typeof value.toNumber === "function" ? value.toNumber() :
+                Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]));
+            const dashboard = plain(rendered);
+            const frames = {};
+            for (const [id, panel] of Object.entries(dashboard.panels || {})) frames[id] = panel.frames || [];
+            Object.assign(dashboard, {definitionId, embedded: true, absoluteTime: dashboard.range, requestedTime: {from: from || "now-7d", thru: thru || "now"},
+                viewerId: ec.user.userId, screenUrl: "/apps/dashboards/Dashboard", panelId: panelId || null});
+            return {dashboard, frames};
+        } catch (error) {
+            ec.logger.warn("report-embed " + definitionId + " is not shown: " + error);
+            return null;
+        }
+    });
+    const reportEmbedExpr = (node) => `(${reportEmbedFn})(ec,${expandNoL10nExpr(attr(node, "definition-id") || "")},${expandNoL10nExpr(attr(node, "panel-id") || "")},` +
+        `${expandNoL10nExpr(attr(node, "from") || "")},${expandNoL10nExpr(attr(node, "thru") || "")},(${attr(node, "variables") || "{}"}))`;
+    const reportPropsExpr = (node) => node.name === "report-embed" ? reportEmbedExpr(node) : node.name === "report-dashboard" ?
         `{dashboard:(${attr(node, "dashboard") || "{}"}),frames:(${attr(node, "frames") || "{}"})}` :
         `{frame:(${attr(node, "frame") || "{fields:[]}"}),panel:(${attr(node, "panel") || "{}"}),title:${expandExpr(attr(node, "title") || "")}}`;
     const reportDataFn = String(function (props, mode) {
+        if (!props) return "";
         const escape = (value) => String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const cell = (value) => value == null ? "—" : typeof value === "object" && typeof value.toNumber !== "function" ? JSON.stringify(value) : String(value);
         const csv = (value, field) => {

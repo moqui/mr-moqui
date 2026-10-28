@@ -31,6 +31,48 @@
             for (const [name,value] of Object.entries(values)) variableParameters['var-'+name]=value
         ]]></script></actions><default-response url="." parameter-map="variableParameters"/>
     </transition>
+    <transition name="duplicatePanel" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
+            const panels=definition.body && definition.body.panels
+            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error('Choose a panel of this dashboard')
+            let copyId=String(panelId).slice(0,70)+'-copy'
+            while (panels[copyId]) copyId+='-copy'
+            if (copyId.length>80) throw new Error('This panel has too many copies; rename one first')
+            panels[copyId]=JSON.parse(JSON.stringify(panels[panelId]))
+            if (panels[copyId].title) panels[copyId].title=panels[copyId].title+' (copy)'
+            // The copy goes after the original: below the grid, or next to it in a list of panel placements.
+            const bottom=node=>(node && node.items || []).reduce((n,item)=>Math.max(n,item.layout?0:(Number(item.y) || 0)+(Number(item.h) || 1)),0)
+            const place=node=>{
+                if (!node || typeof node!=='object') return false
+                const items=node.items || node.children || []
+                const at=items.findIndex(item=>item===panelId || item && item.panelId===panelId)
+                if (at>=0) {const item=items[at];items.splice(at+1,0,typeof item==='string'?copyId:Object.assign({},item,{panelId:copyId},node.type==='grid'?{y:bottom(node)}:{}));return true}
+                return items.some(item=>item && place(item.layout || (item.items?item:null)))
+            }
+            if (definition.body.layout) place(definition.body.layout)
+            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Duplicated panel '+panelId}).call()
+            ec.web.sendJsonResponse({panelId:copyId})
+        ]]></script></actions><default-response type="none"/>
+    </transition>
+    <transition name="removePanel" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
+            const panels=definition.body && definition.body.panels
+            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error('Choose a panel of this dashboard')
+            delete panels[panelId]
+            const prune=node=>{
+                if (!node || typeof node!=='object') return
+                for (const key of ['items','children']) if (Array.isArray(node[key])) {
+                    node[key]=node[key].filter(item=>item!==panelId && !(item && item.panelId===panelId))
+                    for (const item of node[key]) prune(item && (item.layout || (item.items?item:null)))
+                }
+            }
+            prune(definition.body.layout)
+            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Removed panel '+panelId}).call()
+            ec.web.sendJsonResponse({removed:panelId})
+        ]]></script></actions><default-response type="none"/>
+    </transition>
     <transition name="edit"><default-response url="//apps/dashboards/Definition"/></transition>
     <actions><script><![CDATA[
         from = from || 'now-7d'; thru = thru || 'now'
@@ -79,6 +121,10 @@
         for(const id of datasetIds){try{const dataset=ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:id}).call().dataset;dashboardDefinition.datasetFields[id]=dataset.fields || []}catch(error){ec.logger.error('Dashboard filter fields '+id+' failed: '+String(error))}}
         dashboardDefinition.layout = rendered.layout || dashboardDefinition.layout
         dashboardDefinition.absoluteTime = rendered.range
+        // The range as asked for (now-7d, now/d), for the time picker's label; absoluteTime is what it resolved to.
+        dashboardDefinition.requestedTime = {from,thru}
+        dashboardDefinition.title = definition.title
+        dashboardDefinition.editable = definition.type === 'dashboard' && !definition.readOnly && definition.ownerId === ec.user.userId
         dashboardDefinition.definitionId = definitionId
         // The including screen's URL: the panel export, inspect and variable requests use its transitions.
         dashboardDefinition.screenUrl = sri.buildUrl('.').path
@@ -95,23 +141,22 @@
             dashboardFrames[panelId] = panel.frames || []
             dashboardNotices.push(...(panel.notices || []).map(notice=>panelId+': '+(typeof notice === 'string' ? notice : notice.message || JSON.stringify(notice))))
         }
-        // A fractional number comes back from the service as a decimal, which JSON.stringify writes as {}; the widgets take numbers.
-        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
-            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
-        dashboardFrames = plain(dashboardFrames); dashboardDefinition = plain(dashboardDefinition)
     ]]></script></actions>
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>
         <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}"/>
-        <form-single name="DashboardTime" transition=".">
-            <field name="filtersJson"><default-field><hidden/></default-field></field>
-            <field name="definitionId"><default-field><hidden/></default-field></field>
-            <field name="panelId"><default-field><hidden/></default-field></field>
-            <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues || {})"><default-field><hidden/></default-field></field>
-            <field name="from"><default-field title="From"><text-line/></default-field></field>
-            <field name="thru"><default-field title="Through"><text-line/></default-field></field>
-            <field name="refresh"><default-field><submit text="Refresh"/></default-field></field>
-        </form-single>
+        <!-- In qvt the dashboard's time picker sets the range; the other modes use this form. -->
+        <section name="DashboardTimeForm" condition="sri.getRenderMode() !== 'qvt'"><widgets>
+            <form-single name="DashboardTime" transition=".">
+                <field name="filtersJson"><default-field><hidden/></default-field></field>
+                <field name="definitionId"><default-field><hidden/></default-field></field>
+                <field name="panelId"><default-field><hidden/></default-field></field>
+                <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues || {})"><default-field><hidden/></default-field></field>
+                <field name="from"><default-field title="From"><text-line/></default-field></field>
+                <field name="thru"><default-field title="Through"><text-line/></default-field></field>
+                <field name="refresh"><default-field><submit text="Refresh"/></default-field></field>
+            </form-single>
+        </widgets></section>
         <section name="DashboardAccessibleVariables" condition="sri.getRenderMode() !== 'qvt'"><widgets>
             <section-iterate name="DashboardVariables" list="dashboardVariables" entry="variable"><widgets>
                 <form-single name="SetDashboardVariable" transition="setVariable">

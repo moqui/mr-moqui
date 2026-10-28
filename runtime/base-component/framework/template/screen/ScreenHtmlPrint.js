@@ -341,6 +341,7 @@ a { color: blue; }
     const macros = Object.assign({}, noops(S.allElements), S.anyMacros(MODE), {
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
+        "report-embed": reportWidget,
         "screen": stmt((node, children) => children),
         "widgets": widgetsMacro,
         "fail-widgets": widgetsMacro,

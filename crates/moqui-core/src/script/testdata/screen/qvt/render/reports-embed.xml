@@ -1,0 +1,8 @@
+<screen require-authentication="false">
+    <widgets>
+        <label text="Before the embed" type="p"/>
+        <report-embed id="SalesEmbed" definition-id="monitor-overview" from="now-1h" variables="{service:'shop'}"/>
+        <report-embed definition-id="${'monitor-' + 'services'}" panel-id="summary" condition="false"/>
+        <label text="After the embed" type="p"/>
+    </widgets>
+</screen>

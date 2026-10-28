@@ -2466,6 +2466,8 @@
         "context": widget("screenContext", false),
         "report-panel": widget("reportWidget", false),
         "report-dashboard": widget("reportWidget", false),
+        // Computed for the viewer on each request, so a screen with one is not a static template (it renders server-merged).
+        "report-embed": stmt(() => { throw new Error("report-embed renders data for the viewer, which a static template does not hold"); }),
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
         "status-bar": widget("statusBar", true),

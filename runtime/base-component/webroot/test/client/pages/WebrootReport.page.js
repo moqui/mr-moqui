@@ -380,3 +380,161 @@ test('the report composition editor writes the paper size',async()=>{
         assert.equal(JSON.parse(form.fields.definitionJson).paper,'a4');
     } finally {app.unmount();target.remove();}
 });
+function reportButton(target,text){const button=Array.from(target.querySelectorAll('button')).find(node=>node.textContent===text);if(!button)throw new Error('Missing button '+text);return button;}
+test('the time picker applies quick, absolute and remembered recent ranges',async()=>{
+    const viewer='picker-test-'+Date.now(),key=report.recentRanges.key(viewer);
+    const target=document.createElement('div');document.body.appendChild(target);const applied=[];
+    const app=Vue.createApp({render(){return Vue.h(moqui.qvtComponents['m-report-time-picker'],{value:{from:'now-7d',thru:'now'},absolute:{from:'2026-01-01T00:00:00.000Z',thru:'2026-01-08T00:00:00.000Z'},viewerId:viewer,onApply:range=>applied.push(range)});}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const toggle=target.querySelector('button[aria-label^="Time range"]');assert.equal(toggle.textContent,'Last 7 days');
+        toggle.click();await Vue.nextTick();
+        assert.notEqual(target.querySelector('[role="dialog"]'),null);assert.equal(target.textContent.includes('No recent ranges yet.'),true);
+        for(const label of ['Last 5 minutes','Last 30 days','Today','This week','Yesterday','Previous month'])reportButton(target,label);
+        reportButton(target,'Last 1 hour').click();await Vue.nextTick();
+        assert.deepEqual(applied[0],{from:'now-1h',thru:'now'});assert.equal(target.querySelector('[role="dialog"]'),null);
+        assert.deepEqual(report.recentRanges.read(viewer),[{from:'now-1h',thru:'now'}]);
+        toggle.click();await Vue.nextTick();
+        const recent=Array.from(target.querySelectorAll('h5')).find(node=>node.textContent==='Recent ranges').nextElementSibling;assert.equal(recent.textContent,'Last 1 hour');
+        const inputs=target.querySelectorAll('input[type="datetime-local"]');assert.equal(inputs[0].value,report.localInput('2026-01-01T00:00:00.000Z'));
+        inputs[0].value='2026-02-02T10:00';inputs[0].dispatchEvent(new Event('input'));inputs[1].value='2026-02-02T09:00';inputs[1].dispatchEvent(new Event('input'));
+        reportButton(target,'Apply time range').click();await Vue.nextTick();
+        assert.equal(target.querySelector('[role="alert"]').textContent,'The through time must be after the from time');assert.equal(applied.length,1);
+        inputs[1].value='2026-02-02T12:30';inputs[1].dispatchEvent(new Event('input'));reportButton(target,'Apply time range').click();await Vue.nextTick();
+        assert.deepEqual(applied[1],{from:new Date('2026-02-02T10:00').toISOString(),thru:new Date('2026-02-02T12:30').toISOString()});
+        assert.equal(report.recentRanges.read(viewer).length,2);
+        reportButton(target,'Earlier').click();await Vue.nextTick();assert.deepEqual(applied[2],{from:'2025-12-25T00:00:00.000Z',thru:'2026-01-01T00:00:00.000Z'});
+        assert.equal(report.rangeLabel({from:'now/d',thru:'now/d'}),'Today');assert.equal(report.rangeLabel({from:'now-2h',thru:'now'}),'now-2h to now');
+    } finally {app.unmount();target.remove();localStorage.removeItem(key);}
+});
+test('the dashboard toolbar time picker sends the range to the URL and an embed keeps the page keys and URL',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);const navigate=report.navigate,visited=[];report.navigate=href=>visited.push(href);
+    const app=Vue.createApp(moqui.qvtComponents['m-dashboard'],{dashboard:{definitionId:'d',requestedTime:{from:'now-6h',thru:'now'},absoluteTime:{from:'2026-01-01T00:00:00Z',thru:'2026-01-01T06:00:00Z'},panels:{first:{title:'Picked panel',visualization:'stat'}}},frames:{}});
+    try {
+        const dashboard=app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelector('button[aria-label^="Time range"]').textContent,'Last 6 hours');
+        dashboard.timeRange({from:'now-15m',thru:'now'});const url=new URL(visited[0]);assert.equal(url.searchParams.get('from'),'now-15m');assert.equal(url.searchParams.get('thru'),'now');
+    } finally {app.unmount();target.remove();report.navigate=navigate;}
+    const embedTarget=document.createElement('div');document.body.appendChild(embedTarget);
+    const embed=Vue.createApp(moqui.qvtComponents['m-dashboard'],{dashboard:{definitionId:'sales',title:'Sales',embedded:true,editable:true,requestedTime:{from:'now-7d',thru:'now'},absoluteTime:{from:'2026-01-01T00:00:00Z',thru:'2026-01-08T00:00:00Z'},
+        panels:{orders:{title:'Orders',visualization:'table',queries:[{datasetId:'orders'}],notices:[{level:'error',message:'Query failed'}]}}},frames:{orders:[{fields:[{name:'count',type:'number',values:[3]}]}]}});
+    try {
+        const dashboard=embed.mount(embedTarget);await Vue.nextTick();
+        assert.equal(dashboard.onKey,undefined);assert.equal(embedTarget.textContent.includes('Kiosk (Alt+K)'),false);
+        const open=Array.from(embedTarget.querySelectorAll('a')).find(a=>a.textContent==='Open in Dashboards');assert.equal(new URL(open.href).searchParams.get('definitionId'),'sales');assert.equal(new URL(open.href).searchParams.get('from'),'2026-01-01T00:00:00Z');
+        assert.equal(embedTarget.textContent.includes('Orders: Query failed'),true);assert.equal(embedTarget.textContent.includes('Last 7 days'),true);
+        embedTarget.querySelector('button[aria-label="Panel menu for Orders"]').click();await Vue.nextTick();
+        const items=Array.from(embedTarget.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent);
+        assert.deepEqual(items,['Open in Dashboards','Edit','Share','Explore','Inspect']);
+    } finally {embed.unmount();embedTarget.remove();}
+});
+test('the panel menu views, edits, shares, explores, duplicates and removes a panel',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const navigate=report.navigate,request=moqui.request,confirm=window.confirm,visited=[],posts=[];let answer=true;
+    report.navigate=href=>visited.push(href);moqui.request=async(url,options)=>{posts.push({url,options});return {ok:true,json:{panelId:'latency-copy'}};};window.confirm=()=>answer;
+    const panel={title:'Latency',visualization:'timeSeries',queries:[{datasetId:'otel_metrics',queryString:'name:"http.server.duration"',filters:[{field:{name:'service.name',op:'eq',value:'shop'}}],aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'p95',type:'max',role:'metric'}]}]};
+    const range={from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'},filters=[{datasetId:'otel_metrics',query:{field:{name:'env',op:'eq',value:'prod'}}},{datasetId:'orders',query:{field:{name:'x',op:'exists'}}}];
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'ops',panelId:'latency',panel,range,filters,editable:true,frame:{fields:[{name:'time',type:'time',values:[1000]},{name:'p95',type:'number',values:[2]}]}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const toggle=target.querySelector('button[aria-label="Panel menu for Latency"]');assert.equal(toggle.getAttribute('aria-expanded'),'false');toggle.click();await Vue.nextTick();
+        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Duplicate','Remove','New alert rule']);
+        reportButton(target,'View').click();assert.equal(new URL(visited[0]).searchParams.get('panelId'),'latency');
+        toggle.click();await Vue.nextTick();reportButton(target,'Edit').click();assert.equal(visited[1],report.appPath('/apps/dashboards/Definition?definitionId=ops&panelId=latency'));
+        toggle.click();await Vue.nextTick();reportButton(target,'Explore').click();
+        const explore=new URL(visited[2],location.href);assert.equal(explore.pathname.endsWith('/dashboards/Explore'),true);assert.equal(explore.searchParams.get('datasetId'),'otel_metrics');assert.equal(explore.searchParams.get('queryString'),'name:"http.server.duration"');assert.equal(explore.searchParams.get('from'),range.from);
+        const pills=JSON.parse(explore.searchParams.get('filtersJson'));assert.equal(pills.length,2);assert.deepEqual(pills[0].query,{field:{name:'service.name',op:'eq',value:'shop'}});assert.equal(pills[1].query.field.name,'env');
+        toggle.click();await Vue.nextTick();reportButton(target,'Share').click();for(let wait=0;wait<30 && !target.querySelector('[role="status"]');wait++)await new Promise(resolve=>setTimeout(resolve,50));
+        const status=target.querySelector('[role="status"]');assert.notEqual(status,null);const link=new URL(status.querySelector('input')?status.querySelector('input').value:report.shareUrl(range,'latency'));
+        assert.equal(link.searchParams.get('from'),range.from);assert.equal(link.searchParams.get('thru'),range.thru);assert.equal(link.searchParams.get('panelId'),'latency');
+        toggle.click();await Vue.nextTick();reportButton(target,'Duplicate').click();await new Promise(resolve=>setTimeout(resolve,0));
+        assert.equal(posts[0].url,'/apps/dashboards/Dashboard/duplicatePanel');assert.equal(posts[0].options.method,'POST');assert.deepEqual([posts[0].options.params.definitionId,posts[0].options.params.panelId],['ops','latency']);assert.equal(visited.length,4);
+        answer=false;toggle.click();await Vue.nextTick();reportButton(target,'Remove').click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(posts.length,1);
+        answer=true;toggle.click();await Vue.nextTick();reportButton(target,'Remove').click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(posts[1].url,'/apps/dashboards/Dashboard/removePanel');
+        moqui.request=async()=>({ok:true,json:{errors:'viewer may not update this dashboard'}});toggle.click();await Vue.nextTick();reportButton(target,'Duplicate').click();await new Promise(resolve=>setTimeout(resolve,0));await Vue.nextTick();
+        assert.equal(target.querySelector('[role="alert"]').textContent,'viewer may not update this dashboard');
+    } finally {app.unmount();target.remove();report.navigate=navigate;moqui.request=request;window.confirm=confirm;}
+    const readOnly=document.createElement('div');document.body.appendChild(readOnly);
+    const view=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'ops',panelId:'latency',single:true,panel:{title:'Notes',visualization:'text',text:'x'}});
+    try {view.mount(readOnly);await Vue.nextTick();readOnly.querySelector('button[aria-label="Panel menu for Notes"]').click();await Vue.nextTick();
+        assert.deepEqual(Array.from(readOnly.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['Edit','Share','Inspect']);}
+    finally {view.unmount();readOnly.remove();}
+});
+test('visualization suggestions rank types from the frame columns and the editor applies one',async()=>{
+    const first=frame=>report.suggestVisualizations(report.frameShape(frame))[0].visualization;
+    assert.equal(first({fields:[{name:'count',type:'number',values:[3]}]}),'stat');
+    assert.equal(first({fields:[{name:'time',type:'time',values:[1,2]},{name:'requests',type:'number',values:[3,4]}]}),'timeSeries');
+    assert.equal(first({fields:[{name:'status',type:'string',values:['a','b']},{name:'orders',type:'number',values:[3,4]}]}),'bar');
+    assert.equal(first({fields:[{name:'time',type:'time',values:[1]},{name:'latency.bucket.0',type:'number',values:[1]},{name:'latency.bucket.1',type:'number',values:[2]}]}),'heatmap');
+    assert.equal(first({fields:[{name:'span_id',type:'string',values:['a']},{name:'duration_nano',type:'number',values:[1]}]}),'traceWaterfall');
+    const pie=report.suggestVisualizations(report.frameShape({fields:[{name:'status',type:'string',values:['a','b']},{name:'orders',type:'number',values:[3,4]}]})).map(item=>item.visualization);assert.equal(pie.includes('pie'),true);
+    assert.equal(report.suggestVisualizations(report.queryShape({queries:[{aggregations:[{id:'total',type:'sum',role:'metric'}]}]}))[0].visualization,'stat');
+    assert.equal(report.suggestVisualizations(report.queryShape({queries:[{aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'n',type:'value_count',role:'metric'}]}]}))[0].visualization,'timeSeries');
+    const target=document.createElement('div');document.body.appendChild(target);const previousFetch=window.fetch;let sent;
+    window.fetch=async(url,init)=>{sent={url,body:JSON.parse(init.body)};return {ok:true,status:200,json:async()=>({frames:[{fields:[{name:'total',type:'number',values:[9]}]}]})};};
+    const form={fields:Vue.reactive({definitionJson:JSON.stringify({panels:{one:{title:'Orders',visualization:'table',queries:[{datasetId:'orders',aggregations:[{id:'status',type:'terms',role:'x-axis'},{id:'total',type:'sum',role:'metric'}]}]}}})})};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-definition-editor'],{datasets:[{id:'orders'}]});app.provide('mForm',form);const editor=app.mount(target);
+    try {
+        await Vue.nextTick();let group=target.querySelector('[aria-label="Suggested visualizations"]');assert.equal(group.textContent.startsWith('Suggested from the query:'),true);
+        const best=group.querySelector('button[data-visualization]');assert.equal(best.getAttribute('data-visualization'),'bar');best.click();await Vue.nextTick();
+        assert.equal(JSON.parse(form.fields.definitionJson).panels.one.visualization,'bar');
+        await editor.preview();await Vue.nextTick();assert.equal(sent.url,'/rest/s1/moqui/reports/query');assert.equal(sent.body.query.queries[0].datasetId,'orders');
+        group=target.querySelector('[aria-label="Suggested visualizations"]');assert.equal(group.textContent.startsWith('Suggested from the data:'),true);assert.equal(group.querySelector('button[data-visualization]').getAttribute('data-visualization'),'stat');
+        window.fetch=async()=>({ok:false,status:403,json:async()=>({errors:'Not allowed'})});await editor.preview();await Vue.nextTick();assert.equal(target.querySelector('.m-report-suggestions [role="alert"]').textContent,'The data could not be checked: Not allowed');
+    } finally {app.unmount();target.remove();window.fetch=previousFetch;}
+});
+test('table footers total all the data and sparkline cells draw their series',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const frame={fields:[{name:'service',type:'string',values:['a','b']},{name:'hits',type:'number',values:[5,3],config:{totals:{sum:100,max:60}}},{name:'errors',type:'number',values:[1,2]},{name:'sparkline',type:'string',values:['[1,2,3]','[3,null,1]']}]};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{title:'Services',visualization:'table',footer:{calculations:['sum','max']}}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const rows=target.querySelectorAll('tfoot tr');assert.equal(rows.length,2);
+        assert.deepEqual(Array.from(rows[0].children).map(cell=>cell.textContent),['Total','100','3','']);
+        assert.deepEqual(Array.from(rows[1].children).map(cell=>cell.textContent),['Maximum','60','2','']);
+        const sparks=target.querySelectorAll('tbody svg.m-report-sparkline');assert.equal(sparks.length,2);assert.equal((sparks[1].querySelector('path').getAttribute('d').match(/M/g) || []).length,2);
+        assert.equal(target.querySelector('tbody').textContent.includes('[1,2,3]'),false);
+    } finally {app.unmount();target.remove();}
+    assert.equal(report.reduce([1,null,3],'mean'),2);assert.equal(report.reduce([1,2,3,4],'p50'),2.5);assert.equal(report.reduce([],'sum'),null);assert.equal(report.reduce([null,4,null],'last'),4);
+    assert.equal(report.sparklineCell({name:'trend',cellDisplay:'sparkline'},[1,2]).length,2);assert.equal(report.sparklineCell({name:'sparkline',cellDisplay:'text'},'[1]'),null);assert.equal(report.sparklineValues('[1,"x"]'),null);
+    assert.deepEqual(report.footerRows([{name:'n',type:'number',values:[1]}],{totals:{n:7}})[0].values,[7]);
+});
+test('text panels substitute dashboard variables as escaped text',async()=>{
+    assert.equal(report.substituteVariables('Orders for ${customer} in $region, ${missing} and $5',{customer:'**Acme** <b>',region:['EU','US']}),'Orders for \\*\\*Acme\\*\\* \\<b\\> in EU, US, ${missing} and $5');
+    assert.equal(report.substituteVariables('[x](${url})',{url:'javascript:alert(1)'}),'[x](javascript\\:alert\\(1\\))');
+    assert.equal(report.substituteVariables('From ${__from}',{},{from:'2026-01-01T00:00:00Z'}),'From 2026\\-01\\-01T00\\:00\\:00Z');
+    assert.equal(report.substituteVariables('$service',{service:'$__all'}),'All');
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{panel:{title:'Notes',visualization:'text',text:'Region: ${region}'},variables:{region:'EU'}});
+    app.component('m-markdown',{props:{text:String},render(){return Vue.h('pre',{class:'markdown-stub'},this.text);}});
+    try {app.mount(target);await Vue.nextTick();assert.equal(target.querySelector('.markdown-stub').textContent,'Region: EU');}
+    finally {app.unmount();target.remove();}
+});
+test('a latency heatmap draws histogram bucket counts over time with the query bounds',async()=>{
+    const panel={visualization:'heatmap',heatmap:{unit:'s'},queries:[{datasetId:'otel_metrics',aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'latency',type:'histogram_merge',role:'metric',params:{bounds:[0.1,0.5]}}]}]};
+    const frame={fields:[{name:'time',type:'time',values:[2000,1000,2000]},{name:'latency.p50',type:'number',values:[0.1,0.2,0.3]},{name:'latency.bucket.0',type:'number',values:[1,4,2]},{name:'latency.bucket.1',type:'number',values:[0,1,0]},{name:'latency.bucket.2',type:'number',values:[3,0,null]}]};
+    const map=report.heatmap(frame,panel);
+    assert.deepEqual(map.labels,['≤ 0.10 s','≤ 0.50 s','> 0.50 s']);assert.deepEqual(map.columns.map(column=>column.time),[1000,2000]);
+    assert.deepEqual(map.columns.map(column=>column.counts),[[4,1,0],[3,0,3]]);assert.equal(map.max,4);
+    assert.equal(report.heatmap({fields:[{name:'value',type:'number',values:[1]}]},{}),null);
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const figure=target.querySelector('figure.m-report-heatmap');assert.equal(figure.getAttribute('role'),'img');assert.equal(figure.getAttribute('aria-label').includes('2 times, 3 buckets'),true);
+        const labels=Array.from(figure.querySelectorAll('.m-report-heatmap-label')).map(node=>node.textContent);assert.deepEqual(labels,['> 0.50 s','≤ 0.50 s','≤ 0.10 s']);
+        assert.equal(figure.querySelectorAll('[data-count]').length,6);assert.equal(figure.querySelector('[data-count="4"]').getAttribute('title').endsWith('≤ 0.10 s: 4'),true);
+    } finally {app.unmount();target.remove();}
+});
+test('the transformation editor accepts calculation lists, modes and the full filter operators',async()=>{
+    const view=reportBoundComponent('m-report-transform-editor',[{type:'reduce',calculations:['last','max']},{type:'calculate',mode:'movingAverage',field:'hits',window:3},{type:'filter',field:'hits',operator:'range',from:1,to:5},{type:'filter',match:'all',conditions:[{field:'a',operator:'exists'}]}]);
+    try {
+        let groups=view.target.querySelectorAll('fieldset');reportControl(groups[0],'Calculations (comma separated)','last,max,p95');await Vue.nextTick();assert.deepEqual(view.model.value[0].calculations,['last','max','p95']);
+        groups=view.target.querySelectorAll('fieldset');reportControl(groups[1],'Window','5');await Vue.nextTick();assert.equal(view.model.value[1].window,5);
+        groups=view.target.querySelectorAll('fieldset');reportControl(groups[1],'Calculation mode','binary');await Vue.nextTick();groups=view.target.querySelectorAll('fieldset');assert.notEqual(Array.from(groups[1].querySelectorAll('span')).find(node=>node.textContent==='Left field'),undefined);
+        groups=view.target.querySelectorAll('fieldset');reportControl(groups[2],'Range through','9');await Vue.nextTick();assert.equal(view.model.value[2].to,9);
+        groups=view.target.querySelectorAll('fieldset');reportControl(groups[3],'Match','any');await Vue.nextTick();assert.equal(view.model.value[3].match,'any');assert.equal(view.target.textContent.includes('1 conditions; edit them in the definition JSON.'),true);
+        const operators=Array.from(Array.from(view.target.querySelectorAll('fieldset'))[2].querySelectorAll('label')).find(node=>node.querySelector('span').textContent==='Operator').querySelectorAll('option');
+        assert.deepEqual(Array.from(operators).map(option=>option.value),['eq','ne','gt','gte','lt','lte','range','regex','exists','missing']);
+    } finally {view.close();}
+});

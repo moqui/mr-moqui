@@ -918,6 +918,72 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     )
 }
 
+/// The footer calculations a query asks for in `totals` (a table panel's `footer.calculations`), at most 8 known ones.
+fn total_calculations(options: &Json) -> Vec<String> {
+    let known = |name: &str| {
+        matches!(
+            name,
+            "sum" | "mean" | "avg" | "min" | "max" | "count" | "first" | "last" | "delta"
+        ) || name
+            .strip_prefix('p')
+            .and_then(|p| p.parse::<f64>().ok())
+            .is_some_and(|p| (0.0..=100.0).contains(&p))
+    };
+    let mut names = Vec::new();
+    for name in options["totals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Json::as_str)
+    {
+        if !known(name) {
+            tracing::warn!(calculation = name, "unknown table footer calculation, skipping");
+        } else if !names.iter().any(|seen| seen == name) && names.len() < 8 {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// Footer totals from the whole result: the same steps with their row limits off, so a table that shows the top rows
+/// still totals all of them. Each number field of the shown frames gets `config.totals`, `{calculation: value}`.
+fn attach_totals(frames: &mut [frame::Frame], unlimited: Vec<frame::Frame>, steps: &[Json], calculations: &[String]) {
+    let steps = steps
+        .iter()
+        .map(|step| {
+            let mut step = step.clone();
+            if step["type"] == "limit" {
+                step["disabled"] = json!(true);
+            }
+            step
+        })
+        .collect::<Vec<_>>();
+    let complete = match frame::transform_frames(unlimited, &steps) {
+        Ok(complete) => complete,
+        Err(error) => {
+            // The table still renders; only its footer is missing.
+            tracing::error!(%error, "table footer totals failed, continuing without them");
+            return;
+        }
+    };
+    for (shown, complete) in frames.iter_mut().zip(&complete) {
+        for field in shown
+            .fields
+            .iter_mut()
+            .filter(|field| matches!(field.kind.as_str(), "number" | "integer"))
+        {
+            let Some(source) = complete.fields.iter().find(|source| source.name == field.name) else {
+                continue;
+            };
+            let totals = calculations
+                .iter()
+                .map(|name| (name.clone(), frame::reduce(&source.values, name)))
+                .collect::<serde_json::Map<_, _>>();
+            field.config.insert("totals".into(), Json::Object(totals));
+        }
+    }
+}
+
 fn apply_transformations(frames: Vec<frame::Frame>, options: &Json) -> Result<(Vec<frame::Frame>, Vec<Json>), Error> {
     let bucket_sources = frames
         .iter()
@@ -966,11 +1032,16 @@ fn apply_transformations(frames: Vec<frame::Frame>, options: &Json) -> Result<(V
             }
         }
     }
+    let calculations = total_calculations(options);
+    let unlimited = (!calculations.is_empty()).then(|| frames.clone());
     let (mut frames, inspection) = if options["inspect"] == true {
         frame::transform_inspected(frames, steps)?
     } else {
         (frame::transform_frames(frames, steps)?, Vec::new())
     };
+    if let Some(unlimited) = unlimited {
+        attach_totals(&mut frames, unlimited, steps, &calculations);
+    }
     let combines = steps.iter().any(|step| {
         step["disabled"] != true
             && matches!(
@@ -2251,6 +2322,9 @@ pub fn dashboard_frames_filtered(
                 query["comparePrevious"] =
                     json!(panel["comparePrevious"] == true || panel["time"]["comparePrevious"] == true);
                 query["inspect"] = json!(panel["inspect"] == true || body["inspect"] == true);
+                if panel["footer"]["calculations"].is_array() {
+                    query["totals"] = panel["footer"]["calculations"].clone();
+                }
                 variables(&mut query, &resolved);
                 if let Some(values) = resolved.as_object() {
                     apply_variables(&mut query, &variable_definitions, values);
@@ -2323,6 +2397,12 @@ pub fn render_dashboard(
 ) -> Result<Parameters, Error> {
     let params = input(params);
     let mut definition = definitions::read(ec, text(&params, "definitionId", ""))?;
+    if definition["type"] == "panel" {
+        // A library panel renders as a dashboard of itself, for an embed of one panel.
+        let id = text(&definition, "id", "panel").to_owned();
+        definition["body"] =
+            json!({"panels":{id.as_str():{"panelRef":id}},"layout":{"type":"autoGrid","items":[{"panelId":id}]}});
+    }
     if !definition["body"].is_object() {
         return Err(fail("dashboard body must be an object"));
     }
@@ -2373,6 +2453,29 @@ pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crat
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn footer_totals_cover_rows_a_limit_hides() {
+        let frame = frame::Frame::from_rows(&[
+            BTreeMap::from([("name".into(), json!("a")), ("hits".into(), json!(5))]),
+            BTreeMap::from([("name".into(), json!("b")), ("hits".into(), json!(3))]),
+            BTreeMap::from([("name".into(), json!("c")), ("hits".into(), json!(2))]),
+        ]);
+        let options = json!({"totals":["sum","max","bogus","sum"],"transformations":[{"type":"sort","field":"hits","descending":true},{"type":"limit","count":1}]});
+        assert_eq!(total_calculations(&options), vec!["sum".to_owned(), "max".to_owned()]);
+        let (frames, _) = apply_transformations(vec![frame.clone()], &options).unwrap();
+        let hits = frames[0].fields.iter().find(|field| field.name == "hits").unwrap();
+        assert_eq!(hits.values, vec![json!(5)]);
+        assert_eq!(hits.config["totals"], json!({"sum":10.0,"max":5.0}));
+        assert!(!frames[0]
+            .fields
+            .iter()
+            .find(|field| field.name == "name")
+            .unwrap()
+            .config
+            .contains_key("totals"));
+        let (plain, _) = apply_transformations(vec![frame], &json!({})).unwrap();
+        assert!(plain[0].fields.iter().all(|field| !field.config.contains_key("totals")));
+    }
     #[test]
     fn subtotals_preserve_filter_scope_and_native_metric_calculation() {
         let mut aggs = json!({"region":{"terms":{"field":"region"},"aggs":{"paid":{"filter":{"term":{"status":"paid"}},"aggs":{"product":{"terms":{"field":"product"},"aggs":{"average":{"avg":{"field":"amount"}}}}}}}}});

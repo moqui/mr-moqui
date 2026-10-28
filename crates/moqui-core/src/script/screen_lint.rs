@@ -858,6 +858,9 @@ fn check_condition(node: &MNode, file: &mut FileReport) {
 
 pub(crate) fn is_expression_attr(element: &str, attr: &str) -> bool {
     match attr {
+        // A report-embed's from is a time (now-7d), expanded as a string; its variables are the expression.
+        "from" if element == "report-embed" => false,
+        "variables" => element == "report-embed",
         "condition" | "from" | "in-map" | "parameter-map" | "text-map" => true,
         "list" => matches!(
             element,
