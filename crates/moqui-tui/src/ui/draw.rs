@@ -67,6 +67,10 @@ pub fn draw(
     let pane_columns = assist.as_ref().filter(|at| at.docked).map_or(0, |at| at.width);
     let mut framed = frame_with(width - pane_columns, breakpoints, session.drawer_choice());
     framed.terminal = width;
+    if let Some((id, lines)) = session.kiosk_lines(width.saturating_sub(2)) {
+        kiosk(session, theme, breakpoints, &framed, (&id, &lines), hits, ctx);
+        return;
+    }
     let roomy = height >= 10;
     let (body_top, mut body_bottom) = if roomy {
         (2, height - 3)
@@ -157,6 +161,53 @@ pub fn draw(
         .map_or(framed.canvas, |at| at.x.saturating_sub(canvas_x).max(10));
     let canvas = Rect::new(canvas_x, body_top, canvas_width, body_bottom - body_top);
     overlays::draw(&mut paint, session, breakpoints, canvas, framed.class);
+}
+
+/// Kiosk mode: the component alone, without the title, the rules, the drawer and the key line. A message still shows
+/// on the last row, and the dialogs over it.
+fn kiosk(
+    session: &Session,
+    theme: &Theme,
+    breakpoints: &Breakpoints,
+    framed: &Frame,
+    (id, lines): (&str, &[Line]),
+    hits: &mut Hits,
+    ctx: &mut RenderContext,
+) {
+    let width = ctx.area.width;
+    let height = ctx.area.height;
+    let mut spots = Spots::new();
+    let mut paint = Painter {
+        ctx,
+        theme,
+        top: 0,
+        bottom: height,
+        scroll: 0,
+        left: 1,
+        right: width.saturating_sub(1),
+        spots: &mut spots,
+        hits,
+        aim: None,
+    };
+    let message = !session.message().is_empty();
+    let rows = usize::from(height) - usize::from(message);
+    paint.target(Target::Focus(id.to_string()), |paint| {
+        for (at, line) in lines.iter().take(rows).enumerate() {
+            draw_line(paint, line, 1, at, true);
+        }
+    });
+    paint.left = 0;
+    paint.right = width;
+    if message {
+        message_line(&mut paint, session, height - 1, width);
+    }
+    overlays::draw(
+        &mut paint,
+        session,
+        breakpoints,
+        Rect::new(0, 0, width, height),
+        framed.class,
+    );
 }
 
 #[derive(Clone, Copy)]

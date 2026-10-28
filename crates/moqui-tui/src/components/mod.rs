@@ -155,6 +155,11 @@ pub trait Component: Sync {
         None
     }
 
+    /// Whether the component asks for the whole terminal, without the app's chrome: a dashboard's kiosk mode.
+    fn kiosk(&self, _props: &Value, _state: &ComponentState) -> bool {
+        false
+    }
+
     /// A scheduled component tick. Most polling widgets simply read their source again.
     fn tick(&self, _props: &Value, _state: &mut ComponentState) -> Vec<Act> {
         vec![Act::Reload]

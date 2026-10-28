@@ -978,6 +978,12 @@ impl Session {
         if self.message_expired() {
             self.clear_message();
         }
+        // Kiosk mode hides the rest of the screen, so its keys (Esc to leave) reach the kiosk component.
+        if let Some(id) = self.kiosk_component() {
+            if self.focus_id() != id {
+                self.focus_key(&id);
+            }
+        }
         let handled = self.overlay_key(press)
             || self.assist_key(press)
             || self.number_key(press)
