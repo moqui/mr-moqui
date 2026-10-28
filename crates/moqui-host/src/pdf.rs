@@ -41,13 +41,13 @@ mod cdp;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
 use moqui_lib::error::Error;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::{Mutex, Semaphore};
 
 use self::cdp::Connection;

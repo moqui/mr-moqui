@@ -151,6 +151,11 @@ fn read_stored(path: &std::path::Path) -> Option<Stored> {
     })
 }
 
+/// The login key stored in a key file, for the dev tools' `--server` (crate::devtools_remote).
+pub(crate) fn stored_key(path: &std::path::Path) -> Option<String> {
+    read_stored(path).map(|stored| stored.key)
+}
+
 /// Write the key file, readable by its owner only. A failure is logged: the key still serves this run.
 fn write_stored(path: &std::path::Path, stored: &Stored) {
     let text = format!(

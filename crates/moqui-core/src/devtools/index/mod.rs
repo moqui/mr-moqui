@@ -89,6 +89,17 @@ impl Located {
         let index = extract::extract(&info, &text)?;
         Ok((hash_of(&text), index))
     }
+
+    /// The artifacts and references of `text` as this file's (an editor's unsaved buffer).
+    ///
+    /// # Errors
+    ///
+    /// Returns why when the text does not parse.
+    pub fn extract_text(&self, text: &str) -> Result<FileIndex, String> {
+        let (display, mut info) = self.info();
+        info.path = &display;
+        extract::extract(&info, text)
+    }
 }
 
 /// Where `path` is: its component and kind, when it is in a loaded component and of a kind the index reads.
@@ -387,6 +398,57 @@ impl MemoryIndex {
                 entry(path, row, other)
             })
             .collect()
+    }
+
+    /// The artifact or reference at `line` of `path`, for go to definition, as the database index's [`at`]: the
+    /// reference on the line naming `word` (or the first on the line) and the artifact it resolves to; else the
+    /// artifact defined on the line.
+    #[must_use]
+    pub fn at(&self, path: &str, line: u32, word: &str) -> Option<At> {
+        let word = word.trim();
+        let on_line: Vec<&(String, RefRow)> = self
+            .refs
+            .iter()
+            .filter(|(file, row)| file == path && row.line == line)
+            .collect();
+        let chosen = on_line
+            .iter()
+            .find(|(_, row)| {
+                !word.is_empty()
+                    && (row.to_name == word || row.to_name.ends_with(&format!(".{word}")) || row.to_name.contains(word))
+            })
+            .or_else(|| on_line.first());
+        if let Some((file, row)) = chosen {
+            let target = row.to_id.as_deref().and_then(|id| self.describe(id));
+            return Some((Some(entry(file, row, None)), target));
+        }
+        self.artifacts
+            .iter()
+            .find(|artifact| artifact.path == path && artifact.line == line)
+            .map(|artifact| (None, Some(artifact.clone())))
+    }
+
+    /// `located`'s rows read again from `text` (an editor's buffer, saved or not) in place of the ones it had, the
+    /// names resolved again; `false` when the text does not parse, and the old rows stay.
+    pub fn update_text(&mut self, factory: &ExecutionContextFactory, located: &Located, text: &str) -> bool {
+        let Ok(read) = located.extract_text(text) else {
+            return false;
+        };
+        let path = located.path.display().to_string();
+        self.artifacts.retain(|artifact| artifact.path != path);
+        self.refs.retain(|(file, _)| *file != path);
+        self.artifacts.extend(read.artifacts);
+        self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
+        let mut resolver = Resolver::default();
+        for artifact in &self.artifacts {
+            resolver.add(artifact);
+        }
+        let exists = |location: &str| location_exists(factory, location);
+        for (_, row) in &mut self.refs {
+            resolver.resolve(row, &exists);
+        }
+        self.resolver = resolver;
+        true
     }
 
     /// The extensions of `components` (every component when empty), broken ones first.
@@ -1549,12 +1611,7 @@ pub fn refs(
 /// # Errors
 ///
 /// Returns an error when the index is not kept here or cannot be read.
-pub fn at(
-    factory: &Arc<ExecutionContextFactory>,
-    path: &str,
-    line: u32,
-    word: &str,
-) -> Result<Option<At>, Error> {
+pub fn at(factory: &Arc<ExecutionContextFactory>, path: &str, line: u32, word: &str) -> Result<Option<At>, Error> {
     ensure(factory)?;
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let _lifted = fence::lift();

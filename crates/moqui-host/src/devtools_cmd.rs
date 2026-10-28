@@ -28,6 +28,7 @@ struct CheckArgs {
     paths: Vec<PathBuf>,
     json: bool,
     extensions: bool,
+    server: Option<String>,
 }
 
 fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
@@ -35,16 +36,21 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         paths: Vec::new(),
         json: false,
         extensions: false,
+        server: None,
     };
-    for arg in args {
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--json" => parsed.json = true,
             "--extensions" => parsed.extensions = true,
             "--server" => {
-                return Err(Error::new(
-                    "moqui check --server is not built yet; run moqui check where the files are",
-                ))
+                parsed.server = Some(
+                    rest.next()
+                        .cloned()
+                        .ok_or_else(|| crate::usage::command_usage("check"))?,
+                );
             }
+            other if other.starts_with("--server=") => parsed.server = Some(other["--server=".len()..].to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("check")),
             other => parsed.paths.push(PathBuf::from(other)),
         }
@@ -63,21 +69,47 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
     } else {
         args.paths.clone()
     };
-    let factory = model_only()?;
-    let mut problems: Vec<Problem> = Vec::new();
+    let mut files = Vec::new();
     for path in &paths {
         if path.is_dir() {
-            let mut files = Vec::new();
             collect_xml(path, &mut files);
-            for file in files {
-                problems.extend(check::check_file(&factory, &file));
-            }
         } else {
-            problems.extend(check::check_file(&factory, path));
+            files.push(path.clone());
         }
     }
-    if args.extensions {
-        problems.extend(check::check_extensions(&factory));
+    let mut problems: Vec<Problem> = Vec::new();
+    match &args.server {
+        // a running dev instance's checks, file by file; one that fails is reported and the others go on
+        Some(url) => {
+            #[cfg(feature = "tui")]
+            {
+                if args.extensions {
+                    return Err(Error::new("moqui check --extensions runs here, not with --server"));
+                }
+                let remote = crate::devtools_remote::Remote::connect(url)?;
+                for file in &files {
+                    let text = std::fs::read_to_string(file)
+                        .map_err(|err| Error::new(format!("{}: {err}", file.display())))?;
+                    match remote.check(file, &text) {
+                        Ok(found) => problems.extend(found),
+                        Err(err) => eprintln!("{}: not checked: {err}", file.display()),
+                    }
+                }
+            }
+            #[cfg(not(feature = "tui"))]
+            return Err(Error::new(format!(
+                "moqui check --server {url} needs the tui feature's client"
+            )));
+        }
+        None => {
+            let factory = model_only()?;
+            for file in &files {
+                problems.extend(check::check_file(&factory, file));
+            }
+            if args.extensions {
+                problems.extend(check::check_extensions(&factory));
+            }
+        }
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     for problem in &problems {
@@ -208,7 +240,7 @@ fn collect_xml(dir: &Path, into: &mut Vec<PathBuf>) {
 
 /// A factory booted on the runtime with an entity facade of the framework's and the components' entities that opens no
 /// database, as `moqui types` boots.
-fn model_only() -> Result<Arc<ExecutionContextFactory>, Error> {
+pub(crate) fn model_only() -> Result<Arc<ExecutionContextFactory>, Error> {
     let (runtime, framework) = crate::runtime_framework_dirs();
     let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework)
         .map_err(|err| Error::new(err.to_string()))?;
@@ -239,12 +271,15 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
     let mut outgoing = false;
     let mut json = false;
     let mut kinds = Vec::new();
+    let mut server = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--in" => outgoing = false,
             "--out" => outgoing = true,
             "--json" => json = true,
+            "--server" => server = rest.next().cloned(),
+            other if other.starts_with("--server=") => server = Some(other["--server=".len()..].to_string()),
             "--kind" => kinds.extend(rest.next().cloned()),
             other if other.starts_with("--kind=") => kinds.push(other["--kind=".len()..].to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("refs")),
@@ -254,6 +289,9 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
     }
     let name = name.ok_or_else(|| crate::usage::command_usage("refs"))?;
     crate::logging::install_with_console(Some(tracing::Level::ERROR));
+    if let Some(url) = server {
+        return remote_refs(&url, &name, outgoing, json, &kinds);
+    }
     let factory = model_only()?;
     let index = MemoryIndex::build(&factory);
     // a file: every artifact it defines
@@ -325,4 +363,49 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
         targets.join(", ")
     );
     Ok(())
+}
+
+/// `moqui refs --server URL`: the references from a running dev instance's artifact index.
+fn remote_refs(url: &str, name: &str, outgoing: bool, json: bool, kinds: &[String]) -> Result<(), Error> {
+    #[cfg(feature = "tui")]
+    {
+        let remote = crate::devtools_remote::Remote::connect(url)?;
+        let answer = remote.refs(name, if outgoing { "out" } else { "in" })?;
+        let mut count = 0;
+        for row in answer["refs"].as_array().into_iter().flatten() {
+            let kind = row["artifact"]["kind"].as_str().unwrap_or_default();
+            if !kinds.is_empty() && !kinds.iter().any(|wanted| wanted == kind) {
+                continue;
+            }
+            count += 1;
+            if json {
+                println!("{row}");
+                continue;
+            }
+            let other = row["artifact"]["id"]
+                .as_str()
+                .or_else(|| row["name"].as_str())
+                .unwrap_or_default();
+            println!(
+                "{}:{}: {} {other}",
+                row["file"].as_str().unwrap_or_default(),
+                row["line"],
+                row["how"].as_str().unwrap_or_default()
+            );
+        }
+        eprintln!(
+            "moqui refs: {count} reference{} {} {}",
+            if count == 1 { "" } else { "s" },
+            if outgoing { "from" } else { "to" },
+            answer["artifact"].as_str().unwrap_or(name)
+        );
+        Ok(())
+    }
+    #[cfg(not(feature = "tui"))]
+    {
+        let _ = (name, outgoing, json, kinds);
+        Err(Error::new(format!(
+            "moqui refs --server {url} needs the tui feature's client"
+        )))
+    }
 }

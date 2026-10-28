@@ -136,7 +136,7 @@ fn file_diff(context: &Context, root: &Root, path: &str, staged: bool) -> Result
         args.push("--cached");
     }
     args.extend(["--", path]);
-    Ok(context.git().read(&root.path, &args)?)
+    context.git().read(&root.path, &args)
 }
 
 /// `get#Hunks`: a file's hunks with their ranges, and the diff's hash a hunk write is checked against.

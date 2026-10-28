@@ -50,7 +50,7 @@ llm = ["moqui-core/llm"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
-devtools = ["moqui-core/devtools"]
+devtools = ["moqui-core/devtools", "dep:lsp-server", "dep:lsp-types"]
 # The terminal client (`moqui tui`, plans/archive/Screen-TUI-Impl.md 4.6): in every package, so it compiles Revue; lite has it
 # for a quick terminal loop while developing and testing.
 # Its remote client (`moqui tui --server`) takes pushed notifications from `/notws` over tungstenite, with the web's
@@ -70,6 +70,10 @@ moqui-lib = { workspace = true, features = ["http"] }
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }
 tracing = { workspace = true }
+# `moqui lsp` (plans/design-dev-aide.md 13.6, F13): the Language Server Protocol's messages and its stdio transport, as
+# rust-analyzer uses them; under devtools.
+lsp-server = { version = "0.7", optional = true }
+lsp-types = { version = "0.97", optional = true }
 # Log line and log entry timestamps (crates/moqui-host/src/logging.rs). Already in the graph under moqui-lib.
 jiff = { workspace = true }
 tokio = { workspace = true }

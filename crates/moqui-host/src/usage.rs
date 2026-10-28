@@ -39,6 +39,7 @@ Check
   types            [--out dir]                              TypeScript declarations from the loaded definitions
   check            [paths] [--extensions] [--json]          Check Moqui XML files: schema, references, expressions
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
+  lsp              [--server URL]                           A language server for editors and coding agents
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -236,7 +237,7 @@ set the directory. The default is types/ inside the runtime directory. This does
 ";
 
 const CHECK: &str = "\
-moqui check [paths] [--extensions] [--json]
+moqui check [paths] [--extensions] [--json] [--server URL]
     Check Moqui XML files: schema, references, expressions.
 
 Checks each file (a directory: the XML files in it) against the framework's XSDs, the names it uses
@@ -246,7 +247,8 @@ current directory. --extensions also checks every extension against what it exte
 file's base screen and the forms, containers, sections and transitions it names there, each
 extend-entity's entity, and each ECA rule's service or entity. Each problem prints as path:line:col: severity: message [rule, skill#section]; --json
 prints one JSON object per line. Exits 1 when there is an error, so it runs as a git or agent hook;
-warnings do not fail it. This does not open a database.
+warnings do not fail it. This does not open a database. --server URL asks a running dev instance
+instead (its MCP check tool, with the login key moqui tui --server keeps, or MOQUI_LOGIN_KEY).
 
   moqui check
   moqui check runtime/component/my-site/service/my/MyServices.xml
@@ -254,7 +256,7 @@ warnings do not fail it. This does not open a database.
 ";
 
 const REFS: &str = "\
-moqui refs <name> [--in | --out] [--kind k] [--json]
+moqui refs <name> [--in | --out] [--kind k] [--json] [--server URL]
     What uses an artifact, or what it uses.
 
 name is an artifact id (entity:moqui.example.Example, service:a.B.run#Thing, screen:component://...,
@@ -263,11 +265,27 @@ default) lists the references to it in every component's files; --out lists the 
 inside its definition. For a screen or an entity, its transitions, forms and fields count as it.
 --kind keeps the references whose other side is of that kind (entity, field, service, screen,
 transition, form, anchor, seca, eeca, script, data ...). Each prints as path:line: how artifact;
---json prints one JSON object per line. This does not open a database.
+--json prints one JSON object per line. This does not open a database. --server URL asks a running dev
+instance's artifact index instead (its MCP artifact tool).
 
   moqui refs moqui.example.Example
   moqui refs org.moqui.impl.UserServices.create#UserAccount --out
   moqui refs component://example/screen/Gallery/ExampleDetail.xml
+";
+
+const LSP: &str = "\
+moqui lsp [--server URL]
+    A language server for editors and coding agents, over stdio.
+
+Speaks the Language Server Protocol on stdin and stdout: diagnostics of each open Moqui XML file as it
+changes (the checks of moqui check), go to definition and references (the artifact index, read into
+memory and kept current with the open files), hover (an artifact's summary, an element's or
+attribute's documentation from the XSDs), completion (elements, attributes, enumerated values, entity
+and service names) and document and workspace symbols. --server URL answers from a running dev
+instance instead, as moqui check --server does. Logs go to stderr. In the Dev and Debug packages.
+
+  moqui lsp
+  moqui lsp --server https://dev.example.com
 ";
 
 const TEST: &str = "\
@@ -444,6 +462,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "types" => Some(TYPES),
         "check" => Some(CHECK),
         "refs" => Some(REFS),
+        "lsp" => Some(LSP),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "help" => Some(HELP),
@@ -505,6 +524,7 @@ fn is_known_command(name: &str) -> bool {
             | "types"
             | "check"
             | "refs"
+            | "lsp"
             | "test"
             | "test-client"
             | "serve"

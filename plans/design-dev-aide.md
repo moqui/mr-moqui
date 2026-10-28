@@ -1,7 +1,7 @@
 # Dev AIDE: the assisted IDE
 
-Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P7 on Oct 28, 2026; what is not built yet is listed
-in "Built so far" at the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
+Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P9 on Oct 28, 2026; what is not built yet is listed
+in "Built so far" at the end of §18. P10 is later. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
 typing), added D17 to D19, amended D10 and D11, and re-phased the work around them (§18); its findings are recorded
@@ -1401,7 +1401,6 @@ are independent of P4 and may run beside it.
 - **XML edits.** The lossless layer is reached through `apply#XmlOps` only; the WASM module is not built.
 - **Settings.** The site components and network git are stored in `DevAideSetting` rows.
 - **Not built yet:**
-  - `moqui check --server` (planned with `moqui lsp` in P9);
   - the System User screen field for `DEV_AIDE_PUBLISH_BRANCH`, which is a preference an admin can set;
   - opening a merge request on a hosted origin: Publish names the branch to merge;
   - keeping the app drawer closed on the Workspace, which takes the window's height by CSS;
@@ -1696,6 +1695,19 @@ design mode needs (P9).
   inside the canvas's overlay of both files, under the read fence; its submits are its `<actions>`, held as approvals,
   each named as the transition it posts to in the saved screen. Accept is not on the canvas: the agent proposes both
   files with `propose_edit`, as the skill's Canvas section says.
+- **`moqui lsp`** (`crates/moqui-host/src/lsp.rs`, on `lsp-server` and `lsp-types` under `devtools`): the model-only
+  boot of `moqui check` and the memory index of `moqui refs`, which takes each open buffer's text as it changes
+  (`MemoryIndex::update_text`, the names resolved again) and answers go to definition (`MemoryIndex::at`, as the
+  database index's `at`); diagnostics are `check_text` of the buffer, each with its rule as its code and its skill
+  section in its message; hover is the artifact's kind, name, file and summary and the element's or attribute's XSD
+  documentation; completion is the digest's elements, attributes and enumerated values, and entity and service names
+  from the index in their attributes; document symbols are `xml_edit::outline`'s elements, workspace symbols the
+  index's `find`. Full text sync; no rename or code actions.
+- **`--server URL`** (`devtools_remote.rs`) for `moqui check`, `moqui refs` and `moqui lsp`: the running instance's
+  MCP tools `check` and `artifact`, stateless `tools/call`s with the login key `moqui tui --server` keeps (or
+  `MOQUI_LOGIN_KEY`); a local file is the `component://` location of the nearest directory with a `component.xml`, and
+  a location the file of this runtime's component of that name. `check --extensions` runs locally only. The
+  coding-agent skill (`fw/skill/moqui-coding-agent.md`) has Language server and Remote sections.
 
 ---
 

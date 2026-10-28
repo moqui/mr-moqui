@@ -30,10 +30,16 @@ pub mod chromium;
 pub mod db;
 mod detach;
 mod devtools_cmd;
+#[cfg(feature = "tui")]
+#[doc(hidden)]
+pub mod devtools_remote;
 pub mod edge;
 #[cfg(feature = "print")]
 pub mod ipp;
 pub mod logging;
+#[cfg(all(feature = "devtools", feature = "tui"))]
+#[doc(hidden)]
+pub mod lsp;
 mod monitor;
 #[cfg(feature = "pdf")]
 pub mod pdf;
@@ -494,6 +500,18 @@ where
         }
         [command, rest @ ..] if command == "refs" => {
             devtools_cmd::dispatch_refs(rest)?;
+            Ok(None)
+        }
+        [command, rest @ ..] if command == "lsp" => {
+            #[cfg(all(feature = "devtools", feature = "tui"))]
+            lsp::dispatch_lsp(rest)?;
+            #[cfg(not(all(feature = "devtools", feature = "tui")))]
+            {
+                let _ = rest;
+                return Err(moqui_lib::error::Error::new(
+                    "moqui lsp is not built into this host: it is in the Dev and Debug packages (the devtools feature)",
+                ));
+            }
             Ok(None)
         }
         [command, rest @ ..] if command == "test" => {
@@ -1592,7 +1610,11 @@ pub fn build_package() -> &'static str {
     } else if cfg!(feature = "enterprise") {
         "enterprise"
     } else if cfg!(feature = "lite") {
-        if cfg!(feature = "devtools") { "dev" } else { "lite" }
+        if cfg!(feature = "devtools") {
+            "dev"
+        } else {
+            "lite"
+        }
     } else {
         "custom"
     }

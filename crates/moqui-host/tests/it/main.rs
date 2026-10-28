@@ -52,6 +52,8 @@ mod git_resources;
 mod git_storage;
 mod llm;
 mod load_feed;
+#[cfg(all(feature = "devtools", feature = "tui"))]
+mod lsp;
 mod mcp;
 mod notws;
 mod opensearch_start;

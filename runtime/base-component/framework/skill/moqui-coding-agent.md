@@ -11,6 +11,8 @@ sections:
   expressions: The expression checks
   extending: Extend an upstream component from the site component instead of editing it
   specs: Running a component's specs
+  language-server: moqui lsp for an editor or an agent with an LSP client
+  remote: Checks and references from a running dev instance with --server
 ---
 A Moqui component is XML (entities, services, screens, ECA rules, data), JavaScript (scripts and expressions), and
 sometimes Rust. On a dev instance (`instance_purpose` dev, the default `./moq run`), the server watches every component
@@ -89,3 +91,25 @@ screen has none where you need it, the anchor is added to the base screen as its
 ## Specs
 `./moq test <component>` runs a component's JavaScript specs (`test/*.spec.js`); `--spec Name` runs one. A spec calls
 services and checks the rows they wrote with `checkData`.
+
+## Language server
+`moqui lsp` speaks the Language Server Protocol over stdio: diagnostics of each open Moqui XML file as you type (the
+checks of `moqui check`), go to definition and references of the entities, services, screens and forms a file names
+(the artifact index, kept current with the open files), hover with an artifact's summary or an element's or
+attribute's documentation from the XSDs, completion of elements, attributes, enumerated values and entity and service
+names, and document and workspace symbols. Point an editor's generic LSP client at it for `*.xml` files in a Moqui
+runtime, for example in Neovim:
+
+```lua
+vim.lsp.start({ name = "moqui", cmd = { "target/develop/moqui", "lsp" }, root_dir = vim.fn.getcwd() })
+```
+
+or in VS Code with any generic LSP client extension, its command `moqui lsp` and its document selector `xml`. Logs go to
+stderr; stdout is the protocol's.
+
+## Remote
+`moqui check --server URL`, `moqui refs --server URL` and `moqui lsp --server URL` ask a running dev instance (its MCP
+tools `check` and `artifact`) instead of booting the model here, as the user of the login key `moqui tui --server URL`
+keeps for that server, or of `MOQUI_LOGIN_KEY`. A local file is checked as the `component://` location of the nearest
+directory above it with a `component.xml`, so the file must be in a component the server loads.
+

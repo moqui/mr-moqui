@@ -607,7 +607,7 @@ fn set_presence(
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let mut out = Parameters::new();
     if !context.settings.shared || user.is_empty() {
-        out.insert("editors".into(), Value::List(Vec::new().into()));
+        out.insert("editors".into(), Value::List(Vec::new()));
         return Ok(out);
     }
     let paths: Vec<String> = match parameters.get("paths") {

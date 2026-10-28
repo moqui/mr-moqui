@@ -843,4 +843,36 @@ fn the_dev_tools_over_mcp() {
         .collect();
     assert!(rules.contains(&"reference.entity"), "{checked}");
     assert!(rules.contains(&"upstream.edit"), "the framework is upstream: {checked}");
+
+    // moqui check, refs and lsp with --server: a local file checked by the server, by its component location
+    #[cfg(all(feature = "devtools", feature = "tui"))]
+    {
+        std::env::set_var("MOQUI_LOGIN_KEY", &ann.key);
+        let remote = moqui_host::devtools_remote::Remote::connect(&format!("http://{address}")).unwrap();
+        std::env::remove_var("MOQUI_LOGIN_KEY");
+        let file = std::fs::canonicalize(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../runtime/base-component/example/entity/ExampleEntities.xml"
+        ))
+        .unwrap();
+        let text = std::fs::read_to_string(&file).unwrap().replacen(
+            "related=\"moqui.basic.StatusItem\"",
+            "related=\"no.Such\"",
+            1,
+        );
+        let problems = remote.check(&file, &text).unwrap();
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.rule == "reference.entity" && problem.path == file.display().to_string()),
+            "{problems:?}"
+        );
+        let found = remote.find("EnumerationType", &["entity".to_string()], 5);
+        assert_eq!(found[0].id, "entity:moqui.basic.EnumerationType", "{found:?}");
+        assert!(
+            found[0].path.ends_with("BasicEntities.xml"),
+            "the local file of its location: {found:?}"
+        );
+        assert!(!remote.uses("entity:moqui.basic.EnumerationType").is_empty());
+    }
 }

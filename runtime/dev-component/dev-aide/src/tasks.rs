@@ -350,7 +350,7 @@ fn get_tasks(
         }
         Err(err) => {
             tracing::warn!("Dev AIDE: the task source {label} failed: {err}");
-            out.insert("tasks".into(), Value::List(Vec::new().into()));
+            out.insert("tasks".into(), Value::List(Vec::new()));
             out.insert("error".into(), Value::string(err.to_string()));
         }
     }
