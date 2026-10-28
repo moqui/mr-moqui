@@ -266,6 +266,28 @@ fn has_word(text: &str, word: &str) -> bool {
 
 /// The Spanish pack is data the loader can read: one row per original and locale, placeholders intact,
 /// and the neutral catalog stays free of the Spain-only words.
+/// The originals in the `unchanged-*.txt` files of a catalog directory: messages kept as the original in that
+/// language (the same word, or text with nothing to translate), so the catalog has no row for them.
+fn unchanged_originals(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let mut unchanged = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(root).expect("data directory") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if !(name.starts_with("unchanged-") && name.ends_with(".txt")) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            assert!(unchanged.insert(line.to_string()), "duplicate unchanged {line}");
+        }
+    }
+    unchanged
+}
+
 #[test]
 fn spanish_catalog_files_match_the_message_keys() {
     use std::collections::BTreeMap;
@@ -337,6 +359,12 @@ fn spanish_catalog_files_match_the_message_keys() {
         }
     }
     assert!(files >= 47, "catalog files {files}");
+    for original in unchanged_originals(&root) {
+        assert!(
+            !seen.contains_key(&(original.clone(), "es".to_string())),
+            "unchanged key was translated: {original}"
+        );
+    }
     let es = |original: &str| seen.get(&(original.to_string(), "es".to_string())).cloned();
     assert_eq!(es("Save").as_deref(), Some("Guardar"));
     assert_eq!(es("Invoice").as_deref(), Some("Factura"));
@@ -487,22 +515,9 @@ fn chinese_catalog_files_match_the_message_keys() {
         }
     }
 
-    let mut unchanged: BTreeSet<String> = BTreeSet::new();
-    for entry in std::fs::read_dir(&zh_root).expect("zh data directory") {
-        let path = entry.expect("entry").path();
-        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
-        if !(name.starts_with("unchanged-") && name.ends_with(".txt")) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            assert!(unchanged.insert(line.to_string()), "duplicate unchanged {line}");
-        }
-    }
+    // a message the same in Spanish has no es row, and is a key all the same
+    es_originals.extend(unchanged_originals(&es_root));
+    let unchanged = unchanged_originals(&zh_root);
 
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
     let mut files = 0u32;

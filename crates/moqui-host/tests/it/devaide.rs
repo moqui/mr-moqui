@@ -772,8 +772,13 @@ fn a_stamped_render_names_each_widgets_file() {
     ];
     let gate = start_with_files_and_links(
         "dev-aide-stamps",
-        Some(include_str!(
-            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        // a DbForm for the user's group that adds a field to the form
+        Some(&include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+            "</entity-facade-xml>",
+            r#"    <moqui.screen.form.DbForm formId="DBF_FACTS" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_FACTS" fieldName="dbNote" title="Db Note" fieldTypeEnumId="DBFFT_display"/>
+    <moqui.screen.form.DbFormUserGroup formId="DBF_FACTS" userGroupId="ADMIN"/>
+</entity-facade-xml>"#,
         )),
         &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
         &files,
@@ -792,42 +797,6 @@ fn a_stamped_render_names_each_widgets_file() {
         }
         test.render("", BTreeMap::new()).unwrap().text()
     };
-    // a DbForm for the user's group that adds a field to the form
-    {
-        let _authz = context.disable_authz();
-        let facade = factory.entity().unwrap();
-        for (entity, fields) in [
-            (
-                "moqui.screen.form.DbForm",
-                vec![
-                    ("formId", "DBF_FACTS"),
-                    (
-                        "modifyXmlScreenForm",
-                        "component://upstream-app/screen/UpApp/Detail.xml#Facts",
-                    ),
-                ],
-            ),
-            (
-                "moqui.screen.form.DbFormField",
-                vec![
-                    ("formId", "DBF_FACTS"),
-                    ("fieldName", "dbNote"),
-                    ("title", "Db Note"),
-                    ("fieldTypeEnumId", "DBFFT_display"),
-                ],
-            ),
-            (
-                "moqui.screen.form.DbFormUserGroup",
-                vec![("formId", "DBF_FACTS"), ("userGroupId", "ADMIN")],
-            ),
-        ] {
-            let mut row = facade.make_value(entity).unwrap();
-            for (name, value) in fields {
-                row.set(name, Value::string(value));
-            }
-            row.create(&facade).unwrap();
-        }
-    }
     let plain = render(false);
     assert!(plain.contains("Extra Note") && !plain.contains("data-m-src"), "{plain}");
     let stamped = render(true);

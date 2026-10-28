@@ -556,10 +556,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="refresh" noun="MergeRequests">
         <description>The framework's ref-update gitECA rule (Git.gitecas.xml): a branch moved. Each open merge request
-            whose source it is takes the new head (its approvals set back to requested when the target's branch rules
-            dismiss stale ones; webhooks get a merge_request event, synchronize), and each whose source or target it is
-            is checked for mergeability again, and is merged when the target holds its head. One that fails is logged
-            and the others are still refreshed.</description>
+            whose source it is takes the branch's head as it is now, whatever the event's newId (its approvals set back to
+            requested when the target's branch rules dismiss stale ones; webhooks get a merge_request event,
+            synchronize), and each whose source or target it is is checked for mergeability again, and is merged when the
+            target holds its head. One that fails is logged and the others are still refreshed.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="refName" required="true"/>
@@ -576,10 +576,18 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('statusId', 'in', ['GmrDraft', 'GmrOpen'])
                         .condition(cf.makeCondition([cf.makeCondition('sourceRef', 'equals', branch), cf.makeCondition('targetRef', 'equals', branch)], 'or'))
                         .disableAuthz().list())
+                // the branch's head now, not the event's newId: the events of each change run on their own job, so a
+                // late event of an older change would set a merge request's head back to a commit its branch has left
+                let head = null
+                if (rows.some((mr) => mr.sourceRef === branch)) {
+                    const refs = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRefs').parameters({repositoryId, refType: 'branch'}).call()
+                    const ref = Array.from((refs && refs.refList) || []).find((ref) => ref.shortName === branch)
+                    head = ref ? ref.commitId : null
+                }
                 for (const mr of rows) {
                     try {
-                        if (mr.sourceRef === branch && newId && mr.headCommitId !== newId) {
-                            mr.setFields({headCommitId: newId, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
+                        if (mr.sourceRef === branch && head && mr.headCommitId !== head) {
+                            mr.setFields({headCommitId: head, lastUpdatedDate: ec.user.nowTimestamp}, true, null, null)
                             mr.update()
                             const rules = ec.service.sync().name('org.moqui.impl.GitServices.get#GitBranchRules')
                                     .parameters({repositoryId, refName: mr.targetRef}).call()
