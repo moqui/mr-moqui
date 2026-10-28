@@ -252,10 +252,12 @@ pub fn sync_skills(facade: &EntityFacade, read: &ReadSkills) -> Result<SyncRepor
         problems: read.problems.clone(),
         ..SyncReport::default()
     };
+    // only the rows of the files it reads (component://): a skill an application keeps elsewhere (git://, dbresource://)
+    // is its own, never retired here
     let rows = quietly(|| {
         facade
             .find(SKILL)?
-            .condition(moqui_db::sql::Condition::is_not_null("sourceLocation"))
+            .condition(moqui_db::sql::Condition::like("sourceLocation", Value::string("component://%")))
             .condition(moqui_db::sql::Condition::is_null("ownerUserId"))
             .disable_authz()
             .list()
