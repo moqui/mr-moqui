@@ -1900,6 +1900,7 @@
                 childrenUrl: path(of(tree, "children-transition")) || formRequest, childrenParameters: {}, ancestorUrl: path(of(tree, "ancestor-transition")),
                 listName: at(n, "list") || null, transition: movePath(tree), parameters: {}
             } : null;
+            if (treeCfg && of(tree, "confirm-move") === "true") treeCfg.confirmMove = true;
             const peekKeys = keyFields(tree || board || calendar || n);
             const peekCfg = at(n, "peek-url") && peekKeys.length ? { url: path(at(n, "peek-url")), parameters: {}, keyField: peekKeys[0] } : null;
             return {

@@ -375,6 +375,12 @@ along with this software (see the LICENSE.md file). If not, see
                     dragged, indented or outdented (the terminal's tree has no moves).</xs:documentation></xs:annotation></xs:attribute>
                 <xs:attribute name="key-fields" type="xs:string"><xs:annotation><xs:documentation>As view-board key-fields;
                     the first is the key that parent-field holds.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="confirm-move" type="boolean" default="false"><xs:annotation><xs:documentation>
+                    In qvt, ask for confirmation before a drag or keyboard move, showing the row and its old/new parent
+                    labels. The default preserves existing trees. HTML is read only; terminal applications can provide
+                    an explicit Move form for the same transition. The first key-field may be an occurrence ID, with the
+                    record and original edge fields following it so a multi-parent graph move names one dated edge.
+                </xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
 
         </xs:sequence>

@@ -369,3 +369,53 @@ test("the tree, its lead and the elapsed time are components, and the list views
     assert.ok(tree.template.indexOf("'tree_' + entry.index") >= 0 && tree.template.indexOf('name="tree"') >= 0);
     assert.ok(tree.template.indexOf('role="treegrid"') >= 0 && tree.template.indexOf(":aria-level") >= 0);
 });
+
+// A taxonomy node may occur under several parents. The first key is the path occurrence; the record and original
+// dated edge remain separate move parameters. This uses the existing view-tree protocol, without a second node model.
+test('tree occurrence keys keep a shared record under two parents and move just the selected dated edge', async () => {
+    const lt = moqui.listTree;
+    const rows = [
+        {occurrenceId: 'A', parentOccurrenceId: '', categoryId: 'A'},
+        {occurrenceId: 'B', parentOccurrenceId: '', categoryId: 'B'},
+        {occurrenceId: 'A/C', parentOccurrenceId: 'A', categoryId: 'C', originalParentId: 'A', fromDate: '1000'},
+        {occurrenceId: 'B/C', parentOccurrenceId: 'B', categoryId: 'C', originalParentId: 'B', fromDate: '2000'},
+    ];
+    const fields = ['occurrenceId', 'categoryId', 'originalParentId', 'fromDate'];
+    const known = {};
+    rows.forEach((row, index) => {
+        const key = lt.keyOf(row, fields);
+        known[key] = {key, row, parent: row.parentOccurrenceId, order: index, index};
+    });
+    const children = lt.childrenOf(known);
+    assert.deepEqual(lt.visible(known, children, () => true).map(row => row.key), ['A', 'A/C', 'B', 'B/C']);
+    assert.equal(known['A/C'].row.categoryId, known['B/C'].row.categoryId);
+    let posted = null;
+    const tree = moqui.qvt.components['m-list-tree'];
+    const vm = {known, children, tree: {keyFields: fields, parentField: 'parentOccurrenceId', transition: 'move'},
+        setOpen() {}, post(path, parameters) {posted = {path, parameters}; return Promise.resolve(true)}, $emit() {}};
+    tree.methods.postMove.call(vm, 'A/C', {parent: 'B', previous: 'B/C'});
+    await Promise.resolve();
+    assert.deepEqual(posted, {path: 'move', parameters: {occurrenceId: 'A/C', categoryId: 'C', originalParentId: 'A',
+        fromDate: '1000', parentOccurrenceId: 'B', previousSiblingId: 'B/C'}});
+    assert.equal(known['B/C'].row.originalParentId, 'B');
+});
+
+test('a tree move confirmation names the row and both parents, and cancellation changes nothing', async () => {
+    const tree = moqui.qvt.components['m-list-tree'];
+    const known = {A:{row:{name:'Applications'},parent:'',order:0},B:{row:{name:'Industries'},parent:'',order:1},
+        X:{row:{name:'Services',id:'X'},parent:'A',order:2}};
+    let message='',posted=0,opened=0;
+    const saved=window.confirm;
+    const vm={known,children:moqui.listTree.childrenOf(known),tree:{confirmMove:true,columns:[{fields:['name']}],keyFields:['id'],parentField:'parent',transition:'move'},
+        setOpen(){opened++},post(){posted++;return Promise.resolve(true)},$emit(){}};
+    try {
+        window.confirm=text=>{message=text;return false};
+        tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
+        assert.equal(message,'Move "Services" from "Applications" to "Industries"?');
+        assert.equal(posted,0);assert.equal(opened,0);
+        window.confirm=()=>true;
+        tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
+        await Promise.resolve();
+        assert.equal(posted,1);assert.equal(opened,1);
+    }finally{window.confirm=saved}
+});

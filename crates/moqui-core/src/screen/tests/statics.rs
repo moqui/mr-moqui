@@ -1476,6 +1476,7 @@ fn form_list_views_and_the_markdown_view_in_a_static_template() {
         r#":data-row="rowIndex""#,
         "'parentField':'parentId','keyFields':['nodeId'],'childCountField':'kids','rollups':[{'name':'totalPoints','label':ec.l10n.localize('Total points')}]",
         "'childrenUrl':'/planTask'",
+        "'confirmMove':true",
         r#"<template v-slot:tree="_ctx">"#,
         r#"<m-tree-lead :t="mqTree.t"></m-tree-lead>"#,
     ] {

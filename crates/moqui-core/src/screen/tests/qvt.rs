@@ -1201,6 +1201,7 @@ fn form_list_views_and_the_markdown_view() {
         "'parentField':'parentId','keyFields':['nodeId'],'childCountField':'kids','rollups':[{'name':'totalPoints','label':'Total points'}]",
         "'columns':[{'fields':['label'],'label':'Item','align':''},{'fields':['points'],'label':'Points','align':'right'}]",
         "'childrenUrl':'/planTask'",
+        "'confirmMove':true",
         "'transition':'/moveTask'",
         "{'nodeId':'N2','label':'Sign-in','parentId':'N1','kids':0,'totalPoints':8}",
         r#"<template v-slot:tree_1="mqTree"><m-form name="Outline_t1" id="Outline_t1" action="/open""#,
