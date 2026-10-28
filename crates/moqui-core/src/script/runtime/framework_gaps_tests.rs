@@ -1155,6 +1155,14 @@ fn resource_versions_diffs_and_location_text_of_a_version() {
             try { ref.getVersionDiff("01", "09"); return false; } catch (e) { return String(e).includes("version 09 not found"); }
         })()"##,
     );
+    holds(
+        r##"(function () {
+            const diff = ec.resource.textDiff("one\ntwo\n", "one\n<b>two</b>\n", "r1", "r2");
+            return diff.stats.insertions === 1 && diff.stats.deletions === 1 && diff.fromName === "r1"
+                && diff.html.includes("&lt;b&gt;") && !diff.html.includes("<b>")
+                && ec.resource.textDiff("same", "same").html.includes("No differences");
+        })()"##,
+    );
     let dir = std::env::temp_dir().join(format!("moqui-versions-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("plain.txt"), "plain").unwrap();
