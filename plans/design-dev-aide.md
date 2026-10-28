@@ -1674,6 +1674,17 @@ design mode needs (P9).
 - **The member diagram** of a view entity (left from P5) is the Members section's default: each member a card one
   generation past the member it joins from, a connector labeled with its relationship or key maps, dashed when the join
   is optional; Table is the list as before.
+- **`.qvue` design mode.** F14 reaches the text a `<text location template="false">` reads (`render_text_value` takes the
+  overlay's text first), so the canvas buffer stands at a `.qvue`'s location; F10 stamps a `.qvue` template in a
+  stamped render (`stamp::stamp_qvue`: each element of the `<template>` block but an inner `template` or `slot`,
+  `data-m-src="<file>:<line>:<column>"`, comments, quoted values and `{{ }}` passed over) by a scan of the template
+  rather than the Vue compiler, so no QuickJS runtime runs for it and its offsets are exact; a component that passes its
+  attributes to its root shows the stamp there. The Design view (`DevAideQvue.js`, offered by the file's extension) frames
+  the page of the `.qvue`'s sibling XML screen; a click selects an element by its stamp, and its edits are text edits of
+  the tab's buffer by the same scan in the page (`pure.vueElements`): its opening tag edited, moved among its siblings,
+  removed with its line, and a snippet inserted before, after or last inside it (Layout, Quasar and Moqui widgets); an
+  outline lists the elements; the `.tui.json` beside it is shown, or the note that there is none. The XML half opens in
+  its own screen view; the view does not yet open the two files as one tab.
 
 ---
 

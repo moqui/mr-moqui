@@ -150,8 +150,121 @@ pub fn stamp_tree(root: &MNode) {
     }
 }
 
+/// The elements of a `.qvue` file's `<template>` block, each the byte offset just past its tag name and its line and
+/// column (from 1, the column in characters): what [`stamp_qvue`] stamps and the Design view of a `.qvue` edits. The
+/// outer `template` itself is not one, nor a `template` or `slot` inside, which render no element of their own. Comments,
+/// quoted attribute values and `{{ }}` interpolations are passed over, so a `<` inside them starts no element.
+#[must_use]
+pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
+    let bytes = text.as_bytes();
+    let Some(open) = text.find("<template") else {
+        return Vec::new();
+    };
+    let Some(body_start) = text[open..].find('>').map(|end| open + end + 1) else {
+        return Vec::new();
+    };
+    // the block's end: the last </template> before the <script> or <style> block, if any
+    let tail = ["<script", "<style"]
+        .iter()
+        .filter_map(|tag| text[body_start..].find(tag).map(|at| body_start + at))
+        .min()
+        .unwrap_or(text.len());
+    let body_end = text[..tail].rfind("</template>").unwrap_or(tail);
+    let mut out = Vec::new();
+    let mut at = body_start;
+    while at < body_end {
+        if text[at..].starts_with("<!--") {
+            at = text[at..].find("-->").map_or(body_end, |end| at + end + 3);
+            continue;
+        }
+        if text[at..].starts_with("{{") {
+            at = text[at..].find("}}").map_or(body_end, |end| at + end + 2);
+            continue;
+        }
+        if bytes[at] == b'<' && at + 1 < body_end && bytes[at + 1].is_ascii_alphabetic() {
+            let name_start = at + 1;
+            let name_end = text[name_start..]
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == ':' || ch == '.' || ch == '_'))
+                .map_or(body_end, |end| name_start + end);
+            let name = &text[name_start..name_end];
+            if name != "template" && name != "slot" {
+                let line = u32::try_from(text[..at].matches('\n').count() + 1).unwrap_or(u32::MAX);
+                let line_start = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
+                let column = u32::try_from(text[line_start..at].chars().count() + 1).unwrap_or(u32::MAX);
+                out.push((name_end, line, column));
+            }
+            // past the tag, its quoted values passed over
+            let mut quote = None;
+            at = name_end;
+            while at < body_end {
+                let byte = bytes[at];
+                match quote {
+                    Some(open) if byte == open => quote = None,
+                    Some(_) => {}
+                    None if byte == b'"' || byte == b'\'' => quote = Some(byte),
+                    None if byte == b'>' => break,
+                    None => {}
+                }
+                at += 1;
+            }
+            at += 1;
+            continue;
+        }
+        at += text[at..].chars().next().map_or(1, char::len_utf8);
+    }
+    out
+}
+
+/// A `.qvue` file's text with each element of its template stamped `data-m-src="<file>:<line>:<column>"`, for a
+/// stamped render (F10): the screen builder's canvas maps what the template draws back to its lines, as it does an
+/// XML screen's widgets. A component that passes its attributes to its root element shows the stamp there.
+#[must_use]
+pub fn stamp_qvue(text: &str, file: &str) -> String {
+    let elements = qvue_elements(text);
+    if elements.is_empty() {
+        return text.to_string();
+    }
+    let file = file.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let mut out = String::with_capacity(text.len() + elements.len() * (file.len() + 24));
+    let mut from = 0;
+    for (at, line, column) in elements {
+        out.push_str(&text[from..at]);
+        out.push_str(&format!(" data-m-src=\"{file}:{line}:{column}\""));
+        from = at;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_qvue_template_is_stamped_by_its_lines() {
+        let text = "<!-- a screen -->\n<template><div class=\"row\">\n  <q-btn label=\"a > b\" @click=\"go\"/>\n  \
+                    <!-- <span>not</span> -->{{ a < b }}<template v-slot:x><b>x</b></template>\n</div></template>\n\
+                    <script>const x = '<p>';</script>";
+        let stamped = super::stamp_qvue(text, "component://a/screen/A.qvue");
+        assert!(
+            stamped.contains("<div data-m-src=\"component://a/screen/A.qvue:2:11\" class=\"row\">"),
+            "{stamped}"
+        );
+        assert!(
+            stamped.contains("<q-btn data-m-src=\"component://a/screen/A.qvue:3:3\" label=\"a > b\""),
+            "{stamped}"
+        );
+        assert!(
+            stamped.contains("<b data-m-src=\"component://a/screen/A.qvue:4:58\">"),
+            "{stamped}"
+        );
+        // the comment, the interpolation, the inner template, the script: none stamped
+        assert!(
+            stamped.contains("<!-- <span>not</span> -->{{ a < b }}<template v-slot:x>"),
+            "{stamped}"
+        );
+        assert!(stamped.ends_with("<script>const x = '<p>';</script>"), "{stamped}");
+        assert_eq!(super::qvue_elements("<script>x</script>"), Vec::new());
+    }
+
     use super::*;
 
     #[test]

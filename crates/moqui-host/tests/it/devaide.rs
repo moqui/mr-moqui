@@ -2008,3 +2008,67 @@ fn tasks_from_mantle_and_rest() {
     .unwrap();
     assert_eq!(text(&status, "currentTask"), "PROJ-1");
 }
+
+/// A `.qvue` screen in the screen builder (plans/design-dev-aide.md P9, 11.4): its text renders from the canvas's
+/// overlay (F14 for a `<text location>`), and a stamped render marks its template's elements with their lines (F10).
+#[test]
+fn a_qvue_screen_renders_from_its_buffer() {
+    let screen = r#"<screen require-authentication="false" render-modes="qvue">
+    <widgets><render-mode><text type="qvue" location="component://my-site/screen/MySite/Board.qvue" template="false"/></render-mode></widgets>
+</screen>
+"#;
+    let qvue = "<template><div class=\"board\">\n    <q-btn label=\"Saved\"/>\n</div></template>\n<script>module.exports = {};</script>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/screen/MySite/Board.xml", screen),
+        ("component/my-site/screen/MySite/Board.qvue", qvue),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-qvue",
+        Some(include_str!(
+            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let render = |stamped: bool| {
+        let mut test = moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://my-site/screen/MySite/Board.xml")
+            .render_mode("qvue");
+        if stamped {
+            test = test.header("x-moqui-aide", "source");
+        }
+        test.render("", BTreeMap::new()).unwrap().text()
+    };
+    let plain = render(false);
+    assert!(
+        plain.contains("label=\\\"Saved\\\"") || plain.contains("label=\"Saved\""),
+        "{plain}"
+    );
+    assert!(!plain.contains("data-m-src"), "{plain}");
+    let stamped = render(true);
+    assert!(
+        stamped.contains("component://my-site/screen/MySite/Board.qvue:2:5"),
+        "{stamped}"
+    );
+    // the buffer's text in place of the file's, for this render only
+    let mut overlay = moqui_core::screen::overlay::Overlay::new();
+    overlay.insert_location(
+        &factory,
+        "component://my-site/screen/MySite/Board.qvue",
+        &qvue.replace("Saved", "Unsaved"),
+    );
+    let previewed = moqui_core::screen::overlay::with(overlay, || render(false));
+    assert!(previewed.contains("Unsaved"), "{previewed}");
+    assert!(render(false).contains("Saved") && !render(false).contains("Unsaved"));
+}

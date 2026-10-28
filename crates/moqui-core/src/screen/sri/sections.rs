@@ -589,9 +589,16 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
     }
     let registry = script::template::TemplateRegistry::of(&state.factory);
     if template == "false" {
-        return registry
-            .location_text(&state.factory, location)
-            .map(|text| text.to_string());
+        // the overlay's text stands at its location for this render (F14): a .qvue in the screen builder's buffer
+        let text = match crate::screen::overlay::text_of(location) {
+            Some(text) => text.to_string(),
+            None => registry.location_text(&state.factory, location)?.to_string(),
+        };
+        // a stamped render marks a .qvue template's elements with their lines (F10)
+        if crate::screen::stamp::active() && location.ends_with(".qvue") {
+            return Ok(crate::screen::stamp::stamp_qvue(&text, location));
+        }
+        return Ok(text);
     }
     if location.ends_with(".ftl") {
         return Err(Error::new(format!(

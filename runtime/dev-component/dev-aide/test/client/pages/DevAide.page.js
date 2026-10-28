@@ -115,3 +115,9 @@ test("a shared server's editors of a file, and a notification's payload", () => 
     assert.deepEqual(pure.messageJson({ rootId: "r" }), { rootId: "r" });
     assert.equal(pure.messageJson({ message: "not json" }), null);
 });
+
+test("a view offered by a file's extension, as a .qvue's Design", () => {
+    const specs = [{ name: "qvue", label: "Design", extensions: ["qvue"] }, { name: "screen", label: "Screen", roots: ["screen"] }];
+    assert.deepEqual(pure.viewsFor(specs, "screen/A/Board.qvue", null).map((view) => view.name), ["text", "qvue"]);
+    assert.deepEqual(pure.viewsFor(specs, "screen/A/Board.xml", "screen").map((view) => view.name), ["text", "screen"]);
+});

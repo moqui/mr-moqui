@@ -205,6 +205,9 @@
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
     devAide.registerView({ name: "eca", label: "Rules", roots: ["secas", "eecas", "emecas", "gitecas"], component: "m-dev-eca-view",
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
+    // a .qvue screen's Design view (11.4): by the file's extension, as it has no XML root
+    devAide.registerView({ name: "qvue", label: "Design", extensions: ["qvue"], component: "m-dev-qvue-view",
+        script: "/devstatic/DevAideQvue.js", ready: () => !!devAide.qvueViewRegistered });
     // A screen in the screen builder (11.2): the entity view's "Show it on a form" and the like, by the reference's
     // other side (an index row with its root and path).
     devAide.openInBuilder = (ref) => {
@@ -215,7 +218,9 @@
     // The views offered for a file: Text first, then each spec whose roots take the file's root element.
     pure.viewsFor = (specs, path, element) => {
         const offered = [{ name: "text", label: "Text" }];
-        if (!/\.xml$/i.test(String(path || "")) || !element) return offered;
+        const extension = (/\.([A-Za-z0-9]+)$/.exec(String(path || "")) || [])[1] || "";
+        for (const spec of specs || []) if ((spec.extensions || []).indexOf(extension.toLowerCase()) >= 0) offered.push({ name: spec.name, label: spec.label });
+        if (extension.toLowerCase() !== "xml" || !element) return offered;
         for (const spec of specs || []) if ((spec.roots || []).indexOf(element) >= 0) offered.push({ name: spec.name, label: spec.label });
         return offered;
     };
@@ -430,13 +435,16 @@
                 if (!quiet) this.active = opened.active;
                 this.tab = "code";
                 const tab = this.tabs.find((item) => item.path === path);
-                if (!tab.loading) {
+                // a tab open already, or being read: read once (a second answer would overwrite what was typed since)
+                if (!tab.loading || tab.reading) {
                     if (line) tab.line = line;
                     if (how.artifact) tab.artifact = how.artifact;
-                    if (how.view) this.setView(tab, how.view);
+                    if (how.view && !tab.loading) this.setView(tab, how.view);
                     return;
                 }
+                tab.reading = true;
                 this.get("file", { rootId: this.rootId, path }).then((file) => {
+                    tab.reading = false;
                     Object.assign(tab, {
                         loading: false, text: file.text || "", saved: file.text || "", base: file.hash, status: file.status || "",
                         readOnly: !!file.readOnly || !this.canWrite, readOnlyReason: file.readOnlyReason || (this.narrow ? "Read only below 1024 px" : ""),
@@ -453,7 +461,7 @@
                     this.loadSchema(tab);
                     this.takeDraft(tab, this.rootId);
                     if (how.view && how.view !== "text") this.setView(tab, how.view);
-                }, (error) => { this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
+                }, (error) => { tab.reading = false; this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
             },
             // An artifact by its id, opened in its file at its line (in a view when one is asked for).
             openArtifactId(artifactId, view) {
@@ -510,6 +518,8 @@
                 this.outlineTimers[tab.path] = setTimeout(() => this.refreshOutline(tab), 300);
             },
             refreshOutline(tab) {
+                // the outline is of an XML file's elements; a .qvue's view reads its own
+                if (!/\.xml$/i.test(tab.path)) return Promise.resolve();
                 const text = tab.text;
                 return this.post("outline", { text }).then((answer) => {
                     if (tab.text !== text) return;

@@ -4852,6 +4852,101 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
     assert_clean(&mut browser, "the browser");
 }
 
+/// A `.qvue` screen in its Design view (plans/design-dev-aide.md P9, 11.4): the page renders in the canvas with its
+/// template's elements stamped; selecting a button on the canvas and inserting a Quasar button after it changes the
+/// buffer, and the canvas shows the new button before Save; Save writes the file.
+#[cfg(feature = "devtools")]
+#[test]
+fn a_qvue_screen_is_designed_in_chromium() {
+    let site_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+        <subscreens-item name="board" menu-title="Board" location="component://my-site/screen/MySite/Board.xml"/>
+    </screen></screen-facade></moqui-conf>"#;
+    let screen = r#"<screen require-authentication="true" render-modes="qvue">
+    <widgets><render-mode><text type="qvue" location="component://my-site/screen/MySite/Board.qvue" template="false"/></render-mode></widgets>
+</screen>
+"#;
+    let qvue = "<template>\n<div class=\"q-pa-md\" id=\"BoardPage\">\n    <q-btn label=\"Saved one\" id=\"BoardSaved\"></q-btn>\n</div>\n</template>\n<script>module.exports = {};</script>\n";
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/MoquiConf.xml", site_conf),
+        ("component/my-site/screen/MySite/Board.xml", screen),
+        ("component/my-site/screen/MySite/Board.qvue", qvue),
+    ];
+    // the app's screen for admins, as an app's seed data grants it
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="BOARD_APP" description="Board"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="BOARD_APP" artifactTypeEnumId="AT_XML_SCREEN"
+            artifactName="component://my-site/screen/MySite/Board.xml" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="BOARD_APP_ADMIN" artifactGroupId="BOARD_APP" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-qvue",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId=my-site&path=screen/MySite/Board.qvue&view=qvue"
+    ));
+    let in_frame = |what: &str| {
+        format!("(() => {{ const doc = (document.getElementById('DevQvueFrame') || {{}}).contentDocument; return !!(doc && {what}); }})()")
+    };
+    browser.wait_for(
+        "the stamped button in the canvas",
+        &in_frame("doc.querySelector('[data-m-src$=\"Board.qvue:3:5\"]')"),
+        WAIT,
+    );
+    browser.pump(Duration::from_millis(800));
+    // the button selected on the canvas: its frame-relative place clicked in the page
+    browser.eval(
+        "(() => { const frame = document.getElementById('DevQvueFrame'); const el = frame.contentDocument.querySelector('[data-m-src$=\"Board.qvue:3:5\"]'); \
+         el.dispatchEvent(new frame.contentWindow.MouseEvent('click', {bubbles: true, cancelable: true})); return true; })()",
+    );
+    browser.wait_for(
+        "the selection",
+        "(document.querySelector('#DevQvuePanel .text-subtitle2') || {innerText: ''}).innerText.indexOf('<q-btn> line 3') >= 0",
+        WAIT,
+    );
+    browser.click(
+        "Button",
+        "document.querySelector('#DevQvuePanel [data-snippet=\"Button\"]')",
+    );
+    browser.click("After", &by_text(".q-menu .q-item", "After"));
+    browser.wait_for(
+        "the new button in the buffer",
+        "document.querySelectorAll('#DevQvuePanel [data-element=\"q-btn\"]').length === 2",
+        WAIT,
+    );
+    browser.wait_for(
+        "the new button on the canvas before Save",
+        &in_frame("doc.querySelectorAll('[data-m-src*=\"Board.qvue:\"]').length >= 3 && doc.body.innerText.indexOf('Button') >= 0"),
+        WAIT,
+    );
+    let on_disk = std::fs::read_to_string(gate.runtime.join("component/my-site/screen/MySite/Board.qvue")).unwrap();
+    assert!(!on_disk.contains("label=\"Button\""), "nothing saved yet: {on_disk}");
+    browser.click("Save", "document.getElementById('DevSave')");
+    browser.wait_for(
+        "the file saved",
+        "!document.querySelector('.m-dev-editor-tab .m-dev-dirty')",
+        WAIT,
+    );
+    let saved = std::fs::read_to_string(gate.runtime.join("component/my-site/screen/MySite/Board.qvue")).unwrap();
+    assert!(saved.contains("<q-btn label=\"Saved one\" id=\"BoardSaved\"></q-btn>\n    <q-btn unelevated no-caps color=\"primary\" label=\"Button\"></q-btn>"), "{saved}");
+    assert_clean(&mut browser, "the qvue design");
+}
+
 /// The entity modeler (plans/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its
 /// edits going to the site's extend-entity (D17); Add field by its kind shows the field at once (unsaved), and Save
 /// writes the site's entity file, relinks the model and adds the column with no restart; a Picklist writes its field,
