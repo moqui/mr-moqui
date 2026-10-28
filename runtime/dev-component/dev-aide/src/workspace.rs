@@ -366,8 +366,19 @@ fn get_file(
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
-    let bytes = std::fs::read(&resolved.path).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
     let mut out = Parameters::new();
+    if !resolved.path.exists() && text(parameters, "missingOk") == "true" {
+        // a file a view makes on its first save (the site's extension file, a seed data file)
+        out.insert("path".into(), Value::string(&resolved.relative));
+        out.insert("missing".into(), Value::Bool(true));
+        out.insert("binary".into(), Value::Bool(false));
+        if let Err(err) = context.may_write(root, &resolved.relative) {
+            out.insert("readOnly".into(), Value::Bool(true));
+            out.insert("readOnlyReason".into(), Value::string(err.to_string()));
+        }
+        return Ok(out);
+    }
+    let bytes = std::fs::read(&resolved.path).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
     out.insert("path".into(), Value::string(&resolved.relative));
     out.insert("hash".into(), Value::string(sha256(&bytes)));
     out.insert(

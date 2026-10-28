@@ -34,6 +34,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::devtools::get_artifact_extensions",
         "moqui_core::service::devtools::get_artifact_refs",
         "moqui_core::service::devtools::get_schema_digest",
+        "moqui_core::service::devtools::get_xml_outline",
         "moqui_core::service::devtools::rebuild_artifact_index",
         "moqui_core::service::devtools::restart_server",
         "moqui_core::service::content::migrate_db_resource_blobs",

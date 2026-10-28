@@ -29,6 +29,7 @@ pub(in crate::service) fn register(
     rust_service!(map, restart_server)?;
     rust_service!(map, apply_xml_ops)?;
     rust_service!(map, get_schema_digest)?;
+    rust_service!(map, get_xml_outline)?;
     rust_service!(map, find_artifacts)?;
     rust_service!(map, get_artifact)?;
     rust_service!(map, get_artifact_refs)?;
@@ -266,7 +267,7 @@ fn apply_xml_ops(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let mut out = BTreeMap::new();
-    if !allowed("The XML operations") {
+    if !allowed_read("The XML operations") {
         return Ok(out);
     }
     let text = parameters
@@ -292,8 +293,32 @@ fn apply_xml_ops(
     match moqui_lib::xml_edit::apply(&text, &ops) {
         Ok(applied) => {
             let steps = serde_json::to_value(&applied.steps).unwrap_or(serde_json::Value::Null);
+            if let Ok(outline) = moqui_lib::xml_edit::outline(&applied.text) {
+                out.insert("outline".to_string(), json_value(&outline));
+            }
             out.insert("text".to_string(), Value::string(applied.text));
             out.insert("steps".to_string(), moqui_lib::json::from_json(&steps));
+        }
+        Err(err) => {
+            ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
+        }
+    }
+    Ok(out)
+}
+
+/// `get#XmlOutline`: the outline of an XML text (plans/design-dev-aide.md 5.2), for the visual views. Out: `outline`;
+/// a text that does not parse answers its error as a message.
+fn get_xml_outline(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The XML outline") {
+        return Ok(out);
+    }
+    match moqui_lib::xml_edit::outline(&text_in(parameters, "text")) {
+        Ok(outline) => {
+            out.insert("outline".to_string(), json_value(&outline));
         }
         Err(err) => {
             ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
@@ -309,7 +334,7 @@ fn get_schema_digest(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let mut out = BTreeMap::new();
-    if !allowed("The schema digest") {
+    if !allowed_read("The schema digest") {
         return Ok(out);
     }
     let root = parameters

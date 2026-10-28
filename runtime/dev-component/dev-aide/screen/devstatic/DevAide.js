@@ -35,6 +35,8 @@
         return { tabs: rest, active: next };
     };
     pure.isDirty = (tab) => !!tab && tab.text !== tab.saved;
+    // A tab or any of its view's companion buffers has unsaved text.
+    pure.isDirtyAll = (tab) => pure.isDirty(tab) || !!(tab && (tab.companions || []).some((buffer) => buffer.text !== buffer.saved));
 
     // The changed files of a status as the Changes tab groups them.
     pure.groupChanges = (entries) => {
@@ -117,6 +119,58 @@
         return count;
     };
 
+    // The visual views of a file tab (plans/design-dev-aide.md 5.2): each matches the file's root element, and its script
+    // loads on first use and registers its component. A view edits the tab's buffer by the operations of the lossless
+    // XML layer, so Text and the view share one undo history and one Save.
+    devAide.viewSpecs = devAide.viewSpecs || [];
+    devAide.registerView = (spec) => {
+        devAide.viewSpecs = devAide.viewSpecs.filter((have) => have.name !== spec.name).concat([spec]);
+    };
+    // The views offered for a file: Text first, then each spec whose roots take the file's root element.
+    pure.viewsFor = (specs, path, element) => {
+        const offered = [{ name: "text", label: "Text" }];
+        if (!/\.xml$/i.test(String(path || "")) || !element) return offered;
+        for (const spec of specs || []) if ((spec.roots || []).indexOf(element) >= 0) offered.push({ name: spec.name, label: spec.label });
+        return offered;
+    };
+    // The order Save all writes files in (5.7, 6.2): entities, then services, then ECA rules, then screens, then data and
+    // the rest, so a screen never loads before its field.
+    pure.kindRank = (path) => {
+        const text = String(path || "");
+        if (/(^|\/)entity\//.test(text) && !/\.eecas\.xml$/.test(text)) return 0;
+        if (/\.secas\.xml$|\.eecas\.xml$|\.emecas\.xml$|\.gitecas\.xml$/.test(text)) return 2;
+        if (/(^|\/)service\//.test(text)) return 1;
+        if (/(^|\/)screen(-extend)?\//.test(text)) return 3;
+        return 4;
+    };
+    // The buffers to save, dirty ones only, in kind order.
+    pure.saveOrder = (buffers) => (buffers || []).filter((buffer) => buffer && buffer.text !== buffer.saved)
+        .map((buffer, index) => ({ buffer, index })).sort((a, b) => pure.kindRank(a.buffer.path) - pure.kindRank(b.buffer.path) || a.index - b.index)
+        .map((entry) => entry.buffer);
+    // The element of an outline at a path, or null.
+    pure.outlineAt = (outline, path) => {
+        let node = outline || null;
+        for (const index of path || []) node = node && node.children ? node.children[index] || null : null;
+        return node;
+    };
+    // The elements of an outline, depth first, each with its depth: what a view lists.
+    pure.walkOutline = (outline, visit, depth) => {
+        if (!outline) return;
+        visit(outline, depth || 0);
+        for (const child of outline.children || []) pure.walkOutline(child, visit, (depth || 0) + 1);
+    };
+    // The attribute of an outline element.
+    pure.attr = (node, name) => {
+        const found = node && (node.attrs || []).find((pair) => pair[0] === name);
+        return found ? found[1] : undefined;
+    };
+    // The Workspace's transitions from the path of a Dev AIDE page (/qapps/dev/Entities/Edit -> /qapps/dev/Workspace).
+    pure.workspaceBase = (path) => {
+        const text = String(path || "");
+        const at = text.lastIndexOf("/dev/");
+        return (at >= 0 ? text.slice(0, at + 4) : text.replace(/\/[^/]*$/, "")) + "/Workspace";
+    };
+
     // ---- the browser ----
 
     const store = {
@@ -127,7 +181,8 @@
 
     const workspace = {
         name: "mDevWorkspace",
-        props: { base: { type: String, required: true }, query: Object },
+        // mode "guided" (D18): one artifact in its view, with no tree, tabs or repository bar
+        props: { base: { type: String, required: true }, query: Object, mode: { type: String, default: "workspace" } },
         data() {
             return {
                 roots: [], rootId: null, tier: "view", gitAvailable: false, upstreamEdits: false, shared: false,
@@ -138,7 +193,7 @@
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [] }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [] },
                 // an agent's change set under review (?review=<approvalId>): its files with their texts on disk and as proposed
-                review: null, editorView: null,
+                review: null, editorView: null, viewsLoaded: {},
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null
             };
         },
@@ -154,7 +209,18 @@
                 const filter = this.goto.filter.toLowerCase();
                 return this.goto.files.filter((path) => !filter || path.toLowerCase().indexOf(filter) >= 0).slice(0, 50);
             },
-            canWrite() { return this.tier !== "view" && !this.narrow; }
+            canWrite() { return this.tier !== "view" && !this.narrow; },
+            guided() { return this.mode === "guided"; },
+            siteComponent() { const root = this.roots.find((item) => !item.upstream); return root ? ((root.components || []).find((c) => c.site) || {}).name : null; },
+            currentViews() { return this.current ? pure.viewsFor(devAide.viewSpecs, this.current.path, pure.rootElement(this.current.saved || this.current.text)) : []; },
+            currentSpec() { return this.current && this.current.view !== "text" ? devAide.viewSpecs.find((spec) => spec.name === this.current.view) || null : null; },
+            currentContext() { return this.current ? this.viewContext(this.current) : null; },
+            workspaceLink() {
+                const tab = this.current;
+                if (!tab) return this.base;
+                return this.base + "?rootId=" + encodeURIComponent(this.rootId) + "&path=" + encodeURIComponent(tab.path) +
+                    (tab.view !== "text" ? "&view=" + encodeURIComponent(tab.view) : "") + (tab.artifact ? "&artifact=" + encodeURIComponent(tab.artifact) : "");
+            }
         },
         mounted() {
             const client = this.$root && this.$root.notificationClient;
@@ -173,6 +239,8 @@
                 }
             }
             if (this.query && this.query.review) this.openReview(this.query.review);
+            this.outlineTimers = {};
+            this.saveHooks = {};
         },
         beforeUnmount() {
             if (this.offReload) this.offReload();
@@ -185,7 +253,9 @@
         },
         watch: {
             tabs: { deep: true, handler() { this.remember(); } },
-            active() { this.remember(); }
+            active() { this.remember(); },
+            // a visual view reads the outline of the text as it changes, in Text or by its own operations
+            "current.text"() { const tab = this.current; if (tab && tab.view !== "text") this.scheduleOutline(tab); }
         },
         methods: {
             get(name, params) { return moqui.request(this.base + "/" + name, { params: params || {} }).then((result) => result.json || {}); },
@@ -202,7 +272,9 @@
                     const asked = this.query && this.query.rootId;
                     const site = this.roots.find((item) => !item.upstream);
                     this.selectRoot((asked && this.roots.find((item) => item.id === asked) ? asked : null) || (site || this.roots[0] || {}).id);
-                    if (this.query && this.query.path) this.openFile(this.query.path, Number(this.query.line) || 0);
+                    const view = this.query && this.query.view, artifact = this.query && this.query.artifact;
+                    if (this.query && this.query.path) this.openFile(this.query.path, Number(this.query.line) || 0, false, { view, artifact });
+                    else if (artifact) this.openArtifactId(artifact, view);
                 }, this.fail);
             },
             selectRoot(id) {
@@ -212,15 +284,16 @@
                 this.treeKey++;
                 const kept = store.get(pure.storageKey(id, "tabs"));
                 if (kept && Array.isArray(kept.paths)) {
-                    kept.paths.forEach((path) => this.openFile(path, 0, true));
+                    if (!this.guided) kept.paths.forEach((path) => this.openFile(path, 0, true));
                     this.active = kept.active || null;
                 }
                 this.refreshStatus();
             },
             remember() {
-                if (!this.rootId) return;
+                if (!this.rootId || this.guided) return;
                 store.set(pure.storageKey(this.rootId, "tabs"), { paths: this.tabs.map((tab) => tab.path), active: this.active });
                 for (const tab of this.tabs) {
+                    if (tab.loading) continue;
                     const key = pure.storageKey(this.rootId, "draft:" + tab.path);
                     if (pure.isDirty(tab)) store.set(key, { base: tab.base, text: tab.text });
                     else store.drop(key);
@@ -237,14 +310,21 @@
                 return this.get("list", { rootId: this.rootId, path }).then((answer) => answer.entries || []);
             },
             // ---- files and tabs ----
-            openFile(path, line, quiet) {
+            openFile(path, line, quiet, how) {
                 if (!path) return;
-                const opened = pure.openTab(this.tabs, { path, text: "", saved: "", base: "", loading: true, problems: [], line: line || 0 });
+                how = how || {};
+                const opened = pure.openTab(this.tabs, { path, text: "", saved: "", base: "", loading: true, problems: [], line: line || 0,
+                    view: "text", artifact: how.artifact || "", outline: null, outlineError: "", companions: [] });
                 this.tabs = opened.tabs;
                 if (!quiet) this.active = opened.active;
                 this.tab = "code";
                 const tab = this.tabs.find((item) => item.path === path);
-                if (!tab.loading) { if (line) tab.line = line; return; }
+                if (!tab.loading) {
+                    if (line) tab.line = line;
+                    if (how.artifact) tab.artifact = how.artifact;
+                    if (how.view) this.setView(tab, how.view);
+                    return;
+                }
                 this.get("file", { rootId: this.rootId, path }).then((file) => {
                     Object.assign(tab, {
                         loading: false, text: file.text || "", saved: file.text || "", base: file.hash, status: file.status || "",
@@ -260,7 +340,114 @@
                         }).onOk(() => { tab.text = draft.text; }).onCancel(() => store.drop(pure.storageKey(this.rootId, "draft:" + path)));
                     }
                     this.loadSchema(tab);
+                    if (how.view && how.view !== "text") this.setView(tab, how.view);
                 }, (error) => { this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
+            },
+            // An artifact by its id, opened in its file at its line (in a view when one is asked for).
+            openArtifactId(artifactId, view) {
+                this.get("artifactDetail", { artifactId }).then((answer) => {
+                    const artifact = answer.artifact;
+                    if (!artifact || !artifact.rootId) { this.note("No artifact " + artifactId + " in the Workspace's roots", "warning"); return; }
+                    if (artifact.rootId !== this.rootId) this.selectRoot(artifact.rootId);
+                    this.openFile(artifact.relativePath, artifact.line || 0, false, { view, artifact: artifact.id });
+                }, this.fail);
+            },
+            // ---- visual views (5.2) ----
+            setView(tab, name) {
+                if (!tab) return;
+                if (name === "text" || !name) { tab.view = "text"; return; }
+                const spec = devAide.viewSpecs.find((item) => item.name === name);
+                if (!spec) { this.note("No " + name + " view", "warning"); return; }
+                const ready = spec.ready ? spec.ready() : true;
+                const loaded = ready ? Promise.resolve() : moqui.loadScript(spec.script, null, () => !!(spec.ready && spec.ready()));
+                loaded.then(() => {
+                    this.viewsLoaded[name] = true;
+                    tab.view = name;
+                    this.refreshOutline(tab);
+                }, this.fail);
+            },
+            scheduleOutline(tab) {
+                clearTimeout(this.outlineTimers[tab.path]);
+                this.outlineTimers[tab.path] = setTimeout(() => this.refreshOutline(tab), 300);
+            },
+            refreshOutline(tab) {
+                const text = tab.text;
+                return this.post("outline", { text }).then((answer) => {
+                    if (tab.text !== text) return;
+                    tab.outline = answer.outline || null; tab.outlineError = "";
+                }, (error) => { tab.outlineError = pure.errorText(error); });
+            },
+            // What a view of `tab` works with: its outline and digest come from the tab; apply runs XML operations on the
+            // tab's buffer (one undo step of its editor) or on a companion buffer the view opened (the site's extension
+            // file, a seed data file), and save is the tab's Save, which saves the companions too.
+            viewContext(tab) {
+                const vm = this;
+                return {
+                    tab, base: this.base, tier: this.tier, rootId: this.rootId, root: this.root, roots: this.roots,
+                    site: this.siteComponent, canWrite: this.canWrite && !tab.readOnly, upstreamEdits: this.upstreamEdits,
+                    get: (name, params) => vm.get(name, params), post: (name, params) => vm.post(name, params),
+                    note: (message, type) => vm.note(message, type), fail: (error) => vm.fail(error),
+                    apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),
+                    undo: () => vm.undo(tab), redo: () => vm.redo(tab),
+                    outlineOf: (text) => vm.post("outline", { text }).then((answer) => answer.outline || null),
+                    companion: (rootId, path, initialText) => vm.companion(tab, rootId, path, initialText),
+                    save: () => vm.save(tab), onSaved: (hook) => { vm.saveHooks[tab.path] = hook; },
+                    openFile: (path, line) => vm.openFile(path, line), openArtifact: (artifact) => vm.openArtifact(artifact),
+                    openArtifactId: (id, view) => vm.openArtifactId(id, view), showText: () => { tab.view = "text"; },
+                    showReferences: (artifact) => vm.showReferences(artifact)
+                };
+            },
+            postOps(text, ops) { return this.post("xmlOp", { text, ops: JSON.stringify(ops) }); },
+            applyOps(tab, ops, buffer) {
+                if (!ops || !ops.length) return Promise.resolve();
+                if (!buffer || buffer === tab) {
+                    if (tab.readOnly) return Promise.reject(new Error(tab.readOnlyReason || "read only"));
+                    const view = this.current === tab ? this.editorView : null;
+                    let answered = null;
+                    const post = (text, list) => this.postOps(text, list).then((answer) => { answered = answer; return answer; });
+                    if (view && moqui.codeEditor) {
+                        return moqui.codeEditor.applyXmlOps(view, ops, post).then((text) => {
+                            tab.text = text;
+                            if (answered && answered.outline) tab.outline = answered.outline;
+                            return text;
+                        });
+                    }
+                    return post(tab.text, ops).then((answer) => {
+                        if (!answer || answer.text === undefined) throw new Error("no edits");
+                        tab.text = answer.text;
+                        if (answer.outline) tab.outline = answer.outline;
+                        return answer.text;
+                    });
+                }
+                return this.postOps(buffer.text, ops).then((answer) => {
+                    if (!answer || answer.text === undefined) throw new Error("no edits");
+                    buffer.undo.push(buffer.text); buffer.redo = [];
+                    buffer.text = answer.text;
+                    buffer.outline = answer.outline || null;
+                    return answer.text;
+                });
+            },
+            undo(tab) {
+                const CM = root.CodeMirror;
+                if (this.current === tab && this.editorView && CM && CM.undo) CM.undo(this.editorView);
+            },
+            redo(tab) {
+                const CM = root.CodeMirror;
+                if (this.current === tab && this.editorView && CM && CM.redo) CM.redo(this.editorView);
+            },
+            // A second buffer of a tab's view: a file in any root, made with `initialText` on its first save when missing.
+            companion(tab, rootId, path, initialText) {
+                const found = tab.companions.find((item) => item.rootId === rootId && item.path === path);
+                if (found) return Promise.resolve(found);
+                return this.get("file", { rootId, path, missingOk: true }).then((file) => {
+                    const missing = !!file.missing;
+                    const text = missing ? (initialText || "") : (file.text || "");
+                    tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
+                        readOnly: !!file.readOnly, readOnlyReason: file.readOnlyReason || "", outline: null, undo: [], redo: [] });
+                    const buffer = tab.companions[tab.companions.length - 1];
+                    return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; return buffer; },
+                        () => buffer);
+                });
             },
             loadSchema(tab) {
                 if (!/\.xml$/i.test(tab.path)) return;
@@ -274,21 +461,54 @@
             },
             closeTab(path) {
                 const tab = this.tabs.find((item) => item.path === path);
-                const close = () => { const next = pure.closeTab(this.tabs, path, this.active); this.tabs = next.tabs; this.active = next.active; };
-                if (pure.isDirty(tab)) {
+                const close = () => {
+                    const next = pure.closeTab(this.tabs, path, this.active); this.tabs = next.tabs; this.active = next.active;
+                    if (moqui.codeEditor && moqui.codeEditor.dropState) moqui.codeEditor.dropState(this.rootId + ":" + path);
+                };
+                if (pure.isDirtyAll(tab)) {
                     this.$q.dialog({ title: "Close " + path + "?", message: "Its changes are not saved.", cancel: true, ok: { label: "Close", color: "negative" } }).onOk(close);
                 } else close();
             },
             lintOf(tab) {
                 if (!/\.xml$/i.test(tab.path)) return null;
-                return (text) => this.post("check", { rootId: this.rootId, path: tab.path, text }).then((answer) => answer.problems || []);
+                return (text) => this.post("check", { rootId: this.rootId, path: tab.path, text }).then((answer) => {
+                    if (tab.text === text) tab.problems = answer.problems || [];
+                    return answer.problems || [];
+                });
             },
             save(tab) {
                 tab = tab || this.current;
-                if (!tab || tab.readOnly || tab.saving) return;
+                if (!tab || tab.saving) return;
+                const companions = (tab.companions || []).filter((buffer) => buffer.text !== buffer.saved);
+                if (!companions.length) return this.saveTab(tab);
+                // Save all of a view: the buffers by kind, the tab among them, then the view's hook
+                const ordered = pure.saveOrder([tab].concat(companions));
                 tab.saving = true;
-                this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                const reports = [];
+                return ordered.reduce((chain, buffer) => chain.then(() => buffer === tab ? this.saveTab(tab, true) : this.saveCompanion(buffer).then((answer) => {
+                    if (answer) reports.push(answer);
+                })), Promise.resolve()).then(() => {
                     tab.saving = false;
+                    const files = reports.map((answer) => ((answer.reload && answer.reload.files) || []).map((file) => file.summary).join("; ")).filter((text) => text);
+                    if (files.length) this.lastReload = (this.lastReload ? this.lastReload + " · " : "Saved · ") + files.join(" · ");
+                    const hook = this.saveHooks[tab.path];
+                    if (hook) return hook(reports);
+                }, (error) => { tab.saving = false; this.fail(error); });
+            },
+            saveCompanion(buffer) {
+                return this.post("save", { rootId: buffer.rootId, path: buffer.path, text: buffer.text, baseHash: buffer.base }).then((answer) => {
+                    if (answer.conflict) throw { errors: buffer.path + " changed on disk since the view read it; reopen the view" };
+                    buffer.saved = buffer.text; buffer.base = answer.hash; buffer.missing = false;
+                    if (answer.restart) this.restartNeeded = true;
+                    return answer;
+                });
+            },
+            saveTab(tab, inAll) {
+                if (!tab || tab.readOnly || (tab.saving && !inAll)) return Promise.resolve();
+                if (tab.text === tab.saved) return Promise.resolve();
+                tab.saving = true;
+                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                    tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
                         this.note(tab.path + " changed on disk since it was opened: compare them", "warning");
@@ -303,7 +523,8 @@
                     this.note(this.lastReload, tab.problems.some((problem) => problem.severity === "error") ? "warning" : "positive");
                     this.treeKey++;
                     this.refreshStatus();
-                }, (error) => { tab.saving = false; this.fail(error); });
+                    if (!inAll) { const hook = this.saveHooks[tab.path]; if (hook) return hook([answer]); }
+                }, (error) => { tab.saving = false; if (inAll) throw error; this.fail(error); });
             },
             keepMine(tab) { tab.base = tab.conflict.diskHash; tab.conflict = null; this.save(tab); },
             takeDisk(tab) { tab.text = tab.conflict.diskText; tab.saved = tab.conflict.diskText; tab.base = tab.conflict.diskHash; tab.conflict = null; tab.changedOnDisk = false; },
@@ -405,7 +626,7 @@
                     const tag = /^<[A-Za-z][^>]*>?/.exec(line);
                     element = tag ? tag[0].slice(0, 200) : "";
                 }
-                return { root: this.rootId, path: tab.path, language: (tab.path.split(".").pop() || ""), view: "text",
+                return { root: this.rootId, path: tab.path, language: (tab.path.split(".").pop() || ""), view: tab.view || "text", artifact: tab.artifact || "",
                     unsaved: pure.isDirty(tab), element, line: this.cursor.line, selection, problems: (tab.problems || []).length };
             },
             insertCode(code, replace) {
@@ -600,6 +821,22 @@
                 this.$q.dialog({ title: "Restart the server?", message: "Sessions and the sim overlay are lost; the open tabs come back.", cancel: true })
                     .onOk(() => this.post("restart").then(() => { this.note("Restarting…", "warning"); this.restartNeeded = false; }, this.fail));
             },
+            isDirtyAll(tab) { return pure.isDirtyAll(tab); },
+            // Mod+Z, Mod+Shift+Z and Mod+S in a visual view: the buffer's undo and redo, and Save
+            onViewKey(event, tab) {
+                const mod = event.ctrlKey || event.metaKey;
+                if (!mod) return;
+                const target = event.target;
+                // a field of the view keeps its own undo
+                if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+                    if (event.key.toLowerCase() === "s") { event.preventDefault(); this.save(tab); }
+                    return;
+                }
+                const key = event.key.toLowerCase();
+                if (key === "z") { event.preventDefault(); if (event.shiftKey) this.redo(tab); else this.undo(tab); }
+                else if (key === "y") { event.preventDefault(); this.redo(tab); }
+                else if (key === "s") { event.preventDefault(); this.save(tab); }
+            },
             onKey(event) {
                 const mod = event.ctrlKey || event.metaKey;
                 if (mod && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); this.openArtifactGoto(); }
@@ -608,8 +845,15 @@
             }
         },
         template: `
-<div class="m-dev-workspace column no-wrap" id="DevWorkspace" tabindex="-1" @keydown="onKey">
-  <div class="m-dev-repo-bar row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs">
+<div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1" @keydown="onKey">
+  <div v-if="guided" class="row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs" id="DevGuidedBar">
+    <q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"></q-icon>
+    <span class="text-subtitle2 ellipsis">{{current ? current.path.split('/').pop() : ''}}</span>
+    <span class="text-caption m-muted ellipsis">{{root ? root.label : ''}}</span>
+    <q-space></q-space>
+    <q-btn dense flat no-caps icon="sym_o_code" label="Open in Workspace" :href="workspaceLink" type="a" id="DevOpenInWorkspace"></q-btn>
+  </div>
+  <div v-else class="m-dev-repo-bar row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs">
     <q-select dense outlined emit-value map-options options-dense style="min-width: 14rem" :model-value="rootId" @update:model-value="selectRoot"
         :options="roots.map(r => ({ label: r.label + (r.upstream ? '' : ' (site)'), value: r.id, upstream: r.upstream }))" id="DevRootSelect">
       <template v-slot:prepend><q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"></q-icon></template>
@@ -639,7 +883,7 @@
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">A change needs a restart to apply.
     <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>
-  <q-tabs dense align="left" no-caps v-model="tab" class="m-dev-tabs">
+  <q-tabs v-if="!guided" dense align="left" no-caps v-model="tab" class="m-dev-tabs">
     <q-tab name="code" label="Code"></q-tab>
     <q-tab name="changes" :label="'Changes' + (changeCount ? ' ' + changeCount : '')" :disable="!isGit"></q-tab>
     <q-tab name="commits" label="Commits" :disable="!isGit" @click="loadLog"></q-tab>
@@ -647,7 +891,7 @@
   </q-tabs>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">
-    <div class="m-dev-side column no-wrap">
+    <div class="m-dev-side column no-wrap" v-if="!guided">
       <div class="row no-wrap items-center q-px-xs">
         <q-btn-toggle dense flat no-caps v-model="rail" :options="[{ label: 'Files', value: 'files' }, { label: 'Search', value: 'search' }]"></q-btn-toggle>
         <q-space></q-space>
@@ -685,10 +929,10 @@
       </div>
     </div>
     <div class="col column no-wrap m-dev-main">
-      <div class="row no-wrap items-center m-dev-editor-tabs">
+      <div class="row no-wrap items-center m-dev-editor-tabs" v-if="!guided">
         <div v-for="item in tabs" :key="item.path" class="m-dev-editor-tab row no-wrap items-center" :class="{ active: item.path === active }"
             @click="active = item.path" :title="item.path" :data-path="item.path">
-          <span class="ellipsis">{{item.path.split('/').pop()}}</span><span v-if="item.text !== item.saved" class="m-dev-dirty">●</span>
+          <span class="ellipsis">{{item.path.split('/').pop()}}</span><span v-if="isDirtyAll(item)" class="m-dev-dirty">●</span>
           <q-btn dense flat round size="xs" icon="close" @click.stop="closeTab(item.path)"></q-btn>
         </div>
       </div>
@@ -699,7 +943,9 @@
           <span v-else-if="!isGit" class="q-ml-sm m-muted">Not versioned</span>
           <q-chip v-if="current.readOnly" dense square icon="sym_o_lock" class="q-ml-sm" id="DevReadOnly">{{current.readOnlyReason || 'read only'}}</q-chip>
           <q-space></q-space>
-          <q-btn dense flat no-caps size="sm" label="Save" icon="sym_o_save" :disable="current.readOnly || current.text === current.saved" :loading="current.saving" @click="save(current)" id="DevSave"></q-btn>
+          <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
+              :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>
+          <q-btn dense flat no-caps size="sm" label="Save" icon="sym_o_save" :disable="!isDirtyAll(current) || (current.readOnly && !(current.companions || []).length)" :loading="current.saving" @click="save(current)" id="DevSave"></q-btn>
         </div>
         <q-banner v-if="current.changedOnDisk && !current.conflict" dense class="bg-orange-2 text-black" id="DevChangedOnDisk">Changed on disk
           <template v-slot:action>
@@ -719,10 +965,19 @@
               @update:modified="current.text = $event"></m-diff-view>
         </div>
         <div v-else-if="current.binary" class="q-pa-md m-muted">A binary file: it opens in the browser, not in the editor.</div>
-        <m-code-editor v-else-if="!current.loading" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
-            :read-only="current.readOnly" :schema="current.schema" :lint="lintOf(current)" height="100%"
-            :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
-            :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
+        <template v-else-if="!current.loading">
+          <!-- a visual view of the buffer; Text stays mounted beneath it, so the two share one undo history (5.2) -->
+          <div v-if="currentSpec && viewsLoaded[current.view]" class="col column no-wrap m-dev-view" :data-view="current.view"
+              @keydown.capture="onViewKey($event, current)">
+            <component :is="currentSpec.component" class="col" :ctx="currentContext" :tab="current" :outline="current.outline"
+                :key="rootId + ':' + current.path + ':' + current.view"></component>
+            <div v-if="current.outlineError" class="text-caption text-negative q-px-sm" id="DevOutlineError">The text does not parse, so the view shows it as it last parsed: {{current.outlineError}}</div>
+          </div>
+          <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
+              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :schema="current.schema" :lint="lintOf(current)" height="100%"
+              :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
+              :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
+        </template>
         <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
             <q-space></q-space><q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
@@ -859,6 +1114,7 @@
                     ".m-dev-problems{max-height:30%;overflow:auto;border-top:1px solid var(--m-border,rgba(0,0,0,.12))}" +
                     ".m-dev-mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}" +
                     ".m-dev-change .m-file-status{width:1.2em;text-align:center}" +
+                    ".m-dev-view{overflow:auto;min-height:0}.m-dev-guided .m-dev-main{width:100%}" +
                     ".m-dev-side .q-tree{padding-right:8px;overflow:hidden}.m-dev-status-bar>span{white-space:nowrap}" +
                     // below 1024 px it reads only: the tree above the file, the bar wrapping
                     "@media (max-width:1023px){.m-dev-body.row{flex-direction:column}.m-dev-workspace{height:auto}" +
