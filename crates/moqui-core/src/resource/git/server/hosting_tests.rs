@@ -869,9 +869,23 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     assert!(errors.contains("checks not passed: ci/build"), "{errors}");
 
     // the source moves: the head follows and the approval is dismissed
+    let before = work.head();
     let moved = work.commit(&[("t.txt", "topic, more\n")], "More topic work");
     work.ok(&["push", "origin", "topic"]);
     settled(&fixture);
+    let mr = row(&fixture, "moqui.resource.GitMergeRequest", "mergeRequestId", &mr_id);
+    assert_eq!(field(&mr, "headCommitId"), moved);
+    // a late event of the earlier change does not set the head back: the refresh reads the branch, not the event
+    ok(
+        &fixture,
+        WRITER,
+        "org.moqui.impl.GitReviewServices.refresh#MergeRequests",
+        &[
+            ("repositoryId", s("review")),
+            ("refName", s("refs/heads/topic")),
+            ("newId", s(&before)),
+        ],
+    );
     let mr = row(&fixture, "moqui.resource.GitMergeRequest", "mergeRequestId", &mr_id);
     assert_eq!(field(&mr, "headCommitId"), moved);
     let reviewer = {

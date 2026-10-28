@@ -87,7 +87,7 @@ feature("the Landing counters are number cards in a dashboard that link to the f
         const cards = str.output.match(/<m-number-card /g) || []
         const linked = /<m-number-card title="[^"]+" value="[0-9,]+" href="\/[^"]*List\?enumTypeId=[A-Za-z]+"/.test(str.output)
         str.status == 200
-        str.output.includes('<div class="m-dashboard" style="--m-dashboard-min:150px">')
+        str.output.includes('<div class="m-dashboard q-mx-sm" style="--m-dashboard-min:150px">')
         str.output.includes('m-dashboard-each')
         str.output.includes('<m-number-card title="All enumerations"')
         cards.length == 6
