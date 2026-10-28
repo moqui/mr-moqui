@@ -576,4 +576,43 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="task"/>
         </in-parameters>
     </service>
+    <service verb="list" noun="Repositories" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
+        <description>Every root with its kind, components, branch, upstream, ahead and behind, changes and last fetch.</description>
+        <out-parameters>
+            <parameter name="repositories" type="List"/>
+            <parameter name="gitAvailable" type="Boolean"/>
+            <parameter name="moqAvailable" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="fetch" noun="All" type="rust" location="dev_aide::repos::fetch_all" allow-remote="false">
+        <description>Fetch every git root, one by one; a failure is reported in its row and the others go on.</description>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="failed" type="Integer"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="pull" noun="All" type="rust" location="dev_aide::repos::pull_all" allow-remote="false">
+        <description>Pull every git root, fast-forward only, one by one, each with its reload; a failure is reported in its row and the others go on.</description>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="failed" type="Integer"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Addons" type="rust" location="dev_aide::repos::get_addons" allow-remote="false" read-only="true">
+        <description>The components addons.xml and myaddons.xml name, each with whether it is here already.</description>
+        <out-parameters><parameter name="addons" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Component" type="rust" location="dev_aide::repos::get_component" allow-remote="false">
+        <description>./moq component-get name (--dev for runtime/dev-component): the component and those it depends on; it loads after a restart.</description>
+        <in-parameters>
+            <parameter name="name" required="true"/>
+            <parameter name="dev" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="output"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
 </services>

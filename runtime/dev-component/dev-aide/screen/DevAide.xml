@@ -22,13 +22,14 @@ along with this software (see the LICENSE.md file). If not, see
     <subscreens default-item="Home">
         <subscreens-item name="Home" menu-title="Home" menu-index="1" location="component://dev-aide/screen/DevAide/Home.xml"/>
         <subscreens-item name="Workspace" menu-title="Workspace" menu-index="2" location="component://dev-aide/screen/DevAide/Workspace.xml"/>
-        <subscreens-item name="Artifacts" menu-title="Artifacts" menu-index="3" location="component://dev-aide/screen/DevAide/Artifacts.xml"/>
-        <subscreens-item name="Entities" menu-title="Entities" menu-index="4" location="component://dev-aide/screen/DevAide/Entities.xml"/>
-        <subscreens-item name="Services" menu-title="Services" menu-index="5" location="component://dev-aide/screen/DevAide/Services.xml"/>
-        <subscreens-item name="Screens" menu-title="Screens" menu-index="6" location="component://dev-aide/screen/DevAide/Screens.xml"/>
-        <subscreens-item name="Eca" menu-title="ECA Rules" menu-index="7" location="component://dev-aide/screen/DevAide/Eca.xml"/>
-        <subscreens-item name="Data" menu-title="Data" menu-index="8" location="component://dev-aide/screen/DevAide/Data.xml"/>
-        <subscreens-item name="Settings" menu-title="Settings" menu-index="9" location="component://dev-aide/screen/DevAide/Settings.xml"/>
+        <subscreens-item name="Repositories" menu-title="Repositories" menu-index="3" location="component://dev-aide/screen/DevAide/Repositories.xml"/>
+        <subscreens-item name="Artifacts" menu-title="Artifacts" menu-index="4" location="component://dev-aide/screen/DevAide/Artifacts.xml"/>
+        <subscreens-item name="Entities" menu-title="Entities" menu-index="5" location="component://dev-aide/screen/DevAide/Entities.xml"/>
+        <subscreens-item name="Services" menu-title="Services" menu-index="6" location="component://dev-aide/screen/DevAide/Services.xml"/>
+        <subscreens-item name="Screens" menu-title="Screens" menu-index="7" location="component://dev-aide/screen/DevAide/Screens.xml"/>
+        <subscreens-item name="Eca" menu-title="ECA Rules" menu-index="8" location="component://dev-aide/screen/DevAide/Eca.xml"/>
+        <subscreens-item name="Data" menu-title="Data" menu-index="9" location="component://dev-aide/screen/DevAide/Data.xml"/>
+        <subscreens-item name="Settings" menu-title="Settings" menu-index="11" location="component://dev-aide/screen/DevAide/Settings.xml"/>
     </subscreens>
     <shell-providers>
         <palette-action label="Dev AIDE Workspace" icon="sym_o_code" screen="dev/Workspace" sequence="70"/>

@@ -637,7 +637,7 @@ pub(crate) fn network(
 }
 
 /// `fetch#Remote`.
-fn fetch_remote(
+pub(crate) fn fetch_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
@@ -655,7 +655,7 @@ fn fetch_remote(
 /// The files the pull changed are reloaded at once (the watcher then passes over them), which keeps the artifact index
 /// current, and the answer names the site's extensions whose targets the pull removed (`extensionsAffected`, the
 /// upgrade checklist of plans/design-dev-aide.md 4.7).
-fn pull_remote(
+pub(crate) fn pull_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,

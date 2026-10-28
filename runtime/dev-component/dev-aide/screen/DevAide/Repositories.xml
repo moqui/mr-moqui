@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- Repositories (plans/design-dev-aide.md 4.7): every root as ./moq git-status lists it, with Fetch all and Pull all (root
+    by root; one that fails is reported and the others go on; a pull reloads what it changed and says when it broke a
+    site extension); Get a component through ./moq component-get, Clone a URL into the component directory, and a site
+    component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Repositories" default-menu-index="3">
+
+    <transition name="fetchAll"><service-call name="org.moqui.devaide.VcsServices.fetch#All" out-map="done"/>
+        <actions><script>for (const row of done.results || []) {
+            if (row.ok) ec.message.addMessage(row.label + ': fetched', 'success'); else ec.message.addMessage(row.label + ': ' + row.error, 'warning');
+        }</script></actions>
+        <default-response url="."/></transition>
+    <transition name="pullAll"><service-call name="org.moqui.devaide.VcsServices.pull#All" out-map="done"/>
+        <actions><script>for (const row of done.results || []) {
+            if (row.ok) ec.message.addMessage(row.label + ': ' + (row.output || 'up to date'), 'success'); else ec.message.addMessage(row.label + ': ' + row.error, 'warning');
+        }
+        if (done.extensionsAffected) ec.message.addMessage('Extensions affected: ' + done.extensionsAffected + ' (Artifacts, Customizations)', 'warning');</script></actions>
+        <default-response url="."/></transition>
+    <transition name="getComponent"><service-call name="org.moqui.devaide.VcsServices.get#Component"/>
+        <actions><message type="success">Got ${name}: it loads after a restart (Home)</message></actions>
+        <default-response url="."/></transition>
+    <transition name="cloneRepository"><service-call name="org.moqui.devaide.VcsServices.clone#Repository"/>
+        <actions><message type="success">Cloned into ${location}: it loads after a restart (Home)</message></actions>
+        <default-response url="."/></transition>
+    <transition name="workspace"><default-response url="../Workspace"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.VcsServices.list#Repositories" out-map="found"/>
+        <set field="repositories" from="found.repositories || []"/>
+        <service-call name="org.moqui.devaide.VcsServices.get#Addons" out-map="addonsOut"/>
+        <set field="addonOptions" from="(addonsOut.addons || []).filter((addon) => !addon.here).map((addon) => ({key: addon.name, text: addon.name}))"/>
+        <set field="full" from="ec.user.hasPermission('DEV_AIDE')" type="Boolean"/>
+    </actions>
+    <widgets>
+        <container-row><row-col md="8">
+            <label text="${repositories.length} roots${found.gitAvailable ? '' : ': no git on the server, so every root is shown as plain'}" type="p"/>
+        </row-col><row-col md="4" style="text-right">
+            <link url="fetchAll" text="Fetch all" link-type="hidden-form" btn-type="default"/>
+            <link url="pullAll" text="Pull all" link-type="hidden-form" btn-type="primary" confirmation="Pull every repository, fast-forward only?"/>
+        </row-col></container-row>
+        <form-list name="RepositoryList" list="repositories" skip-form="true">
+            <field name="label"><default-field title="Root">
+                <link url="workspace" text="${label}${upstream ? '' : ' (site)'}" parameter-map="{rootId: rootId}" link-type="anchor"/></default-field></field>
+            <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : 'plain'}"/></default-field></field>
+            <field name="components"><default-field title="Components"><display/></default-field></field>
+            <field name="branch"><default-field title="Branch"><display text="${branch || ''}${upstream ? ' → ' + upstream : ''}"/></default-field></field>
+            <field name="ahead"><default-field title="↑ ↓"><display text="${kind == 'git' &amp;&amp; upstream ? ahead + ' / ' + behind : ''}"/></default-field></field>
+            <field name="changes"><default-field title="Changes"><display text="${changes == null ? '' : changes}"/></default-field></field>
+            <field name="lastFetch"><default-field title="Last fetch"><display text="${lastFetch ? new Date(lastFetch * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''}"/></default-field></field>
+            <field name="path"><default-field title="Path"><display/></default-field></field>
+        </form-list>
+
+        <section name="AddSection" condition="full"><widgets>
+            <container-box id="DevGetComponentBox"><box-header title="Get a component"/><box-body>
+                <section name="MoqSection" condition="found.moqAvailable"><widgets>
+                    <form-single name="GetComponentForm" transition="getComponent">
+                        <field name="name"><default-field title="Component (addons.xml)"><drop-down allow-empty="false">
+                            <list-options list="addonOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                        <field name="dev"><default-field title="Into runtime/dev-component (dev only)"><check><option key="true" text=" "/></check></default-field></field>
+                        <field name="submitButton"><default-field title="Get"><submit/></default-field></field>
+                    </form-single>
+                </widgets><fail-widgets><label type="p" text="This runtime has no ./moq beside it: clone a URL instead."/></fail-widgets></section>
+                <form-single name="CloneForm" transition="cloneRepository">
+                    <field name="url"><default-field title="Clone a URL"><text-line size="50"/></default-field></field>
+                    <field name="name"><default-field title="Directory (from the URL when empty)"><text-line size="20"/></default-field></field>
+                    <field name="dev"><default-field title="Into runtime/dev-component (dev only)"><check><option key="true" text=" "/></check></default-field></field>
+                    <field name="submitButton"><default-field title="Clone"><submit/></default-field></field>
+                </form-single>
+                <label type="p" text="A new site component is made from Home. A component got or cloned loads after a restart."/>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

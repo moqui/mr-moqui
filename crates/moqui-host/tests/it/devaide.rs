@@ -1710,4 +1710,25 @@ fn the_git_depth_writes_on_scratch_repositories() {
         &[("url", remote.to_str().unwrap()), ("name", "../escape")],
     )
     .is_err());
+
+    // Repositories: every root with its state; Fetch all and Pull all root by root
+    let fetched = call(&factory, "john.doe", &format!("{VCS}fetch#All"), &[]).unwrap();
+    assert_eq!(text(&fetched, "failed"), "0", "{fetched:?}");
+    let listed = call(&factory, "john.doe", &format!("{VCS}list#Repositories"), &[]).unwrap();
+    let listed = moqui_lib::json::to_json(&listed["repositories"]);
+    let mine = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["rootId"] == "my-site")
+        .cloned()
+        .unwrap();
+    assert_eq!(mine["branch"], "main", "{mine}");
+    assert!(mine["lastFetch"].as_u64().is_some(), "{mine}");
+    let pulled = call(&factory, "john.doe", &format!("{VCS}pull#All"), &[]).unwrap();
+    let results = moqui_lib::json::to_json(&pulled["results"]);
+    assert!(
+        results.as_array().unwrap().iter().any(|row| row["rootId"] == "my-site"),
+        "{results}"
+    );
 }

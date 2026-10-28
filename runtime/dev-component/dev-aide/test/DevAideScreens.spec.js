@@ -84,3 +84,21 @@ feature("the Workspace runs XML operations and answers the outline", {
         JSON.parse(outline.output).outline.children[0].attrs[0][1] == "A"
     },
 })
+
+feature("Repositories, Data and Settings's tokens render in both modes", {
+    expect() {
+        const repositories = dev().render("Repositories", null, null)
+        const repositoriesTui = dev().renderMode("tui").render("Repositories", null, null)
+        const data = dev().render("Data", { component: "dev-aide" }, null)
+        const dataTui = dev().renderMode("tui").render("Data", { component: "dev-aide", type: "seed" }, null)
+        repositories.errorMessages.join("; ") == ""
+        repositories.status == 200
+        repositories.output.includes("RepositoryList")
+        repositories.output.includes("CloneForm")
+        repositoriesTui.errorMessages.join("; ") == ""
+        data.errorMessages.join("; ") == ""
+        data.output.includes("DevAideAgentData.xml")
+        dataTui.errorMessages.join("; ") == ""
+        dataTui.output.includes("DevAideSecurityData.xml")
+    },
+})

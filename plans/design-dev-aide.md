@@ -1638,6 +1638,11 @@ design mode needs (P9).
   status strip has a menu (Diff, History, Blame, Stage, Discard, Commit); Blame is a gutter of `m-code-editor` (its new
   `blame` prop). A network command shows its last progress line with Cancel; Force push, in the branch menu under
   Advanced, asks for the remote branch typed back.
+- **Repositories** (`dev/Repositories`, menu index 3; the menu after it moved down one): each root's kind, components,
+  branch and upstream, ahead and behind, changes and last fetch (the time of `FETCH_HEAD`); Fetch all and Pull all go
+  root by root through the same services as the Workspace's, a failure a message for its root while the others go on,
+  and a pull's broken extensions summed; Get a component runs `./moq component-get [--dev]` (from the names of
+  `addons.xml` and `myaddons.xml` not here yet, when the runtime has `moq`), and Clone a URL is `clone#Repository`.
 
 ---
 

@@ -37,9 +37,10 @@ along with this software (see the LICENSE.md file). If not, see
         </form-single>
         <label text="${fileCount} data files${fileCount > 1000 ? ', the first 1000 shown' : ''}" type="p"/>
         <form-list name="DataFileList" list="files" skip-form="true">
-            <field name="fileName"><default-field title="File">
-                <link url="${url || ''}" url-type="plain" text="${relativePath || fileName}" link-type="anchor" condition="url"/>
-            </default-field></field>
+            <field name="fileName">
+                <conditional-field condition="url" title="File">
+                    <link url="${url}" url-type="plain" text="${relativePath || fileName}" link-type="anchor"/></conditional-field>
+                <default-field title="File"><display text="${fileName}"/></default-field></field>
             <field name="type"><default-field title="Type"><display/></default-field></field>
             <field name="component"><default-field title="Component"><display text="${component}${site ? ' · site' : ''}"/></default-field></field>
             <field name="size"><default-field title="Size"><display text="${size &lt; 1024 ? size + ' B' : Math.round(size / 1024) + ' KB'}"/></default-field></field>
