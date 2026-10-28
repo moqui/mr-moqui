@@ -1537,10 +1537,19 @@ are independent of P4 and may run beside it.
 - **The Outline** is the block tree (`DevAideBlocks.js`, SortableJS nested groups, Alt+Up and Down, Delete), on the
   screen file's widgets in place or the `screen-extend`'s elements in extension mode; Properties edits the selected
   element's attributes from the schema digest.
-- **Not built:** Move, Remove, Set default and Reorder in the tree (Text, Properties and the Workspace's rename do
-  them); Add filter, Add section, Add button and Add row action; double-click to edit a title in place; "Add an anchor here"
-  (the full tier names the element in Text with the upstream toggle on); the archetype's gallery preview; the
-  `screen-xml` canvas's "Open in the builder" carrying the proposal as the builder's buffer.
+- **Since built** (Oct 28, 2026): the tree's Set default and menu index (`update#Subscreen`: in the parent's file, a
+  directory screen's own `default-menu-index`, or for an upstream parent the site's `screen-extend` of it), Move
+  (`move#Screen`: the file and its directory, each file naming the old location saved naming the new one, those the user
+  may not write listed) and Remove (`remove#Screen`: refused naming what references the screen, then confirmed), as forms
+  of the tree's list; the intents Add filter (the column's field with a header find widget, refused with why when the
+  list's find takes no `search-form-inputs`), Add section (a box, or a related list of an entity keyed by a field of the
+  page), Add button (a transition calling a service and its link) and Add row action (a list column whose link passes the
+  row's key); a double click edits a label's or link's text or a box's title in place (the screen's own file); "Add an
+  anchor here" names an unnamed element in the base screen's file for a full-tier user with upstream editing on; a
+  DbForm's fields are stamped `dbform:<formId>` and the canvas names the form and its groups; and the `screen-xml`
+  canvas's "Open in the builder" hands its program to the builder as the unsaved text of its location (a browser draft
+  the Workspace takes when it opens that file). A server-static template is built with stamping paused, as it is shared
+  by every render: a server-static screen carries no stamps. Still to come: the archetypes' gallery preview.
 
 **P7, the service writer and ECA rules** (Oct 28, 2026), with these differences:
 

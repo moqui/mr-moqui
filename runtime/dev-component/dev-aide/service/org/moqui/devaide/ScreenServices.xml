@@ -62,4 +62,40 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="hash"/>
         </out-parameters>
     </service>
+    <service verb="update" noun="Subscreen" type="rust" location="dev_aide::screens::update_subscreen" allow-remote="false">
+        <description>A subscreen made its parent's default or given a menu index: in the parent's file, or for an upstream
+            parent in the site's screen-extend of it.</description>
+        <in-parameters>
+            <parameter name="parentRootId" required="true"/>
+            <parameter name="parentPath" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="isDefault" type="Boolean"/>
+            <parameter name="menuIndex"/>
+            <parameter name="mountedBy"><description>How the subscreen is mounted: directory, item ..., conf ..., row.</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="remove" noun="Screen" type="rust" location="dev_aide::screens::remove_screen" allow-remote="false">
+        <description>A screen's file and its directory of subscreens, refused naming what references it unless confirm; audited.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="confirm" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/><parameter name="refs" type="List"/></out-parameters>
+    </service>
+    <service verb="move" noun="Screen" type="rust" location="dev_aide::screens::move_screen" allow-remote="false">
+        <description>A screen's file and its directory moved in its root; with updateRefs each file naming the old
+            location saved naming the new one (those the user may not write listed); audited.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="to" required="true"/>
+            <parameter name="updateRefs" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refs" type="List"/>
+            <parameter name="updated" type="List"/>
+            <parameter name="skipped" type="List"/>
+        </out-parameters>
+    </service>
 </services>

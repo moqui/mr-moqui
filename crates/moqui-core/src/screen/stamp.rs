@@ -77,6 +77,15 @@ pub fn with<T>(body: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Run `body` writing no stamps, in a stamped render: what it writes is kept for other renders (a server-static
+/// template).
+pub fn paused<T>(body: impl FnOnce() -> T) -> T {
+    let before = STAMPING.with(|on| on.replace(false));
+    let result = body();
+    STAMPING.with(|on| on.set(before));
+    result
+}
+
 /// Whether the render on this thread writes the stamps.
 #[must_use]
 pub fn active() -> bool {

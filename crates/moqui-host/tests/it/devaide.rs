@@ -792,6 +792,42 @@ fn a_stamped_render_names_each_widgets_file() {
         }
         test.render("", BTreeMap::new()).unwrap().text()
     };
+    // a DbForm for the user's group that adds a field to the form
+    {
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        for (entity, fields) in [
+            (
+                "moqui.screen.form.DbForm",
+                vec![
+                    ("formId", "DBF_FACTS"),
+                    (
+                        "modifyXmlScreenForm",
+                        "component://upstream-app/screen/UpApp/Detail.xml#Facts",
+                    ),
+                ],
+            ),
+            (
+                "moqui.screen.form.DbFormField",
+                vec![
+                    ("formId", "DBF_FACTS"),
+                    ("fieldName", "dbNote"),
+                    ("title", "Db Note"),
+                    ("fieldTypeEnumId", "DBFFT_display"),
+                ],
+            ),
+            (
+                "moqui.screen.form.DbFormUserGroup",
+                vec![("formId", "DBF_FACTS"), ("userGroupId", "ADMIN")],
+            ),
+        ] {
+            let mut row = facade.make_value(entity).unwrap();
+            for (name, value) in fields {
+                row.set(name, Value::string(value));
+            }
+            row.create(&facade).unwrap();
+        }
+    }
     let plain = render(false);
     assert!(plain.contains("Extra Note") && !plain.contains("data-m-src"), "{plain}");
     let stamped = render(true);
@@ -810,6 +846,140 @@ fn a_stamped_render_names_each_widgets_file() {
     assert!(
         stamped.contains("my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml:2:31\""),
         "the merged field names its screen-extend: {stamped}"
+    );
+    assert!(
+        stamped.contains("data-m-src=\"dbform:DBF_FACTS:0:0\""),
+        "a DbForm's field names the DbForm: {stamped}"
+    );
+    assert!(!plain.contains("dbform:"));
+}
+
+const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
+
+/// The screen tree's actions (plans/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
+/// with the references to the old location updated; Remove refused while something references the screen, then
+/// confirmed; and for an upstream parent the default goes in the site's screen-extend of it.
+#[test]
+fn the_screen_tree_orders_moves_and_removes() {
+    let parent = "<screen>\n    <subscreens>\n        <subscreens-item name=\"Child\" location=\"component://my-site/screen/Site/Child.xml\"/>\n        <subscreens-item name=\"Other\" location=\"component://my-site/screen/Site/Other.xml\"/>\n    </subscreens>\n    <widgets><subscreens-panel id=\"site\"/></widgets>\n</screen>\n";
+    let leaf = "<screen><widgets><label text=\"leaf\"/></widgets></screen>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/screen/Site.xml", parent),
+        ("component/my-site/screen/Site/Child.xml", leaf),
+        ("component/my-site/screen/Site/Other.xml", leaf),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/screen/Up.xml", "<screen><widgets/></screen>\n"),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-tree",
+        Some(include_str!(
+            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("component/my-site");
+    let read = |path: &str| std::fs::read_to_string(site.join(path)).unwrap_or_default();
+    let update =
+        |parameters: &[(&str, &str)]| call(&factory, "john.doe", &format!("{SCREENS}update#Subscreen"), parameters);
+    update(&[
+        ("parentRootId", "my-site"),
+        ("parentPath", "screen/Site.xml"),
+        ("name", "Other"),
+        ("isDefault", "true"),
+    ])
+    .unwrap();
+    assert!(
+        read("screen/Site.xml").contains("<subscreens default-item=\"Other\">"),
+        "{}",
+        read("screen/Site.xml")
+    );
+    update(&[
+        ("parentRootId", "my-site"),
+        ("parentPath", "screen/Site.xml"),
+        ("name", "Child"),
+        ("menuIndex", "3"),
+        ("mountedBy", "item"),
+    ])
+    .unwrap();
+    assert!(read("screen/Site.xml").contains(
+        "<subscreens-item name=\"Child\" location=\"component://my-site/screen/Site/Child.xml\" menu-index=\"3\"/>"
+    ));
+
+    // Move, with the references to it updated
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.impl.DevToolsServices.rebuild#ArtifactIndex",
+        &[],
+    )
+    .unwrap();
+    let moved = call(
+        &factory,
+        "john.doe",
+        &format!("{SCREENS}move#Screen"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "screen/Site/Other.xml"),
+            ("to", "screen/Site/Moved.xml"),
+            ("updateRefs", "true"),
+        ],
+    )
+    .unwrap();
+    assert!(site.join("screen/Site/Moved.xml").is_file() && !site.join("screen/Site/Other.xml").exists());
+    assert!(
+        read("screen/Site.xml").contains("location=\"component://my-site/screen/Site/Moved.xml\""),
+        "{moved:?} {}",
+        read("screen/Site.xml")
+    );
+
+    // Remove: refused naming what references it, then confirmed
+    let refused = call(
+        &factory,
+        "john.doe",
+        &format!("{SCREENS}remove#Screen"),
+        &[("rootId", "my-site"), ("path", "screen/Site/Child.xml")],
+    );
+    assert!(refused.unwrap_err().contains("Site.xml"));
+    assert!(site.join("screen/Site/Child.xml").is_file());
+    call(
+        &factory,
+        "john.doe",
+        &format!("{SCREENS}remove#Screen"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "screen/Site/Child.xml"),
+            ("confirm", "true"),
+        ],
+    )
+    .unwrap();
+    assert!(!site.join("screen/Site/Child.xml").exists());
+
+    // an upstream parent: the default in the site's screen-extend of it
+    update(&[
+        ("parentRootId", "upstream-app"),
+        ("parentPath", "screen/Up.xml"),
+        ("name", "Extra"),
+        ("isDefault", "true"),
+    ])
+    .unwrap();
+    let extend = read("screen-extend/upstream-app/screen/Up.xml");
+    assert!(
+        extend.contains("<subscreens default-item=\"Extra\"></subscreens>")
+            || extend.contains("<subscreens default-item=\"Extra\"/>"),
+        "{extend}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(gate.runtime.join("component/upstream-app/screen/Up.xml")).unwrap(),
+        "<screen><widgets/></screen>\n"
     );
 }
 

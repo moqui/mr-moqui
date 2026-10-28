@@ -404,7 +404,16 @@ fn user_db_forms(location: &str, name: &str) -> Result<Vec<MNode>, Error> {
     forms
         .iter()
         .filter(|(_, groups)| groups.iter().any(|group| user_groups.contains(group)))
-        .map(|(id, _)| db_form_node(id))
+        .map(|(id, _)| {
+            let node = db_form_node(id)?;
+            // F10: a field a DbForm adds or changes names the DbForm, for the screen builder's canvas
+            if crate::devtools::is_dev_instance() {
+                for field in node.children_named("field") {
+                    field.set_attribute(super::stamp::ATTRIBUTE, format!("dbform:{id}:0:0"));
+                }
+            }
+            Ok(node)
+        })
         .collect()
 }
 

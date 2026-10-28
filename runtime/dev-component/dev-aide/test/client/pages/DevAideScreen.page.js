@@ -83,3 +83,29 @@ test("a section or transition is copied into the site's screen-extend to replace
     assert.deepEqual(ops.copyInto(ext, text, node), [{ op: "insert", at: [], position: "last", xml: "<transition name=\"save\"><actions/></transition>" }]);
     assert.equal(ops.actionsExtend(ext, "before")[0].xml, "<actions-extend type=\"actions\" when=\"before\"><log level=\"info\" message=\"before the screen's actions\"/></actions-extend>");
 });
+
+test("a filter, a section, a button and a row action as written", () => {
+    const actions = el("actions", [0], [], [el("entity-find", [0, 0], [["entity-name", "W"], ["list", "wList"]], [el("search-form-inputs", [0, 0, 0])])]);
+    const outline = el("screen", [], [], [actions, el("widgets", [1], [], [el("form-list", [1, 0], [["name", "L"], ["list", "wList"]], [el("field", [1, 0, 0], [["name", "a"]])])])]);
+    assert.ok(ops.hasSearchInputs(ops.listFindOf(outline, "wList")));
+    assert.equal(ops.listFindOf(outline, "other"), null);
+    const form = outline.children[1].children[0];
+    assert.deepEqual(ops.filterOps(true, outline, form, "a"), [{ op: "insert", at: [1, 0, 0], position: "first",
+        xml: "<header-field show-order-by=\"true\"><text-find/></header-field>" }]);
+    assert.deepEqual(ops.filterOps(false, el("screen-extend", [], [], []), form, "a"), [{ op: "insert", at: [], position: "last",
+        xml: "<form-list name=\"L\"><field name=\"a\"><header-field show-order-by=\"true\"><text-find/></header-field></field></form-list>" }]);
+    assert.equal(ops.sectionXml({ kind: "box", name: "Notes", title: "Notes" }), "<container-box name=\"Notes\"><box-header title=\"Notes\"/><box-body></box-body></container-box>");
+    const related = ops.sectionXml({ kind: "related", name: "Lines", title: "Lines", entity: "mantle.order.OrderItem", keyField: "orderId" });
+    assert.ok(related.startsWith("<section name=\"Lines\"><actions><entity-find entity-name=\"mantle.order.OrderItem\" list=\"orderItemList\"><econdition field-name=\"orderId\" from=\"orderId\"/>"));
+    assert.ok(related.includes("<auto-fields-entity entity-name=\"mantle.order.OrderItem\" field-type=\"display\"/>"));
+    // in place the link's path moves by one: the transition goes in before the actions, ahead of the widgets it is under
+    const node = el("label", [1, 0], [["text", "x"]]);
+    const button = ops.buttonOps(false, outline, { transition: "approve", service: "a.B.approve#C", text: "Approve" },
+        () => [{ op: "insert", at: node.path, position: "after", xml: "<link/>" }], node);
+    assert.deepEqual(button.map((op) => [op.at.join("."), op.position]), [["0", "before"], ["2.0", "after"]]);
+    assert.equal(button[0].xml, "<transition name=\"approve\"><service-call name=\"a.B.approve#C\" in-map=\"true\"/><default-response url=\".\"/></transition>");
+    assert.equal(ops.rowActionXml({ name: "approveRow", transition: "approve", text: "Approve", keyField: "orderId" }),
+        "<field name=\"approveRow\"><default-field><link url=\"approve\" text=\"Approve\" link-type=\"anchor\" parameter-map=\"{orderId: orderId}\"/></default-field></field>");
+    assert.equal(ops.textAttribute(el("label", [0])), "text");
+    assert.equal(ops.textAttribute(el("form-list", [0])), null);
+});

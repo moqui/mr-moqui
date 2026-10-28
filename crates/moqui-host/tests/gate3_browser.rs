@@ -4988,6 +4988,65 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         "(document.getElementById('DevNearestAnchor') || {innerText: ''}).innerText.indexOf('nearest anchor is Notes') >= 0",
         WAIT,
     );
+    // Add filter says why not when the list's find takes no search inputs
+    click_in_frame(&mut browser, "the list cell again", "First widget");
+    browser.wait_for("Add filter", "!!document.getElementById('DevAddFilter')", WAIT);
+    browser.click("Add filter", "document.getElementById('DevAddFilter')");
+    browser.wait_for(
+        "why not",
+        "(document.getElementById('DevFilterWhy') || {innerText: ''}).innerText.indexOf('search-form-inputs') >= 0",
+        WAIT,
+    );
+    browser.press("Escape");
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    // Add section inside the named container of an unnamed label
+    click_in_frame(&mut browser, "the notes label", "Notes here");
+    browser.wait_for("Add section", "!!document.getElementById('DevAddSection')", WAIT);
+    browser.click("Add section", "document.getElementById('DevAddSection')");
+    browser.wait_for("the section dialog", "!!document.getElementById('DevIntentDo')", WAIT);
+    browser.eval(
+        "(() => { const inputs = document.querySelectorAll('#DevIntentDialog input'); \
+         inputs[0].value = 'MoreNotes'; inputs[0].dispatchEvent(new Event('input')); \
+         inputs[1].value = 'More notes'; inputs[1].dispatchEvent(new Event('input')); return true; })()",
+    );
+    browser.click("Add", "document.getElementById('DevIntentDo')");
+    browser.wait_for(
+        "the section on the canvas",
+        &format!("{frame}.body.innerText.indexOf('More notes') >= 0"),
+        WAIT,
+    );
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&extend)
+            .unwrap_or_default()
+            .contains("MoreNotes")
+        {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let extend_text = std::fs::read_to_string(&extend).unwrap();
+    assert!(
+        extend_text.contains("<widgets-extend name=\"Notes\" where=\"append\"><container-box name=\"MoreNotes\">"),
+        "{extend_text}"
+    );
+
+    // an agent's proposal opened in the builder: the draft is the buffer, unsaved
+    browser.eval(
+        "localStorage.setItem('moqui.devAide.draft:component://my-site/screen-extend/upstream-app/screen/UpApp.xml', \
+         JSON.stringify({ text: '<screen-extend><widgets-extend name=\"Notes\" where=\"after\"><label text=\"From the proposal\"/></widgets-extend></screen-extend>' })); true",
+    );
+    browser.navigate(&format!("{base}/qapps/dev/Screens/Design?page=%2Fqapps%2Fupapp"));
+    browser.wait_for(
+        "the proposal on the canvas",
+        &format!("!!document.getElementById('DevCanvasFrame') && !!{frame} && {frame}.body.innerText.indexOf('From the proposal') >= 0"),
+        WAIT,
+    );
+    assert!(
+        !std::fs::read_to_string(&extend).unwrap().contains("From the proposal"),
+        "not saved"
+    );
     assert_clean(&mut browser, "the screen builder");
     if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
         use base64::Engine as _;

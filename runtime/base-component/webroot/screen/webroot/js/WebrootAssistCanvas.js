@@ -1371,9 +1371,20 @@
                 header() { return canvas.screenXmlHeader(this.program) || { location: "", path: "" }; },
                 src() { return this.header.path ? canvas.previewUrl(this.header.path, "canvas:" + this.artifactId) + "&v=" + (this.version || 0) : ""; }
             },
+            methods: {
+                // the proposal as the screen builder's buffer, unsaved (plans/design-dev-aide.md 13.5): the Workspace takes
+                // the draft of the location when it opens the file
+                openInBuilder() {
+                    const text = String(this.program || "").replace(/<!--\s*screen-xml[^>]*-->\s*\n?/, "");
+                    try { root.localStorage.setItem("moqui.devAide.draft:" + this.header.location, JSON.stringify({ text })); } catch (err) { return; }
+                    root.location.href = "/qapps/dev/Screens/Design?page=" + encodeURIComponent(this.header.path);
+                }
+            },
             render() {
-                const kids = [h("div", { class: "text-caption m-muted q-mb-xs", "data-assist-screen-xml-location": this.header.location },
-                    "Preview of " + (this.header.location || "a screen") + " · not saved")];
+                const kids = [h("div", { class: "row items-center no-wrap text-caption m-muted q-mb-xs", "data-assist-screen-xml-location": this.header.location }, [
+                    h("span", { class: "col" }, "Preview of " + (this.header.location || "a screen") + " · not saved"),
+                    this.header.path && this.header.location && !this.readOnly ? h(root.Vue.resolveComponent("q-btn"), { dense: true, flat: true, noCaps: true, size: "sm", icon: "sym_o_dashboard_customize",
+                        label: "Open in the builder", "data-assist-screen-xml-builder": "", onClick: () => this.openInBuilder() }) : null])];
                 if (this.src) kids.push(h("iframe", { src: this.src, title: "Screen preview", class: "m-assist-screen-xml-frame",
                     style: "width:100%;min-height:28rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px", "data-assist-screen-xml": "" }));
                 else kids.push(h("div", { class: "q-pa-sm m-muted" }, "The program names no page path to show it on."));

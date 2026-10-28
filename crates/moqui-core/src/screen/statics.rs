@@ -290,7 +290,8 @@ fn template_for(state: &RenderState, runner: &dyn Runner, key: &str) -> Result<A
     if let Some(found) = def.generated.static_template(key) {
         return Ok(found);
     }
-    match build_template(state, runner, &def, key) {
+    // a template is shared by every render of the screen: none of a stamped render's stamps go into it (F10)
+    match super::stamp::paused(|| build_template(state, runner, &def, key)) {
         Ok(made) => {
             def.generated.put_static_template(key.to_string(), Arc::clone(&made));
             Ok(made)

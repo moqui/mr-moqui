@@ -172,6 +172,68 @@
     // Actions run before or after the screen's own (actions-extend when="before|after").
     ops.actionsExtend = (extOutline, when) => [{ op: "insert", at: extOutline.path || [], position: "last",
         xml: xml("actions-extend", [["type", "actions"], ["when", when]], "<log level=\"info\" message=\"" + when + " the screen's actions\"/>") }];
+    // The find of a form-list's list in the screen's actions, and whether it takes the list's search inputs (Add filter).
+    ops.listFindOf = (outline, listName) => {
+        let found = null;
+        if (!listName) return null;
+        pure.walkOutline(outline, (node) => {
+            if (!found && (node.name === "entity-find" || node.name === "entity-find-count") && attrOf(node, "list") === listName) found = node;
+        });
+        return found;
+    };
+    ops.hasSearchInputs = (find) => !!(find && children(find, ["search-form-inputs"]).length);
+    // Add filter: the column's field with a find widget in its header; the form merge of the site, or the field itself.
+    ops.filterXml = (fieldName) => xml("field", [["name", fieldName]], "<header-field show-order-by=\"true\"><text-find/></header-field>");
+    ops.filterOps = (inPlace, outline, form, fieldName) => {
+        if (!inPlace) {
+            const merge = children(outline, ["form-list"]).find((node) => attrOf(node, "name") === attrOf(form, "name"));
+            return merge ? [{ op: "insert", at: merge.path, position: "last", xml: ops.filterXml(fieldName) }]
+                : [{ op: "insert", at: outline.path || [], position: "last", xml: xml("form-list", [["name", attrOf(form, "name")]], ops.filterXml(fieldName)) }];
+        }
+        const field = children(form, ["field"]).find((node) => attrOf(node, "name") === fieldName);
+        if (!field) return [{ op: "insert", at: form.path, position: "last", xml: xml("field", [["name", fieldName]],
+            "<header-field show-order-by=\"true\"><text-find/></header-field><default-field><display/></default-field>") }];
+        if (children(field, ["header-field"]).length) return [];
+        return [{ op: "insert", at: field.path, position: "first", xml: "<header-field show-order-by=\"true\"><text-find/></header-field>" }];
+    };
+    // Add section (11.2): a box, or a list of a related entity's records keyed by a field of the page.
+    ops.sectionXml = (spec) => {
+        const name = spec.name || "NewSection";
+        if (spec.kind === "related") {
+            const list = (spec.entity.split(".").pop() || "related").replace(/^./, (ch) => ch.toLowerCase()) + "List";
+            const find = xml("entity-find", [["entity-name", spec.entity], ["list", list]],
+                xml("econdition", [["field-name", spec.keyField], ["from", spec.keyFrom || spec.keyField]]));
+            const formList = xml("form-list", [["name", name + "List"], ["list", list], ["skip-form", "true"]],
+                xml("auto-fields-entity", [["entity-name", spec.entity], ["field-type", "display"]]));
+            return xml("section", [["name", name]], "<actions>" + find + "</actions><widgets>" +
+                xml("container-box", [["name", name + "Box"]], xml("box-header", [["title", spec.title || name]]) + "<box-body>" + formList + "</box-body>") + "</widgets>");
+        }
+        return xml("container-box", [["name", name]], xml("box-header", [["title", spec.title || name]]) + "<box-body></box-body>");
+    };
+    // Add button (11.2): a transition that calls a service, and a link to it.
+    ops.transitionXml = (spec) => xml("transition", [["name", spec.transition]], xml("service-call", [["name", spec.service], ["in-map", "true"]]) +
+        "<default-response url=\".\"/>");
+    ops.linkXml = (spec) => xml("link", [["url", spec.transition], ["text", spec.text], ["btn-type", "primary"]]);
+    // the transition's place in a screen file: before its actions and widgets
+    ops.transitionOp = (outline, transitionXml) => {
+        const next = children(outline, ["subscreens", "pre-actions", "always-actions", "actions", "widgets"])[0];
+        return next ? { op: "insert", at: next.path, position: "before", xml: transitionXml } : { op: "insert", at: outline.path || [], position: "last", xml: transitionXml };
+    };
+    // Add button as one list of operations: the transition, then its link at the place (in place the link's path moves
+    // by one when the transition goes in before the element it is under).
+    ops.buttonOps = (extension, outline, spec, insertAt, node) => {
+        const transition = ops.transitionXml(spec);
+        if (extension) return [{ op: "insert", at: outline.path || [], position: "last", xml: transition }].concat(insertAt(ops.linkXml(spec)));
+        const first = ops.transitionOp(outline, transition);
+        const path = node.path.slice();
+        if (first.position === "before" && first.at.length === 1 && path[0] >= first.at[0]) path[0]++;
+        return [first].concat(insertAt(ops.linkXml(spec)).map((op) => Object.assign({}, op, { at: path })));
+    };
+    // Add row action: a list column whose link calls a transition with the row's key.
+    ops.rowActionXml = (spec) => xml("field", [["name", spec.name || "rowAction"]], xml("default-field", [["title", ""]],
+        xml("link", [["url", spec.transition], ["text", spec.text], ["link-type", "anchor"], ["parameter-map", spec.keyField ? "{" + spec.keyField + ": " + spec.keyField + "}" : ""]])));
+    // The text a double click edits: a label's text, a link's text, a box header's title.
+    ops.textAttribute = (node) => node && ({ label: "text", link: "text", "box-header": "title", "default-field": "title", "container-box": null })[node.name] || null;
     // The widgets Insert offers (11.2), each as it is written.
     ops.SNIPPETS = [
         { key: "label", label: "Label", xml: "<label text=\"New label\" type=\"p\"/>" },
@@ -207,7 +269,7 @@
             return {
                 view: null, error: "", mode: "design", width: 0, dark: false, query: "", bufferId: newId(), frameSrc: "", version: 0,
                 base: null, ext: null, selection: null, hover: null, panel: "points", stamps: {}, adding: null, inserting: null,
-                schema: null, rendering: false, frameError: "", selectedBox: null
+                schema: null, rendering: false, frameError: "", selectedBox: null, intent: null
             };
         },
         computed: {
@@ -315,6 +377,11 @@
                 doc.addEventListener("mouseleave", () => { this.hoverEl = null; this.drawHover(); }, true);
                 const block = (event) => { const el = stamped(event.target); event.preventDefault(); event.stopPropagation(); if (el && event.type === "click") this.selectElement(el); };
                 doc.addEventListener("click", block, true);
+                doc.addEventListener("dblclick", (event) => {
+                    event.preventDefault(); event.stopPropagation();
+                    const node = this.selection && this.selection.node;
+                    if (node) this.editText(node);
+                }, true);
                 doc.addEventListener("submit", (event) => { event.preventDefault(); event.stopPropagation(); }, true);
                 // reselect what was selected, by its source
                 if (this.selection && this.selection.stamp) {
@@ -344,6 +411,7 @@
             describe(el) {
                 const stamp = el.getAttribute("data-m-src") || "";
                 const known = this.stamps[stamp];
+                if (known && known.loc && known.loc.dbform) return "field from DbForm " + known.loc.dbform + (known.loc.groups.length ? " · group " + known.loc.groups.join(", ") : "");
                 const node = known && known.node;
                 const name = node ? node.name + (ops.anchorName(node) ? " " + ops.anchorName(node) : "") : el.tagName.toLowerCase();
                 return name + (known && known.loc ? " · " + (known.loc.site ? "site" : "upstream") : "");
@@ -448,6 +516,78 @@
                 if (node) this.apply(ops.copyInto(this.editOutline, text, node));
             },
             actionsExtendOps(when) { return ops.actionsExtend(this.editOutline, when); },
+            // ---- the intents beyond a field: a filter, a section, a button, a row action ----
+            startIntent(kind) {
+                const intents = this.intents;
+                const form = intents && intents.form;
+                const base = { kind, name: "", title: "", text: "", transition: "", service: "", entity: "", keyField: "", fieldName: intents ? intents.field : "", where: "after", sectionKind: "box" };
+                if (kind === "filter") {
+                    const find = ops.listFindOf(this.baseOutline, form ? attrOf(form.node, "list") : "");
+                    base.why = !find ? "The list's find is not in this screen's actions, so its filters cannot be told apart."
+                        : !ops.hasSearchInputs(find) ? "The list's find has no search-form-inputs, so a header filter would not narrow it: add search-form-inputs to its find first." : "";
+                }
+                this.intent = base;
+            },
+            doIntent() {
+                const intent = this.intent;
+                this.intent = null;
+                const intents = this.intents;
+                const node = this.selection && this.selection.node;
+                const anchor = intents && (intents.anchor ? intents.anchor.name : intents.nearest ? intents.nearest.name : "");
+                const where = intents && intents.anchor ? intent.where : intents && intents.nearest ? intents.nearest.where : intent.where;
+                const outline = this.editOutline;
+                const insertAt = (body) => this.extensionMode ? ops.extendWidgets(outline, anchor, where, body)
+                    : [{ op: "insert", at: node.path, position: { before: "before", after: "after", prepend: "first", append: "last" }[where] || "after", xml: body }];
+                if (intent.kind === "filter") {
+                    const form = intents.form;
+                    const target = this.extensionMode ? form.node : this.findInEdit(form.kind, form.name);
+                    this.apply(ops.filterOps(!this.extensionMode, outline, target || form.node, intent.fieldName));
+                } else if (intent.kind === "section") {
+                    this.apply(insertAt(ops.sectionXml(Object.assign({}, intent, { kind: intent.sectionKind }))));
+                } else if (intent.kind === "button") {
+                    this.apply(ops.buttonOps(this.extensionMode, outline, intent, insertAt, node));
+                } else if (intent.kind === "rowAction") {
+                    const form = intents.form;
+                    const field = ops.rowActionXml(intent);
+                    if (this.extensionMode) {
+                        const merge = children(outline, ["form-list"]).find((item) => attrOf(item, "name") === form.name);
+                        this.apply(merge ? [{ op: "insert", at: merge.path, position: "last", xml: field }]
+                            : [{ op: "insert", at: outline.path || [], position: "last", xml: xml("form-list", [["name", form.name]], field) }]);
+                    } else {
+                        const target = this.findInEdit(form.kind, form.name);
+                        if (target) this.apply([{ op: "insert", at: target.path, position: "last", xml: field }]);
+                    }
+                }
+            },
+            findInEdit(kind, name) {
+                let found = null;
+                pure.walkOutline(this.editOutline, (item) => { if (!found && item.name === kind && attrOf(item, "name") === name) found = item; });
+                return found;
+            },
+            // a double click edits a label's or link's text, a box's title, in place (the screen's own file)
+            editText(node) {
+                const attribute = ops.textAttribute(node);
+                if (!attribute || this.extensionMode || !this.canEdit) {
+                    if (attribute && this.extensionMode) this.ctx.note("An upstream screen's text is changed in its own file: with \"Allow editing upstream components\" on", "warning");
+                    return;
+                }
+                this.$q.dialog({ title: node.name + " " + attribute, prompt: { model: attrOf(node, attribute) || "", type: "text" }, cancel: true })
+                    .onOk((value) => this.apply([{ op: "set-attribute", at: node.path, name: attribute, value }]));
+            },
+            // Add an anchor here (question 14): the element named in the base screen's own file, for a user who may edit
+            // upstream; never generated
+            addAnchor() {
+                const node = this.selection && this.selection.node;
+                const buffer = this.tabIsBase ? this.tab : this.base;
+                if (!node || !buffer) return;
+                this.$q.dialog({ title: "Name this " + node.name, message: "The name is written into " + this.view.base.path + ", the base screen.",
+                    prompt: { model: "", type: "text" }, cancel: true }).onOk((value) => {
+                    if (!value) return;
+                    const attribute = node.name === "container-row" || node.name === "row-col" || node.name === "container" ? "id" : "name";
+                    this.ctx.apply([{ op: "set-attribute", at: node.path, name: attribute, value }], buffer === this.tab ? null : buffer)
+                        .then(() => this.scheduleRender(), (error) => this.ctx.fail(error));
+                });
+            },
             removeSelected() {
                 const node = this.selection && this.selection.node;
                 if (!node || this.selection.which !== "edit") return;
@@ -519,6 +659,16 @@
               :disable="!canEdit" @click="startField" id="DevAddColumn"></q-btn>
           <q-btn v-if="intents.form && intents.form.kind === 'form-single'" dense unelevated no-caps color="primary" icon="sym_o_add_box" label="Add field"
               :disable="!canEdit" @click="startField" id="DevAddFormField"></q-btn>
+          <template v-if="intents.form && intents.form.kind === 'form-list'">
+            <q-btn dense flat no-caps icon="sym_o_filter_alt" label="Add filter" :disable="!canEdit" @click="startIntent('filter')" id="DevAddFilter"></q-btn>
+            <q-btn dense flat no-caps icon="sym_o_ads_click" label="Add row action" :disable="!canEdit" @click="startIntent('rowAction')"></q-btn>
+          </template>
+          <template v-if="intents.anchor || intents.nearest || !extensionMode">
+            <q-btn dense flat no-caps icon="sym_o_view_agenda" label="Add section" :disable="!canEdit" @click="startIntent('section')" id="DevAddSection"></q-btn>
+            <q-btn dense flat no-caps icon="sym_o_smart_button" label="Add button" :disable="!canEdit" @click="startIntent('button')" id="DevAddButton"></q-btn>
+          </template>
+          <q-btn v-if="intents.unnamed && extensionMode && ctx.tier === 'full' && ctx.upstreamEdits" dense flat no-caps icon="sym_o_anchor" label="Add an anchor here"
+              @click="addAnchor" id="DevAddAnchor"></q-btn>
           <template v-if="intents.anchor">
             <q-btn dense flat no-caps icon="sym_o_vertical_align_top" label="Insert before" :disable="!canEdit" @click="startInsert('before')"></q-btn>
             <q-btn dense flat no-caps icon="sym_o_vertical_align_bottom" label="Insert after" :disable="!canEdit" @click="startInsert('after')" id="DevInsertAfter"></q-btn>
@@ -527,7 +677,7 @@
           <div v-if="intents.unnamed && extensionMode" class="text-caption m-dev-unnamed" id="DevNearestAnchor">This {{selection.node.name}} has no name, so it cannot be anchored{{intents.nearest ? '; nearest anchor is ' + intents.nearest.name : ''}}.
             <q-btn v-if="intents.nearest" dense flat no-caps size="sm" :label="'Insert ' + intents.nearest.where + ' ' + intents.nearest.name" :disable="!canEdit"
                 @click="startInsert(intents.nearest.where, intents.nearest.name)"></q-btn>
-            <div v-if="ctx.tier === 'full'" class="m-muted">With "Allow editing upstream components" on you may name it in the base screen.</div></div>
+            <div v-if="ctx.tier === 'full' && !ctx.upstreamEdits" class="m-muted">With "Allow editing upstream components" on you may name it in the base screen.</div></div>
           <template v-if="!extensionMode && selection.which === 'edit'">
             <q-btn dense flat no-caps icon="sym_o_vertical_align_top" label="Insert before" :disable="!canEdit" v-if="!intents.anchor" @click="startInsert('before')"></q-btn>
             <q-btn dense flat no-caps icon="sym_o_vertical_align_bottom" label="Insert after" :disable="!canEdit" v-if="!intents.anchor" @click="startInsert('after')"></q-btn>
@@ -551,6 +701,9 @@
           </div>
         </template>
       </template>
+      <div v-else-if="selection && selection.loc && selection.loc.dbform" class="text-caption" id="DevDbFormField">A field from DbForm
+        <b>{{selection.loc.dbform}}</b>{{selection.loc.groups.length ? ' for ' + selection.loc.groups.join(', ') : ''}}: a configuration in the database, changed
+        in System's form settings, not a file.</div>
       <div v-else class="m-muted text-caption">Click an element on the canvas, an extension point, or a block of the Outline.</div>
       <div v-if="extensionMode" class="q-mt-md">
         <div class="text-caption text-weight-medium">The screen's actions</div>
@@ -571,6 +724,35 @@
       </q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn>
         <q-btn unelevated no-caps color="primary" label="Add" @click="addField" id="DevScreenFieldAdd"></q-btn></q-card-actions>
+    </q-card>
+  </q-dialog>
+  <q-dialog :model-value="!!intent" @update:model-value="v => { if (!v) intent = null; }">
+    <q-card v-if="intent" style="width: 32rem; max-width: 95vw" id="DevIntentDialog">
+      <q-card-section class="text-subtitle1">{{ { filter: 'Add a filter', section: 'Add a section', button: 'Add a button', rowAction: 'Add a row action' }[intent.kind] }}</q-card-section>
+      <q-card-section class="q-pt-none q-gutter-y-sm">
+        <template v-if="intent.kind === 'filter'">
+          <div v-if="intent.why" class="text-warning text-caption" id="DevFilterWhy">{{intent.why}}</div>
+          <q-input dense outlined v-model="intent.fieldName" label="The column's field" for="DevFilterField"></q-input>
+        </template>
+        <template v-if="intent.kind === 'section'">
+          <q-btn-toggle dense no-caps v-model="intent.sectionKind" :options="[{ label: 'A box', value: 'box' }, { label: 'A related list', value: 'related' }]"
+></q-btn-toggle>
+          <q-input dense outlined v-model="intent.name" label="Name (its anchor)"></q-input>
+          <q-input dense outlined v-model="intent.title" label="Title"></q-input>
+          <template v-if="intent.sectionKind === 'related'">
+            <q-input dense outlined v-model="intent.entity" label="The related entity"></q-input>
+            <q-input dense outlined v-model="intent.keyField" label="Its field that holds this page's key"></q-input>
+          </template>
+        </template>
+        <template v-if="intent.kind === 'button' || intent.kind === 'rowAction'">
+          <q-input dense outlined v-model="intent.text" label="Its text"></q-input>
+          <q-input dense outlined v-model="intent.transition" label="The transition (its name)"></q-input>
+          <q-input v-if="intent.kind === 'button'" dense outlined v-model="intent.service" label="The service it calls"></q-input>
+          <q-input v-if="intent.kind === 'rowAction'" dense outlined v-model="intent.keyField" label="The row's key field it passes"></q-input>
+        </template>
+      </q-card-section>
+      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="intent = null"></q-btn>
+        <q-btn unelevated no-caps color="primary" label="Add" :disable="intent.kind === 'filter' && !!intent.why" @click="doIntent" id="DevIntentDo"></q-btn></q-card-actions>
     </q-card>
   </q-dialog>
   <q-dialog :model-value="!!inserting" @update:model-value="v => { if (!v) inserting = null; }">

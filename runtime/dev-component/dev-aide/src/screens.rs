@@ -41,7 +41,351 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(get_screen_view), get_screen_view)?;
     registry.service_function(moqui_core::service_location!(put_canvas_buffer), put_canvas_buffer)?;
     registry.service_function(moqui_core::service_location!(resolve_stamps), resolve_stamps)?;
-    registry.service_function(moqui_core::service_location!(create_subscreen), create_subscreen)
+    registry.service_function(moqui_core::service_location!(create_subscreen), create_subscreen)?;
+    registry.service_function(moqui_core::service_location!(update_subscreen), update_subscreen)?;
+    registry.service_function(moqui_core::service_location!(remove_screen), remove_screen)?;
+    registry.service_function(moqui_core::service_location!(move_screen), move_screen)
+}
+
+use moqui_lib::xml_edit::{Locator, Op, OutlineNode, Position};
+
+/// Apply `build`'s operations (from the file's outline) to a file and save it through the save pipeline; a file not
+/// there starts as `missing`.
+fn edit_file(
+    context: &Context,
+    root: &Root,
+    relative: &str,
+    missing: &str,
+    build: impl FnOnce(&OutlineNode) -> Vec<Op>,
+) -> Result<Parameters, LibError> {
+    let resolved = context.resolve(root, relative)?;
+    let (text, base) = match std::fs::read(&resolved.path) {
+        Ok(bytes) => (
+            String::from_utf8_lossy(&bytes).into_owned(),
+            crate::workspace::sha256(&bytes),
+        ),
+        Err(_) => (missing.to_string(), String::new()),
+    };
+    let outline = moqui_lib::xml_edit::outline(&text)?;
+    let ops = build(&outline);
+    if ops.is_empty() {
+        return Ok(Parameters::new());
+    }
+    let applied = moqui_lib::xml_edit::apply(&text, &ops)?;
+    crate::workspace::save_text(context, root, &resolved, &applied.text, &base, None)
+}
+
+fn child<'a>(node: &'a OutlineNode, name: &str) -> Option<&'a OutlineNode> {
+    node.children.iter().find(|child| child.name == name)
+}
+
+/// `update#Subscreen`: a subscreen made the default of its parent, or given a menu index (11.1): in the parent's file
+/// (`subscreens default-item`, a `subscreens-item`'s `menu-index`, or a directory screen's own `default-menu-index`),
+/// or for an upstream parent in the site's `screen-extend` of it (its `subscreens` merge, D17).
+fn update_subscreen(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let _authz = ec.disable_authz();
+    let root = context.root(&text(parameters, "parentRootId"))?;
+    let parent = text(parameters, "parentPath");
+    let name = text(parameters, "name");
+    let make_default = text(parameters, "isDefault") == "true";
+    let menu_index = text(parameters, "menuIndex");
+    let mounted = text(parameters, "mountedBy");
+    if name.is_empty() {
+        return Err(LibError::new("name the subscreen"));
+    }
+    if context.may_write(root, &parent).is_ok() {
+        // a directory screen keeps its menu index in its own file
+        if !menu_index.is_empty() && mounted == "directory" {
+            let own = format!("{}/{name}.xml", parent.trim_end_matches(".xml"));
+            edit_file(&context, root, &own, "", |_| {
+                vec![Op::SetAttribute {
+                    at: Locator::Path(Vec::new()),
+                    name: "default-menu-index".into(),
+                    value: menu_index.clone(),
+                }]
+            })?;
+        }
+        return edit_file(&context, root, &parent, "", |outline| {
+            let mut ops = Vec::new();
+            let subscreens = child(outline, "subscreens");
+            if make_default {
+                match subscreens {
+                    Some(node) => ops.push(Op::SetAttribute {
+                        at: Locator::Path(node.path.clone()),
+                        name: "default-item".into(),
+                        value: name.clone(),
+                    }),
+                    // where the schema has it: before the actions and widgets
+                    None => ops.push(
+                        match outline.children.iter().find(|child| {
+                            ["always-actions", "pre-actions", "actions", "widgets"].contains(&child.name.as_str())
+                        }) {
+                            Some(next) => Op::Insert {
+                                at: Locator::Path(next.path.clone()),
+                                position: Position::Before,
+                                xml: format!("<subscreens default-item=\"{name}\"/>"),
+                            },
+                            None => Op::Insert {
+                                at: Locator::Path(Vec::new()),
+                                position: Position::Last,
+                                xml: format!("<subscreens default-item=\"{name}\"/>"),
+                            },
+                        },
+                    ),
+                }
+            }
+            if !menu_index.is_empty() && mounted != "directory" {
+                if let Some(item) = subscreens.and_then(|node| {
+                    node.children
+                        .iter()
+                        .find(|item| item.name == "subscreens-item" && item.attr("name") == Some(name.as_str()))
+                }) {
+                    ops.push(Op::SetAttribute {
+                        at: Locator::Path(item.path.clone()),
+                        name: "menu-index".into(),
+                        value: menu_index.clone(),
+                    });
+                }
+            }
+            ops
+        });
+    }
+    // an upstream parent: its subscreens merge in the site's screen-extend of it
+    let location = location_of(root, &parent).ok_or_else(|| LibError::new(format!("{parent} is in no component")))?;
+    let after = location.strip_prefix("component://").unwrap_or(&location);
+    let target = site::site_path(&context, &format!("screen-extend/{after}"))
+        .ok_or_else(|| LibError::new("the parent is upstream and there is no site component to extend it in"))?;
+    let site_root = context.root(&target.root_id)?.clone();
+    let empty = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen-extend xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/xml-screen-3.xsd\">\n</screen-extend>\n";
+    edit_file(&context, &site_root, &target.path, empty, |outline| {
+        let mut ops = Vec::new();
+        let item = format!(
+            "<subscreens-item name=\"{name}\"{}/>",
+            if menu_index.is_empty() {
+                String::new()
+            } else {
+                format!(" menu-index=\"{menu_index}\"")
+            }
+        );
+        match child(outline, "subscreens") {
+            Some(node) => {
+                if make_default {
+                    ops.push(Op::SetAttribute {
+                        at: Locator::Path(node.path.clone()),
+                        name: "default-item".into(),
+                        value: name.clone(),
+                    });
+                }
+                match node
+                    .children
+                    .iter()
+                    .find(|have| have.name == "subscreens-item" && have.attr("name") == Some(name.as_str()))
+                {
+                    Some(have) if !menu_index.is_empty() => ops.push(Op::SetAttribute {
+                        at: Locator::Path(have.path.clone()),
+                        name: "menu-index".into(),
+                        value: menu_index.clone(),
+                    }),
+                    Some(_) => {}
+                    None if !menu_index.is_empty() => ops.push(Op::Insert {
+                        at: Locator::Path(node.path.clone()),
+                        position: Position::Last,
+                        xml: item.clone(),
+                    }),
+                    None => {}
+                }
+            }
+            None => ops.push(Op::Insert {
+                at: Locator::Path(Vec::new()),
+                position: Position::Last,
+                xml: format!(
+                    "<subscreens{}>{}</subscreens>",
+                    if make_default {
+                        format!(" default-item=\"{name}\"")
+                    } else {
+                        String::new()
+                    },
+                    if menu_index.is_empty() {
+                        String::new()
+                    } else {
+                        item.clone()
+                    }
+                ),
+            }),
+        }
+        ops
+    })
+}
+
+/// What references a screen, from the index: each with its file and line.
+fn screen_refs(context: &Context, location: &str) -> Result<Vec<Json>, LibError> {
+    Ok(moqui_core::devtools::index::refs(
+        &context.factory,
+        &format!("screen:{location}"),
+        moqui_core::devtools::index::Direction::In,
+        &[],
+    )?
+    .iter()
+    .filter(|entry| entry.ref_type != "extend" && entry.ref_type != "anchor")
+    .map(|entry| {
+        let mut out = site::located(context, &entry.path);
+        out["line"] = json!(entry.line);
+        out["refType"] = json!(entry.ref_type);
+        out
+    })
+    .collect())
+}
+
+/// `remove#Screen`: a screen's file and its directory of subscreens; with what references it answered first, and
+/// removed when `confirm` (11.1). Audited.
+fn remove_screen(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let _authz = ec.disable_authz();
+    let root = context.root(&text(parameters, "rootId"))?;
+    let resolved = context.resolve(root, &text(parameters, "path"))?;
+    context.may_write(root, &resolved.relative)?;
+    let location = location_of(root, &resolved.relative).unwrap_or_default();
+    let refs = screen_refs(&context, &location)?;
+    let mut out = Parameters::new();
+    out.insert("refs".into(), json_value(&refs));
+    if !refs.is_empty() && text(parameters, "confirm") != "true" {
+        let named: Vec<String> = refs
+            .iter()
+            .take(5)
+            .map(|entry| format!("{}:{}", entry["path"].as_str().unwrap_or_default(), entry["line"]))
+            .collect();
+        return Err(LibError::new(format!(
+            "{} is used by {} ({}{}): confirm to remove it anyway",
+            resolved.relative,
+            refs.len(),
+            named.join(", "),
+            if refs.len() > 5 { ", …" } else { "" }
+        )));
+    }
+    let directory = resolved.path.with_extension("");
+    let before = std::fs::read(&resolved.path)
+        .ok()
+        .map(|bytes| crate::workspace::sha256(&bytes));
+    std::fs::remove_file(&resolved.path).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    if directory.is_dir() {
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+    crate::audit::record(
+        &context.facade,
+        &crate::audit::Write {
+            action: "DAA_DELETE",
+            root: &root.id,
+            path: &resolved.relative,
+            hash_before: before.as_deref(),
+            ..Default::default()
+        },
+    );
+    let report = moqui_core::devtools::reload_paths(&context.factory, &[resolved.path.clone(), directory]);
+    out.insert("removed".into(), Value::Bool(true));
+    out.insert("reload".into(), json_value(&report));
+    Ok(out)
+}
+
+/// `move#Screen`: a screen's file and its directory of subscreens moved to `to` (a path in the same root); with
+/// `updateRefs`, each file that names the old location (the index's references) is saved naming the new one, those the
+/// user may not write left and listed (11.1). Audited.
+fn move_screen(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let _authz = ec.disable_authz();
+    let root = context.root(&text(parameters, "rootId"))?;
+    let from = context.resolve(root, &text(parameters, "path"))?;
+    let to = context.resolve(root, &text(parameters, "to"))?;
+    context.may_write(root, &from.relative)?;
+    context.may_write(root, &to.relative)?;
+    if to.path.exists() {
+        return Err(LibError::new(format!("{} is there already", to.relative)));
+    }
+    let old_location = location_of(root, &from.relative).unwrap_or_default();
+    let new_location = location_of(root, &to.relative).unwrap_or_default();
+    let refs = screen_refs(&context, &old_location)?;
+    if let Some(parent) = to.path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| LibError::new(err.to_string()))?;
+    }
+    std::fs::rename(&from.path, &to.path).map_err(|err| LibError::new(format!("{}: {err}", from.relative)))?;
+    let (old_dir, new_dir) = (from.path.with_extension(""), to.path.with_extension(""));
+    if old_dir.is_dir() {
+        std::fs::rename(&old_dir, &new_dir).map_err(|err| LibError::new(format!("{}: {err}", old_dir.display())))?;
+    }
+    crate::audit::record(
+        &context.facade,
+        &crate::audit::Write {
+            action: "DAA_MOVE",
+            root: &root.id,
+            path: &from.relative,
+            detail: Some(json!({ "to": to.relative })),
+            ..Default::default()
+        },
+    );
+    let mut updated = Vec::new();
+    let mut skipped = Vec::new();
+    if text(parameters, "updateRefs") == "true" && !old_location.is_empty() {
+        let mut files: Vec<(String, String)> = refs
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry["rootId"].as_str()?.to_string(),
+                    entry["path"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        files.sort();
+        files.dedup();
+        for (root_id, path) in files {
+            let Ok(ref_root) = context.root(&root_id).cloned() else {
+                continue;
+            };
+            let Ok(resolved) = context.resolve(&ref_root, &path) else {
+                continue;
+            };
+            let Ok(bytes) = std::fs::read(&resolved.path) else {
+                continue;
+            };
+            let before = String::from_utf8_lossy(&bytes).into_owned();
+            let after = before.replace(&old_location, &new_location);
+            if after == before {
+                continue;
+            }
+            match crate::workspace::save_text(
+                &context,
+                &ref_root,
+                &resolved,
+                &after,
+                &crate::workspace::sha256(&bytes),
+                None,
+            ) {
+                Ok(_) => updated.push(format!("{root_id}:{path}")),
+                Err(err) => skipped.push(format!("{root_id}:{path}: {err}")),
+            }
+        }
+    }
+    let report = moqui_core::devtools::reload_paths(
+        &context.factory,
+        &[from.path.clone(), to.path.clone(), old_dir, new_dir],
+    );
+    let mut out = Parameters::new();
+    out.insert("refs".into(), json_value(&refs));
+    out.insert("updated".into(), json_value(&updated));
+    out.insert("skipped".into(), json_value(&skipped));
+    out.insert("reload".into(), json_value(&report));
+    Ok(out)
 }
 
 /// The root the tree starts at: the apps under the shell.
@@ -324,6 +668,22 @@ fn resolve_stamps(
         let (Some(column), Some(line), Some(file)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
+        // a field a DbForm adds or changes: the form and the user groups it is for
+        if let Some(form_id) = file.strip_prefix("dbform:") {
+            let groups: Vec<String> = context
+                .facade
+                .find("moqui.screen.form.DbFormUserGroup")
+                .and_then(|find| find.eq("formId", Value::string(form_id)).disable_authz().list())
+                .map(|rows| {
+                    rows.values()
+                        .iter()
+                        .filter_map(|row| row.fields().get("userGroupId").map(moqui_lib::object::to_plain_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            resolved.insert(stamp.clone(), json!({ "dbform": form_id, "groups": groups }));
+            continue;
+        }
         let entry = match file_of(&context, file) {
             Some((root, path, site)) => json!({ "rootId": root, "path": path, "site": site,
                 "line": line.parse::<u32>().unwrap_or(0), "column": column.parse::<u32>().unwrap_or(0) }),

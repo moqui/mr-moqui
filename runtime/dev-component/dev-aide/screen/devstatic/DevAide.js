@@ -357,6 +357,7 @@
                         }).onOk(() => { tab.text = draft.text; }).onCancel(() => store.drop(pure.storageKey(this.rootId, "draft:" + path)));
                     }
                     this.loadSchema(tab);
+                    this.takeDraft(tab, this.rootId);
                     if (how.view && how.view !== "text") this.setView(tab, how.view);
                 }, (error) => { this.tabs = pure.closeTab(this.tabs, path, this.active).tabs; this.fail(error); });
             },
@@ -378,6 +379,23 @@
                     if (base.rootId !== this.rootId) this.selectRoot(base.rootId);
                     this.openFile(base.path, 0, false, { view: "screen", page });
                 }, this.fail);
+            },
+            // The component:// location of a file of a root, as the screen-xml dialect names one.
+            locationOf(rootId, path) {
+                const item = this.roots.find((root) => root.id === rootId);
+                if (!item) return "";
+                const component = (item.components || []).filter((c) => !c.path || path === c.path || path.indexOf(c.path + "/") === 0)
+                    .sort((a, b) => b.path.length - a.path.length)[0];
+                return component ? "component://" + component.name + "/" + (component.path ? path.slice(component.path.length + 1) : path) : "";
+            },
+            // An agent's proposal opened in the builder (13.5): the draft of the file's location becomes its unsaved text.
+            takeDraft(buffer, rootId) {
+                const key = "moqui.devAide.draft:" + this.locationOf(rootId, buffer.path);
+                const draft = store.get(key);
+                if (!draft || typeof draft.text !== "string") return;
+                store.drop(key);
+                buffer.text = draft.text;
+                this.note("Opened with Assist's proposal, not saved: Save keeps it", "info");
             },
             // ---- visual views (5.2) ----
             setView(tab, name) {
@@ -472,6 +490,7 @@
                     tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
                         readOnly: !!file.readOnly, readOnlyReason: file.readOnlyReason || "", outline: null, undo: [], redo: [] });
                     const buffer = tab.companions[tab.companions.length - 1];
+                    this.takeDraft(buffer, rootId);
                     return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; return buffer; },
                         () => buffer);
                 });
