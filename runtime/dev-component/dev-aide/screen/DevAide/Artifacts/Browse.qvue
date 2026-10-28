@@ -1,0 +1,51 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Artifact Browser page: loads the client (/devstatic/DevAide.js with js/WebrootCode.js, then DevAideBrowser.js)
+    and mounts m-dev-artifact-browser on the Workspace's transitions, centered on the query's artifactId, else a search. -->
+<template><div class="m-dev-browse-page">
+    <div v-if="!artifactId" class="row items-center q-gutter-sm q-pa-sm" id="DevBrowseSearch">
+        <q-input dense outlined v-model="text" placeholder="An artifact to browse: OrdHdr, place#Order" style="min-width: 22rem" debounce="200"
+            @update:model-value="search" @keyup.enter="results[0] && (artifactId = results[0].id)"></q-input>
+        <q-list dense bordered v-if="results.length" class="full-width"><q-item v-for="artifact in results" :key="artifact.id" clickable @click="artifactId = artifact.id">
+            <q-item-section>{{artifact.shortName}} <span class="text-caption">{{artifact.kind}} · {{artifact.name}}</span></q-item-section></q-item></q-list>
+    </div>
+    <m-dev-artifact-browser v-if="ready && artifactId" :base="base" :artifact-id="artifactId"></m-dev-artifact-browser>
+    <div v-else-if="!ready" class="q-pa-md m-muted" id="DevBrowseLoading">{{failed || 'Loading the browser…'}}</div>
+</div></template>
+
+<script>
+module.exports = {
+    inject: { mScreen: { default: null } },
+    data() {
+        const parameters = (this.mScreen && this.mScreen.parameters) || {};
+        return { ready: false, failed: '', artifactId: parameters.artifactId || '', text: '', results: [] };
+    },
+    computed: {
+        base() { return window.moqui.devAide.pure.workspaceBase(this.mScreen ? this.mScreen.path : window.location.pathname); }
+    },
+    mounted() {
+        const moqui = window.moqui;
+        moqui.loadScript('/devstatic/DevAide.js', null, () => !!(moqui.devAide && moqui.devAide.components))
+            .then(() => moqui.devAide.start())
+            .then(() => moqui.loadScript('/devstatic/DevAideBrowser.js', null, () => !!moqui.devAide.browserRegistered))
+            .then(() => { this.ready = true; }, (err) => { this.failed = 'The browser could not load: ' + (err && err.message || err); });
+    },
+    methods: {
+        search(text) {
+            if (!text || text.length < 2) { this.results = []; return; }
+            window.moqui.request(this.base + '/artifacts', { params: { text, limit: 20 } }).then((result) => { this.results = (result.json && result.json.artifacts) || []; });
+        }
+    }
+};
+</script>

@@ -13,14 +13,15 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Artifacts (plans/design-dev-aide.md 7): Search, an artifact's references as lists (Refs, the browser's List view), and
-    the site's Customizations, all from the framework's artifact index. Plain forms and lists, so the terminal reaches
-    them. The browser canvas is later (P9). -->
+    the site's Customizations, all from the framework's artifact index, plain forms and lists so the terminal reaches
+    them; and the Browser, the canvas of the same references (a qvue page, P9). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Artifacts" default-menu-index="3">
     <subscreens default-item="Search">
         <subscreens-item name="Search" menu-title="Search" menu-index="1" location="component://dev-aide/screen/DevAide/Artifacts/Search.xml"/>
         <subscreens-item name="Refs" menu-title="References" menu-index="2" location="component://dev-aide/screen/DevAide/Artifacts/Refs.xml"/>
         <subscreens-item name="Customizations" menu-title="Customizations" menu-index="3" location="component://dev-aide/screen/DevAide/Artifacts/Customizations.xml"/>
+        <subscreens-item name="Browse" menu-title="Browser" menu-index="4" location="component://dev-aide/screen/DevAide/Artifacts/Browse.xml"/>
     </subscreens>
     <widgets>
         <subscreens-panel id="dev-aide-artifacts" type="tab"/>

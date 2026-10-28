@@ -261,7 +261,10 @@
             ".m-diff-view{border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px;overflow:auto}" +
             ".m-file-tree .m-file-status{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;margin-left:auto;padding-left:8px}" +
             ".m-file-status-M{color:#e2a400}.m-file-status-A,.m-file-status-\\?{color:#2e9e4f}.m-file-status-D{color:#d32f2f}" +
-            ".m-file-status-U{color:#d32f2f}.m-file-status-R{color:#1e88e5}.m-file-tree .m-file-ignored{opacity:.5}";
+            ".m-file-status-U{color:#d32f2f}.m-file-status-R{color:#1e88e5}.m-file-tree .m-file-ignored{opacity:.5}" +
+            ".m-pan-zoom{position:relative;overflow:hidden;touch-action:none;cursor:grab;outline:none}.m-pan-zoom:active{cursor:grabbing}" +
+            ".m-pan-zoom-layer{position:absolute;left:0;top:0;transform-origin:0 0}" +
+            ".m-pan-zoom-layer>svg{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}";
         root.document.head.appendChild(style);
     }
 
@@ -558,7 +561,117 @@
         }
     };
 
-    const components = { "m-code-editor": codeEditor, "m-diff-view": diffView, "m-file-tree": fileTree };
+    // ---- m-pan-zoom ----
+
+    // The view of a pan-and-zoom layer, { x, y, k }: the layer's offset in the frame and its scale. Pure, so the arithmetic
+    // is tested without a page.
+    const panZoom = editor.panZoom = {
+        clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
+        // a zoom by `factor` that keeps the layer point under `at` (frame coordinates) where it is
+        zoomAt(view, at, factor, min, max) {
+            const k = panZoom.clamp(view.k * factor, min, max);
+            const ratio = k / view.k;
+            return { x: at.x - (at.x - view.x) * ratio, y: at.y - (at.y - view.y) * ratio, k };
+        },
+        // the view that shows `box` ({ x, y, width, height } in layer coordinates) whole in a frame of `size`, centered,
+        // with `pad` around it, never zoomed in past 1
+        fit(box, size, pad, min, max) {
+            const width = Math.max(1, box.width), height = Math.max(1, box.height);
+            const k = panZoom.clamp(Math.min((size.width - 2 * pad) / width, (size.height - 2 * pad) / height, 1), min, max);
+            return { x: (size.width - width * k) / 2 - box.x * k, y: (size.height - height * k) / 2 - box.y * k, k };
+        },
+        // the view that puts the layer point `at` in the middle of a frame of `size`, keeping the scale
+        center(view, at, size) { return { x: size.width / 2 - at.x * view.k, y: size.height / 2 - at.y * view.k, k: view.k }; }
+    };
+
+    // A pan-and-zoom layer (plans/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
+    // or a trackpad to pan, Ctrl+wheel or a pinch to zoom at the pointer, arrow keys and + and - for both, 0 to fit. The
+    // default slot is the layer's content, absolutely placed; the `under` slot is drawn beneath it (one SVG of
+    // connectors). A drag that starts on a button, a link, an input or [data-no-pan] is left to it.
+    const panZoomLayer = {
+        name: "mPanZoom",
+        props: { minZoom: { type: Number, default: 0.2 }, maxZoom: { type: Number, default: 2 }, height: { type: String, default: "100%" } },
+        emits: ["view"],
+        data() { return { view: { x: 0, y: 0, k: 1 }, pointers: {}, drag: null }; },
+        mounted() { addStyles(); },
+        computed: {
+            transform() { return "translate(" + this.view.x + "px," + this.view.y + "px) scale(" + this.view.k + ")"; }
+        },
+        methods: {
+            size() { const el = this.$el; return { width: el ? el.clientWidth : 0, height: el ? el.clientHeight : 0 }; },
+            setView(view) { this.view = view; this.$emit("view", view); },
+            local(event) { const rect = this.$el.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; },
+            zoomBy(factor, at) { this.setView(panZoom.zoomAt(this.view, at || { x: this.size().width / 2, y: this.size().height / 2 }, factor, this.minZoom, this.maxZoom)); },
+            panBy(dx, dy) { this.setView({ x: this.view.x + dx, y: this.view.y + dy, k: this.view.k }); },
+            // the layer's content whole in the frame; `box` defaults to the content's own extent
+            fit(box) {
+                const content = box || this.extent();
+                if (content) this.setView(panZoom.fit(content, this.size(), 24, this.minZoom, this.maxZoom));
+            },
+            centerOn(point) { this.setView(panZoom.center(this.view, point, this.size())); },
+            extent() {
+                const layer = this.$refs.layer;
+                if (!layer) return null;
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const child of layer.children) {
+                    if (child.tagName === "svg") continue;
+                    minX = Math.min(minX, child.offsetLeft); minY = Math.min(minY, child.offsetTop);
+                    maxX = Math.max(maxX, child.offsetLeft + child.offsetWidth); maxY = Math.max(maxY, child.offsetTop + child.offsetHeight);
+                }
+                return minX === Infinity ? null : { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+            },
+            onWheel(event) {
+                event.preventDefault();
+                if (event.ctrlKey || event.metaKey) this.zoomBy(Math.exp(-event.deltaY / 300), this.local(event));
+                else this.panBy(-event.deltaX, -event.deltaY);
+            },
+            onDown(event) {
+                if (event.target.closest && event.target.closest("button, a, input, textarea, select, [data-no-pan]")) return;
+                this.pointers[event.pointerId] = this.local(event);
+                const ids = Object.keys(this.pointers);
+                if (ids.length === 1) this.drag = { start: this.local(event), view: this.view };
+                else if (ids.length === 2) {
+                    const [a, b] = ids.map((id) => this.pointers[id]);
+                    this.drag = { pinch: Math.hypot(a.x - b.x, a.y - b.y), view: this.view, at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+                }
+                if (this.$el.setPointerCapture) this.$el.setPointerCapture(event.pointerId);
+            },
+            onMove(event) {
+                if (!this.drag || !this.pointers[event.pointerId]) return;
+                this.pointers[event.pointerId] = this.local(event);
+                const ids = Object.keys(this.pointers);
+                if (this.drag.pinch && ids.length === 2) {
+                    const [a, b] = ids.map((id) => this.pointers[id]);
+                    const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                    this.setView(panZoom.zoomAt(this.drag.view, this.drag.at, distance / this.drag.pinch, this.minZoom, this.maxZoom));
+                } else if (this.drag.start) {
+                    const at = this.local(event);
+                    this.setView({ x: this.drag.view.x + at.x - this.drag.start.x, y: this.drag.view.y + at.y - this.drag.start.y, k: this.drag.view.k });
+                }
+            },
+            onUp(event) {
+                delete this.pointers[event.pointerId];
+                if (!Object.keys(this.pointers).length) this.drag = null;
+            },
+            onKey(event) {
+                if (event.target !== this.$el) return;
+                const step = 60;
+                const keys = { ArrowLeft: () => this.panBy(step, 0), ArrowRight: () => this.panBy(-step, 0), ArrowUp: () => this.panBy(0, step),
+                    ArrowDown: () => this.panBy(0, -step), "+": () => this.zoomBy(1.2), "=": () => this.zoomBy(1.2), "-": () => this.zoomBy(1 / 1.2),
+                    "0": () => this.fit() };
+                if (keys[event.key]) { event.preventDefault(); keys[event.key](); }
+            }
+        },
+        render() {
+            return h("div", {
+                class: "m-pan-zoom", tabindex: 0, style: { height: this.height }, onWheel: this.onWheel, onPointerdown: this.onDown,
+                onPointermove: this.onMove, onPointerup: this.onUp, onPointercancel: this.onUp, onKeydown: this.onKey
+            }, [h("div", { ref: "layer", class: "m-pan-zoom-layer", style: { transform: this.transform } },
+                [this.$slots.under ? this.$slots.under() : null].concat(this.$slots.default ? this.$slots.default() : []))]);
+        }
+    };
+
+    const components = { "m-code-editor": codeEditor, "m-diff-view": diffView, "m-file-tree": fileTree, "m-pan-zoom": panZoomLayer };
     editor.components = components;
 
     // Before WebrootVue.qvt.js its registry takes them; after it they are registered late on the running application.

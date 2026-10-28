@@ -92,3 +92,17 @@ test("the fields shown are the server's with the buffer's element over them", ()
         { name: "field", path: [0, 1], attrs: [["name", "widgetId"], ["type", "id"], ["is-pk", "true"]] }] };
     assert.deepEqual(ops.mergeFields(server, entity, true).map((field) => field.name + ":" + field.type), ["widgetName:text-long", "widgetId:id"]);
 });
+
+test("a view entity's members as the diagram's cards: each a generation past the member it joins from", () => {
+    const cards = pure.memberCards([
+        { entityAlias: "OH", entityName: "mantle.order.OrderHeader" },
+        { entityAlias: "OI", entityName: "mantle.order.OrderItem", joinFromAlias: "OH" },
+        { entityAlias: "PR", entityName: "mantle.product.Product", joinFromAlias: "OI" },
+        { entityAlias: "XX", entityName: "x.Y", joinFromAlias: "NOPE" }
+    ]);
+    assert.deepEqual(cards.map((card) => [card.id, card.generation, card.parentId]),
+        [["OH", 0, null], ["OI", 1, "OH"], ["PR", 2, "OI"], ["XX", 0, null]]);
+    const placed = pure.browserLayout(cards, {}, { columnWidth: 200, gap: 70, space: 14 });
+    assert.deepEqual([placed.OH.x, placed.OI.x, placed.PR.x], [0, 270, 540]);
+    assert.ok(placed.XX.y > placed.OH.y);
+});

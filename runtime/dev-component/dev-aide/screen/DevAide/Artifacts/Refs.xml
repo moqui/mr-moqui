@@ -66,6 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <label type="p" text="${artifact.summary}" condition="artifact.summary"/>
                 <label type="p" text="${artifact.component}${artifact.upstream ? ' (upstream)' : ' (site)'} · ${(artifact.relativePath || artifact.path || '')}:${artifact.line}"/>
                 <link url="${artifact.url || ''}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="artifact.url"/>
+                <link url="../Browse" text="Open in the Browser" parameter-map="{artifactId: artifact.id}" link-type="anchor"/>
                 <label type="p" text="Extended by ${extensions.length}: ${extensions.map(e => (e.other ? e.other.component + ' ' + e.other.kind : e.from) + (e.resolved ? '' : ' (broken)')).join(', ')}" condition="extensions.length"/>
             </box-body></container-box>
             <container-box id="RefsUsedBy"><box-header title="Used by: ${usedBy.length}"/><box-body-nopad>

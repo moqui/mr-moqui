@@ -127,6 +127,68 @@
         return count;
     };
 
+    // ---- cards on a pan-and-zoom layer (D9): the Artifact Browser's and the entity view's member diagram ----
+
+    // The places of the cards: `cards` is a list of { id, generation (0 the center, -n users, +n uses), parentId, anchor
+    // (the parent row's offset from its card's top, or across in vertical), order (the parent row's index) }; `sizes`
+    // the measured { width, height } by id. Columns are `gap` apart, cards in a column `space` apart. Vertical swaps the
+    // axes: generations go down (uses) and up (users), cards across. Answers { id: { x, y, width, height } }.
+    pure.browserLayout = (cards, sizes, options) => {
+        const opts = Object.assign({ columnWidth: 280, gap: 80, space: 16, vertical: false }, options || {});
+        const size = (id) => sizes[id] || { width: opts.columnWidth, height: 120 };
+        const placed = {};
+        const byGeneration = {};
+        for (const card of cards) (byGeneration[card.generation] = byGeneration[card.generation] || []).push(card);
+        const generations = Object.keys(byGeneration).map(Number).sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+        // along: the axis of the generations. Across, each a column width; down, each generation as tall as its tallest card
+        const offsets = { 0: 0 };
+        const deepest = (generation) => Math.max(0, ...(byGeneration[generation] || []).map((card) => size(card.id).height));
+        for (const generation of generations.filter((g) => g !== 0)) {
+            const inner = generation > 0 ? generation - 1 : generation + 1;
+            if (!opts.vertical) offsets[generation] = generation * (opts.columnWidth + opts.gap);
+            else offsets[generation] = generation > 0 ? offsets[inner] + deepest(inner) + opts.gap : offsets[inner] - deepest(generation) - opts.gap;
+        }
+        const along = (card) => offsets[card.generation] || 0;
+        for (const generation of generations) {
+            // in a column: the cards in the order of their parents' places, then of their rows
+            const column = byGeneration[generation].slice().sort((a, b) => {
+                const pa = a.parentId ? placed[a.parentId] : null, pb = b.parentId ? placed[b.parentId] : null;
+                const at = (p) => (p ? (opts.vertical ? p.x : p.y) : 0);
+                return at(pa) - at(pb) || (a.order || 0) - (b.order || 0);
+            });
+            let next = -Infinity;
+            for (const card of column) {
+                const own = size(card.id);
+                const parent = card.parentId ? placed[card.parentId] : null;
+                // a card from a row sits a little above the row, so the row is by the card's title; a side card at its parent
+                const wanted = parent ? (opts.vertical ? parent.x : parent.y) + (card.anchor ? card.anchor - 12 : 0) : 0;
+                const start = Math.max(wanted, next);
+                const across = opts.vertical ? own.width : own.height;
+                placed[card.id] = opts.vertical
+                    ? { x: start, y: along(card), width: own.width, height: own.height }
+                    : { x: along(card), y: start, width: own.width, height: own.height };
+                next = start + across + opts.space;
+            }
+        }
+        return placed;
+    };
+
+    // The connector from a parent card's row to a child card's near edge: a curve, as an SVG path. `from` is the parent
+    // card's place and the row's offset in it; `to` the child's place; users lie before the parent (generation < 0).
+    pure.connectorPath = (from, anchor, to, before, vertical) => {
+        let x1, y1, x2, y2;
+        if (vertical) {
+            x1 = from.x + anchor; y1 = before ? from.y : from.y + from.height;
+            x2 = to.x + to.width / 2; y2 = before ? to.y + to.height : to.y;
+            const bend = (y2 - y1) / 2;
+            return "M" + x1 + " " + y1 + " C" + x1 + " " + (y1 + bend) + " " + x2 + " " + (y2 - bend) + " " + x2 + " " + y2;
+        }
+        x1 = before ? from.x : from.x + from.width; y1 = from.y + anchor;
+        x2 = before ? to.x + to.width : to.x; y2 = to.y + 16;
+        const bend = (x2 - x1) / 2;
+        return "M" + x1 + " " + y1 + " C" + (x1 + bend) + " " + y1 + " " + (x2 - bend) + " " + y2 + " " + x2 + " " + y2;
+    };
+
     // The visual views of a file tab (plans/design-dev-aide.md 5.2): each matches the file's root element, and its script
     // loads on first use and registers its component. A view edits the tab's buffer by the operations of the lossless
     // XML layer, so Text and the view share one undo history and one Save.
@@ -1300,7 +1362,9 @@
         </template>
         <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
-            <q-space></q-space><q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
+            <q-space></q-space><q-btn v-if="refs.artifactId" dense flat no-caps size="sm" label="Browse" type="a"
+                :href="'/qapps/dev/Artifacts/Browse?artifactId=' + encodeURIComponent(refs.artifactId)" id="DevBrowseRefs"></q-btn>
+            <q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
           <q-list dense>
             <q-item v-for="(item, index) in refs.items" :key="index" clickable @click="openArtifact(item)">
               <q-item-section><q-item-label>{{item.label}}</q-item-label><q-item-label caption>{{item.caption}}</q-item-label></q-item-section>

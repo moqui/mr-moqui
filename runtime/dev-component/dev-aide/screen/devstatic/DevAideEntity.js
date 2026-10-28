@@ -35,6 +35,22 @@
         return body ? out + ">" + body + "</" + name + ">" : out + "/>";
     };
     const attrOf = pure.attr;
+
+    // A view entity's members as the cards of a diagram (8.3): each member a generation further than the one it joins
+    // from, the first (with no join) at 0; a member whose join-from alias is unknown starts a tree of its own.
+    pure.memberCards = (members) => {
+        const list = members || [];
+        const byAlias = {};
+        for (const member of list) byAlias[member.entityAlias] = member;
+        const depth = (member, seen) => {
+            if (!member.joinFromAlias || !byAlias[member.joinFromAlias] || seen.indexOf(member.entityAlias) >= 0) return 0;
+            return 1 + depth(byAlias[member.joinFromAlias], seen.concat([member.entityAlias]));
+        };
+        return list.map((member, index) => ({
+            id: member.entityAlias, generation: depth(member, []), order: index, anchor: 0,
+            parentId: member.joinFromAlias && byAlias[member.joinFromAlias] ? member.joinFromAlias : null
+        }));
+    };
     const children = (node, names) => ((node && node.children) || []).filter((child) => !names || names.indexOf(child.name) >= 0);
     // The short name of an entity name (moqui.example.Example -> Example).
     ops.shortName = (name) => String(name || "").split(".").pop();
@@ -308,11 +324,26 @@
             return {
                 entityName: "", view: null, loading: false, error: "", target: null, seed: null, section: "fields",
                 adding: null, relAdding: null, indexAdding: null, memberAdding: null, aliasAdding: null, uses: null,
+                membersAs: "diagram", memberSizes: {},
                 ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false, schema: null, viewSql: "",
                 dataCheck: null, exporting: null
             };
         },
         computed: {
+            memberCards() { return pure.memberCards(this.entity && this.entity.members); },
+            memberPlaces() { return pure.browserLayout(this.memberCards, this.memberSizes, { columnWidth: 200, gap: 70, space: 14 }); },
+            memberLines() {
+                const lines = [];
+                for (const card of this.memberCards) {
+                    const from = this.memberPlaces[card.parentId], to = this.memberPlaces[card.id];
+                    if (!from || !to) continue;
+                    const member = (this.entity.members || []).find((item) => item.entityAlias === card.id) || {};
+                    const label = member.relationship || (member.keyMaps || []).map((key) => key.fieldName + (key.related ? "=" + key.related : "")).join(", ");
+                    lines.push({ id: card.id, d: pure.connectorPath(from, 22, to, false, false), optional: !!member.joinOptional,
+                        label, x: (from.x + from.width + to.x) / 2, y: (from.y + 22 + to.y + 16) / 2 - 4 });
+                }
+                return lines;
+            },
             elements() { return ops.entityElements(this.outline); },
             isData() { return this.outline && this.outline.name === "entity-facade-xml"; },
             entity() { return this.view ? this.view.entity : null; },
@@ -553,6 +584,14 @@
                 this.edit((element) => ops.addIndex(element, index));
             },
             // ---- view entities ----
+            // a member card's size, for the diagram's layout, once it is drawn
+            measureMember(id, el) {
+                const dom = el && (el.$el || el);
+                if (!dom || !dom.offsetWidth) return;
+                const have = this.memberSizes[id];
+                if (have && have.width === dom.offsetWidth && have.height === dom.offsetHeight) return;
+                this.memberSizes = Object.assign({}, this.memberSizes, { [id]: { width: dom.offsetWidth, height: dom.offsetHeight } });
+            },
             startMember() { this.memberAdding = { entityAlias: "", entityName: "", joinFromAlias: "", joinOptional: false, relationship: "", relationships: [] }; },
             memberJoinChanged() {
                 const member = this.memberAdding;
@@ -776,7 +815,23 @@
       </div>
 
       <div v-if="section === 'members'" id="DevEntityMembers">
-        <div class="m-dev-grid-wrap"><table class="m-dev-grid"><thead><tr><th>Alias</th><th>Entity</th><th>Join from</th><th>Optional</th><th>Relationship</th><th>Key maps</th></tr></thead>
+        <q-btn-toggle dense flat no-caps size="sm" v-model="membersAs" :options="[{ label: 'Diagram', value: 'diagram' }, { label: 'Table', value: 'table' }]" class="q-mb-xs"></q-btn-toggle>
+        <m-pan-zoom v-if="membersAs === 'diagram'" ref="memberLayer" height="18rem" class="m-dev-member-diagram" id="DevMemberDiagram">
+          <template v-slot:under><svg width="1" height="1">
+            <path v-for="line in memberLines" :key="line.id" :d="line.d" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.5"
+                :stroke-dasharray="line.optional ? '5 4' : null" :data-join="line.id"></path>
+            <text v-for="line in memberLines" :key="'t' + line.id" :x="line.x" :y="line.y" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".7">{{line.label}}</text>
+          </svg></template>
+          <q-card v-for="card in memberCards" :key="card.id" flat bordered class="absolute q-pa-xs" :data-member="card.id"
+              :style="memberPlaces[card.id] ? { left: memberPlaces[card.id].x + 'px', top: memberPlaces[card.id].y + 'px', width: '200px' } : { visibility: 'hidden' }"
+              :ref="(el) => measureMember(card.id, el)">
+            <div class="text-caption m-dev-mono">{{card.id}}</div>
+            <div class="text-caption text-weight-medium" style="word-break: break-all">{{((entity.members || []).find(m => m.entityAlias === card.id) || {}).entityName ||
+                ((entity.members || []).find(m => m.entityAlias === card.id) || {}).relationship}}</div>
+            <div class="text-caption m-muted">{{(entity.aliases || []).filter(a => a.entityAlias === card.id).length}} aliases</div>
+          </q-card>
+        </m-pan-zoom>
+        <div v-else class="m-dev-grid-wrap"><table class="m-dev-grid"><thead><tr><th>Alias</th><th>Entity</th><th>Join from</th><th>Optional</th><th>Relationship</th><th>Key maps</th></tr></thead>
           <tbody><tr v-for="member in entity.members" :key="member.entityAlias"><td class="m-dev-mono">{{member.entityAlias}}</td><td>{{member.entityName}}</td>
             <td>{{member.joinFromAlias || ''}}</td><td>{{member.joinOptional ? 'yes' : ''}}</td><td>{{member.relationship || ''}}</td>
             <td class="text-caption">{{(member.keyMaps || []).map(k => k.fieldName + (k.related ? '=' + k.related : '')).join(', ')}}</td></tr></tbody></table></div>

@@ -4513,15 +4513,16 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
          && document.querySelector('#DevWorkspace .cm-content').innerText.indexOf('second') >= 0",
         WAIT,
     );
+    // the edit first, so the tab is not clean when the watcher reports the outside change (a clean tab would take it)
+    browser.eval(
+        "(() => { const view = CodeMirror.EditorView.findFromDOM(document.querySelector('#DevWorkspace .cm-editor')); \
+         view.dispatch({changes: {from: 0, insert: '<!-- mine -->\\n'}}); return true; })()",
+    );
     std::fs::write(
         gate.runtime.join("component/my-site/service/mysite/Things.xml"),
         site_services.replace("first", "outside"),
     )
     .unwrap();
-    browser.eval(
-        "(() => { const view = CodeMirror.EditorView.findFromDOM(document.querySelector('#DevWorkspace .cm-editor')); \
-         view.dispatch({changes: {from: 0, insert: '<!-- mine -->\\n'}}); return true; })()",
-    );
     browser.click("Save", "document.getElementById('DevSave')");
     browser.wait_for("Compare", "!!document.querySelector('#DevCompare .m-diff-view')", WAIT);
     let problems = browser.take_problems();
@@ -4709,6 +4710,146 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     browser.wait_for("the merge done", "!document.getElementById('DevOperationBanner')", WAIT);
     assert_eq!(git(&site, &["log", "-1", "--format=%P"]).split_whitespace().count(), 2);
     assert_clean(&mut browser, "the conflict resolved");
+}
+
+/// The Artifact Browser canvas (plans/design-dev-aide.md P9, 7.3): a service in the center with what uses it to its left
+/// and what it uses to its right; a row of each side expanded into a second generation, joined by a connector; the
+/// orientation flipped to down and back; a card collapsed again.
+#[cfg(feature = "devtools")]
+#[test]
+fn the_artifact_browser_expands_and_flips_in_chromium() {
+    let entities = r#"<entities>
+    <entity entity-name="Widget" package="mysite"><field name="widgetId" type="id" is-pk="true"/><field name="partId" type="id"/>
+        <relationship type="one" related="mysite.Part"/></entity>
+    <entity entity-name="Part" package="mysite"><field name="partId" type="id" is-pk="true"/></entity>
+</entities>"#;
+    let services = r#"<services>
+    <service verb="get" noun="Widget"><in-parameters><parameter name="widgetId"/></in-parameters>
+        <actions><entity-find-one entity-name="mysite.Widget" value-field="widget"/></actions></service>
+    <service verb="show" noun="Widget"><actions><service-call name="mysite.Widgets.get#Widget"/></actions></service>
+</services>"#;
+    let screen = r#"<screen><transition name="show"><service-call name="mysite.Widgets.show#Widget"/><default-response url="."/></transition>
+    <widgets><label text="Widgets"/></widgets></screen>"#;
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/entity/MySiteEntities.xml", entities),
+        ("component/my-site/service/mysite/Widgets.xml", services),
+        ("component/my-site/screen/MySite/WidgetPage.xml", screen),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-browse",
+        Some(security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Artifacts/Browse?artifactId=service%3Amysite.Widgets.get%23Widget"
+    ));
+    let card =
+        |side: &str, row: &str| format!("!!document.querySelector('[data-card=\"{side}\"] [data-row=\"{row}\"]')");
+    browser.wait_for(
+        "the users' card",
+        &card("c:in", "service:mysite.Widgets.show#Widget"),
+        WAIT,
+    );
+    browser.wait_for("the uses' card", &card("c:out", "entity:mysite.Widget"), WAIT);
+    // a second generation on each side, each joined to its row; the canvas settles first (measured, then fitted)
+    browser.pump(Duration::from_millis(1000));
+    browser.click(
+        "expand show#Widget",
+        "document.querySelector('[data-card=\"c:in\"] [data-expand=\"service:mysite.Widgets.show#Widget\"]')",
+    );
+    browser.wait_for(
+        "show#Widget's users",
+        "!!document.querySelector('[data-generation=\"-2\"] [data-row*=\"WidgetPage\"]')",
+        WAIT,
+    );
+    browser.pump(Duration::from_millis(800));
+    browser.click(
+        "expand Widget",
+        "document.querySelector('[data-card=\"c:out\"] [data-expand=\"entity:mysite.Widget\"]')",
+    );
+    browser.wait_for(
+        "Widget's uses",
+        "!!document.querySelector('[data-generation=\"2\"] [data-row=\"entity:mysite.Part\"]')",
+        WAIT,
+    );
+    browser.wait_for(
+        "four connectors",
+        "document.querySelectorAll('[data-connector]').length === 4",
+        WAIT,
+    );
+    let across = browser.eval(
+        "(() => { const a = document.querySelector('[data-generation=\"-2\"]'), b = document.querySelector('[data-generation=\"2\"]'); \
+         return parseFloat(a.style.left) < 0 && parseFloat(b.style.left) > 0; })()",
+    );
+    assert_eq!(across, serde_json::json!(true));
+    assert_clean(&mut browser, "the browser across");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "browser-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "browser-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "browser-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+    // down: users above, uses below; then across again
+    browser.pump(Duration::from_millis(500));
+    browser.click("Down", &by_text("#DevBrowserOrientation button", "Down"));
+    browser.wait_for(
+        "the generations stacked down",
+        "(() => { const a = document.querySelector('[data-generation=\"-2\"]'), b = document.querySelector('[data-generation=\"2\"]'); \
+         return a && b && parseFloat(a.style.top) < 0 && parseFloat(b.style.top) > 0; })()",
+        WAIT,
+    );
+    browser.click("Across", &by_text("#DevBrowserOrientation button", "Across"));
+    browser.wait_for(
+        "across again",
+        "parseFloat(document.querySelector('[data-generation=\"2\"]').style.left) > 0",
+        WAIT,
+    );
+    // collapse: the card and its connector go
+    browser.pump(Duration::from_millis(800));
+    browser.click(
+        "collapse Widget",
+        "document.querySelector('[data-card=\"c:out\"] [data-expand=\"entity:mysite.Widget\"]')",
+    );
+    browser.wait_for(
+        "the card gone",
+        "!document.querySelector('[data-generation=\"2\"]')",
+        WAIT,
+    );
+    browser.wait_for(
+        "three connectors",
+        "document.querySelectorAll('[data-connector]').length === 3",
+        WAIT,
+    );
+    assert_clean(&mut browser, "the browser");
 }
 
 /// The entity modeler (plans/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its

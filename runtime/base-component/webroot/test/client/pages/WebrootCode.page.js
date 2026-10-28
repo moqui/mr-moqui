@@ -123,3 +123,19 @@ test("kept editor states come back by key, the most recent 50", () => {
     editor.dropState("gone");
     assert.equal(editor.takeState("gone"), null);
 });
+
+test("a pan-and-zoom view zooms at a point, fits a box and centers on a point", () => {
+    const pz = moqui.codeEditor.panZoom;
+    // the layer point under (100, 50) stays there
+    const zoomed = pz.zoomAt({ x: 0, y: 0, k: 1 }, { x: 100, y: 50 }, 2, 0.2, 4);
+    assert.deepEqual(zoomed, { x: -100, y: -50, k: 2 });
+    assert.equal((100 - zoomed.x) / zoomed.k, 100);
+    // clamped to the limits
+    assert.equal(pz.zoomAt({ x: 0, y: 0, k: 1 }, { x: 0, y: 0 }, 10, 0.2, 2).k, 2);
+    // a 1000 x 500 box in an 524 x 524 frame with 12 around it: scale 0.5, centered
+    const fit = pz.fit({ x: 0, y: 0, width: 1000, height: 500 }, { width: 524, height: 524 }, 12, 0.1, 2);
+    assert.deepEqual(fit, { x: 12, y: 137, k: 0.5 });
+    // a small box is not zoomed in past 1
+    assert.equal(pz.fit({ x: 10, y: 10, width: 10, height: 10 }, { width: 500, height: 500 }, 0, 0.1, 4).k, 1);
+    assert.deepEqual(pz.center({ x: 0, y: 0, k: 2 }, { x: 50, y: 25 }, { width: 400, height: 200 }), { x: 100, y: 50, k: 2 });
+});

@@ -1656,6 +1656,25 @@ design mode needs (P9).
   app). A source that cannot be reached answers its error and no tasks. Projects linked to the repository are not put
   first yet: a working tree knows no hosted repository id.
 
+**P9, the rest of the canvases and LSP** (Oct 28, 2026), with these differences:
+
+- **`m-pan-zoom`** is the framework's (`WebrootCode.js`), its view arithmetic pure (`moqui.codeEditor.panZoom`: zoom at a
+  point, fit a box never past 1, center on a point): a drag on the background, the wheel, Ctrl+wheel or a pinch, the
+  arrow keys, + and - and 0 to fit; a drag that starts on a button, link or input is the control's.
+- **The Artifact Browser** is `dev/Artifacts/Browse` (a `.qvue` page, `DevAideBrowser.js`), on the Workspace's
+  transitions (`get#ArtifactDetail`, `get#Refs`; no new server call). The layout and the connectors are pure functions of
+  `DevAide.js` shared with the member diagram: across, a column a generation; down, each generation as tall as its
+  tallest card; in a column, cards in their parents' then their rows' order, each a little above its row and pushed past
+  the one before. A card's sections are by kind, one row per artifact (its ways of referring joined, its observed calls
+  summed), eight then "+ n more"; a connector is dashed when only observed; a row already on the path from the center is
+  a cycle and does not expand; the same artifact elsewhere lights up on hover. Filters: kinds, framework artifacts (hidden
+  unless the center is one), static and observed links. The center has Open in Text, Try (a service), Data (an entity),
+  Preview (a screen, in the builder), the List view and Copy name. Refs and the Workspace's references panel open it.
+  The canvas does not refit itself when a card is added; Fit does.
+- **The member diagram** of a view entity (left from P5) is the Members section's default: each member a card one
+  generation past the member it joins from, a connector labeled with its relationship or key maps, dashed when the join
+  is optional; Table is the list as before.
+
 ---
 
 ## 19. Tests
