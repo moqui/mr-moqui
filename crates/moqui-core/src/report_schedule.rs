@@ -505,6 +505,8 @@ fn layout_order(layout: &Json, out: &mut Vec<String>) {
 /// The tables a CSV or xlsx export writes, in layout order: each table panel, or, for dashboards with no table
 /// panel, each panel with data, so a chart-only dashboard still exports its numbers.
 fn export_tables(dashboards: &[Json]) -> Vec<ExportTable> {
+    let kind = |panel: &Json| jtext(panel, "visualization", jtext(panel, "type", "")).to_owned();
+    let has_frames = |panel: &Json| panel["frames"].as_array().is_some_and(|frames| !frames.is_empty());
     let mut panels = Vec::new();
     for dashboard in dashboards {
         let Some(map) = dashboard["panels"].as_object() else {
@@ -518,26 +520,23 @@ fn export_tables(dashboards: &[Json]) -> Vec<ExportTable> {
                 order.push(id.clone());
             }
         }
+        let any_table = map.values().any(|panel| kind(panel) == "table");
         for id in order {
             let panel = &map[&id];
-            panels.push((id, panel));
+            let wanted = if any_table {
+                kind(panel) == "table"
+            } else {
+                has_frames(panel)
+            };
+            if wanted {
+                panels.push((id, panel));
+            }
         }
     }
-    let kind = |panel: &Json| jtext(panel, "visualization", jtext(panel, "type", "")).to_owned();
-    let has_frames = |panel: &Json| panel["frames"].as_array().is_some_and(|frames| !frames.is_empty());
-    let any_table = panels.iter().any(|(_, panel)| kind(panel) == "table");
     let mut files = std::collections::BTreeSet::new();
     let mut sheets = std::collections::BTreeSet::new();
     let mut tables = Vec::new();
     for (id, panel) in panels {
-        let wanted = if any_table {
-            kind(panel) == "table"
-        } else {
-            has_frames(panel)
-        };
-        if !wanted {
-            continue;
-        }
         let title = jtext(panel, "title", &id).trim().to_owned();
         let title = if title.is_empty() { id.clone() } else { title };
         let stem = title
@@ -1496,6 +1495,13 @@ mod tests {
         ]);
         assert_eq!(charts.len(), 1);
         assert_eq!(charts[0].file, "chart");
+        // The rule is per dashboard: a chart dashboard next to one with a table still exports its numbers.
+        let mixed = export_tables(&[
+            json!({"panels":{"chart":{"visualization":"bar","frames":[{"fields":[]}]}}}),
+            json!({"panels":{"rows":{"visualization":"table","frames":[{"fields":[]}]},"line":{"visualization":"timeseries","frames":[{"fields":[]}]}}}),
+        ]);
+        let files: Vec<_> = mixed.iter().map(|table| table.file.as_str()).collect();
+        assert_eq!(files, ["chart", "rows"]);
         let long = unique(
             &"x".repeat(40),
             &mut std::collections::BTreeSet::from(["x".repeat(31)]),

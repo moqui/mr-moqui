@@ -243,7 +243,12 @@ async function monitoringBuildReport(options) {
     const id='browser-report-'+options.marker.slice(-16);for(const [name,value] of [['definitionId',id],['definitionTitle','Browser composed report']]){const input=form.querySelector('input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}await tick();const body=JSON.parse(form.querySelector('textarea[name="definitionJson"]').value);form.requestSubmit();return {id,entries:body.dashboards.length};
 }
 async function monitoringReportPreview(options) {
-    const result=await moqui.request('/apps/dashboards/Reports/preview',{params:{definitionId:options.id,renderMode:'csv'}});if(!result.ok)throw new Error('Composed report preview failed');const match=result.text.match(/data:text\/csv;base64,([^"\s<>]+)/);if(!match)throw new Error('Composed CSV download absent');return {hasDocuments:atob(match[1]).includes('documents')};
+    const result=await moqui.request('/apps/dashboards/Reports/preview',{params:{definitionId:options.id,renderMode:'csv'}});if(!result.ok)throw new Error('Composed report preview failed');const match=result.text.match(/data:(text\/csv|application\/zip);base64,([^"\s<>]+)/);if(!match)throw new Error('Composed CSV download absent');const bytes=Uint8Array.from(atob(match[2]),c=>c.charCodeAt(0));
+    if(match[1]==='text/csv')return {hasDocuments:new TextDecoder().decode(bytes).includes('documents')};
+    // Several table panels give a zip with a CSV each: read each local entry (deflated) and look in all of them.
+    const view=new DataView(bytes.buffer),texts=[];for(let at=0;at+30<=bytes.length && view.getUint32(at,true)===0x04034b50;){const method=view.getUint16(at+8,true),size=view.getUint32(at+18,true),nameLength=view.getUint16(at+26,true),extra=view.getUint16(at+28,true),start=at+30+nameLength+extra,data=bytes.slice(start,start+size);
+        texts.push(method===0?new TextDecoder().decode(data):await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());at=start+size;}
+    return {hasDocuments:texts.some(text=>text.includes('documents'))};
 }
 // Monitor Logs includes Explore; its row links and forms resolve against /monitor/Logs, so its transitions must be there.
 feature('Monitor Logs follows a trace link and the surrounding entries of a row',{
