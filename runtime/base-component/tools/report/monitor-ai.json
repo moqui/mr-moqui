@@ -1,0 +1,346 @@
+{
+  "id": "monitor-ai",
+  "type": "dashboard",
+  "title": "AI and agents",
+  "body": {
+    "folder": "Monitor",
+    "variables": [
+      {
+        "name": "provider",
+        "label": "Provider",
+        "kind": "query",
+        "datasetId": "otel_spans",
+        "field": "gen_ai.provider.name",
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "model",
+        "label": "Model",
+        "kind": "query",
+        "datasetId": "otel_spans",
+        "field": "gen_ai.request.model",
+        "multi": true,
+        "includeAll": true
+      }
+    ],
+    "panels": {
+      "calls": {
+        "title": "LLM calls",
+        "visualization": "stat",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "calls",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "input": {
+        "title": "Input tokens",
+        "visualization": "stat",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "input",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "gen_ai.usage.input_tokens"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "title": "Output tokens",
+        "visualization": "stat",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "output",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "gen_ai.usage.output_tokens"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "failed": {
+        "title": "Failed calls",
+        "visualization": "stat",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:* AND status_code:ERROR",
+            "aggregations": [
+              {
+                "id": "calls",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "positive"
+                },
+                {
+                  "value": 1,
+                  "color": "negative"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "tokens": {
+        "title": "Tokens by model",
+        "visualization": "timeSeries",
+        "stacked": true,
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "model",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "gen_ai.request.model",
+                  "size": 10
+                }
+              },
+              {
+                "id": "input",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "gen_ai.usage.input_tokens"
+                }
+              },
+              {
+                "id": "output",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "gen_ai.usage.output_tokens"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "providers": {
+        "title": "Calls by provider",
+        "visualization": "bar",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "provider",
+                "type": "terms",
+                "role": "x-axis",
+                "params": {
+                  "field": "gen_ai.provider.name",
+                  "size": 20
+                }
+              },
+              {
+                "id": "calls",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "finish": {
+        "title": "Finish reasons",
+        "visualization": "pie",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "reason",
+                "type": "terms",
+                "role": "x-axis",
+                "params": {
+                  "field": "gen_ai.response.finish_reasons",
+                  "size": 10,
+                  "missing": "(none)"
+                }
+              },
+              {
+                "id": "calls",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "latency": {
+        "title": "LLM call duration p95 by model",
+        "visualization": "timeSeries",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ns",
+            "decimals": 0
+          }
+        },
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "gen_ai.operation.name:*",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "model",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "gen_ai.request.model",
+                  "size": 10
+                }
+              },
+              {
+                "id": "p95",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano",
+                  "percents": [
+                    95
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

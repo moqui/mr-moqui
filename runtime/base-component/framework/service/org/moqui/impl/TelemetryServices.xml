@@ -8,4 +8,16 @@
         <description>Roll minute metrics into hours and hours into days, with deterministic document ids for safe retries.</description>
         <out-parameters><parameter name="written" type="Long"/><parameter name="failed" type="Long"/></out-parameters>
     </service>
+    <service verb="scrape" noun="Targets" type="rust" location="moqui_core::telemetry::scrape_targets" transaction="ignore">
+        <description>Scrape each enabled moqui.monitor.ScrapeTarget whose interval has passed into otel_metrics, or targetId now.
+            A failed target is logged and recorded on its row, and the others are still scraped.</description>
+        <in-parameters><parameter name="targetId"/></in-parameters>
+        <out-parameters><parameter name="scraped" type="Long"/><parameter name="failed" type="Long"/><parameter name="written" type="Long"/></out-parameters>
+    </service>
+    <service verb="run" noun="Checks" type="rust" location="moqui_core::telemetry::run_checks" transaction="ignore">
+        <description>Run each enabled moqui.monitor.SyntheticCheck whose interval has passed, or checkId now. Each is a root span
+            (moqui.synthetic.check) kept whatever the sample ratio; a failed check is an error span, logged, and recorded on its row.</description>
+        <in-parameters><parameter name="checkId"/></in-parameters>
+        <out-parameters><parameter name="run" type="Long"/><parameter name="failed" type="Long"/><parameter name="traceId"/></out-parameters>
+    </service>
 </services>

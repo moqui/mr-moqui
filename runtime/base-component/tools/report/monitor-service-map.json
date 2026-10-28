@@ -1,0 +1,48 @@
+{
+  "id": "monitor-service-map",
+  "type": "dashboard",
+  "title": "Service map",
+  "body": {
+    "folder": "Monitor",
+    "panels": {
+      "map": {
+        "title": "Calls between services",
+        "visualization": "nodeGraph",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "mode": "serviceMap"
+          }
+        ]
+      },
+      "edges": {
+        "title": "Calls, errors and mean duration",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "mode": "serviceMap"
+          }
+        ]
+      },
+      "flame": {
+        "title": "Self time by span path",
+        "visualization": "flameGraph",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "mode": "flame"
+          }
+        ]
+      }
+    },
+    "layout": {
+      "type": "grid",
+      "items": [
+        { "panelId": "map", "x": 0, "y": 0, "w": 14, "h": 1 },
+        { "panelId": "edges", "x": 14, "y": 0, "w": 10, "h": 1 },
+        { "panelId": "flame", "x": 0, "y": 1, "w": 24, "h": 1 }
+      ]
+    }
+  }
+}

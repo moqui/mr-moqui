@@ -662,6 +662,8 @@ fn xlsx_tables(tables: &[ExportTable]) -> Result<Vec<u8>, Error> {
 fn xlsx_tables(_: &[ExportTable]) -> Result<Vec<u8>, Error> {
     Err(fail("xlsx is not built into this host"))
 }
+/// The bundled country outline of geomap panels (Natural Earth 110m, from world-atlas).
+const OUTLINE: &str = "component://webroot/screen/webroot/libs/naturalearth/countries-110m.json";
 fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], options: &Json) -> Result<String, Error> {
     let resource = ec.factory().resource();
     let mut scripts = String::new();
@@ -679,6 +681,22 @@ fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], optio
             .map_err(fail)?
             .replace("</script", "<\\/script");
         scripts.push_str(&format!("<script>{source}</script>"));
+    }
+    // A geomap's outline goes in only when a panel needs it; without it the map draws its points alone.
+    let geomap = dashboards.iter().any(|dashboard| {
+        dashboard["panels"]
+            .as_object()
+            .is_some_and(|panels| panels.values().any(|panel| panel["visualization"] == "geomap"))
+    });
+    if geomap {
+        match resource.location_bytes(OUTLINE) {
+            Ok(Some(bytes)) => scripts.push_str(&format!(
+                "<script>window.moquiReportGeo={};</script>",
+                String::from_utf8_lossy(&bytes).replace('<', "\\u003c")
+            )),
+            Ok(None) => tracing::error!(path = OUTLINE, "report map outline is missing; drawing maps without it"),
+            Err(error) => tracing::error!(path = OUTLINE, %error, "report map outline failed to load; drawing maps without it"),
+        }
     }
     let renderer = resource
         .location_bytes("component://framework/template/report/PrintReport.js")?

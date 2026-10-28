@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Definition folders kept in git repositories: a save pushes its file, and a push or fetch to the repository pulls. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Git sync" default-menu-index="9">
+    <transition name="store" method="post" authz-action="update">
+        <service-call name="org.moqui.report.ReportServices.store#DefinitionGitSync"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="push" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            const result=ec.service.sync().name('org.moqui.report.ReportServices.push#DefinitionGitSync').parameters({syncId}).call()
+            if (result && !ec.message.hasError()) ec.message.addMessage('Wrote '+(result.written || 0)+' files; '+(result.unchanged || 0)+' already the same')
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="pull" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            const result=ec.service.sync().name('org.moqui.report.ReportServices.pull#DefinitionGitSync').parameters({syncId}).call()
+            if (result && !ec.message.hasError()) {
+                ec.message.addMessage('Saved '+(result.saved || []).length+' definitions; '+(result.unchanged || 0)+' already the same')
+                for (const item of result.failed || []) ec.message.addMessage('Not pulled: '+item.file+': '+item.error,'warning')
+                if ((result.missing || []).length) ec.message.addMessage('No file for: '+result.missing.join(', ')+' (not deleted)','warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <actions><script><![CDATA[
+        syncs=[];allowed=true
+        try { syncs=ec.service.sync().name('org.moqui.report.ReportServices.list#DefinitionGitSyncs').call().syncs || [] }
+        catch (error) { allowed=false;ec.message.clearErrors() }
+        repositories=ec.entity.find('moqui.resource.GitRepository').disableAuthz().orderBy('repositoryId').list()
+    ]]></script></actions>
+    <widgets>
+        <section name="NotAllowed" condition="!allowed"><widgets>
+            <label text="Git sync needs the REPORT_GIT_SYNC_ADMIN grant." type="p"/>
+        </widgets></section>
+        <section name="Syncs" condition="allowed"><widgets>
+            <label text="Each definition of a folder is a JSON file in the repository directory. Saving a definition writes its file; a push or fetch to the repository saves the files that changed. Both run as the sync's user." type="p"/>
+            <container-dialog id="NewSync" button-text="Add git sync">
+                <form-single name="NewSync" transition="store">
+                    <field name="folder"><default-field title="Definition folder"><text-line/></default-field></field>
+                    <field name="repositoryId"><default-field title="Repository"><drop-down><list-options list="repositories" key="${repositoryId}" text="${repositoryId}"/></drop-down></default-field></field>
+                    <field name="path"><default-field title="Directory in the repository"><text-line/></default-field></field>
+                    <field name="userId"><default-field title="Runs as user ID"><text-line default-value="${ec.user.userId}"/></default-field></field>
+                    <field name="submit"><default-field><submit text="Add"/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <form-list name="GitSyncs" list="syncs" skip-form="true" paginate="false">
+                <field name="folder"><default-field><display/></default-field></field>
+                <field name="repositoryId"><default-field title="Repository"><display/></default-field></field>
+                <field name="path"><default-field title="Directory"><display/></default-field></field>
+                <field name="userId"><default-field title="User"><display/></default-field></field>
+                <field name="enabled"><default-field><display text="${enabled ? 'Yes' : 'No'}"/></default-field></field>
+                <field name="lastPushDate"><default-field title="Last push"><display/></default-field></field>
+                <field name="lastPullDate"><default-field title="Last pull"><display/></default-field></field>
+                <field name="lastError"><default-field title="Last error"><display/></default-field></field>
+                <field name="push"><default-field><link url="push" text="Push now" link-type="hidden-form" parameter-map="{syncId:syncId}"/></default-field></field>
+                <field name="pull"><default-field><link url="pull" text="Pull now" link-type="hidden-form" parameter-map="{syncId:syncId}"/></default-field></field>
+                <field name="toggle"><default-field><link url="store" text="${enabled ? 'Disable' : 'Enable'}" link-type="hidden-form" parameter-map="{syncId:syncId,enabled:enabled ? 'N' : 'Y'}"/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
+</screen>

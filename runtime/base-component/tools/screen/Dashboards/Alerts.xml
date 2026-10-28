@@ -3,6 +3,10 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6">
     <transition name="rule"><default-response url="//apps/dashboards/AlertRule"/></transition>
     <transition name="shared"><default-response url="//apps/dashboards/AlertShared"/></transition>
+    <transition name="delete" method="post" authz-action="delete">
+        <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
     <transition name="evaluate" method="post" authz-action="update"><actions><service-call name="org.moqui.report.ReportServices.evaluate#Alerts" in-map="{definitionId:definitionId}"/></actions><default-response url="."/></transition>
     <actions><script><![CDATA[
         rules=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'alert'}).call().definitions || []
@@ -20,6 +24,7 @@
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
             <field name="paused"><default-field><display text="${body.paused ? 'Paused' : 'Active'}"/></default-field></field>
             <field name="evaluate"><default-field><link url="evaluate" text="Evaluate now" link-type="hidden-form-link" confirmation="Evaluate this alert rule now? A state change notifies its contact points."><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this alert rule, its state and its versions?"><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <label text="Shared contact points" type="h5"/>
         <link url="shared" text="New contact point" parameter-map="{sharedType:'contactPoint'}"/>
@@ -28,6 +33,7 @@
             <field name="id"><default-field title="ID"><display/></default-field></field>
             <field name="detail"><default-field title="Delivery"><display/></default-field></field>
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+            <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <label text="Shared silences" type="h5"/>
         <link url="shared" text="New silence" parameter-map="{sharedType:'silence'}"/>
@@ -36,6 +42,7 @@
             <field name="id"><default-field title="ID"><display/></default-field></field>
             <field name="detail"><default-field title="Window"><display/></default-field></field>
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+            <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <label text="Shared mute timings" type="h5"/>
         <link url="shared" text="New mute timing" parameter-map="{sharedType:'muteTiming'}"/>
@@ -44,6 +51,7 @@
             <field name="id"><default-field title="ID"><display/></default-field></field>
             <field name="detail"><default-field title="Daily window"><display/></default-field></field>
             <field name="ownerId"><default-field title="Owner"><display/></default-field></field>
+            <field name="delete"><default-field title=""><link url="delete" text="Delete" link-type="hidden-form-link" condition="!readOnly &amp;&amp; ownerId === ec.user.userId" confirmation="Delete this shared item? Rules that still reference it must drop it first."><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <form-list name="AlertInstances" list="alertInstances" skip-form="true">
             <field name="definitionId"><default-field title="Rule"><link url="rule" text="${definitionId}" link-type="anchor"><parameter name="definitionId"/></link></default-field></field>

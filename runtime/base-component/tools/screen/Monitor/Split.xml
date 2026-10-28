@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-index="9">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-index="11">
     <!-- The Dashboards screen mounted under Monitor, so comparing ranges and versions needs only this app's authorization. -->
     <widgets><include-screen location="component://tools/screen/Dashboards/Split.xml" share-scope="true"/></widgets>
 </screen>

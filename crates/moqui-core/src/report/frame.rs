@@ -775,6 +775,7 @@ pub fn transform(mut frame: Frame, steps: &[Value]) -> Result<Frame, Error> {
                     }
                 }
             }
+            "patterns" => frame = super::patterns::transform(&frame, step)?,
             _ => {
                 return Err(Error::new(format!(
                     "report transformation {i} has unsupported type {kind}"

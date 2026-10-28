@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Sources" default-menu-index="8">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Sources" default-menu-index="9">
     <transition name="createKey" method="post" authz-action="create">
         <actions><script><![CDATA[
             // Only the key's hash is stored, so its token shows once, in a message on the next page (the log masks it).
             const created=ec.service.sync().name('org.moqui.monitor.MonitorServices.create#IngestKey').parameters({source:source,expireDays:parseInt(expireDays || '90',10)}).call()
-            if (created.accessToken) ec.message.addPublic('New ingest key '+created.keyId+' for '+source+'. Copy it now; it is not shown again. token: '+created.accessToken,'warning')
+            if (created.accessToken) ec.message.addPublic(ec.l10n.localize('New ingest key {0} for {1}. Copy it now; it is not shown again.').replace('{0}',created.keyId).replace('{1}',source)+' token: '+created.accessToken,'warning')
         ]]></script></actions><default-response url="."/>
     </transition>
     <transition name="revokeKey" method="post" authz-action="delete">
@@ -34,7 +34,7 @@
                 }
             } catch (error) { ec.logger.error('Source discovery '+datasetId+' failed: '+String(error));sourceNotices.push(datasetId+': '+String(error)) }
         }
-        sourceList=Array.from(published.values()).slice(0,500).map(item=>Object.assign(item,{status:!item.lastSeen?'Unknown':new Date(item.lastSeen).getTime()>Date.now()-300000?'Recent telemetry':'No telemetry in five minutes'}))
+        sourceList=Array.from(published.values()).slice(0,500).map(item=>Object.assign(item,{status:ec.l10n.localize(!item.lastSeen?'Unknown':new Date(item.lastSeen).getTime()>Date.now()-300000?'Recent telemetry':'No telemetry in five minutes')}))
         ingestKeys = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#IngestKeys').call().keys || []
         counterList = Object.entries(sourceStatus.counters || {}).map(([name,value])=>({name,value}))
     ]]></script></actions>

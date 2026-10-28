@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Its links go through its own transitions, so a screen that includes it (BOSS Insights › Dashboards) can take them in with
+    transition-include: a dashboard then opens in that screen's sibling Dashboard screen. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboards" default-menu-index="1">
     <parameter name="definitionType"/><parameter name="folder"/><parameter name="tag"/><parameter name="starredOnly"/>
     <transition name="dashboard" method="post" authz-action="view">
@@ -9,10 +11,11 @@
             let recent=[];try {recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]')}catch(_){}
             recent=Array.isArray(recent)?recent:[]
             ec.user.setPreference('REPORT_RECENT',JSON.stringify([definitionId,...recent.filter(id=>id!==definitionId)].slice(0,20)))
-        ]]></script></actions><default-response url="//apps/dashboards/Dashboard"><parameter name="definitionId"/></default-response>
+        ]]></script></actions><default-response url="../Dashboard"><parameter name="definitionId"/></default-response>
     </transition>
     <transition name="edit"><default-response url="//apps/dashboards/Definition"/></transition>
     <transition name="new"><default-response url="//apps/dashboards/Definition"/></transition>
+    <transition name="explore"><default-response url="//apps/dashboards/Explore"/></transition>
     <transition name="star" method="post" authz-action="update">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call()
@@ -36,8 +39,8 @@
         definitions.sort((a,b)=>a.folderName.localeCompare(b.folderName) || a.title.localeCompare(b.title))
     ]]></script></actions>
     <widgets>
-        <link url="//apps/dashboards/Definition" text="New ${definitionType || 'dashboard'}" parameter-map="{definitionType:definitionType || 'dashboard'}"/>
-        <link url="//apps/dashboards/Explore" text="Explore data"/>
+        <link url="new" text="New ${definitionType || 'dashboard'}" parameter-map="{definitionType:definitionType || 'dashboard'}"/>
+        <link url="explore" text="Explore data"/>
         <form-single name="DashboardFolders" transition=".">
             <field name="definitionType"><default-field><hidden/></default-field></field>
             <field name="folder"><default-field title="Folder"><text-line/></default-field></field>
@@ -47,22 +50,22 @@
         </form-single>
         <label text="Starred" type="h5"/>
         <form-list name="StarredDefinitions" list="starredDefinitions" skip-form="true" paginate="false">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="//apps/dashboards/Home/dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="//apps/dashboards/Definition" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <label text="Recent" type="h5"/>
         <form-list name="RecentDefinitions" list="recentDefinitions" skip-form="true" paginate="false">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="//apps/dashboards/Home/dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="//apps/dashboards/Definition" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
         <label text="All definitions" type="h5"/>
         <form-list name="Definitions" list="definitions" skip-form="true">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="//apps/dashboards/Home/dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="//apps/dashboards/Definition" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
             <field name="folderName"><default-field title="Folder"><display/></default-field></field>
             <field name="tagNames"><default-field title="Tags"><display/></default-field></field>
-            <field name="star"><default-field><link url="//apps/dashboards/Home/star" text="${isStarred ? 'Unstar' : 'Star'}" link-type="hidden-form-link" parameter-map="{definitionId:id,definitionType:definitionType}"/></default-field></field>
+            <field name="star"><default-field><link url="star" text="${isStarred ? 'Unstar' : 'Star'}" link-type="hidden-form-link" parameter-map="{definitionId:id,definitionType:definitionType}"/></default-field></field>
             <field name="type"><default-field><display/></default-field></field>
             <field name="component"><default-field><display/></default-field></field>
             <field name="readOnly"><default-field title="Shipped"><display/></default-field></field>
-            <field name="edit"><default-field><link url="//apps/dashboards/Definition" text="Definition and versions" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="edit"><default-field><link url="edit" text="Definition and versions" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
         </form-list>
     </widgets>
 </screen>

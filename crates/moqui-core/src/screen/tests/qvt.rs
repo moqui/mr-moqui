@@ -716,6 +716,8 @@ fn report_widgets_share_frames_across_render_modes() {
         tui.contains("report-panel") && tui.contains("report-dashboard") && tui.contains("12.5"),
         "{tui}"
     );
+    // A decimal in the props is a JSON number in the TUI's nodes, as JSON.stringify writes it, not an empty object.
+    assert!(tui.contains("7.25") && !tui.contains("\"values\":[{}"), "{tui}");
 }
 
 /// A section in a form-list cell is a unit of its own: it starts from the list's state (its links are in-cell links with the

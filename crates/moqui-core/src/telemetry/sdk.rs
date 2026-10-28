@@ -208,6 +208,7 @@ impl Runtime {
             span_id: span_context.span_id().to_string(),
             sampled,
             tracestate: parent.map_or_else(String::new, |parent| parent.tracestate),
+            local: true,
         };
         span.set_attribute(KeyValue::new("moqui.head.sampled", sampled));
         Span {
@@ -458,6 +459,9 @@ fn attribute_key(key: &str) -> opentelemetry::Key {
         "moqui.job.root",
         "moqui.job.name",
         "moqui.job.run.id",
+        "moqui.synthetic.check",
+        "synthetic.check.id",
+        "synthetic.check.name",
         "gen_ai.operation.name",
         "gen_ai.provider.name",
         "gen_ai.request.model",
@@ -584,7 +588,7 @@ pub(super) enum ExportBatch {
 fn mandatory_root(span: &SpanData) -> bool {
     span.span_kind == opentelemetry::trace::SpanKind::Server
         || span.attributes.iter().any(|attribute| {
-            attribute.key.as_str() == "moqui.job.root"
+            matches!(attribute.key.as_str(), "moqui.job.root" | "moqui.synthetic.check")
                 && (attribute.value == opentelemetry::Value::Bool(true)
                     || matches!(&attribute.value, opentelemetry::Value::String(value) if value.as_str() == "true"))
         })

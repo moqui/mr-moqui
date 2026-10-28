@@ -20,6 +20,8 @@ const REMOTE_QUEUE_RECORDS: usize = 8192;
 const REMOTE_QUEUE_BATCHES: usize = 64;
 /// The most of a collector's response read, for its partial success.
 const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
+/// Queued batches of one signal are merged into a request up to this many records.
+const MERGE_RECORDS: usize = 2048;
 
 /// The OTLP/HTTP encoding, named as `OTEL_EXPORTER_OTLP_PROTOCOL` names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +47,8 @@ pub struct OtlpExporter {
     endpoint: String,
     headers: Vec<(String, String)>,
     protocol: Protocol,
+    /// gzip the request body (`otlp-compression`, on by default).
+    gzip: bool,
     client: moqui_lib::http::RestClient,
     conversion_errors: AtomicU64,
 }
@@ -59,6 +63,7 @@ impl OtlpExporter {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             headers,
             protocol: Protocol::Protobuf,
+            gzip: true,
             client: moqui_lib::http::RestClient::new().connect_timeout(Duration::from_secs(2)),
             conversion_errors: AtomicU64::new(0),
         }
@@ -77,6 +82,12 @@ impl OtlpExporter {
 
     pub fn protocol(&self) -> Protocol {
         self.protocol
+    }
+
+    /// Send bodies as they are, without `Content-Encoding: gzip`.
+    pub fn without_compression(mut self) -> Self {
+        self.gzip = false;
+        self
     }
 }
 
@@ -112,6 +123,17 @@ impl Exporter for OtlpExporter {
         }
         let mut headers = self.headers.clone();
         headers.push(("Content-Type".to_string(), content_type.to_string()));
+        let body = if self.gzip {
+            use std::io::Write;
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder
+                .write_all(&body)
+                .and_then(|()| encoder.finish())
+                .inspect(|_| headers.push(("Content-Encoding".to_string(), "gzip".to_string())))
+                .unwrap_or(body)
+        } else {
+            body
+        };
         let response = self.client.open(moqui_lib::http::OpenRequest {
             method: moqui_lib::http::Method::Post,
             url: format!("{}{}", self.endpoint, encoded.path),
@@ -247,8 +269,9 @@ impl Exporter for TeeExporter {
     }
 }
 
-/// The remote export thread: one request per queued batch. A failing or panicking exporter costs its batch, which is
-/// counted and logged (the first time, then at powers of two).
+/// The remote export thread. Batches waiting in the queue are merged by signal into requests of up to
+/// [`MERGE_RECORDS`] records, so a busy server sends fewer, larger requests. A failing or panicking exporter costs its
+/// request, which is counted and logged (the first time, then at powers of two).
 fn remote_worker(
     remote: Arc<dyn Exporter>,
     receiver: mpsc::Receiver<(&'static str, Vec<Document>)>,
@@ -257,7 +280,20 @@ fn remote_worker(
 ) {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     let mut failures = 0u64;
-    while let Ok((index, documents)) = receiver.recv() {
+    let mut waiting: std::collections::VecDeque<(&'static str, Vec<Document>)> = std::collections::VecDeque::new();
+    loop {
+        if waiting.is_empty() {
+            match receiver.recv() {
+                Ok(batch) => waiting.push_back(batch),
+                Err(_) => break,
+            }
+        }
+        while let Ok(batch) = receiver.try_recv() {
+            waiting.push_back(batch);
+        }
+        let Some((index, documents)) = merge_next(&mut waiting) else {
+            continue;
+        };
         let count = documents.len() as u64;
         let outcome = catch_unwind(AssertUnwindSafe(|| remote.export(index, documents)))
             .unwrap_or_else(|_| Err(Error::new("the external telemetry exporter panicked")));
@@ -293,8 +329,27 @@ fn remote_worker(
     }
 }
 
+/// The first waiting batch, with the later batches of the same signal appended while the total stays within
+/// [`MERGE_RECORDS`]. Other signals keep their order.
+fn merge_next(
+    waiting: &mut std::collections::VecDeque<(&'static str, Vec<Document>)>,
+) -> Option<(&'static str, Vec<Document>)> {
+    let (index, mut documents) = waiting.pop_front()?;
+    let mut at = 0;
+    while at < waiting.len() {
+        if waiting[at].0 == index && documents.len() + waiting[at].1.len() <= MERGE_RECORDS {
+            if let Some((_, more)) = waiting.remove(at) {
+                documents.extend(more);
+            }
+        } else {
+            at += 1;
+        }
+    }
+    Some((index, documents))
+}
+
 /// Wrap a local exporter when a configured endpoint exists. Header values are never logged. `otlp-protocol` is
-/// `http/protobuf` (the default) or `http/json`.
+/// `http/protobuf` (the default) or `http/json`; `otlp-compression` is `gzip` (the default) or `none`.
 pub fn configured(factory: &crate::context::ExecutionContextFactory, local: Arc<dyn Exporter>) -> Arc<dyn Exporter> {
     let endpoint = factory.conf_setting("telemetry", "otlp-endpoint");
     if endpoint.is_empty() {
@@ -316,9 +371,18 @@ pub fn configured(factory: &crate::context::ExecutionContextFactory, local: Arc<
         );
         Protocol::Protobuf
     });
+    let compression = factory.conf_setting("telemetry", "otlp-compression");
     match OtlpExporter::new(&endpoint, headers) {
         Ok(remote) => {
-            let remote = remote.with_protocol(protocol);
+            let mut remote = remote.with_protocol(protocol);
+            match compression.as_str() {
+                "" | "gzip" => {}
+                "none" => remote = remote.without_compression(),
+                other => tracing::warn!(
+                    compression = other,
+                    "telemetry otlp-compression is not gzip or none; using gzip"
+                ),
+            }
             if remote.protocol() != protocol {
                 tracing::warn!("this build has no protobuf OTLP export; sending OTLP JSON");
             }
@@ -878,6 +942,7 @@ mod tests {
     }
 
     /// A stub OTLP endpoint: each request's content type and body go to the channel, and it answers `reply`.
+    /// A collector answering `reply`; it sends each request's content type and body, gunzipped when it was gzipped.
     fn stub(reply: Vec<u8>, reply_type: &'static str) -> (String, mpsc::Receiver<(String, Vec<u8>)>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -919,6 +984,24 @@ mod tests {
                     .unwrap_or("")
                     .trim()
                     .to_string();
+                let gzip = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-encoding:"))
+                    .is_some_and(|value| value.trim() == "gzip");
+                let request = if gzip {
+                    let mut plain = Vec::new();
+                    flate2::read::GzDecoder::new(&request[..])
+                        .read_to_end(&mut plain)
+                        .unwrap();
+                    plain
+                } else {
+                    request
+                };
+                let content_type = if gzip {
+                    format!("{content_type}+gzip")
+                } else {
+                    content_type
+                };
                 let _ = sender.send((content_type, request));
                 let _ = write!(
                     stream,
@@ -952,7 +1035,10 @@ mod tests {
         ];
         assert_eq!(exporter.export("otel_spans", documents).unwrap(), 1);
         let (content_type, body) = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(content_type, "application/x-protobuf");
+        assert_eq!(
+            content_type, "application/x-protobuf+gzip",
+            "bodies are gzipped by default"
+        );
         let request =
             opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest::decode(&body[..]).unwrap();
         assert_eq!(request.resource_spans.len(), 1);
@@ -968,12 +1054,35 @@ mod tests {
         );
         let exporter = OtlpExporter::new(&url, Vec::new())
             .unwrap()
-            .with_protocol(Protocol::Json);
+            .with_protocol(Protocol::Json)
+            .without_compression();
         let log = document(json!({"timestamp":1,"severity_number":9,"body":"x","service.name":"a"}));
         assert_eq!(exporter.export("otel_logs", vec![log; 3]).unwrap(), 1);
         let (content_type, body) = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(content_type, "application/json");
+        assert_eq!(
+            content_type, "application/json",
+            "otlp-compression none sends the body as it is"
+        );
         assert_eq!(decode(Signal::Logs, "application/json", &body).len(), 3);
+    }
+
+    #[test]
+    fn queued_batches_merge_by_signal_up_to_the_cap() {
+        let log = document(json!({"timestamp":1,"severity_number":9,"body":"x"}));
+        let mut waiting: std::collections::VecDeque<(&'static str, Vec<Document>)> = [
+            ("otel_logs", vec![log.clone(); 2]),
+            ("otel_spans", vec![span("0000000000000001", "a", "moqui")]),
+            ("otel_logs", vec![log.clone(); 3]),
+            ("otel_logs", vec![log.clone(); MERGE_RECORDS]),
+        ]
+        .into();
+        let (index, merged) = merge_next(&mut waiting).unwrap();
+        assert_eq!((index, merged.len()), ("otel_logs", 5));
+        assert_eq!(waiting.len(), 2);
+        assert_eq!(waiting[0].0, "otel_spans", "other signals keep their order");
+        assert_eq!(merge_next(&mut waiting).unwrap().1.len(), 1);
+        assert_eq!(merge_next(&mut waiting).unwrap().1.len(), MERGE_RECORDS);
+        assert!(merge_next(&mut waiting).is_none());
     }
 
     #[test]

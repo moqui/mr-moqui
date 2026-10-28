@@ -1,12 +1,12 @@
 # Remaining work
 
-Open items only, grouped by domain; trimmed and reorganized on 2026-10-25. Built: phases 0–12 and gates 1–4 of [Implementation-Phases](archive/Implementation-Phases.md), Phase 13.1 to 13.14 of [LLM-A2A-Assist](LLM-A2A-Assist.md), and M1–M7 of [Monitoring](Monitoring.md). Each item says what is missing and links to where the detail is; the build records are in the linked plans and guides, not here.
+Open items only, grouped by domain. Each item says what is missing and links to where the detail is; what was built, and when, is recorded in the linked plans and guides, not here.
 
 What is not ported on purpose (JSON-RPC, the Groovy and Java runners, the database drivers not in this tree, `service-group`, Swagger 2.0 and RAML, Hazelcast, the embedded SMTP server, vuet and `/vapps`) is in [Parity-Mapping, Excluded on purpose](Parity-Mapping.md#excluded-on-purpose); the non-SQL entity datasources (`ElasticDatasourceFactory`, OrientDB) are a proposal in [Future-Plans](Future-Plans.md). Differences from Java that are kept on purpose are in [Parity-Diffs](Parity-Diffs.md).
 
 ## Agents, Assist, A2A, MCP and the gateway
 
-Phase 13 is built ([LLM-A2A-Assist](LLM-A2A-Assist.md); guides [Assist](../docs/Assist.md), [A2A](../docs/A2A.md), [MCP](../docs/MCP.md), [Gateway](../docs/Gateway.md)). Every check ran on the scripted fake provider, fixture or loopback servers only.
+Plan [LLM-A2A-Assist](LLM-A2A-Assist.md); guides [Assist](../docs/Assist.md), [A2A](../docs/A2A.md), [MCP](../docs/MCP.md), [Gateway](../docs/Gateway.md). Every check so far ran on the scripted fake provider, fixture or loopback servers only.
 
 | Area | Item | Source |
 |---|---|---|
@@ -26,12 +26,12 @@ Phase 13 is built ([LLM-A2A-Assist](LLM-A2A-Assist.md); guides [Assist](../docs/
 
 ## Mail
 
-Built through M5f: [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs/Mail-OAuth.md); mr-boss `plan/impl-drawers-commons.md` §5 M5.
+Guides [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs/Mail-OAuth.md); mr-boss `plan/impl-drawers-commons.md` §5 M5.
 
 | Area | Item | Source |
 |---|---|---|
 | Replies | The automatic reply counts as internal a user's address, the domain of a hosted or shared account, or one of its `internalDomains`, and answers only mail with the account's or an identity's address in To or Cc (not mail an alias forwards) | M5c, `send#OutOfOfficeReplies` |
-| Sync | Not yet run against a real account (a Gmail app password). A folder gone from the server keeps its local messages (`remoteRemovedDate`); POP3 reads no sync window, newest first. A plain `imap` or `pop3` store now refuses to sign in without STARTTLS or STLS unless `EmailServer.storeAllowPlain` is Y or the host is loopback; BOSS's mail settings have no control for that opt-out | M5d, `service/mail/sync.rs`, `inbound.rs` |
+| Sync | Not yet run against a real account (a Gmail app password). A folder gone from the server keeps its local messages (`remoteRemovedDate`); POP3 reads no sync window, newest first. BOSS's mail settings have no control for `EmailServer.storeAllowPlain` (the opt-out that lets a plain `imap` or `pop3` store sign in without STARTTLS or STLS) | M5d, `service/mail/sync.rs`, `inbound.rs` |
 | OAuth | Not yet run against real Google and Microsoft clients (the Testing 7-day limit and Google verification) | M5e, docs/Mail-OAuth.md |
 | Inbound SMTP | No TLS client certificates (the allow-list is the gateway's identity); no BINARYMIME; no failure or delay DSNs of its own; the delivered report waits on the outgoing server for up to 30 seconds inside the store, before the listener answers | M5f, `moqui-host/src/smtp.rs`, `service/mail/delivery.rs` |
 | Sending | A held send goes at the job's next minute unless the client calls `send#DueDrafts` when its hold ends | `EmailClientServices` |
@@ -40,20 +40,17 @@ Built through M5f: [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs
 
 ## Monitoring
 
-M1–M7, the Oct 27 review pass and the Remaining-Work pass of Oct 27–28 are built ([Monitoring](Monitoring.md); guide [Monitoring](../docs/Monitoring.md)). The Later stages of the plan (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC) are not started.
+Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/Monitoring.md). Not started: the plan's Later stages (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC).
 
 | Area | Item | Source |
 |---|---|---|
-| Metrics | The Prometheus scrape covers this server's own instruments, not metrics received over OTLP; type sampling applies to frame and LLM spans, while SQL children follow the global ratio | `telemetry/prometheus.rs`, `telemetry/mod.rs` |
-| Export | No gzip on outgoing OTLP; queued batches are not merged into one request; the per-batch timing was measured with JSON, not protobuf | `telemetry/otlp.rs` |
-| Overhead | No per-milestone overhead baselines were captured; production-scale concurrency, cardinality, long retention and rollup load, storage growth and a multi-host soak are not measured | Monitoring.md "Overhead" |
-| Alerts | Shared silences apply only to rules that reference them, not to every rule whose labels match; definitions have no delete, so shared items can't be removed; a notification sent before a failed state write can be sent again on the retry | `report/alert.rs` |
-| Dashboards | The TUI has no time picker, panel menu or suggestions, and its kiosk mode doesn't scroll; Services drill-down links don't carry the time range; no Rust test of a signed-in `report-embed`; no shipped dashboard uses the latency heatmap; Explore puts telemetry search highlights in the sandboxed html frame | `moqui-tui/src/components/report.rs`, `tools/report/monitor-services.json`, `Dashboards/Explore.xml` |
-| Access | BOSS Insights › Dashboards includes `Dashboards/Home.xml`, whose links are absolute `//apps/dashboards/...` URLs, so those open the Dashboards app; only the Sales dashboard link uses the BOSS `Insights/Dashboard` screen | `tools/screen/Dashboards/Home.xml`, mr-boss `Insights/Dashboards.xml` |
-| Scripts | Decimals have `toJSON`, but host conversions of script values (the TUI props) do not call it, so `Dashboard.xml` still converts decimals to numbers | `script/runtime/decimal.rs` |
-| Localization | `WebrootReport.js` never calls `moqui.l10n.localize` (time picker, panel menu, suggestions, footer and heatmap strings); Monitor dashboard panel titles and screen-script notices and errors are not localized; AlertRule form-list columns are titled with raw keys | mr-l10n README |
-| Components | mr-mantle money fields use a fixed `USD` unit; a unit read from a field (`currencyUomId`) needs a framework key; the dataset lookups and labels are not asserted by a test | mr-mantle `report/` |
-| Tests | Monitoring spec "the dashboard time picker, panel menu and an embed" failed once at the dashboard copy (line 400) and passed on rerun | `tools/test/client/Monitoring.spec.js` |
+| Overhead | No per-milestone overhead baselines were captured; production-scale concurrency, cardinality, long retention and rollup load, storage growth and a multi-host soak are not measured. The per-batch export timing (`monitor_performance.rs`, now protobuf with gzip) has not been re-run against a live collector | Monitoring.md "Overhead" |
+| Export | No real collector has received a gzipped request yet (the Docker test `collector_forwards_json_and_raw_protobuf_for_every_signal` would show it); received exponential histograms are not on `/metrics` | `telemetry/otlp.rs`, `telemetry/received.rs` |
+| Dashboards | The flame graph is span self time (no stored profiles); the service map and span flame read the newest 10000 spans of a range, so with head sampling they show mostly the always-kept roots, errors and slow spans; the geomap has no zoom or pan, and the TUI geomap shows a country frame as a list, not a map; TUI and print text panels in a repeat show the dashboard's variable values, not the copy's | `report/graph.rs`, `WebrootReport.js`, `moqui-tui` `components/report/graph.rs` |
+| Git sync | A pull cannot save a definition another user owns; only the repository's default branch syncs; no test runs the gitECA path end to end (a push over HTTP or SSH, including a pull that deletes) | `report/git_sync.rs` |
+| Alerts | No test drives a state write that fails after a real delivery (the retry check stands in for it); a process that dies between marking a notification sent and sending it loses that one notification | `report/alert.rs` |
+| Pull | Scrape targets have no relabeling, extra labels, basic auth or service discovery, and OpenMetrics exemplars are ignored; checks are single HTTP requests (no TCP, DNS, certificate expiry or multi-step flows) from this server only; a check that calls an unsampled page of this same server loses its CLIENT child (the page's SERVER span decides the trace first) | `telemetry/scrape.rs`, `telemetry/mod.rs` |
+| Patterns, AI | Log patterns group the newest 1,000 matching lines (the documents page cap), and a pattern narrows the search by its constant words as phrases, which can match a little more than the pattern; Monitor › AI groups the newest 1,000 LLM calls, and spans carry no cost (System › LLM › Usage has it) | `report/patterns.rs`, `Monitor/AgentTraces.xml` |
 
 ## Chat and presence
 
@@ -76,7 +73,7 @@ M1–M7, the Oct 27 review pass and the Remaining-Work pass of Oct 27–28 are b
 
 ## Git and git hosting
 
-Built: [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revision-Management.md).
+Guides [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revision-Management.md).
 
 | Area | Item | Source |
 |---|---|---|
@@ -125,7 +122,7 @@ Built: [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revi
 | Item | Source |
 |---|---|
 | `moqui lint --screens` does not check attributes against the XSD, so an unknown attribute (`display default-text`) passes silently (unknown elements are flagged) | gallery finding F24; `script/screen_lint.rs` |
-| The XSDs compile in libxml2 since 2026-10-25 (an extension element needs a namespace of its own, `##other`), and validating the runtime's files against them shows long-standing violations: 100 of 936 screens (`box-body` without `box-header`, `transition` out of order, `${}` in enumerated attributes, attributes not in the schema; mr-boss `Comms/Settings/MailAccounts/List.xml` puts `row-col` in `section-iterate`), 3 service files, 2 conf files and 2 entity files. Fix the files or loosen the schemas | `runtime/base-component/framework/xsd/` |
+| Validating the runtime's files against the XSDs shows long-standing violations: 100 of 936 screens (`box-body` without `box-header`, `transition` out of order, `${}` in enumerated attributes, attributes not in the schema; mr-boss `Comms/Settings/MailAccounts/List.xml` puts `row-col` in `section-iterate`), 3 service files, 2 conf files and 2 entity files. Fix the files or loosen the schemas | `runtime/base-component/framework/xsd/` |
 
 ## Sessions, notifications and security
 
@@ -138,7 +135,7 @@ Built: [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revi
 
 | Area | Item | Source |
 |---|---|---|
-| IronStone | Commons, Comms and Projects are built; the other 13 business apps hold placeholder screens (they render in qvt, pass `moqui lint --screens`, and `test/AppStructure.spec.js` renders each with a demo record). For Projects, what remains is `impl-projects.md` §7 Later and the open findings of its §6 | mr-boss `plan/impl-drawers-commons.md`, `plan/impl-projects.md` |
+| IronStone | The 13 business apps other than Commons, Comms and Projects hold placeholder screens (they render in qvt, pass `moqui lint --screens`, and `test/AppStructure.spec.js` renders each with a demo record). Projects: `impl-projects.md` §7 Later and the open findings of its §6 | mr-boss `plan/impl-drawers-commons.md`, `plan/impl-projects.md` |
 | IronStone | Sales/Reports (`SalesSummary`, `SalesAnalysis`) has no spec that renders it. Marking the BOSS data screens outside Projects and Commons `server-static="qvt"` waits on their specs, which check data in the merged qvt output that a server-static screen leaves to `/actions` | same |
 | Tools | The tools screens still call the `StringUtilities`/`WebUtilities` globals (`runtime/base-component/tools/screen`, e.g. `EntityDataFind.xml`) | — |
 | Marble ERP (mr-marble) | Acceptance work after the migration: wiki fixtures, exhaustive role and organization isolation, CSRF, every mounted QVT interaction, physical checks and scanners | [MarbleERPMigration, Limits](archive/MarbleERPMigration.md#limits) |
@@ -157,11 +154,11 @@ Built: [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revi
 | Item | Source |
 |---|---|
 | The Java vs MR-Moqui comparison harness and its diff report (a gate artifact) has no code; only search-backend comparison tests exist. The Java runtime must stay runnable | [Implementation-Phases, Tests](archive/Implementation-Phases.md) |
-| The Java Spock security suite (`Security*.groovy`) has not been ported. The separate HTTP security-proof migration is complete | [SECURITY_TESTS](../docs/SECURITY_TESTS.md) |
+| The Java Spock security suite (`Security*.groovy`) has not been ported | [SECURITY_TESTS](../docs/SECURITY_TESTS.md) |
 | Optional client-test extensions: move suitable `gate3_browser` flows into client specs; browser users in load tests, an arrival-rate model, server metrics around load runs and merged client reports; screenshot comparison; CDP over a pipe; TypeScript declarations shared with server specs | [ClientTestHarness, Later](archive/ClientTestHarness.md#15-later) |
 | Anonymous `GET /menuData/apps/tools` is HTTP 500 (`sri.getScreenUrlInfo()` is undefined in that script) before `getMenuData` would answer 401. The client proof only requires that the body is not the Tools menu | [SECURITY_TESTS](../docs/SECURITY_TESTS.md) |
 | A full `moqui test` run (all components, 1540 features) runs out of memory in QuickJS about 930 features in: mr-boss screen renders then fail with `out of memory` (about 63 features), though the same specs pass on their own. Something held per run grows: find it (contexts, compiled screens, cached finds) or give each spec file its own runtime | `./moq test-all`, 2026-10-25 |
-| Co-editing across servers has no test: since 2026-10-25 `cluster::publish` gives a message without a `message_id` one (a peer refused `collab-update` posts without it, so co-edits never reached other servers), checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
+| Co-editing across servers has no test: `cluster::publish` giving a message its `message_id` (without one a peer refuses `collab-update` posts) is checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
 | `example/test/GitHosting.spec.js` "a merge request waits for its review and check, then merges" fails about 1 run in 10: `merge#MergeRequest` right after `create#GitCommitStatus` for the head commit still says "checks not passed: ci/build". Look at how `latest_statuses` (`service/git_hosting.rs`) sees the new row, and whether the merge request's head and the branch head can differ there | `./moq test-all`, 2026-10-25 |
 
 ## Framework internals

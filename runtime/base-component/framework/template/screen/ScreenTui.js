@@ -45,6 +45,8 @@ const $scrub = (value) => {
     if (value === null || value === undefined) return "null";
     if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
     if (Array.isArray(value)) return "[" + value.map($scrub).join(",") + "]";
+    // A value with toJSON (a decimal, a date) is written as JSON.stringify would write it.
+    if (typeof value === "object" && typeof value.toJSON === "function") return $scrub(value.toJSON());
     if (typeof value === "object") {
         let out = "{";
         let first = true;

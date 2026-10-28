@@ -1,8 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-//! The report charts in text: bar charts, pie and donut, heatmaps, state timelines and gauges. Each draws the same
-//! frame the table does, in theme roles (so they read in light and dark themes) with a fill per series or state as
-//! well (so they read without colour). Each answers None when there is nothing it can draw or no room, and the panel
-//! shows its table instead.
+//! The report charts in text: bar charts, pie and donut, heatmaps, state timelines and gauges (and, from `graph`, the
+//! funnel, node graph, flame graph and geomap). Each draws the same frame the table does, in theme roles (so they read
+//! in light and dark themes) with a fill per series or state as well (so they read without colour). Each answers None
+//! when there is nothing it can draw or no room, and the panel shows its table instead.
 use super::{all_configured_fields, formatted, is_metadata, mappings_for, number, text_of, trend_series, Trends};
 use crate::components::{fit, role_of_color, Line, Span};
 use crate::layout::display_width;
@@ -39,6 +39,10 @@ pub(super) fn chart(frame: &Value, panel: &Value, visual: &str, width: usize) ->
         "heatmap" => heatmap(frame, panel, width),
         "stateTimeline" | "state-timeline" => states(frame, panel, width),
         "gauge" | "barGauge" => gauges(frame, panel, width, visual == "barGauge"),
+        "funnel" => super::graph::funnel(frame, panel, width),
+        "nodeGraph" => super::graph::node_graph(frame, panel, width),
+        "flameGraph" => super::graph::flame(frame, panel, width),
+        "geomap" => super::graph::geomap(frame, panel, width),
         _ => None,
     }
 }

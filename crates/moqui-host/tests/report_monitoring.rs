@@ -130,6 +130,8 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
       <moqui.entity.document.DataDocumentField dataDocumentId="ReportFixture" fieldSeqId="02" fieldPath="enumTypeId" fieldType="keyword"/>
       <moqui.entity.document.DataDocumentField dataDocumentId="ReportFixture" fieldSeqId="03" fieldPath="sequenceNum" fieldType="long"/>
       <moqui.security.UserAccount userId="REPORT_OTHER" username="report.other" disabled="N"/>
+      <moqui.resource.GitRepository repositoryId="report-sync" repositoryKind="db" description="Synced report definitions"/>
+      <moqui.report.DefinitionGitSync syncId="REPORT_SYNC" folder="Synced" repositoryId="report-sync" path="dash" userId="EX_JOHN_DOE" enabled="Y"/>
       <moqui.basic.EnumerationType enumTypeId="REPORT_DISPLAY" description="Report labels"/>
       <moqui.basic.Enumeration enumId="visible" enumTypeId="REPORT_DISPLAY" description="Visible description"/>
       <moqui.security.UserGroup userGroupId="REPORT_VIEW" description="Scoped report viewer"/>
@@ -440,6 +442,7 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
     let sums=result(report::run_query(&context,&service(),&parameters(json!({"query":{"datasetId":"report-fixture-dataset","from":"now-1h","thru":"now+1h","aggs":{"amount":{"sum":{"field":"sequenceNum"}}}}}))).unwrap());
     assert_eq!(sums["frames"][0]["fields"][0]["values"][0], 7);
     verify_saved_runtime_pills_and_csv(&context, &facade, &entity);
+    verify_git_sync(&context, &entity);
 
     // Restore creates a new version; imports remap named references and never steal ownership.
     let saved = parameters(
@@ -1056,6 +1059,180 @@ fn verify_saved_runtime_pills_and_csv(
         .collect::<BTreeSet<_>>();
     assert_eq!(ids, BTreeSet::from(["pill-B", "pill-Missing"]));
     verify_tolerant_panels_and_single_panel_view(context, &stored);
+    verify_repeated_panels(context, &stored);
+}
+
+/// A save in a synced folder writes its file once the save commits; a file changed in the repository is pulled by its
+/// id, a second pull and the pulled save change nothing, a bad file is named while the rest pull, and a definition whose
+/// file is gone is listed, not deleted.
+fn verify_git_sync(context: &moqui_core::context::ExecutionContext, entity: &EntityFacade) {
+    let sync = json!({"syncId":"REPORT_SYNC","folder":"Synced","repositoryId":"report-sync","path":"dash","userId":"EX_JOHN_DOE"});
+    let resource = context.factory().resource();
+    let file = "git://report-sync/dash/synced-dash.json";
+    let save = |definition: Json| {
+        entity
+            .transactions_for("moqui.report.Definition")
+            .unwrap()
+            .run(TransactionAttribute::UseOrBegin, None, || {
+                report::save_definition(context, &service(), &parameters(json!({"definition":definition})))
+            })
+            .unwrap()
+    };
+    save(json!({"id":"synced-dash","type":"dashboard","title":"Synced","body":{"folder":"Synced","panels":{}}}));
+    let written: Json = serde_json::from_slice(
+        &resource
+            .location_bytes(file)
+            .unwrap()
+            .expect("the save pushed its file"),
+    )
+    .unwrap();
+    assert_eq!(
+        written,
+        json!({"id":"synced-dash","type":"dashboard","title":"Synced","body":{"folder":"Synced","panels":{}}})
+    );
+    let versions = |location: &str| resource.version_history(location).unwrap().len();
+    assert_eq!(versions(file), 1);
+
+    resource
+        .write_bytes(
+            file,
+            br#"{"id":"synced-dash","type":"dashboard","title":"Synced from git","body":{"panels":{},"folder":"Synced"}}"#,
+        )
+        .unwrap();
+    resource
+        .write_bytes("git://report-sync/dash/broken.json", b"not json")
+        .unwrap();
+    let factory = context.factory().clone();
+    let pulled = report::git_sync::pull(&factory, &sync).unwrap();
+    assert_eq!(pulled["saved"], json!(["synced-dash"]), "{pulled}");
+    assert_eq!(
+        pulled["failed"][0]["file"], "git://report-sync/dash/broken.json",
+        "{pulled}"
+    );
+    let definition = report::definitions::read(context, "synced-dash").unwrap();
+    assert_eq!(definition["title"], "Synced from git");
+    assert_eq!(versions(file), 2, "the pulled save wrote nothing back");
+    let again = report::git_sync::pull(&factory, &sync).unwrap();
+    assert_eq!(
+        (again["saved"].clone(), again["unchanged"].clone()),
+        (json!([]), json!(1)),
+        "{again}"
+    );
+    assert_eq!(
+        report::git_sync::push(&factory, &sync).unwrap(),
+        json!({"written":0,"unchanged":1,"removed":[]})
+    );
+
+    // Deleting a synced definition removes its file once the delete commits.
+    save(json!({"id":"synced-two","type":"dashboard","title":"Second","body":{"folder":"Synced","panels":{}}}));
+    let second = "git://report-sync/dash/synced-two.json";
+    assert!(resource.location_bytes(second).unwrap().is_some());
+    entity
+        .transactions_for("moqui.report.Definition")
+        .unwrap()
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            report::delete_definition(context, &service(), &parameters(json!({"definitionId":"synced-two"})))
+        })
+        .unwrap();
+    assert!(
+        resource.location_bytes(second).unwrap().is_none(),
+        "the delete removed its file"
+    );
+
+    resource.delete(file).unwrap();
+    // A definition this sync wrote is deleted when its file is removed in git; an untracked one is only listed.
+    {
+        let _storage = context.disable_authz();
+        let mut untracked = entity.make_value("moqui.report.Definition").unwrap();
+        for (name, value) in [
+            ("definitionId", "untracked-dash"),
+            ("definitionType", "dashboard"),
+            ("title", "Untracked"),
+            ("bodyJson", r#"{"folder":"Synced","panels":{}}"#),
+            ("ownerId", "EX_JOHN_DOE"),
+            ("readOnly", "N"),
+        ] {
+            untracked.set(name, moqui_lib::object::Value::string(value));
+        }
+        untracked.create(entity).unwrap();
+    }
+    let gone = report::git_sync::pull(&factory, &sync).unwrap();
+    assert_eq!(gone["deleted"], json!(["synced-dash"]), "{gone}");
+    assert_eq!(gone["missing"], json!(["untracked-dash"]), "{gone}");
+    assert!(
+        report::definitions::read_optional(context, "synced-dash")
+            .unwrap()
+            .is_none(),
+        "the removed file deleted its tracked definition"
+    );
+    assert!(report::definitions::read(context, "untracked-dash").is_ok());
+    let _status = context.disable_authz();
+    let row = entity
+        .find("moqui.report.DefinitionGitSync")
+        .unwrap()
+        .eq("syncId", moqui_lib::object::Value::string("REPORT_SYNC"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert!(row.get("lastPullDate").is_some_and(|date| !date.is_null()));
+    assert!(row
+        .get("lastError")
+        .and_then(moqui_lib::object::Value::as_str)
+        .is_some_and(|error| error.contains("broken.json")));
+}
+
+/// A panel repeated for each value of a query variable set to All: one copy per option, each narrowed to its value, the
+/// first keeping the panel's id; a copy alone renders through the single-panel view.
+fn verify_repeated_panels(context: &moqui_core::context::ExecutionContext, stored: &Json) {
+    let mut definition = stored.clone();
+    let body = &mut definition["body"];
+    body["variables"] =
+        json!([{"name":"enum","kind":"query","datasetId":"report-fixture-dataset","field":"enumId","includeAll":true}]);
+    let mut repeated = body["panels"]["business"].clone();
+    repeated["title"] = json!("Totals for $enum");
+    repeated["repeat"] = json!({"variable":"enum","maxPerRow":2});
+    body["panels"] = json!({"byEnum":repeated});
+    body["layout"] = json!({"type":"grid","items":[{"panelId":"byEnum","x":0,"y":0,"w":24,"h":1}]});
+    let rendered =
+        report::dashboard_frames_filtered(context, &definition, &json!({}), "now-1h", "now+1h", &json!([])).unwrap();
+    let panels = rendered["panels"].as_object().unwrap();
+    assert!(panels.len() >= 3, "a copy for each option: {rendered}");
+    let copy = |value: &str| {
+        panels
+            .iter()
+            .find(|(_, panel)| panel["repeatValues"]["enum"] == value)
+            .unwrap_or_else(|| panic!("no copy for {value}: {rendered}"))
+    };
+    for (value, amount) in [("pill-A", 7.0), ("pill-B", 11.0)] {
+        let (id, panel) = copy(value);
+        assert_eq!(panel["title"], json!(format!("Totals for {value}")), "{id}");
+        assert_eq!(panel["repeatOf"], "byEnum");
+        assert_eq!(
+            numeric_field(&panel["frames"][0], "amount"),
+            amount,
+            "{id} is narrowed to {value}: {panel}"
+        );
+    }
+    assert!(panels.contains_key("byEnum"), "the first copy keeps the panel id");
+    let items = rendered["layout"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), panels.len(), "{rendered}");
+    assert!(
+        items.iter().all(|item| item["w"] == 12),
+        "two copies to a row: {rendered}"
+    );
+    let (id, _) = copy("pill-B");
+    let mut single = definition.clone();
+    report::select_panel(&mut single, id).unwrap();
+    let alone =
+        report::dashboard_frames_filtered(context, &single, &json!({}), "now-1h", "now+1h", &json!([])).unwrap();
+    assert_eq!(alone["panels"].as_object().unwrap().len(), 1, "{alone}");
+    assert_eq!(
+        numeric_field(&alone["panels"][id]["frames"][0], "amount"),
+        11.0,
+        "{alone}"
+    );
+    assert_eq!(alone["layout"], json!({"type":"autoGrid","items":[{"panelId":id}]}));
+    assert!(report::select_panel(&mut definition.clone(), "nothing~1").is_err());
 }
 
 /// One bad panel, library reference or variable is a notice on that piece; the data panel beside it

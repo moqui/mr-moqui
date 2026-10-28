@@ -4,7 +4,7 @@
     <parameter name="filtersJson"/><parameter name="pillAction"/><parameter name="pillIndex"/><parameter name="pillField"/><parameter name="pillOperation"/><parameter name="pillValue"/><parameter name="pillLabel"/><parameter name="historyQuery"/>
     <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
     <parameter name="pageIndex"/><parameter name="pageSize"/><parameter name="order"/>
-    <parameter name="datasetId"/><parameter name="cursor"/><parameter name="fieldName"/><parameter name="savedSearchId"/><parameter name="retrievalMode"/>
+    <parameter name="showPatterns"/><parameter name="datasetId"/><parameter name="cursor"/><parameter name="fieldName"/><parameter name="savedSearchId"/><parameter name="retrievalMode"/>
     <transition name="remember" method="post" authz-action="view">
         <actions><script><![CDATA[
             const dataset=datasetId || 'otel_logs'
@@ -120,6 +120,13 @@
                 format:String(ec.web.parameters.renderMode || sri.getRenderMode() || 'csv'),definitionId:datasetId,rowCount:allHits.length}).call()
         }
         documentList = allHits.map(hit => Object.assign({},hit.body || {},{documentId:hit.id,documentType:hit.documentId,documentTitle:hit.documentTitle || '',authorizedLinks:hit.links || [],highlightsText:Object.values(hit.highlights || {}).flat().join(' · ')}))
+        // Fragments arrive HTML-escaped around <em> (search/highlight.rs): keep only those tags, as <mark>, and show them inline
+        // in the row; plain text drops the tags and the escapes.
+        for (const row of documentList) {
+            const parts=String(row.highlightsText || '').split(/(<\/?em>)/)
+            row.highlightsHtml=parts.map(part=>part==='<em>'?'<mark>':part==='</em>'?'</mark>':part.replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('')
+            row.highlightsPlain=parts.filter(part=>part!=='<em>' && part!=='</em>').join('').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&')
+        }
         if (order === 'oldest') documentList.reverse()
         nextCursor = result.nextCursor
         documentListCount = result.total || 0
@@ -173,6 +180,18 @@
                     if (values) topValues=values.values.map((value,index)=>({value,count:counts?counts.values[index]:null}))
                 }
             } catch (error) { ec.logger.error('Explore field analysis failed: '+String(error));queryNotices.push(String(error)) }
+        }
+        // Log patterns: the newest 1000 matching lines grouped by template (report/patterns.rs), on datasets with a body.
+        patternsAvailable = (datasetInfo.fields || []).some(field=>field.name==='body')
+        patternList = [];patternLines = 0
+        if (!queryError && patternsAvailable && showPatterns === 'Y') {
+            try {
+                const patterns = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId,from,thru,queryString:queryString || '',filters:filterPills,
+                    mode:'documents',sort:['-time','-__cursor'],pageSize:1000,transformations:[{type:'patterns',field:'body',limit:50}]}}).call()
+                const frame=(patterns.frames || [])[0] || {fields:[]},rows=frame.fields.length?frame.fields[0].values.length:0
+                for (let row=0;row<rows;row++) patternList.push(Object.fromEntries(frame.fields.map(field=>[field.name,field.values[row]])))
+                patternLines = Number(patterns.sourceCount || 0)
+            } catch (error) { ec.logger.error('Explore log patterns failed: '+String(error));queryNotices.push(String(error)) }
         }
     ]]></script></actions>
     <widgets>
@@ -260,6 +279,19 @@
             </form-single>
         </widgets></section>
         <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries'}"/>
+        <section name="LogPatterns" condition="patternsAvailable"><widgets>
+            <link condition="showPatterns !== 'Y'" url="." text="Show log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y'}"/>
+            <link condition="showPatterns === 'Y'" url="." text="Hide log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson}"/>
+            <label condition="showPatterns === 'Y'" text="Patterns of the newest ${Math.min(patternLines || 0,1000)} of ${patternLines || 0} matching lines. Numbers, ids and quoted text are shown as &lt;*&gt;; a pattern narrows the search to its lines." type="p"/>
+            <form-list name="Patterns" list="patternList" skip-form="true" paginate="false" condition="showPatterns === 'Y'">
+                <field name="pattern"><default-field><link url="." text="${pattern}" link-type="anchor" condition="query" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y',queryString:(queryString ? '('+queryString+') AND ' : '')+query}"/><display condition="!query"/></default-field></field>
+                <field name="count"><default-field><display/></default-field></field>
+                <field name="share"><default-field title="Share"><display text="${share}%"/></default-field></field>
+                <field name="severity"><default-field title="Level"><display/></default-field></field>
+                <field name="last"><default-field title="Latest"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+                <field name="sample"><default-field title="Newest line"><display/></default-field></field>
+            </form-list>
+        </widgets></section>
         <form-single name="InspectField" transition=".">
             <field name="filtersJson"><default-field><hidden/></default-field></field>
             <field name="datasetId"><default-field><hidden/></default-field></field>
@@ -313,7 +345,12 @@
             </default-field></field>
             <field name="record"><default-field title="Record">
                 <display text="${documentTitle}"/>
-                <html-view condition="highlightsText" html="${highlightsText}"/>
+                <section name="Highlights" condition="highlightsText"><widgets><render-mode>
+                    <text type="qvt"><![CDATA[<span v-pre class="m-report-highlights text-caption">${highlightsHtml}</span>]]></text>
+                    <text type="html,html-print"><![CDATA[<span class="m-report-highlights">${highlightsHtml}</span>]]></text>
+                    <text type="tui"><![CDATA[${JSON.stringify({t:'text',text:highlightsPlain})}]]></text>
+                    <text type="text"><![CDATA[${highlightsPlain}]]></text>
+                </render-mode></widgets></section>
                 <section-iterate name="DocumentLinks" list="authorizedLinks" entry="documentLink"><widgets>
                     <link url="${documentLink.url}" text="${documentLink.label}" link-type="anchor" url-type="${documentLink.urlType || 'plain'}"/>
                 </widgets></section-iterate>

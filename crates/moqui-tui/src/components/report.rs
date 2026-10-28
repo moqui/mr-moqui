@@ -8,6 +8,7 @@ use crate::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod graph;
 mod visual;
 
 pub struct ReportPanel;
@@ -108,6 +109,18 @@ fn currency_text(value: f64, code: &str, decimals: Option<u64>) -> String {
         format!("{sign}{code} {grouped}")
     } else {
         format!("{sign}{symbol}{grouped}")
+    }
+}
+
+/// [`formatted`] in the row's own unit, when the field has one per row (`units`, from a dataset field's `unitField`).
+fn formatted_at(value: &Value, field: &Value, row: usize) -> String {
+    match field["units"][row].as_str() {
+        Some(unit) => {
+            let mut field = field.clone();
+            field["unit"] = Value::String(unit.into());
+            formatted(value, &field)
+        }
+        None => formatted(value, field),
     }
 }
 
@@ -643,7 +656,7 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line
         let cells: Vec<String> = fields
             .iter()
             .take(cols)
-            .map(|field| fit(&formatted(&field["values"][at], field), col_width))
+            .map(|field| fit(&formatted_at(&field["values"][at], field, at), col_width))
             .collect();
         lines.push(vec![Span::new(cells.join("  "), Role::Text)]);
     }
@@ -942,6 +955,11 @@ fn table_key(
                 );
             }
             url = url.replace("${value}", &encoded(&text_of(field["values"].get(state.at))));
+            // The dashboard's time range, so a drill-down keeps it.
+            for (name, key) in [("${__from}", "from"), ("${__thru}", "thru")] {
+                let range = dashboard.map_or(Value::Null, |dashboard| dashboard["absoluteTime"][key].clone());
+                url = url.replace(name, &encoded(&text_of(Some(&range))));
+            }
             if (url.starts_with('/') && !url.starts_with("//")
                 || url.starts_with("https://")
                 || url.starts_with("http://"))
@@ -1055,6 +1073,182 @@ fn span_stamp(span: &Value) -> u64 {
     })
 }
 
+/// The time picker's quick ranges, as the web picker lists them: from, through and label.
+const QUICK_RANGES: [(&str, &str, &str); 22] = [
+    ("now-5m", "now", "Last 5 minutes"),
+    ("now-15m", "now", "Last 15 minutes"),
+    ("now-30m", "now", "Last 30 minutes"),
+    ("now-1h", "now", "Last 1 hour"),
+    ("now-3h", "now", "Last 3 hours"),
+    ("now-6h", "now", "Last 6 hours"),
+    ("now-12h", "now", "Last 12 hours"),
+    ("now-24h", "now", "Last 24 hours"),
+    ("now-2d", "now", "Last 2 days"),
+    ("now-7d", "now", "Last 7 days"),
+    ("now-30d", "now", "Last 30 days"),
+    ("now-90d", "now", "Last 90 days"),
+    ("now/d", "now/d", "Today"),
+    ("now/d", "now", "Today so far"),
+    ("now-1d/d", "now-1d/d", "Yesterday"),
+    ("now/w", "now/w", "This week"),
+    ("now/w", "now", "This week so far"),
+    ("now-1w/w", "now-1w/w", "Previous week"),
+    ("now/M", "now/M", "This month"),
+    ("now-1M/M", "now-1M/M", "Previous month"),
+    ("now/y", "now/y", "This year"),
+    ("now-1y/y", "now-1y/y", "Previous year"),
+];
+
+/// The panel menu's items for a panel, as the web panel menu has them: an id and its label.
+fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static str)> {
+    let mut items = vec![("view", "View"), ("edit", "Edit"), ("share", "Share")];
+    if panel["queries"].as_array().is_some_and(|queries| !queries.is_empty()) {
+        items.push(("explore", "Explore"));
+    }
+    items.push(("inspect", "Inspect"));
+    if dashboard["editable"] == true {
+        items.push(("duplicate", "Duplicate"));
+        items.push(("remove", "Remove"));
+    }
+    let alerting = panel["queries"].as_array().into_iter().flatten().any(|query| {
+        query["aggregations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|aggregation| aggregation["role"] == "metric")
+    });
+    if alerting {
+        items.push(("alert", "New alert rule"));
+    }
+    items
+}
+
+/// Explore over the panel's first query, with its filters and the dashboard's filters on the same dataset, and the range.
+fn explore_url(dashboard: &Value, panel: &Value) -> Option<String> {
+    let query = panel["queries"].get(0)?;
+    let dataset = query["datasetId"].as_str()?;
+    let mut pills: Vec<Value> = query["filters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            if item["query"].is_object() {
+                let mut pill = item.clone();
+                pill["datasetId"] = Value::String(dataset.into());
+                pill
+            } else {
+                serde_json::json!({"datasetId":dataset,"query":item,"label":"","negated":false,"disabled":false,"pinned":false})
+            }
+        })
+        .collect();
+    pills.extend(
+        dashboard["filters"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|pill| pill["datasetId"].as_str().is_none_or(|id| id == dataset))
+            .cloned(),
+    );
+    pills.truncate(32);
+    let mut url = format!(
+        "/apps/dashboards/Explore?datasetId={}&filtersJson={}",
+        encoded(dataset),
+        encoded(&Value::Array(pills).to_string())
+    );
+    if let Some(text) = query["queryString"].as_str().filter(|text| !text.is_empty()) {
+        url.push_str(&format!("&queryString={}", encoded(text)));
+    }
+    for key in ["from", "thru"] {
+        if let Some(value) = dashboard["absoluteTime"][key].as_str() {
+            url.push_str(&format!("&{key}={}", encoded(value)));
+        }
+    }
+    Some(url)
+}
+
+/// What a panel menu item does. Remove asks for a second Enter first.
+fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state: &mut ComponentState) -> Vec<Act> {
+    let source = panel["repeatOf"].as_str().unwrap_or(id);
+    let definition = dashboard["definitionId"].as_str().unwrap_or("");
+    match item {
+        "view" => vec![Act::Follow(dashboard_url(dashboard, "", Some(id), None))],
+        "edit" => vec![Act::Follow(format!(
+            "/apps/dashboards/Definition?definitionId={}&panelId={}",
+            encoded(definition),
+            encoded(source)
+        ))],
+        "share" => vec![Act::Message(format!(
+            "Link to this panel with the time made absolute: {}",
+            dashboard_url(dashboard, "", Some(id), None)
+        ))],
+        "explore" => explore_url(dashboard, panel).map_or_else(Vec::new, |url| vec![Act::Follow(url)]),
+        "inspect" => {
+            state.closed.insert("__report_inspector".into());
+            state.local["inspectionRequest"] = Value::Bool(true);
+            vec![Act::Read(dashboard_url(dashboard, "inspectPanel", Some(id), None))]
+        }
+        "duplicate" | "remove" => {
+            if item == "remove" && state.local["confirmRemove"].as_str() != Some(id) {
+                state.local["confirmRemove"] = Value::String(id.into());
+                state.local["menu"] = state.local["menu"].clone();
+                return vec![Act::Message(
+                    "Enter again removes the panel; a new version is saved, and an earlier one can be restored".into(),
+                )];
+            }
+            state.local["confirmRemove"] = Value::Null;
+            vec![Act::Post {
+                url: format!(
+                    "/apps/dashboards/Dashboard/{}",
+                    if item == "remove" {
+                        "removePanel"
+                    } else {
+                        "duplicatePanel"
+                    }
+                ),
+                fields: BTreeMap::from([
+                    ("definitionId".to_string(), definition.to_string()),
+                    ("panelId".to_string(), source.to_string()),
+                ]),
+            }]
+        }
+        "alert" => vec![Act::Follow(format!(
+            "/apps/dashboards/AlertRule?dashboardId={}&panelId={}",
+            encoded(definition),
+            encoded(id)
+        ))],
+        _ => Vec::new(),
+    }
+}
+
+/// A list of choices drawn under a heading, the chosen one marked.
+fn choice_lines(heading: &str, choices: &[&str], at: usize) -> Vec<Line> {
+    let mut lines = vec![vec![Span::new(heading.to_string(), Role::Primary)]];
+    lines.extend(choices.iter().enumerate().map(|(index, text)| {
+        vec![Span::new(
+            format!("{} {text}", if index == at { "▶" } else { " " }),
+            if index == at { Role::Primary } else { Role::Text },
+        )]
+    }));
+    lines
+}
+
+/// Up/Down move in a list of `count` open choices kept at `state.local[key]`, Esc closes it, Enter returns the chosen
+/// index. Any other key keeps the list open and does nothing.
+fn choose(state: &mut ComponentState, key: &str, count: usize, press: &KeyPress) -> Option<Option<usize>> {
+    let at = state.local[key].as_u64()? as usize;
+    match press.key {
+        Key::Up => state.local[key] = Value::from(at.saturating_sub(1)),
+        Key::Down => state.local[key] = Value::from((at + 1).min(count.saturating_sub(1))),
+        Key::Escape => {
+            state.local[key] = Value::Null;
+            state.local["confirmRemove"] = Value::Null;
+        }
+        Key::Enter => return Some(Some(at.min(count.saturating_sub(1)))),
+        _ => {}
+    }
+    Some(None)
+}
+
 impl Component for ReportDashboard {
     fn name(&self) -> &'static str {
         "report-dashboard"
@@ -1086,6 +1280,14 @@ impl Component for ReportDashboard {
                 Role::Muted,
             )]);
         }
+        if let Some(at) = state.local["picker"].as_u64() {
+            let labels: Vec<&str> = QUICK_RANGES.iter().map(|(_, _, label)| *label).collect();
+            lines.extend(choice_lines(
+                "Time range (↑/↓ choose, Enter applies, Esc closes)",
+                &labels,
+                at as usize,
+            ));
+        }
         for (at, control) in controls.iter().enumerate() {
             lines.push(vec![Span::new(
                 format!(
@@ -1106,11 +1308,24 @@ impl Component for ReportDashboard {
             )]);
         }
         for (at, (id, panel)) in entries.iter().enumerate() {
+            // Kiosk mode scrolls by panel: the selected one is at the top.
+            if kiosk && at < state.at {
+                continue;
+            }
             if at == state.at && !kiosk {
                 lines.push(vec![Span::new(
-                    "▶ Selected panel; i inspects, c/x exports CSV/XLSX",
+                    "▶ Selected panel; m opens its menu, i inspects, c/x exports CSV/XLSX",
                     Role::Muted,
                 )]);
+                if let Some(chosen) = state.local["menu"].as_u64() {
+                    let items = panel_menu(&data["dashboard"], panel);
+                    let labels: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
+                    lines.extend(choice_lines(
+                        "Panel menu (↑/↓ choose, Enter runs, Esc closes)",
+                        &labels,
+                        chosen as usize,
+                    ));
+                }
             }
             let frame = data["frames"][id].get(0).unwrap_or(&Value::Null);
             let table = ComponentState {
@@ -1139,10 +1354,53 @@ impl Component for ReportDashboard {
         if lines.is_empty() {
             lines.push(vec![Span::new("No panels", Role::Muted)]);
         }
+        // PgUp/PgDn scroll within kiosk mode; the title line stays.
+        let offset = state.local["kioskOffset"].as_u64().unwrap_or(0) as usize;
+        if kiosk && offset > 0 && lines.len() > 1 {
+            let skip = offset.min(lines.len() - 2);
+            lines.drain(1..1 + skip);
+        }
         lines
     }
     fn key(&self, props: &Value, state: &mut ComponentState, press: &KeyPress, _wide: bool) -> Option<Vec<Act>> {
         let data = state.data.as_ref().unwrap_or(props).clone();
+        if press.is_plain() {
+            let dashboard = &data["dashboard"];
+            // An open time picker or panel menu takes the keys until Enter or Esc.
+            if let Some(chosen) = choose(state, "picker", QUICK_RANGES.len(), press) {
+                if let Some(at) = chosen {
+                    state.local["picker"] = Value::Null;
+                    let (from, thru, _) = QUICK_RANGES[at];
+                    let mut next = dashboard.clone();
+                    next["absoluteTime"] = serde_json::json!({"from":from,"thru":thru});
+                    return Some(vec![Act::Follow(dashboard_url(&next, "", None, None))]);
+                }
+                return Some(Vec::new());
+            }
+            let entries = dashboard_entries(&data, state);
+            if let Some((id, panel)) = entries.get(state.at) {
+                let items = panel_menu(dashboard, panel);
+                if let Some(chosen) = choose(state, "menu", items.len(), press) {
+                    if let Some(at) = chosen {
+                        let acts = panel_menu_act(items[at].0, dashboard, id, panel, state);
+                        if state.local["confirmRemove"].is_null() {
+                            state.local["menu"] = Value::Null;
+                        }
+                        return Some(acts);
+                    }
+                    return Some(Vec::new());
+                }
+            }
+            if kiosk(&data, state) && matches!(press.key, Key::PageDown | Key::PageUp) {
+                let offset = state.local["kioskOffset"].as_u64().unwrap_or(0);
+                state.local["kioskOffset"] = Value::from(if press.key == Key::PageDown {
+                    offset + 10
+                } else {
+                    offset.saturating_sub(10)
+                });
+                return Some(Vec::new());
+            }
+        }
         // Esc leaves kiosk mode first, then the inspector, then the single-panel view; `d k` and Alt+K toggle it.
         if press.alt && !press.ctrl && press.key == Key::Char('k') {
             state.local["kiosk"] = Value::Bool(!kiosk(&data, state));
@@ -1243,10 +1501,25 @@ impl Component for ReportDashboard {
             match press.key {
                 Key::Up => {
                     state.at = state.at.saturating_sub(1);
+                    state.local["kioskOffset"] = Value::from(0);
                     return Some(Vec::new());
                 }
                 Key::Down => {
                     state.at = (state.at + 1).min(entries.len().saturating_sub(1));
+                    state.local["kioskOffset"] = Value::from(0);
+                    return Some(Vec::new());
+                }
+                Key::Char('p') => {
+                    let requested = &dashboard["requestedTime"];
+                    let current = QUICK_RANGES
+                        .iter()
+                        .position(|(from, thru, _)| requested["from"] == *from && requested["thru"] == *thru)
+                        .unwrap_or(0);
+                    state.local["picker"] = Value::from(current);
+                    return Some(Vec::new());
+                }
+                Key::Char('m') if !entries.is_empty() => {
+                    state.local["menu"] = Value::from(0);
                     return Some(Vec::new());
                 }
                 Key::Char('g') => {
@@ -1368,6 +1641,12 @@ impl Component for ReportDashboard {
             ("↑/↓", "Select panel"),
             ("←/→", "Choose dashboard tab"),
             ("i", "Inspect selected panel"),
+            (
+                "m",
+                "Panel menu: view, edit, share, explore, inspect, duplicate, remove, new alert rule",
+            ),
+            ("p", "Time range picker (quick ranges)"),
+            ("PgUp/PgDn", "Scroll in kiosk mode (↑/↓ go a panel at a time)"),
             ("v/Enter", "View panel"),
             ("Esc", "Leave kiosk; close inspector; all panels"),
             ("d k", "Kiosk mode (also Alt+K)"),
@@ -1523,7 +1802,7 @@ impl Component for TraceWaterfall {
                 let title = fit(&format!("{}{}", " ".repeat(depth * 2), prop(span, "name", "span")), 28);
                 #[expect(clippy::cast_precision_loss)]
                 let millis = elapsed as f64 / 1_000_000.0;
-                vec![
+                let mut line = vec![
                     Span::new(format!("{title} {millis:>8.2}ms "), Role::Text),
                     Span::new(
                         format!("{}{}", " ".repeat(offset), "━".repeat(length.max(1))),
@@ -1533,7 +1812,28 @@ impl Component for TraceWaterfall {
                             Role::Primary
                         },
                     ),
-                ]
+                ];
+                // An LLM call's token use, from its gen_ai.* attributes.
+                let tokens = |key: &str| {
+                    let value = if span[key].is_null() {
+                        &span["attributes"][key]
+                    } else {
+                        &span[key]
+                    };
+                    integer(value)
+                };
+                let (input, output) = (
+                    tokens("gen_ai.usage.input_tokens"),
+                    tokens("gen_ai.usage.output_tokens"),
+                );
+                if input.is_some() || output.is_some() {
+                    let show = |value: Option<u64>| value.map_or_else(|| "?".to_string(), |value| value.to_string());
+                    line.push(Span::new(
+                        format!(" {}→{} tokens", show(input), show(output)),
+                        Role::Muted,
+                    ));
+                }
+                line
             })
             .collect();
         if state.closed.contains("__report_inspector") {
@@ -1781,6 +2081,15 @@ mod tests {
             lines[1].find('━') > lines[0].find('━'),
             "the child retains its offset when nanoseconds arrive as strings"
         );
+        assert!(!lines[0].contains("tokens"));
+        let llm = json!({"spans":[{"span_id":"call","name":"openai:gpt","start_nano":"1800000000000000000","duration_nano":5,
+            "gen_ai.usage.input_tokens":120,"attributes":{"gen_ai.usage.output_tokens":"30"}}]});
+        let lines: Vec<_> = TraceWaterfall
+            .lines(&llm, &ComponentState::default(), 100, false)
+            .iter()
+            .map(line_text)
+            .collect();
+        assert!(lines[0].ends_with(" 120→30 tokens"), "{lines:?}");
     }
     #[test]
     fn field_overrides_and_inline_refresh_are_real() {
@@ -2168,6 +2477,127 @@ mod gap_tests {
                 false
             ),
             None
+        );
+    }
+    #[test]
+    fn time_picker_applies_a_quick_range_and_panel_menu_runs_its_items() {
+        let props = json!({"dashboard":{"definitionId":"d","title":"Board","editable":true,"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"},
+            "requestedTime":{"from":"now-24h","thru":"now"},"filters":[{"datasetId":"orders","query":{"field":{"name":"status","op":"eq","value":"open"}}}],
+            "panels":{"p":{"title":"Orders","queries":[{"datasetId":"orders","queryString":"total:>5","aggregations":[{"id":"n","type":"sum","role":"metric"}]}]}}},"frames":{}});
+        let mut state = ComponentState::default();
+        let text = |state: &ComponentState| {
+            ReportDashboard
+                .lines(&props, state, 120, false)
+                .iter()
+                .map(super::super::line_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let press =
+            |state: &mut ComponentState, key: Key| ReportDashboard.key(&props, state, &KeyPress::plain(key), false);
+        // p opens the picker at the current range; Down and Enter apply the next quick range.
+        press(&mut state, Key::Char('p'));
+        assert!(text(&state).contains("▶ Last 24 hours"), "{}", text(&state));
+        press(&mut state, Key::Down);
+        let Some(acts) = press(&mut state, Key::Enter) else {
+            panic!("no act")
+        };
+        assert!(
+            matches!(&acts[..], [Act::Follow(url)] if url.contains("from=now-2d") && url.contains("thru=now")),
+            "{acts:?}"
+        );
+        assert!(state.local["picker"].is_null());
+        // m opens the panel menu; its items follow the panel and the dashboard.
+        press(&mut state, Key::Char('m'));
+        let shown = text(&state);
+        for item in [
+            "View",
+            "Edit",
+            "Share",
+            "Explore",
+            "Inspect",
+            "Duplicate",
+            "Remove",
+            "New alert rule",
+        ] {
+            assert!(shown.contains(item), "{item}: {shown}");
+        }
+        press(&mut state, Key::Down);
+        press(&mut state, Key::Down);
+        press(&mut state, Key::Down);
+        let Some(acts) = press(&mut state, Key::Enter) else {
+            panic!("no act")
+        };
+        assert!(
+            matches!(&acts[..], [Act::Follow(url)] if url.starts_with("/apps/dashboards/Explore?datasetId=orders")
+                && url.contains("queryString=total") && url.contains("status") && url.contains("from=2026-10-27")),
+            "{acts:?}"
+        );
+        // Remove asks for a second Enter, then posts the dashboard's transition.
+        state.local["menu"] = json!(6);
+        assert!(matches!(
+            press(&mut state, Key::Enter).as_deref(),
+            Some([Act::Message(_)])
+        ));
+        let Some(acts) = press(&mut state, Key::Enter) else {
+            panic!("no act")
+        };
+        assert!(
+            matches!(&acts[..], [Act::Post { url, fields }] if url.ends_with("/removePanel") && fields["panelId"] == "p"),
+            "{acts:?}"
+        );
+        assert!(state.local["menu"].is_null());
+        // Esc closes an open menu without leaving anything else.
+        press(&mut state, Key::Char('m'));
+        assert_eq!(press(&mut state, Key::Escape), Some(Vec::new()));
+        assert!(state.local["menu"].is_null());
+    }
+    #[test]
+    fn kiosk_mode_scrolls_by_panel_and_by_page() {
+        let props = json!({"dashboard":{"definitionId":"d","title":"Wall","kiosk":true,"panels":{"a":{"title":"First","visualization":"text","text":"one"},"b":{"title":"Second","visualization":"text","text":"two"}}},"frames":{}});
+        let mut state = ComponentState::default();
+        let text = |state: &ComponentState| {
+            ReportDashboard
+                .lines(&props, state, 100, false)
+                .iter()
+                .map(super::super::line_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(text(&state).contains("First"));
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Down), false);
+        let shown = text(&state);
+        assert!(
+            shown.starts_with("Wall") && !shown.contains("First") && shown.contains("Second"),
+            "{shown}"
+        );
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::PageDown), false);
+        assert_eq!(state.local["kioskOffset"], 10);
+        assert!(text(&state).starts_with("Wall"));
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::PageUp), false);
+        assert_eq!(state.local["kioskOffset"], 0);
+    }
+    #[test]
+    fn data_links_carry_the_dashboard_time_range() {
+        let frame = json!({"fields":[{"name":"service","values":["shop"],"link":"/apps/monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"}]});
+        let dashboard = json!({"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"}});
+        let mut state = ComponentState {
+            choosing: Some(0),
+            ..Default::default()
+        };
+        let acts = table_key(
+            &frame,
+            &json!({}),
+            &mut state,
+            &KeyPress::plain(Key::Enter),
+            Some(&dashboard),
+        );
+        assert_eq!(
+            acts,
+            Some(vec![Act::Follow(
+                "/apps/monitor/Services?var-service=shop&from=2026-10-27T00%3A00%3A00Z&thru=2026-10-28T00%3A00%3A00Z"
+                    .into()
+            )])
         );
     }
     #[test]

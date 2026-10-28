@@ -28,6 +28,31 @@
         <relationship type="one" related="moqui.report.Definition"/>
         <index name="REPORT_REF_TARGET"><index-field name="referencedId"/></index>
     </entity>
+    <!-- A definition folder (body.folder) kept in a directory of a git repository, one JSON file per definition: a save
+        pushes its file, and a push or fetch to the repository pulls (report/git_sync.rs). Runs as userId. -->
+    <entity entity-name="DefinitionGitSync" package="moqui.report" use="configuration" cache="never">
+        <field name="syncId" type="id" is-pk="true"/>
+        <field name="folder" type="text-medium"/>
+        <field name="repositoryId" type="id"/>
+        <field name="path" type="text-medium"/>
+        <field name="userId" type="id"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="lastPushDate" type="date-time"/>
+        <field name="lastPullDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <index name="REPORT_GIT_SYNC_FOLDER"><index-field name="folder"/></index>
+    </entity>
+    <!-- A definition whose file a git sync wrote or read. Only a tracked definition is deleted when a pull finds its file
+        gone, and deleting a tracked definition removes its file. -->
+    <entity entity-name="DefinitionGitFile" package="moqui.report" use="configuration" cache="never">
+        <field name="syncId" type="id" is-pk="true"/>
+        <field name="definitionId" type="id-long" is-pk="true"/>
+        <field name="syncedDate" type="date-time"/>
+        <relationship type="one" related="moqui.report.DefinitionGitSync"/>
+        <index name="REPORT_GIT_FILE_DEF"><index-field name="definitionId"/></index>
+    </entity>
     <entity entity-name="AlertInstance" package="moqui.report" use="transactional" cache="never">
         <field name="definitionId" type="id-long" is-pk="true"/>
         <field name="seriesId" type="id-long" is-pk="true"/>

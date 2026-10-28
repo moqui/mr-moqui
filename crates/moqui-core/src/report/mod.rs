@@ -4,6 +4,10 @@ pub mod alert;
 pub mod annotations;
 pub mod definitions;
 pub mod frame;
+pub mod git_sync;
+pub mod graph;
+pub mod patterns;
+pub mod repeat;
 pub mod time;
 
 use crate::{
@@ -509,6 +513,33 @@ fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Res
     )
 }
 
+/// The spans of a graph query (`serviceMap` or `flame`), newest first and at most [`graph::SPAN_LIMIT`], read in
+/// cursor pages as the viewer.
+fn graph_spans(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Result<(Vec<Json>, Vec<Json>), Error> {
+    let mut query = options.clone();
+    query["mode"] = Json::Null;
+    query["pageSize"] = json!(1000);
+    query["sort"] = json!(["-time"]);
+    let mut spans = Vec::new();
+    let mut notices = Vec::new();
+    loop {
+        let page = documents_of(ec, &query, dataset)?;
+        let hits = page["hits"].as_array().cloned().unwrap_or_default();
+        let full = hits.len() == 1000;
+        for hit in hits {
+            if spans.len() == graph::SPAN_LIMIT {
+                notices.push(json!({"level":"warning","code":"span_limit","message":format!("The graph uses the newest {} spans of the range; narrow the query to see all of them.",graph::SPAN_LIMIT),"complete":false}));
+                return Ok((spans, notices));
+            }
+            spans.push(hit["body"].clone());
+        }
+        match page["nextCursor"].clone() {
+            cursor if full && !cursor.is_null() => query["cursor"] = cursor,
+            _ => return Ok((spans, notices)),
+        }
+    }
+}
+
 fn decorate_document(
     ec: &ExecutionContext,
     facade: &search::SearchFacade,
@@ -638,6 +669,23 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         let (frames, inspection) = apply_transformations(vec![frame], options)?;
         return Ok(
             json!({"frames":frames,"inspection":inspection,"notices":documents["notices"],"range":range,"sourceCount":documents["total"],"nextCursor":documents["nextCursor"]}),
+        );
+    }
+    if let Some(mode @ ("serviceMap" | "flame")) = options["mode"].as_str() {
+        let mut query = options.clone();
+        query["from"] = range["from"].clone();
+        query["thru"] = range["thru"].clone();
+        let dataset = dataset(ec, text(options, "datasetId", "otel_spans"))?;
+        let (spans, notices) = graph_spans(ec, &query, &dataset)?;
+        let mut frame = if mode == "serviceMap" {
+            graph::service_map(&spans)
+        } else {
+            graph::span_flame(&spans)
+        };
+        configure_frame(ec, &dataset, options, &mut frame)?;
+        let (frames, inspection) = apply_transformations(vec![frame], options)?;
+        return Ok(
+            json!({"frames":frames,"inspection":inspection,"notices":notices,"range":range,"sourceCount":spans.len()}),
         );
     }
     if let Some(queries) = options["queries"].as_array() {
@@ -1316,7 +1364,13 @@ fn configure_frame(
             let rows = find.list()?;
             Ok(rows.iter().filter_map(|row|row.get(key).zip(row.get(display))).map(|(key,display)|json!({"value":moqui_lib::json::to_json(key),"text":moqui_lib::object::to_plain_string(display)})).collect())
         };
-        match resolve() {
+        // The labels of ids already in the authorized frame: the dataset's read permission and row filters decided what the
+        // viewer sees, so reading the label table (StatusItem, Enumeration, Uom, a product's name) needs no grant of its own.
+        let resolved = {
+            let _authz = ec.disable_authz();
+            resolve()
+        };
+        match resolved {
             Ok(mappings) => {
                 let existing = field.config.entry("mappings".into()).or_insert_with(|| json!([]));
                 if let Some(existing) = existing.as_array_mut() {
@@ -1328,7 +1382,94 @@ fn configure_frame(
             }
         }
     }
+    apply_unit_fields(frame, |unit_field| distinct_units(ec, query, unit_field));
     Ok(())
+}
+
+/// The distinct values of `unit_field` (at most 3) over the query's documents, for an aggregated frame that does not
+/// carry the unit column. None when they cannot be read; the field keeps its fallback unit.
+fn distinct_units(ec: &ExecutionContext, query: &Json, unit_field: &str) -> Option<Vec<String>> {
+    if query["mode"] == "documents" || query["datasetId"].as_str().is_none() {
+        return None;
+    }
+    let mut options =
+        json!({"aggregations":[{"id":"unit","type":"terms","role":"x-axis","params":{"field":unit_field,"size":3}}]});
+    for key in ["datasetId", "from", "thru", "queryString", "filters"] {
+        if !query[key].is_null() {
+            options[key] = query[key].clone();
+        }
+    }
+    match execute_query(ec, &options) {
+        Ok(result) => Some(
+            result["frames"][0]["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|field| field["name"] == "unit")
+                .flat_map(|field| field["values"].as_array().cloned().unwrap_or_default())
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect(),
+        ),
+        Err(error) => {
+            tracing::warn!(%unit_field, %error, "report unit field values could not be read; keeping the fallback unit");
+            None
+        }
+    }
+}
+
+/// A field whose defaults name a `unitField` (such as `currencyUomId` for an amount) takes its unit from that column:
+/// one unit in the frame becomes the field's unit, and several give `units`, one per row, which the renderers use per
+/// cell. A frame without the column (an aggregation) asks `distinct` for the column's values over the same documents:
+/// one value is the unit, and several leave the amount without a unit, since a sum across currencies has none. With
+/// no answer the field keeps its fixed `unit` as the fallback.
+fn apply_unit_fields(frame: &mut frame::Frame, mut distinct: impl FnMut(&str) -> Option<Vec<String>>) {
+    let mut asked: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
+    for at in 0..frame.fields.len() {
+        let Some(unit_field) = frame.fields[at]
+            .config
+            .get("unitField")
+            .and_then(Json::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let column = frame
+            .fields
+            .iter()
+            .find(|field| field.name == unit_field)
+            .map(|field| field.values.clone());
+        let (single, per_row) = match column {
+            Some(values) => {
+                let units: Vec<Option<String>> =
+                    values.iter().map(|value| value.as_str().map(str::to_string)).collect();
+                let distinct: std::collections::BTreeSet<&String> = units.iter().flatten().collect();
+                match distinct.len() {
+                    0 => (None, None),
+                    1 => (distinct.into_iter().next().cloned(), None),
+                    _ => (None, Some(units)),
+                }
+            }
+            None => match asked.entry(unit_field.clone()).or_insert_with(|| distinct(&unit_field)) {
+                Some(values) if values.len() == 1 => (Some(values[0].clone()), None),
+                Some(values) if values.len() > 1 => {
+                    let field = &mut frame.fields[at];
+                    field.unit = None;
+                    field.config.remove("unit");
+                    field.config.insert("unitMixed".into(), json!(values));
+                    continue;
+                }
+                _ => (None, None),
+            },
+        };
+        let field = &mut frame.fields[at];
+        if let Some(unit) = single {
+            field.unit = Some(unit.clone());
+            field.config.insert("unit".into(), json!(unit));
+        }
+        if let Some(units) = per_row {
+            field.config.insert("units".into(), json!(units));
+        }
+    }
 }
 
 fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize, range: &Json) -> Result<Json, Error> {
@@ -2000,8 +2141,8 @@ pub fn get_dataset(
 pub use alert::evaluate_rules;
 pub use annotations::{create_annotation, record_release};
 pub use definitions::{
-    copy_definition, export_definitions, find_definition_uses, get_definition, get_definition_diff, import_definitions,
-    list_definitions, load_shipped, restore_definition, save_definition, versions_definition,
+    copy_definition, delete_definition, export_definitions, find_definition_uses, get_definition, get_definition_diff,
+    import_definitions, list_definitions, load_shipped, restore_definition, save_definition, versions_definition,
 };
 
 /// One rendering path for browser embeds and offline reports. Each panel retains its own
@@ -2129,18 +2270,9 @@ pub fn dashboard_frames_filtered(
                 value = value["value"].clone();
             }
             if value.is_null() && variable["kind"] == "query" && !text(variable, "field", "").is_empty() {
-                match execute_query(
-                    ec,
-                    &json!({"datasetId":variable["datasetId"],"from":from,"thru":thru,"aggregations":[{"id":"option","type":"terms","role":"x-axis","params":{"field":variable["field"],"size":1000}}]}),
-                ) {
+                match variable_options(ec, variable, &from, &thru) {
                     Ok(options) => {
-                        value = options["frames"][0]["fields"]
-                            .as_array()
-                            .and_then(|fields| fields.iter().find(|field| field["name"] == "option"))
-                            .and_then(|field| field["values"].as_array())
-                            .and_then(|values| values.first())
-                            .cloned()
-                            .unwrap_or(Json::Null);
+                        value = options.into_iter().next().unwrap_or(Json::Null);
                     }
                     Err(error) => {
                         // The variable stays unset, so it does not narrow any panel.
@@ -2218,6 +2350,38 @@ pub fn dashboard_frames_filtered(
         }
     }
     let resolved = Json::Object(resolved);
+    // Repeats expand into a plain panel map and layout before any query runs; a panel selected by a copy's id keeps
+    // that copy alone.
+    let mut layout = body["layout"].clone();
+    let mut panels = panels.clone();
+    if repeat::has_repeats(body) {
+        let mut option_notices = Vec::new();
+        let mut values_of = |name: &str| {
+            let Some(variable) = variable_definitions.iter().find(|variable| variable["name"] == name) else {
+                tracing::error!(variable = %name, "dashboard repeat names no variable; drawing the panel once");
+                return Vec::new();
+            };
+            repeat::selected_values(resolved.get(name), || {
+                variable_options(ec, variable, &from, &thru).unwrap_or_else(|error| {
+                    tracing::error!(variable=%name,%error,"repeat values unavailable; drawing the panel once");
+                    option_notices.push(json!({"level":"warning","code":"variable_error","variable":name,"message":format!("Values for repeating on {name} are unavailable: {}",error.message())}));
+                    Vec::new()
+                })
+            })
+        };
+        let expanded = repeat::expand(body, &mut values_of);
+        panels = expanded.panels;
+        layout = expanded.layout;
+        variable_notices.extend(expanded.notices);
+        variable_notices.extend(option_notices);
+    }
+    if let Some(selected) = body["repeatSelect"].as_str() {
+        let panel = panels
+            .remove(selected)
+            .ok_or_else(|| fail("dashboard panel does not exist"))?;
+        panels = serde_json::Map::from_iter([(selected.to_owned(), panel)]);
+        layout = json!({"type":"autoGrid","items":[{"panelId":selected}]});
+    }
     let mut annotations = Vec::new();
     let mut annotation_notices = Vec::new();
     let mut marker_query = json!({"datasetId":"monitor_annotations","from":from,"thru":thru,"pageSize":200,"query":{"bool":{"any":[{"field":{"name":"dashboard","op":"exists","negate":true}},{"field":{"name":"dashboard","op":"eq","value":definition["id"]}}]}}});
@@ -2282,7 +2446,7 @@ pub fn dashboard_frames_filtered(
         }
     }
     let mut results = serde_json::Map::new();
-    for (id, panel) in panels {
+    for (id, panel) in &panels {
         // A panel that cannot be read or queried gets an error notice; the others still render.
         let panel = match dashboard_panel(ec, panel) {
             Ok(panel) => panel,
@@ -2325,6 +2489,11 @@ pub fn dashboard_frames_filtered(
                 if panel["footer"]["calculations"].is_array() {
                     query["totals"] = panel["footer"]["calculations"].clone();
                 }
+                // A repeated copy has its variable pinned to its own value.
+                let mut resolved = resolved.clone();
+                for (name, value) in panel["repeatValues"].as_object().into_iter().flatten() {
+                    resolved[name] = value.clone();
+                }
                 variables(&mut query, &resolved);
                 if let Some(values) = resolved.as_object() {
                     apply_variables(&mut query, &variable_definitions, values);
@@ -2346,6 +2515,7 @@ pub fn dashboard_frames_filtered(
             }
         }
         let mut rendered = panel;
+        localize_title(&mut rendered["title"]);
         rendered["frames"] = json!(frames);
         rendered["notices"] = json!(notices);
         rendered["annotations"] = json!(annotations);
@@ -2354,9 +2524,72 @@ pub fn dashboard_frames_filtered(
         results.insert(id.clone(), rendered);
     }
     annotation_notices.extend(variable_notices);
+    localize_layout(&mut layout, 0);
+    let mut title = definition["title"].clone();
+    localize_title(&mut title);
     Ok(
-        json!({"title":definition["title"],"layout":body["layout"],"panels":results,"annotations":annotations,"notices":annotation_notices,"variableValues":resolved,"filters":filters,"range":{"from":from,"thru":thru}}),
+        json!({"title":title,"layout":layout,"panels":results,"annotations":annotations,"notices":annotation_notices,"variableValues":resolved,"filters":filters,"range":{"from":from,"thru":thru}}),
     )
+}
+
+/// A title in the viewer's language when the catalog has it (`LocalizedMessage`), so a shipped dashboard's titles show
+/// translated on the web, in the TUI and in a printed report alike; other text stays as written.
+fn localize_title(title: &mut Json) {
+    if let Some(text) = title.as_str().filter(|text| !text.is_empty()) {
+        if let Ok(localized) = crate::l10n::localize(text) {
+            *title = Json::String(localized);
+        }
+    }
+}
+
+/// The titles of a layout's rows and tabs, through [`localize_title`].
+fn localize_layout(node: &mut Json, depth: usize) {
+    if depth > 12 {
+        return;
+    }
+    if let Some(map) = node.as_object_mut() {
+        if let Some(title) = map.get_mut("title") {
+            localize_title(title);
+        }
+        for key in ["items", "children"] {
+            for item in map.get_mut(key).and_then(Json::as_array_mut).into_iter().flatten() {
+                localize_layout(item, depth + 1);
+            }
+        }
+        if let Some(layout) = map.get_mut("layout") {
+            localize_layout(layout, depth + 1);
+        }
+    }
+}
+
+/// The options of a dashboard variable: its listed options, or for a query variable the terms of its field in the range
+/// (at most 1000).
+fn variable_options(ec: &ExecutionContext, variable: &Json, from: &str, thru: &str) -> Result<Vec<Json>, Error> {
+    if let Some(options) = variable["options"].as_array().filter(|options| !options.is_empty()) {
+        return Ok(options
+            .iter()
+            .map(|option| {
+                if option.is_object() {
+                    option["value"].clone()
+                } else {
+                    option.clone()
+                }
+            })
+            .collect());
+    }
+    if variable["kind"] != "query" || text(variable, "field", "").is_empty() {
+        return Ok(Vec::new());
+    }
+    let options = execute_query(
+        ec,
+        &json!({"datasetId":variable["datasetId"],"from":from,"thru":thru,"aggregations":[{"id":"option","type":"terms","role":"x-axis","params":{"field":variable["field"],"size":1000}}]}),
+    )?;
+    Ok(options["frames"][0]["fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|field| field["name"] == "option"))
+        .and_then(|field| field["values"].as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// A dashboard panel, or the body of the library panel it references.
@@ -2381,10 +2614,20 @@ pub fn select_panel(definition: &mut Json, panel_id: &str) -> Result<(), Error> 
         .get_mut("body")
         .filter(|body| body.is_object())
         .ok_or_else(|| fail("dashboard body must be an object"))?;
-    let selected = body["panels"]
-        .get(panel_id)
-        .cloned()
-        .ok_or_else(|| fail("dashboard panel does not exist"))?;
+    if repeat::has_repeats(body) {
+        // A repeated copy (<id>~<n>), and the pinned values of any panel in a repeat, exist only once the repeats
+        // expand, so the body is kept whole and marked.
+        let source = panel_id.split_once('~').map_or(panel_id, |(source, _)| source);
+        if body["panels"].get(source).is_none() {
+            return Err(fail("dashboard panel does not exist"));
+        }
+        body["repeatSelect"] = json!(panel_id);
+        return Ok(());
+    }
+    if body["panels"].get(panel_id).is_none() {
+        return Err(fail("dashboard panel does not exist"));
+    }
+    let selected = body["panels"][panel_id].clone();
     body["panels"] = json!({panel_id:selected});
     body["layout"] = json!({"type":"autoGrid","items":[{"panelId":panel_id}]});
     Ok(())
@@ -2436,6 +2679,7 @@ pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crat
         ("copy_definition", copy_definition),
         ("versions_definition", versions_definition),
         ("restore_definition", restore_definition),
+        ("delete_definition", delete_definition),
         ("export_definitions", export_definitions),
         ("import_definitions", import_definitions),
         ("render_dashboard", render_dashboard),
@@ -2444,6 +2688,11 @@ pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crat
         ("find_definition_uses", find_definition_uses),
         ("get_definition_diff", get_definition_diff),
         ("audit_export", audit_export_service),
+        ("store_git_sync", git_sync::store_sync),
+        ("list_git_syncs", git_sync::list_syncs),
+        ("push_git_sync", git_sync::push_sync),
+        ("pull_git_sync", git_sync::pull_sync),
+        ("pull_git_syncs", git_sync::pull_repository),
     ] {
         registry.service_function(&format!("moqui_core::report::{name}"), function)?;
     }
@@ -2453,6 +2702,66 @@ pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_fields_take_the_unit_from_the_row_or_the_documents() {
+        let field = |name: &str, values: Json, config: Json| frame::Field {
+            name: name.into(),
+            kind: "number".into(),
+            unit: config["unit"].as_str().map(str::to_string),
+            labels: BTreeMap::new(),
+            config: config.as_object().unwrap().clone().into_iter().collect(),
+            values: values.as_array().unwrap().clone(),
+        };
+        let amount = || json!({"unit":"USD","unitField":"currencyUomId","decimals":2});
+        // One currency in the column: the field's unit.
+        let mut one = frame::Frame {
+            fields: vec![
+                field("total", json!([1, 2]), amount()),
+                field("currencyUomId", json!(["EUR", "EUR"]), json!({})),
+            ],
+        };
+        apply_unit_fields(&mut one, |_| panic!("the column is in the frame"));
+        assert_eq!(one.fields[0].unit.as_deref(), Some("EUR"));
+        assert_eq!(one.fields[0].config["unit"], "EUR");
+        // Several: one unit per row.
+        let mut mixed = frame::Frame {
+            fields: vec![
+                field("total", json!([1, 2]), amount()),
+                field("currencyUomId", json!(["EUR", "JPY"]), json!({})),
+            ],
+        };
+        apply_unit_fields(&mut mixed, |_| None);
+        assert_eq!(mixed.fields[0].config["units"], json!(["EUR", "JPY"]));
+        // An aggregation without the column asks once per unit field.
+        let mut asked = 0;
+        let mut summed = frame::Frame {
+            fields: vec![
+                field("sales", json!([3]), amount()),
+                field("cost", json!([1]), amount()),
+            ],
+        };
+        apply_unit_fields(&mut summed, |name| {
+            asked += 1;
+            assert_eq!(name, "currencyUomId");
+            Some(vec!["GBP".into()])
+        });
+        assert_eq!(asked, 1);
+        assert_eq!(summed.fields[1].unit.as_deref(), Some("GBP"));
+        // Several currencies summed: no unit, rather than a wrong one.
+        let mut across = frame::Frame {
+            fields: vec![field("sales", json!([3]), amount())],
+        };
+        apply_unit_fields(&mut across, |_| Some(vec!["EUR".into(), "USD".into()]));
+        assert!(across.fields[0].unit.is_none() && !across.fields[0].config.contains_key("unit"));
+        assert_eq!(across.fields[0].config["unitMixed"], json!(["EUR", "USD"]));
+        // Nothing known: the fallback stays.
+        let mut unknown = frame::Frame {
+            fields: vec![field("sales", json!([3]), amount())],
+        };
+        apply_unit_fields(&mut unknown, |_| None);
+        assert_eq!(unknown.fields[0].unit.as_deref(), Some("USD"));
+    }
     #[test]
     fn footer_totals_cover_rows_a_limit_hides() {
         let frame = frame::Frame::from_rows(&[

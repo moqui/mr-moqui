@@ -113,7 +113,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "d06017c30257d1ddfba0b4faaceb718e6e96cb0d8d46f974e97ad12ddb2a977f"
+    "sha256": "415e3932d70b36488ebcf759949f923694d1b8b5685d4f3217980019d0721f4d"
   },
   "libraries": [
     {
@@ -447,6 +447,24 @@
           "from": "dist/chart.umd.min.js",
           "size": 208522,
           "sha256": "48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a"
+        }
+      ]
+    },
+    {
+      "id": "naturalearth",
+      "name": "world-atlas (Natural Earth 110m countries)",
+      "version": "2.0.2",
+      "license": "ISC",
+      "note": "The map data is Natural Earth 4.1.0, in the public domain (https://www.naturalearthdata.com/about/terms-of-use/).",
+      "source": "https://registry.npmjs.org/world-atlas/-/world-atlas-2.0.2.tgz",
+      "npm": "world-atlas@2.0.2",
+      "tarballIntegrity": "sha512-IXfV0qwlKXpckz1FhwXVwKRjiIhOnWttOskm5CtxMsjgE/MXAYRHWJqgXOpM8IkcPBoXnyTU5lFHcYa5ChG0LQ==",
+      "files": [
+        {
+          "path": "naturalearth/countries-110m.json",
+          "from": "countries-110m.json",
+          "size": 107761,
+          "sha256": "2516c915867c7baf18ddec727aec46c315541a07cfb3d79a6559b05d5e94eee8"
         }
       ]
     },

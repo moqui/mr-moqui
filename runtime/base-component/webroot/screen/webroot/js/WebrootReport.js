@@ -5,6 +5,12 @@
     const moqui = root.moqui;
     const report = moqui.report = {};
     const finite = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+    // Text in the viewer's language from the loaded catalog (MoquiL10n.js), else as written; looked up when drawn, since the
+    // catalog may load after this file. `{0}`, `{1}` are filled from the arguments.
+    const T = report.t = (text, ...args) => {
+        const localized = moqui.l10n && typeof moqui.l10n.localize === "function" ? moqui.l10n.localize(String(text)) : String(text);
+        return args.reduce((out, arg, at) => out.split("{" + at + "}").join(String(arg)), localized);
+    };
     report.fields = (frame) => (frame && Array.isArray(frame.fields) ? frame.fields : []);
     report.numericField = field => ["number", "integer"].includes(field.type || field.kind);
     report.configuredFields = (frame, panel) => report.fields(frame).map((field) => {
@@ -115,7 +121,11 @@
     };
 
     report.isMetadata=(field,role)=>["partial","__subtotal","__level"].includes(field.name) || !role && !field.role && !field.config?.role && !field.config?.bucket && (field.type || field.kind)==='boolean' && /^(?:missing|other)(?:\.\d+)?$/.test(field.name);
-    report.cellText=(value,field,row)=>{const bucket=field && field.config && field.config.bucket;return bucket && bucket.labels && bucket.labels[row]!=null?String(bucket.labels[row]):report.format(value,field);};
+    // A cell's text: a bucket's label, else the value formatted, in its row's own unit when the field has one per row (the
+    // server's `units`, from a dataset field's unitField such as currencyUomId).
+    report.cellText=(value,field,row)=>{const config=field && field.config || {},bucket=config.bucket;if(bucket && bucket.labels && bucket.labels[row]!=null)return String(bucket.labels[row]);
+        const units=config.units || field && field.units,unit=Array.isArray(units)?units[row]:null;
+        return report.format(value,unit?Object.assign({},field,{unit,config:Object.assign({},config,{unit})}):field);};
     report.bucketPill=(frame,panel,fieldIndex,rowIndex,negated)=>{
         const field=report.fields(frame)[fieldIndex];if(!field || report.isMetadata(field))return null;
         const bucket=field.config && field.config.bucket;
@@ -181,6 +191,14 @@
             plugins:{tooltip:{callbacks:{label:context=>context.dataset.label+': '+report.format(context.raw,context.dataset._reportField || {})}}},
             scales:['pie','donut'].includes(visual)?undefined:{x:{stacked:!!panel.stacked},y:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}},...(panel.secondAxis?{y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:value=>report.format(value,numeric[1] && numeric[1].field || {})}}}:{})}}};
     };
+    // An LLM call's model and token use from its OTel gen_ai.* attributes, for the waterfall and the AI screen.
+    report.genAiLabel = (span) => {
+        const value = (key) => span[key] !== undefined ? span[key] : (span.attributes || {})[key];
+        const input = value("gen_ai.usage.input_tokens"), output = value("gen_ai.usage.output_tokens");
+        if (input == null && output == null) return "";
+        const model = value("gen_ai.response.model") || value("gen_ai.request.model") || "";
+        return (model ? model + " · " : "") + (input == null ? "?" : input) + " → " + (output == null ? "?" : output) + " tokens";
+    };
     report.waterfall = (spans) => {
         spans = (spans || []).map((span) => span.body || span);
         if (!spans.length) return [];
@@ -202,7 +220,9 @@
             missingParent: !!span.parent_span_id && !/^0+$/.test(span.parent_span_id) && !byId.has(span.parent_span_id) }));
     };
     report.safeLink = (url) => typeof url === "string" && (url.startsWith("/") && !url.startsWith("//") || /^https?:\/\//i.test(url)) ? url : "";
-    report.dataLink = (url, value, row) => report.safeLink(String(url || "").replace(/\$\{([^}]+)\}/g, (_, name) => encodeURIComponent(name === "value" ? value ?? "" : row[name] ?? "")));
+    // ${value}, ${field} of the row, and ${__from} / ${__thru}, the panel's time range, so a drill-down keeps it.
+    report.dataLink = (url, value, row, range) => report.safeLink(String(url || "").replace(/\$\{([^}]+)\}/g, (_, name) => encodeURIComponent(
+        name === "value" ? value ?? "" : name === "__from" ? (range && range.from) ?? "" : name === "__thru" ? (range && range.thru) ?? "" : row[name] ?? "")));
     report.thresholdColor = (value, field) => {
         if (!finite(value)) return "";
         let color = "";
@@ -241,12 +261,12 @@
         const sorted = nums.slice().sort((a, b) => a - b), position = Number(p[1]) / 100 * (sorted.length - 1), low = Math.floor(position), high = Math.ceil(position);
         return sorted[low] + (sorted[high] - sorted[low]) * (position - low);
     };
-    report.calculationLabel = (name) => ({ sum: "Total", mean: "Mean", avg: "Mean", min: "Minimum", max: "Maximum", count: "Count", first: "First", last: "Last", delta: "Change" })[name] || String(name || "").toUpperCase();
+    report.calculationLabel = (name) => T(({ sum: "Total", mean: "Mean", avg: "Mean", min: "Minimum", max: "Maximum", count: "Count", first: "First", last: "Last", delta: "Change" })[name] || String(name || "").toUpperCase());
     // The footer of a table: one row per calculation, from the server's totals over all the rows (config.totals), else from the
     // frame's values. A panel's legacy totals map, by field name, still works.
     report.footerRows = (fields, panel) => {
         const calculations = Array.isArray(panel && panel.footer && panel.footer.calculations) ? panel.footer.calculations.slice(0, 8) : [];
-        if (!calculations.length && panel && panel.totals && typeof panel.totals === "object") return [{ calculation: "sum", label: "Total", values: fields.map((field) => panel.totals[field.name] ?? null) }];
+        if (!calculations.length && panel && panel.totals && typeof panel.totals === "object") return [{ calculation: "sum", label: T("Total"), values: fields.map((field) => panel.totals[field.name] ?? null) }];
         return calculations.map((calculation) => ({ calculation, label: report.calculationLabel(calculation), values: fields.map((field) => {
             if (!report.numericField(field) || report.isMetadata(field)) return null;
             const totals = field.config && field.config.totals || field.totals;
@@ -274,7 +294,8 @@
     };
     // ---- visualization suggestions ----
     report.visualizationLabels = { timeSeries: "Time series", area: "Area chart", bar: "Bar chart", stat: "Stat", gauge: "Gauge", barGauge: "Bar gauge", table: "Table",
-        pie: "Pie chart", donut: "Donut chart", heatmap: "Heatmap", stateTimeline: "State timeline", logs: "Logs", traceWaterfall: "Trace waterfall", text: "Text" };
+        pie: "Pie chart", donut: "Donut chart", heatmap: "Heatmap", stateTimeline: "State timeline", logs: "Logs", traceWaterfall: "Trace waterfall", text: "Text",
+        funnel: "Funnel", nodeGraph: "Node graph", flameGraph: "Flame graph", geomap: "Geomap" };
     // What a frame holds, for the suggestions: time fields, numbers, categories, histogram buckets and rows.
     report.frameShape = (frame) => {
         const fields = report.fields(frame).filter((field) => !report.isMetadata(field)), names = fields.map((field) => field.name);
@@ -283,14 +304,19 @@
             categories: fields.filter((field) => !["time", "number", "integer"].includes(field.type || field.kind)).length,
             buckets: names.filter((name) => /\.bucket\.\d+$/.test(name)).length, rows: report.rows(frame).length,
             logs: names.includes("body") && (names.includes("severity_text") || names.includes("severity_number")),
-            spans: names.includes("span_id") && names.includes("duration_nano") };
+            spans: names.includes("span_id") && names.includes("duration_nano"),
+            edges: names.includes("source") && names.includes("target"), paths: names.includes("path") && fields.some(report.numericField),
+            geo: names.some((name) => /^(?:lat|latitude)$|[._](?:lat|latitude)$|Latitude$/i.test(name)) && names.some((name) => /^(?:lon|lng|long|longitude)$|[._](?:lon|lng|longitude)$|Longitude$/i.test(name)) ||
+                fields.some((field) => /country/i.test(field.name) && !report.numericField(field)) };
     };
     // The same from a panel's queries before any data: bucket aggregations give time or categories, metrics give numbers.
     report.queryShape = (panel) => {
-        const shape = { time: 0, numbers: 0, categories: 0, buckets: 0, rows: null, logs: false, spans: false };
+        const shape = { time: 0, numbers: 0, categories: 0, buckets: 0, rows: null, logs: false, spans: false, edges: false, paths: false, geo: false };
         const visit = (query) => {
             if (!query || typeof query !== "object") return;
             for (const child of query.queries || []) visit(child);
+            if (query.mode === "serviceMap") { shape.edges = true; return; }
+            if (query.mode === "flame") { shape.paths = true; return; }
             if (query.mode === "documents") { if (query.datasetId === "otel_logs") shape.logs = true; else if (query.datasetId === "otel_spans") shape.spans = true; else shape.categories++; return; }
             for (const aggregation of query.aggregations || []) {
                 const type = aggregation.type || "", role = aggregation.role || "metric";
@@ -307,7 +333,10 @@
     };
     // Visualizations ranked for a shape, best first, each with why: after OSD Explore's rules and Grafana's suggestions.
     report.suggestVisualizations = (shape) => {
-        const out = [], add = (visualization, score, reason) => { if (!out.some((item) => item.visualization === visualization)) out.push({ visualization, score, reason, label: report.visualizationLabels[visualization] }); };
+        const out = [], add = (visualization, score, reason) => { if (!out.some((item) => item.visualization === visualization)) out.push({ visualization, score, reason: T(reason), label: T(report.visualizationLabels[visualization]) }); };
+        if (shape.edges) add("nodeGraph", 100, "Calls between services");
+        if (shape.paths) add("flameGraph", 100, "Paths with their time");
+        if (shape.geo) add("geomap", 90, "Places or countries");
         if (shape.spans) add("traceWaterfall", 100, "Trace spans");
         if (shape.logs) add("logs", 100, "Log lines");
         if (shape.time && shape.buckets) { add("heatmap", 98, "Histogram buckets over time"); add("timeSeries", 80, "Time and numbers"); }
@@ -317,6 +346,7 @@
             add("bar", 95, "A category and a number");
             if (shape.numbers === 1 && (shape.rows == null || shape.rows <= 12)) { add("pie", 75, "Parts of a whole"); add("donut", 70, "Parts of a whole"); }
             add("barGauge", 60, "A category and a number");
+            add("funnel", 45, "Steps of a process");
         }
         if (!shape.time && !shape.categories && shape.numbers) {
             const one = shape.numbers === 1 && (shape.rows == null || shape.rows <= 1);
@@ -356,6 +386,181 @@
         const max = columns.reduce((n, column) => Math.max(n, ...column.counts), 0);
         return { prefix: found.prefix, columns, labels, max, timeField: time >= 0 ? fields[time] : null };
     };
+    // ---- funnel, node graph, flame graph and geomap ----
+    // The label field (first non-numeric) and the value field (first numeric, or panel option) of a frame.
+    const visible = (frame, panel) => report.configuredFields(frame, panel).map((field, at) => ({ field, at })).filter(({ field }) => !report.isMetadata(field));
+    const pick = (fields, name, test) => fields.find(({ field }) => name ? field.name === name : test(field));
+    // Funnel steps: one per row (a label and a number), or one per numeric field of a single-row frame. Each step has its
+    // share of the first step and of the one before it.
+    report.funnel = (frame, panel) => {
+        const options = panel && panel.funnel || {}, fields = visible(frame, panel), rows = report.rows(frame);
+        const value = pick(fields, options.value, report.numericField), label = pick(fields, options.label, (field) => !report.numericField(field) && (field.type || field.kind) !== "time");
+        let steps;
+        if (label && value) steps = rows.map((row, at) => ({ label: report.cellText(row[label.at], label.field, at), value: Number(row[value.at]), field: value.field }));
+        else if (rows.length === 1) steps = fields.filter(({ field }) => report.numericField(field)).map(({ field, at }) => ({ label: field.displayName || field.name, value: Number(rows[0][at]), field }));
+        else return null;
+        steps = steps.filter((step) => Number.isFinite(step.value)).slice(0, 50);
+        if (!steps.length) return null;
+        const first = steps[0].value, max = Math.max(...steps.map((step) => step.value), 0);
+        return steps.map((step, at) => Object.assign(step, { width: max > 0 ? Math.max(0, step.value) / max * 100 : 0,
+            ofFirst: first ? step.value / first * 100 : null, ofPrevious: at && steps[at - 1].value ? step.value / steps[at - 1].value * 100 : null }));
+    };
+    // A node graph from edge rows (source, target, count, errors, duration): nodes placed in layers by the longest path
+    // from a node no edge enters, with edges that close a cycle drawn back. At most 200 edges.
+    report.nodeGraph = (frame, panel) => {
+        const options = panel && panel.nodeGraph || {}, fields = visible(frame, panel), rows = report.rows(frame);
+        const at = (name, fallback) => { const found = pick(fields, options[name] || fallback); return found ? found.at : -1; };
+        const source = at("source", "source"), target = at("target", "target"), count = at("value", "count"), errors = at("errors", "errors"), duration = at("duration", "duration");
+        if (source < 0 || target < 0) return null;
+        const nodes = new Map(), edges = [];
+        const node = (id) => { if (!nodes.has(id)) nodes.set(id, { id, calls: 0, errors: 0, out: [], into: [], layer: 0 }); return nodes.get(id); };
+        for (const row of rows.slice(0, 200)) {
+            if (row[source] == null || row[target] == null) continue;
+            const edge = { from: String(row[source]), to: String(row[target]), count: finite(row[count]) ? Number(row[count]) : 1, errors: finite(row[errors]) ? Number(row[errors]) : 0,
+                duration: finite(row[duration]) ? Number(row[duration]) : null };
+            edges.push(edge); node(edge.from).out.push(edge); node(edge.to).into.push(edge);
+            node(edge.to).calls += edge.count; node(edge.to).errors += edge.errors;
+        }
+        if (!edges.length) return null;
+        // Depth-first from each start node marks the edges that close a cycle; the rest form a DAG for the layers.
+        const state = new Map(), visit = (item) => {
+            state.set(item.id, 1);
+            for (const edge of item.out) { const next = nodes.get(edge.to), seen = state.get(next.id); if (seen === 1) edge.back = true; else if (!seen) visit(next); }
+            state.set(item.id, 2);
+        };
+        for (const item of nodes.values()) if (!item.into.length && !state.get(item.id)) visit(item);
+        for (const item of nodes.values()) if (!state.get(item.id)) visit(item);
+        for (let pass = 0, changed = true; changed && pass < nodes.size; pass++) {
+            changed = false;
+            for (const edge of edges) { if (edge.back) continue; const from = nodes.get(edge.from), to = nodes.get(edge.to); if (to.layer < from.layer + 1) { to.layer = from.layer + 1; changed = true; } }
+        }
+        for (const item of nodes.values()) if (!item.into.length) item.calls = item.out.reduce((n, edge) => n + edge.count, 0);
+        const layers = [];
+        for (const item of nodes.values()) (layers[item.layer] = layers[item.layer] || []).push(item);
+        const columnWidth = 220, rowHeight = 90, radius = 26;
+        layers.forEach((column, layer) => column.sort((a, b) => b.calls - a.calls || a.id.localeCompare(b.id)).forEach((item, index) => { item.x = 110 + layer * columnWidth; item.y = 50 + index * rowHeight; }));
+        const height = Math.max(...layers.map((column) => column.length)) * rowHeight + 20, width = layers.length * columnWidth;
+        const max = Math.max(...edges.map((edge) => edge.count), 1);
+        for (const edge of edges) {
+            const from = nodes.get(edge.from), to = nodes.get(edge.to), bend = edge.back || from === to ? -60 : 0;
+            const x1 = from.x + radius, x2 = to.x - radius, mid = (x1 + x2) / 2;
+            edge.path = from === to ? "M" + (from.x + radius) + " " + from.y + " C" + (from.x + 70) + " " + (from.y - 70) + " " + (from.x - 70) + " " + (from.y - 70) + " " + (from.x - radius) + " " + from.y
+                : "M" + x1 + " " + from.y + " C" + mid + " " + (from.y + bend) + " " + mid + " " + (to.y + bend) + " " + x2 + " " + to.y;
+            edge.width = 1 + 5 * edge.count / max;
+        }
+        return { nodes: Array.from(nodes.values()).map(({ out, into, ...item }) => Object.assign(item, { errorRate: item.calls ? item.errors / item.calls * 100 : 0 })), edges, width, height, radius };
+    };
+    // A flame graph (icicle) from path rows (a;b;c) and a value: rectangles from the focused path down, each with its
+    // share of the focus as x and w (0 to 1). Rectangles under 0.2% are left out, and at most 2000 are drawn.
+    report.flame = (frame, panel, focus) => {
+        const options = panel && panel.flame || {}, fields = visible(frame, panel), rows = report.rows(frame), separator = options.separator || ";";
+        const path = pick(fields, options.path || "path") || pick(fields, null, (field) => !report.numericField(field)), value = pick(fields, options.value, report.numericField);
+        if (!path || !value) return null;
+        const root = { name: "all", children: new Map(), self: 0, total: 0 };
+        for (const row of rows) {
+            const amount = Number(row[value.at]);
+            if (row[path.at] == null || !Number.isFinite(amount) || amount <= 0) continue;
+            let at = root;
+            for (const name of String(row[path.at]).split(separator).slice(0, 64)) {
+                if (!at.children.has(name)) at.children.set(name, { name, children: new Map(), self: 0, total: 0 });
+                at = at.children.get(name);
+            }
+            at.self += amount;
+        }
+        const total = (item) => { item.total = item.self; for (const child of item.children.values()) item.total += total(child); return item.total; };
+        if (!total(root)) return null;
+        let top = root;
+        const trail = [];
+        for (const name of focus || []) { const next = top.children.get(name); if (!next) break; top = next; trail.push(name); }
+        const rects = [];
+        let depth = 0;
+        const place = (item, names, level, x) => {
+            const w = item.total / top.total;
+            if (w < 0.002 || rects.length >= 2000) return;
+            rects.push({ name: item.name, path: names, depth: level, x, w, total: item.total, self: item.self, share: w * 100 });
+            depth = Math.max(depth, level);
+            let offset = x;
+            for (const child of Array.from(item.children.values()).sort((a, b) => a.name.localeCompare(b.name))) { place(child, [...names, child.name], level + 1, offset); offset += child.total / top.total; }
+        };
+        place(top, trail, 0, 0);
+        return { rects, depth, total: top.total, focus: trail, field: value.field };
+    };
+    // ISO 3166 countries as alpha-3 (the Moqui geoId), alpha-2 and numeric, 8 characters each, from GeoCountryData.xml.
+    const ISO_CODES = "AFGAF004ALBAL008DZADZ012ASMAS016ANDAD020AGOAO024AIAAI660ATAAQ010ATGAG028ARGAR032ARMAM051ABWAW533AUSAU036AUTAT040AZEAZ031BHSBS044BHRBH048BGDBD050BRBBB052BLRBY112BELBE056BLZBZ084BENBJ204BMUBM060BTNBT064BOLBO068BIHBA070BWABW072BVTBV074BRABR076IOTIO086BRNBN096BGRBG100BFABF854BDIBI108KHMKH116CMRCM120CANCA124CPVCV132CYMKY136CAFCF140TCDTD148CHLCL152CHNCN156CXRCX162CCKCC166COLCO170COMKM174COGCG178CODCD180COKCK184CRICR188CIVCI384HRVHR191CUBCU192CYPCY196CZECZ203DNKDK208DJIDJ262DMADM212DOMDO214TLSTL626ECUEC218EGYEG818SLVSV222GNQGQ226ERIER232ESTEE233ETHET231FLKFK238FROFO234FJIFJ242FINFI246FXXFX249FRAFR250GUFGF254PYFPF258ATFTF260GABGA266GMBGM270GEOGE268DEUDE276GHAGH288GIBGI292GRCGR300GRLGL304GRDGD308GLPGP312GUMGU316GTMGT320GINGN324GNBGW624GUYGY328HTIHT332HMDHM334VATVA336HNDHN340HKGHK344HUNHU348ISLIS352INDIN356IDNID360IRNIR364IRQIQ368IRLIE372ISRIL376ITAIT380JAMJM388JPNJP392JORJO400KAZKZ398KENKE404KIRKI296PRKKP408KORKR410KWTKW414KGZKG417LAOLA418LVALV428LBNLB422LSOLS426LBRLR430LBYLY434LIELI438LTULT440LUXLU442MACMO446MKDMK807MDGMG450MWIMW454MYSMY458MDVMV462MLIML466MLTMT470MHLMH584MTQMQ474MRTMR478MUSMU480MYTYT175MEXMX484FSMFM583MDAMD498MCOMC492MNGMN496MNEME499MSRMS500MARMA504MOZMZ508MMRMM104NAMNA516NRUNR520NPLNP524NLDNL528ANTAN530NCLNC540NZLNZ554NICNI558NERNE562NGANG566NIUNU570NFKNF574MNPMP580NORNO578OMNOM512PAKPK586PLWPW585PSEPS275PANPA591PNGPG598PRYPY600PERPE604PHLPH608PCNPN612POLPL616PRTPT620PRIPR630QATQA634REURE638ROURO642RUSRU643RWARW646KNAKN659LCALC662VCTVC670WSMWS882SMRSM674STPST678SAUSA682SENSN686SRBRS688SYCSC690SLESL694SGPSG702SVKSK703SVNSI705SLBSB090SOMSO706SGSGS239ZAFZA710ESPES724LKALK144SHNSH654SPMPM666SDNSD736SURSR740SJMSJ744SWZSZ748SWESE752CHECH756SYRSY760TWNTW158TJKTJ762TZATZ834THATH764TGOTG768TKLTK772TONTO776TTOTT780TUNTN788TURTR792TKMTM795TCATC796TUVTV798UGAUG800UKRUA804USAUS840UMIUM581AREAE784GBRGB826URYUY858UZBUZ860VUTVU548VENVE862VNMVN704VGBVG092VIRVI850WLFWF876ESHEH732YEMYE887YUGYU891ZMBZM894ZWEZW716";
+    report.countryNumeric = (code) => {
+        if (!report.countryCodes) {
+            report.countryCodes = new Map();
+            for (let at = 0; at < ISO_CODES.length; at += 8) { const item = ISO_CODES.slice(at, at + 8), numeric = item.slice(5); report.countryCodes.set(item.slice(0, 3), numeric); report.countryCodes.set(item.slice(3, 5), numeric); report.countryCodes.set(numeric, numeric); }
+        }
+        const text = String(code ?? "").trim().toUpperCase();
+        return report.countryCodes.get(/^\d{1,3}$/.test(text) ? text.padStart(3, "0") : text) || null;
+    };
+    // The bundled outline (Natural Earth 110m countries as TopoJSON, from world-atlas), loaded once; the print document
+    // inlines it as moquiReportGeo.
+    report.outlinePath = "/libs/naturalearth/countries-110m.json";
+    report.loadOutline = () => {
+        if (root.moquiReportGeo && !report.outline) report.outline = report.topoCountries(root.moquiReportGeo);
+        if (report.outline) return Promise.resolve(report.outline);
+        if (!report.outlineLoading) report.outlineLoading = root.fetch(report.outlinePath, { credentials: "same-origin" }).then((response) => {
+            if (!response.ok) throw new Error("Map outline unavailable (" + response.status + ")");
+            return response.json();
+        }).then((topology) => (report.outline = report.topoCountries(topology))).catch((error) => { report.outlineLoading = null; throw error; });
+        return report.outlineLoading;
+    };
+    // Countries of a TopoJSON topology: {id (ISO numeric), name, polygons of [lon, lat] rings, centroid}.
+    report.topoCountries = (topology) => {
+        const object = topology && topology.objects && (topology.objects.countries || Object.values(topology.objects)[0]);
+        if (!object || !Array.isArray(topology.arcs)) return [];
+        const transform = topology.transform;
+        const arcs = topology.arcs.map((arc) => {
+            let x = 0, y = 0;
+            return arc.map((point) => transform ? (x += point[0], y += point[1], [x * transform.scale[0] + transform.translate[0], y * transform.scale[1] + transform.translate[1]]) : point);
+        });
+        const ring = (indexes) => indexes.reduce((points, index) => { const arc = index >= 0 ? arcs[index] : arcs[~index].slice().reverse(); return points.concat(points.length ? arc.slice(1) : arc); }, []);
+        const area = (points) => points.reduce((sum, point, at) => { const next = points[(at + 1) % points.length]; return sum + point[0] * next[1] - next[0] * point[1]; }, 0) / 2;
+        return (object.geometries || []).map((geometry) => {
+            const polygons = geometry.type === "Polygon" ? [geometry.arcs.map(ring)] : geometry.type === "MultiPolygon" ? geometry.arcs.map((polygon) => polygon.map(ring)) : [];
+            const outer = polygons.map((polygon) => polygon[0]).filter(Boolean).sort((a, b) => Math.abs(area(b)) - Math.abs(area(a)))[0] || [];
+            const a = area(outer), centroid = a ? outer.reduce((sum, point, at) => { const next = outer[(at + 1) % outer.length], cross = point[0] * next[1] - next[0] * point[1];
+                return [sum[0] + (point[0] + next[0]) * cross, sum[1] + (point[1] + next[1]) * cross]; }, [0, 0]).map((n) => n / (6 * a)) : outer[0] || [0, 0];
+            return { id: geometry.id == null ? null : String(geometry.id).padStart(3, "0"), name: geometry.properties && geometry.properties.name || "", polygons, centroid };
+        }).filter((country) => country.polygons.length);
+    };
+    // Equirectangular in a 360 by 150 box, latitude 90 at the top to -60 at the bottom (Antarctica is left out).
+    report.project = (lon, lat) => [Math.round((Number(lon) + 180) * 10) / 10, Math.round((90 - Math.max(-60, Math.min(90, Number(lat)))) * 10) / 10];
+    report.countryPath = (country) => country.polygons.map((polygon) => polygon.map((points) => "M" + points.map(([lon, lat]) => report.project(lon, lat).join(" ")).join("L") + "Z").join("")).join("");
+    // A geomap: points from latitude and longitude fields, sized by a value, or countries shaded by a value from a country
+    // field (alpha-3 geoId, alpha-2 or numeric). Without the outline, countries are drawn as points at no position and
+    // listed instead.
+    report.geomap = (frame, panel, outline) => {
+        const options = panel && panel.geomap || {}, fields = visible(frame, panel), rows = report.rows(frame);
+        const named = (name, pattern) => name ? pick(fields, name) : fields.find(({ field }) => pattern.test(field.name));
+        const lat = named(options.latitude, /^(?:lat|latitude)$|[._](?:lat|latitude)$|Latitude$/i), lon = named(options.longitude, /^(?:lon|lng|long|longitude)$|[._](?:lon|lng|longitude)$|Longitude$/i);
+        const country = named(options.country, /country|geo(?:Id)?$/i);
+        const value = pick(fields, options.value, (field) => report.numericField(field) && field !== (lat && lat.field) && field !== (lon && lon.field));
+        const label = pick(fields, options.label, (field) => !report.numericField(field) && (field.type || field.kind) !== "time");
+        if (lat && lon) {
+            const points = rows.map((row, at) => ({ lat: Number(row[lat.at]), lon: Number(row[lon.at]), value: value ? Number(row[value.at]) : 1, label: label ? report.cellText(row[label.at], label.field, at) : "" }))
+                .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180).slice(0, 5000);
+            const max = Math.max(...points.map((point) => Number.isFinite(point.value) ? point.value : 0), 0);
+            for (const point of points) { [point.x, point.y] = report.project(point.lon, point.lat); point.r = 1.2 + 4 * Math.sqrt(max > 0 && point.value > 0 ? point.value / max : 0); }
+            return { mode: "points", points, countries: outline || [], max, field: value && value.field };
+        }
+        if (!country) return null;
+        const values = new Map(), unmatched = [];
+        rows.forEach((row) => {
+            const code = report.countryNumeric(row[country.at]), amount = value ? Number(row[value.at]) : 1;
+            if (!code) { if (row[country.at] != null) unmatched.push(String(row[country.at])); return; }
+            if (Number.isFinite(amount)) values.set(code, (values.get(code) || 0) + amount);
+        });
+        const max = Math.max(...values.values(), 0);
+        const countries = (outline || []).map((item) => Object.assign({}, item, { value: values.has(item.id) ? values.get(item.id) : null }))
+            .map((item) => Object.assign(item, { shade: item.value != null && max > 0 ? 0.15 + 0.85 * Math.max(0, item.value) / max : 0 }));
+        const drawn = new Set(countries.filter((item) => item.value != null).map((item) => item.id));
+        const listed = Array.from(values.entries()).map(([id, amount]) => { const item = (outline || []).find((entry) => entry.id === id); return { id, name: item ? item.name : id, value: amount, drawn: drawn.has(id) }; })
+            .sort((a, b) => b.value - a.value);
+        return { mode: "countries", countries, listed, unmatched: unmatched.slice(0, 20), max, field: value && value.field };
+    };
     // ---- time ranges ----
     report.quickRanges = [
         ["now-5m", "now", "Last 5 minutes"], ["now-15m", "now", "Last 15 minutes"], ["now-30m", "now", "Last 30 minutes"], ["now-1h", "now", "Last 1 hour"],
@@ -368,9 +573,9 @@
     report.rangeLabel = (range) => {
         if (!range || !range.from) return "";
         const quick = report.quickRanges.find((item) => item.from === range.from && item.thru === (range.thru || "now"));
-        if (quick) return quick.label;
+        if (quick) return T(quick.label);
         const text = (value) => /^now/.test(String(value || "")) ? String(value) : report.format(value, { type: "time" });
-        return text(range.from) + " to " + text(range.thru || "now");
+        return T("{0} to {1}", text(range.from), text(range.thru || "now"));
     };
     // An ISO time as a datetime-local value in the browser's zone, and back.
     report.localInput = (value) => {
@@ -499,12 +704,12 @@
         set(value,path,next){const parts=String(path).split('.');let target=value;for(let at=0;at<parts.length-1;at++){const key=parts[at];target=target[key] || (target[key]=/^\d+$/.test(parts[at+1])?[]:{});}if(next===undefined)delete target[parts[parts.length-1]];else target[parts[parts.length-1]]=next;},
         list:value=>String(value || '').split(',').map(value=>value.trim()).filter(Boolean),
         move(items,at,delta){const to=at+delta;if(to<0 || to>=items.length)return;[items[at],items[to]]=[items[to],items[at]];},
-        button(text,click,disabled){return root.Vue.h('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-pa-xs'},text);},
+        button(text,click,disabled){return root.Vue.h('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-pa-xs'},T(text));},
         control(label,value,change,type,choices,disabled){const h=root.Vue.h;let input;
             if(choices)input=h('select',{value:value??'',disabled:!!disabled,onChange:event=>change(event.target.value)},choices.map(choice=>h('option',{value:typeof choice==='object'?choice.value:choice},typeof choice==='object'?choice.text || choice.value:choice)));
             else if(type==='textarea')input=h('textarea',{value:value??'',rows:3,disabled:!!disabled,onChange:event=>change(event.target.value)});
             else input=h('input',{type:type==='list'?'text':type || 'text',value:type==='list'?(value || []).join(','):value??'',checked:type==='checkbox'?!!value:undefined,disabled:!!disabled,onChange:event=>change(type==='checkbox'?event.target.checked:type==='number'?(event.target.value===''?undefined:Number(event.target.value)):type==='list'?E.list(event.target.value):event.target.value)});
-            return h('label',{class:'m-report-editor-control'},[h('span',label),input]);
+            return h('label',{class:'m-report-editor-control'},[h('span',T(label)),input]);
         },
         listControls(items,at,change,disabled){return [E.button('Move up',()=>{const copy=E.clone(items);E.move(copy,at,-1);change(copy);},disabled || at===0),E.button('Move down',()=>{const copy=E.clone(items);E.move(copy,at,1);change(copy);},disabled || at===items.length-1),E.button('Remove',()=>{const copy=E.clone(items);copy.splice(at,1);change(copy);},disabled)];},
         panelIds(node){if(!node)return[];if(typeof node==='string')return[node];if(node.panelId)return[node.panelId];return (node.items || node.children || []).flatMap(item=>E.panelIds(item.layout || item));},
@@ -515,9 +720,10 @@
         methods:{change(at,path,value){const copy=E.clone(this.value);E.set(copy[at],path,value);this.$emit('change',copy);}},
         render(){const h=root.Vue.h,disabled=this.disabled;
             const fields=this.value.map((step,at)=>{const controls=[],put=(label,path,type,choices)=>controls.push(E.control(label,E.get(step,path),value=>this.change(at,path,value),type,choices,disabled));
-                put('Transformation type','type','select',['limit','sort','reduce','filter','calculate','organize','join','joinByTime','merge','pivot','partitionByValues','longToWide','wideToLong','timeSeriesToTable','groupBy','runningTotal','movingAverage','delta','percentOfTotal','timeShift']);put('Disabled','disabled','checkbox');
+                put('Transformation type','type','select',['limit','sort','reduce','filter','calculate','organize','join','joinByTime','merge','pivot','partitionByValues','longToWide','wideToLong','timeSeriesToTable','groupBy','runningTotal','movingAverage','delta','percentOfTotal','timeShift','patterns']);put('Disabled','disabled','checkbox');
                 if(['sort','filter','runningTotal','movingAverage','delta','percentOfTotal','timeShift'].includes(step.type))put('Field','field');
                 if(step.type==='limit')put('Row limit','count','number');
+                if(step.type==='patterns'){put('Message field','field');put('Patterns shown','limit','number');put('Sparkline buckets','buckets','number');}
                 if(step.type==='sort')put('Descending','descending','checkbox');
                 if(['reduce','groupBy'].includes(step.type)){if(!Array.isArray(step.calculations))put('Calculation','calculation','select',['sum','mean','min','max','count','first','last','delta','p50','p95','p99']);put('Calculations (comma separated)','calculations','list');}
                 if(step.type==='reduce')put('Reduce mode','mode','select',[{value:'',text:'One value per field'},{value:'rows',text:'A row per series'}]);
@@ -576,13 +782,14 @@
         }
     };
     components['m-report-layout-editor']={
-        props:{value:{type:Object,default:()=>({type:'autoGrid',items:[]})},panelIds:{type:Array,default:()=>[]},disabled:Boolean},emits:['change'],
+        props:{value:{type:Object,default:()=>({type:'autoGrid',items:[]})},panelIds:{type:Array,default:()=>[]},variableNames:{type:Array,default:()=>[]},disabled:Boolean},emits:['change'],
         render(){const h=root.Vue.h,disabled=this.disabled;
             const render=(node,change,depth)=>{if(depth>12)return h('p',{role:'alert'},'Layout nesting exceeds 12 levels');const items=node.items || node.children || [],type=node.type || 'autoGrid';
                 const setItems=next=>change(Object.assign({},node,{items:next}));
                 return h('fieldset',{class:'m-report-editor-group'},[h('legend','Layout level '+(depth+1)),E.control('Layout type',type,value=>change(E.layout(value,E.panelIds(node))), 'select',['autoGrid','grid','rows','tabs'],disabled),
                     ...items.map((item,at)=>{const update=value=>{const next=E.clone(items);next[at]=value;setItems(next);};return h('div',{class:'m-report-editor-layout-item'},[
-                        type==='rows'||type==='tabs'?h('div',[E.control(type==='rows'?'Row title':'Tab title',item.title,value=>update(Object.assign({},item,{title:value})),null,null,disabled),type==='rows'?E.control('Initially collapsed',item.collapsed,value=>update(Object.assign({},item,{collapsed:value})),'checkbox',null,disabled):null,render(item.layout || {type:'autoGrid',items:[]},value=>update(Object.assign({},item,{layout:value})),depth+1)]):
+                        type==='rows'||type==='tabs'?h('div',[E.control(type==='rows'?'Row title':'Tab title',item.title,value=>update(Object.assign({},item,{title:value})),null,null,disabled),type==='rows'?E.control('Initially collapsed',item.collapsed,value=>update(Object.assign({},item,{collapsed:value})),'checkbox',null,disabled):null,
+                            this.variableNames.length?E.control('Repeat for each value of',item.repeat && item.repeat.variable || '',value=>{const next=Object.assign({},item);if(value)next.repeat={variable:value};else delete next.repeat;update(next);},'select',[{value:'',text:'No repeat'},...this.variableNames],disabled):null,render(item.layout || {type:'autoGrid',items:[]},value=>update(Object.assign({},item,{layout:value})),depth+1)]):
                         h('div',[E.control('Panel',typeof item==='string'?item:item.panelId,value=>update(Object.assign({},typeof item==='object'?item:{},{panelId:value})),'select',this.panelIds,disabled),...(type==='grid'?['x','y','w','h'].map(key=>E.control({x:'Column (0–23)',y:'Row',w:'Width (1–24)',h:'Height'}[key],item[key],value=>update(Object.assign({},item,{[key]:value})),'number',null,disabled)):[])]),...E.listControls(items,at,setItems,disabled)]);}),
                     E.button(type==='rows'?'Add row':type==='tabs'?'Add tab':'Add panel placement',()=>setItems([...E.clone(items),type==='rows'||type==='tabs'?{title:type==='rows'?'Row':'Tab',layout:{type:'autoGrid',items:[]}}:{panelId:this.panelIds[0] || '',...(type==='grid'?{x:0,y:0,w:12,h:1}:{})}]),disabled)]);
             };return render(this.value,value=>this.$emit('change',value),0);
@@ -711,17 +918,20 @@
             const queryAt=Math.min(this.queryAt,Math.max(0,(panel.queries || []).length-1)),queryPrefix='queries.'+queryAt+'.';
             options.push(h('div',{class:'row q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')})),this.readOnly),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             if(!this.queryOnly)input("Panel title", "title");
-            if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text"]);
+            if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text", "funnel", "nodeGraph", "flameGraph", "geomap"].map((value) => ({ value, text: T(report.visualizationLabels[value] || value) })));
             if(!this.queryOnly && !this.optionSearch && !panel.panelRef){const suggested=report.suggestVisualizations(this.previewFrame?report.frameShape(this.previewFrame):report.queryShape(panel)).slice(0,4);
                 options.push(h('div',{class:'m-report-suggestions row items-center q-gutter-xs',role:'group','aria-label':'Suggested visualizations'},[h('span',this.previewFrame?'Suggested from the data:':'Suggested from the query:'),
                     ...suggested.map(item=>h('button',{type:'button',class:'q-btn q-pa-xs',disabled:this.readOnly,'aria-pressed':(panel.visualization || 'table')===item.visualization?'true':'false','data-visualization':item.visualization,onClick:()=>this.update('visualization',item.visualization)},item.label+' ('+item.reason+')')),
                     E.button(this.previewing?'Checking the data…':'Check with the data',this.preview,this.previewing || !(panel.queries || []).length),this.previewError?h('span',{role:'alert',class:'text-negative'},this.previewError):null]));}
             if(!this.queryOnly && panel.visualization==='text'){options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly));options.push(h('p',{class:'text-caption'},'Variables: ${name} or $name, and ${__from} and ${__thru} for the time range. Values show as text.'));}
             if(!this.queryOnly && (panel.visualization || 'table')==='table')options.push(E.control('Table footer calculations (comma separated: sum, mean, min, max, count, last)',panel.footer && panel.footer.calculations || [],value=>this.update('footer',value.length?{calculations:value}:undefined),'list',null,this.readOnly));
+            if(!this.queryOnly && !this.panelOnly && !this.optionSearch){const names=(this.body.variables || []).map(variable=>variable.name).filter(Boolean);
+                options.push(E.control('Repeat for each value of',panel.repeat && panel.repeat.variable || '',value=>this.update('repeat',value?Object.assign({},panel.repeat,{variable:value}):undefined),'select',[{value:'',text:'No repeat'},...names],this.readOnly));
+                if(panel.repeat && panel.repeat.variable){input('Repeat direction','repeat.direction','select',[{value:'h',text:'Across'},{value:'v',text:'Down'}]);input('Most copies per row','repeat.maxPerRow','number');}}
             if(!this.queryOnly && panel.visualization==='heatmap'){input('Heatmap histogram field','heatmap.field');input('Heatmap bucket bound unit','heatmap.unit');}
             input("Dataset", queryPrefix+"datasetId", "select", this.datasets.map((dataset) => ({ value: dataset.id, text: dataset.title || dataset.id })));
             input("Query string", queryPrefix+"queryString");
-            input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents"]);
+            input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents", { value: "serviceMap", text: "service map (spans)" }, { value: "flame", text: "flame graph (spans)" }]);
             const aggregationRows=((panel.queries || [])[queryAt] || {}).aggregations || [];
             aggregationRows.forEach((aggregation,at)=>{
                 const prefix=queryPrefix+'aggregations.'+at+'.';
@@ -770,7 +980,7 @@
                     h("div", [h("input", { type: "search", placeholder: "Search panel options", value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } }), ...options]),
                 !this.queryOnly && !panel.panelRef && !this.optionSearch ? h('details',[h('summary','Field overrides, mappings and thresholds'),h(components['m-report-field-editor'],{value:panel.fieldConfig || {},disabled:this.readOnly,onChange:value=>this.update('fieldConfig',value)})]):null,
                 !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Dashboard variables'),h(components['m-report-variable-editor'],{value:this.body.variables || [],datasets:this.datasets,disabled:this.readOnly,onChange:value=>this.updateBody('variables',value)})]):null,
-                !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Nested rows, tabs and panel placements'),h(components['m-report-layout-editor'],{value:this.body.layout || E.layout('autoGrid',Object.keys(this.panels)),panelIds:Object.keys(this.panels),disabled:this.readOnly,onChange:value=>this.updateBody('layout',value)})]):null,
+                !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Nested rows, tabs and panel placements'),h(components['m-report-layout-editor'],{value:this.body.layout || E.layout('autoGrid',Object.keys(this.panels)),panelIds:Object.keys(this.panels),variableNames:(this.body.variables || []).map(variable=>variable.name).filter(Boolean),disabled:this.readOnly,onChange:value=>this.updateBody('layout',value)})]):null,
                 h("p", "Options update the definition below. Save a version to keep the changes.")]);
         }
     };
@@ -828,7 +1038,7 @@
                     h("span", { style: { position: "relative", height: "22px", borderBottom: "1px solid var(--q-secondary)" } }, [
                         h("span", { style: { position: "absolute", left: row.left + "%", width: row.width + "%", minWidth: "2px", height: "18px",
                             background: row.span.status_code === "ERROR" ? "var(--q-negative)" : "var(--q-primary)", borderRadius: "2px" } }),
-                        h("span", { style: { position: "relative", textShadow: "0 0 3px var(--m-panel-bg)", paddingLeft: "4px" } }, row.duration.toFixed(2) + " ms") ]) ])),
+                        h("span", { style: { position: "relative", textShadow: "0 0 3px var(--m-panel-bg)", paddingLeft: "4px" } }, row.duration.toFixed(2) + " ms" + (report.genAiLabel(row.span) ? " · " + report.genAiLabel(row.span) : "")) ]) ])),
                 this.selected ? h("details", { open: true, class: "q-pa-sm" }, [h("summary", this.selected.name), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(this.selected, null, 2))]) : null ]);
         }
     };
@@ -853,12 +1063,22 @@
             title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
             editable:Boolean, embedded:Boolean, single:Boolean },
         emits:["filter"],
-        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "" }),
+        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
+        mounted() { this.needOutline(); },
+        updated() { this.needOutline(); },
         methods: {
+            // A geomap waits for the bundled outline; the panel draws again once it is loaded.
+            needOutline() {
+                if ((this.panel.visualization || this.panel.type) !== "geomap" || report.outline || this.outlineError || this.outlineRequested) return;
+                this.outlineRequested = true;
+                report.loadOutline().then(() => { this.outlineReady = true; }).catch((error) => { this.outlineError = String(error && error.message || error); });
+            },
             // The Dashboards app view of this dashboard, for an embed whose page is another screen.
             dashboardUrl(panelId){const url=new root.URL(report.appRoot()+'/dashboards/Dashboard',root.location.href);url.searchParams.set('definitionId',this.dashboardId);if(panelId)url.searchParams.set('panelId',panelId);if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);return url.href;},
             viewPanel(){this.menu=false;if(this.embedded){report.navigate(this.dashboardUrl(this.panelId));return;}const url=new root.URL(root.location.href);url.searchParams.set('panelId',this.panelId);report.navigate(url.href);},
-            editPanel(){this.menu=false;report.navigate(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.panelId)));},
+            // A repeated copy is edited, duplicated and removed as the panel it repeats.
+            sourcePanelId(){return this.panel.repeatOf || this.panelId;},
+            editPanel(){this.menu=false;report.navigate(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.sourcePanelId())));},
             async sharePanel(){this.menu=false;this.shared=report.shareUrl(this.range,this.panelId,this.embedded?this.dashboardUrl():undefined);this.status=await report.copyText(this.shared)?'Link copied, with the time range made absolute.':'Copy this link to share the panel:';},
             explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range});if(url)report.navigate(url);},
             async changePanel(action){
@@ -866,7 +1086,7 @@
                 if(action==='removePanel' && root.confirm && !root.confirm('Remove the panel '+(this.title || this.panel.title || this.panelId)+' from this dashboard? A new version is saved; an earlier version can be restored.'))return;
                 this.busy=true;this.actionError='';
                 try {
-                    const result=await moqui.request('/apps/dashboards/Dashboard/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.panelId,moquiSessionToken:moqui.sessionToken || ''}});
+                    const result=await moqui.request('/apps/dashboards/Dashboard/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.sourcePanelId(),moquiSessionToken:moqui.sessionToken || ''}});
                     if(!result.json || result.json.errors || result.json.error)throw new Error(result.json && (result.json.errors || result.json.error) || 'The dashboard was not changed');
                     const url=new root.URL(root.location.href);if(action==='removePanel' && url.searchParams.get('panelId')===this.panelId)url.searchParams.delete('panelId');report.navigate(url.href);
                 } catch(error){this.actionError=String(error && (error.message || (error.json && (error.json.errors || error.json.error)) || error.statusText) || error);}
@@ -908,24 +1128,26 @@
             const h = root.Vue.h, frame = this.frames && this.frames[0] || this.frame;
             const fields = report.configuredFields(frame, this.panel), rows = report.rows(frame), visual = this.panel.visualization || this.panel.type || "table";
             const title = this.title || this.panel.title;
-            const named = title || "Report";
+            const named = title || T("Report");
             const header = h("div", { class: "row items-center q-gutter-sm" }, [h("strong", { class: "col" }, named),
-                h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as CSV" }, "CSV"),
-                this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as XLSX" }, "XLSX") : null,
-                h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Inspect " + named, "aria-pressed": this.inspector }, "Inspect"),
-                this.dashboardId && this.panelId ? h("button", { type: "button", class: "q-btn q-pa-xs", "aria-haspopup": "menu", "aria-expanded": this.menu ? "true" : "false", "aria-label": "Panel menu for " + named, onClick: () => { this.menu = !this.menu; } }, "Menu") : null]);
-            const item = (text, click, show) => show === false ? null : h("button", { type: "button", role: "menuitem", class: "q-btn q-pa-xs", disabled: this.busy, onClick: click }, text);
+                h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Export {0} as CSV", named) }, "CSV"),
+                this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Export {0} as XLSX", named) }, "XLSX") : null,
+                h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Inspect {0}", named), "aria-pressed": this.inspector }, T("Inspect")),
+                this.dashboardId && this.panelId ? h("button", { type: "button", class: "q-btn q-pa-xs", "aria-haspopup": "menu", "aria-expanded": this.menu ? "true" : "false", "aria-label": T("Panel menu for {0}", named), onClick: () => { this.menu = !this.menu; } }, T("Menu")) : null]);
+            const item = (text, click, show) => show === false ? null : h("button", { type: "button", role: "menuitem", class: "q-btn q-pa-xs", disabled: this.busy, onClick: click }, T(text));
             const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric"));
-            const menu = this.menu ? h("div", { role: "menu", "aria-label": "Panel menu for " + named, class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
+            const menu = this.menu ? h("div", { role: "menu", "aria-label": T("Panel menu for {0}", named), class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
                 item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel), item("Share", this.sharePanel),
                 item("Explore", this.explorePanel, !!report.firstQuery(this.panel)), item("Inspect", () => { this.menu = false; this.inspect(); }),
                 item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable), item("Remove", () => this.changePanel("removePanel"), this.editable),
-                alerting ? h("a", { role: "menuitem", class: "q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, "New alert rule") : null]) : null;
-            const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": "Panel link", style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
+                alerting ? h("a", { role: "menuitem", class: "q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, T("New alert rule")) : null]) : null;
+            const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
                 E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
-            if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", this.variables, this.range) });
-            else if (!rows.length) content = h("p", { role: "status", class: "text-grey" }, "No data in this time range.");
+            // The print document inlines the outline, so its map is drawn in the first pass.
+            if (visual === "geomap" && !report.outline && root.moquiReportGeo) report.loadOutline();
+            if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", Object.assign({}, this.variables, this.panel.repeatValues), this.range) });
+            else if (!rows.length) content = h("p", { role: "status", class: "text-grey" }, T("No data in this time range."));
             else if (visual === "stat" || visual === "gauge" || visual === "barGauge") {
                 const series=report.chart(frame,this.panel).data.datasets,previousAt=this.panel.compareField?fields.findIndex(field=>field.name===this.panel.compareField):-1;
                 content = h("div", { class: "q-pa-md" }, [!series.length?h('p',{role:'status'},'No numeric metrics in this frame.'):null,...series.slice(0,50).map((dataset,index)=>{
@@ -950,15 +1172,50 @@
                         cells.push(h("div", { key: bucket + ":" + at, title: timeText(column.time) + " · " + map.labels[bucket] + ": " + report.format(count, { type: "number" }), "data-count": count,
                             style: { minHeight: "14px", background: count > 0 ? "var(--q-primary)" : "transparent", opacity: count > 0 ? shade(count) : 1, outline: count > 0 ? "none" : "1px solid rgba(127,127,127,0.12)" } })); });
                 }
-                content = h("figure", { class: "m-report-heatmap q-ma-none", role: "img", "aria-label": "Heatmap of " + map.prefix + ": " + columns.length + " times, " + map.labels.length + " buckets, highest count " + report.format(map.max, { type: "number" }) }, [
+                content = h("figure", { class: "m-report-heatmap q-ma-none", role: "img", "aria-label": T("Heatmap of {0}: {1} times, {2} buckets, highest count {3}", map.prefix, columns.length, map.labels.length, report.format(map.max, { type: "number" })) }, [
                     h("div", { style: { display: "grid", gridTemplateColumns: "max-content repeat(" + Math.max(1, columns.length) + ",minmax(1px,1fr))", gap: "1px", fontSize: "11px", height: this.height, alignContent: "stretch" } }, cells),
-                    h("figcaption", { class: "row justify-between text-caption" }, [h("span", columns.length ? timeText(columns[0].time) : ""), h("span", "Count per bucket: 0 to " + report.format(map.max, { type: "number" })), h("span", columns.length ? timeText(columns[columns.length - 1].time) : "")])]);
+                    h("figcaption", { class: "row justify-between text-caption" }, [h("span", columns.length ? timeText(columns[0].time) : ""), h("span", T("Count per bucket: 0 to {0}", report.format(map.max, { type: "number" }))), h("span", columns.length ? timeText(columns[columns.length - 1].time) : "")])]);
             } else if (visual === "heatmap") {
                 const values = rows.map((row) => row.filter(finite).map(Number));
                 const max = Math.max(1, ...values.flat());
                 content = h("div", { style: { display: "grid", gridTemplateColumns: "repeat(" + Math.max(1, fields.length) + ",1fr)", gap: "2px" } },
                     rows.flatMap((row, at) => row.map((value, index) => h("div", { key: at + ":" + index, title: fields[index].name + ": " + report.format(value, fields[index]),
                         style: { padding: "4px", background: finite(value) ? "var(--q-primary)" : "transparent", opacity: finite(value) ? Math.max(0.15, Number(value) / max) : 1 } }, report.format(value, fields[index])))));
+            } else if (visual === "funnel" && report.funnel(frame, this.panel)) {
+                const steps = report.funnel(frame, this.panel), percent = (value) => value == null ? "" : report.format(value, { type: "number", unit: "percent", decimals: 1 });
+                content = h("ol", { class: "m-report-funnel q-pa-none q-ma-none", style: { listStyle: "none" }, "aria-label": "Funnel of " + steps.length + " steps" }, steps.map((step, at) => h("li", { key: at, class: "q-mb-xs", "data-step": step.label }, [
+                    h("div", { class: "row justify-between text-caption" }, [h("span", step.label), h("span", report.format(step.value, step.field) + (at ? " · " + percent(step.ofFirst) + " of first · " + percent(step.ofPrevious) + " of previous" : ""))]),
+                    h("div", { style: { margin: "0 auto", width: Math.max(0.5, step.width) + "%", height: "22px", background: report.thresholdColor(step.value, step.field) || report.color(0), borderRadius: "2px" } })])));
+            } else if (visual === "nodeGraph" && report.nodeGraph(frame, this.panel)) {
+                const graph = report.nodeGraph(frame, this.panel), ms = (value) => report.format(value, { type: "number", unit: "ns" });
+                const open = (item) => { const query = report.firstQuery(this.panel); if (query) report.navigate(report.filterUrl({ datasetId: query.datasetId, query: { field: { name: "service.name", op: "eq", value: item.id } }, label: "service.name: " + item.id, negated: false, disabled: false, pinned: false }, { range: this.range })); };
+                content = h("div", { class: "scroll" }, [h("svg", { class: "m-report-node-graph", viewBox: "0 0 " + graph.width + " " + graph.height, width: graph.width, height: graph.height, role: "img", "aria-label": "Node graph of " + graph.nodes.length + " nodes and " + graph.edges.length + " edges" }, [
+                    h("defs", [h("marker", { id: "m-report-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, [h("path", { d: "M0 0L10 5L0 10z", fill: "var(--q-secondary)" })])]),
+                    ...graph.edges.map((edge, at) => h("path", { key: "e" + at, d: edge.path, fill: "none", stroke: edge.errors ? "var(--q-negative)" : "var(--q-secondary)", "stroke-width": edge.width, "marker-end": "url(#m-report-arrow)", "data-edge": edge.from + "→" + edge.to },
+                        [h("title", edge.from + " → " + edge.to + ": " + report.format(edge.count, { type: "number" }) + " calls" + (edge.errors ? ", " + edge.errors + " errors" : "") + (edge.duration != null ? ", mean " + ms(edge.duration) : ""))])),
+                    ...graph.nodes.map((item) => h("g", { key: item.id, "data-node": item.id, transform: "translate(" + item.x + " " + item.y + ")", tabindex: "0", role: "button", style: { cursor: "pointer" },
+                        "aria-label": item.id + ": " + item.calls + " calls, " + item.errorRate.toFixed(1) + "% errors", onClick: () => open(item), onKeydown: (event) => { if (event.key === "Enter") open(item); } }, [
+                        h("circle", { r: graph.radius, fill: "var(--m-panel-bg, white)", stroke: item.errorRate > 5 ? "var(--q-negative)" : item.errorRate > 0 ? "var(--q-warning)" : "var(--q-primary)", "stroke-width": "3" }),
+                        h("text", { "text-anchor": "middle", dy: "4", "font-size": "11", fill: "currentColor" }, report.format(item.calls, { type: "number" })),
+                        h("text", { "text-anchor": "middle", y: graph.radius + 14, "font-size": "12", fill: "currentColor" }, item.id.length > 28 ? item.id.slice(0, 27) + "…" : item.id)]))])]);
+            } else if (visual === "flameGraph" && report.flame(frame, this.panel, this.flameFocus)) {
+                const flame = report.flame(frame, this.panel, this.flameFocus), rowHeight = 20, width = 1000, colors = [0, 2, 3, 6, 1];
+                content = h("div", [flame.focus.length ? h("p", { class: "row items-center q-gutter-sm q-my-xs" }, [h("span", "Focused on " + flame.focus.join(" › ")), E.button("Reset zoom", () => { this.flameFocus = null; })]) : null,
+                    h("svg", { class: "m-report-flame", viewBox: "0 0 " + width + " " + (flame.depth + 1) * rowHeight, width: "100%", height: (flame.depth + 1) * rowHeight, role: "img", preserveAspectRatio: "none",
+                        "aria-label": "Flame graph, total " + report.format(flame.total, flame.field) }, flame.rects.map((rect, at) => h("g", { key: at, "data-frame": rect.path.join(";"), style: { cursor: "pointer" }, onClick: () => { this.flameFocus = rect.path; } }, [
+                        h("title", (rect.path.join(" › ") || "all") + ": " + report.format(rect.total, flame.field) + " (" + rect.share.toFixed(1) + "%), self " + report.format(rect.self, flame.field)),
+                        h("rect", { x: rect.x * width, y: rect.depth * rowHeight, width: Math.max(0.5, rect.w * width - 1), height: rowHeight - 1, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
+                        rect.w * width > 40 ? h("text", { x: rect.x * width + 3, y: rect.depth * rowHeight + 14, "font-size": "11", fill: "currentColor" }, rect.name.length > rect.w * width / 7 ? rect.name.slice(0, Math.max(1, Math.floor(rect.w * width / 7) - 1)) + "…" : rect.name) : null])))]);
+            } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
+                const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
+                const base = map.countries.map((country, at) => h("path", { key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,
+                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
+                const points = (map.points || []).map((point, at) => h("circle", { key: "p" + at, cx: point.x, cy: point.y, r: point.r, fill: "var(--q-negative)", "fill-opacity": "0.6", "data-point": point.label || at }, [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
+                content = h("figure", { class: "m-report-geomap q-ma-none" }, [
+                    h("svg", { viewBox: "0 0 360 150", width: "100%", style: { maxHeight: this.height }, role: "img", "aria-label": map.mode === "points" ? "Map of " + map.points.length + " places" : "Map of " + map.listed.length + " countries" }, [...base, ...points]),
+                    !report.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
+                    map.mode === "countries" ? h("details", [h("summary", "Values by country"), h("table", { class: "q-table" }, [h("tbody", map.listed.slice(0, 50).map((item) => h("tr", { key: item.id }, [h("td", item.name), h("td", formatted(item.value))])))]),
+                        map.unmatched.length ? h("p", { class: "text-caption" }, "Not a known country code: " + map.unmatched.join(", ")) : null]) : null]);
             } else if (visual === "stateTimeline") {
                 content = h("div", rows.map((row, at) => h("div", { key: at, class: "row no-wrap" }, row.map((value, index) => h("span", {
                     style: { padding: "8px", flex: index ? 1 : undefined, background: index ? report.thresholdColor(value, fields[index]) || "var(--q-secondary)" : "transparent" },
@@ -977,7 +1234,7 @@
                         h("button", { type: "button", onClick: () => { this.descending = this.sortField === index ? !this.descending : false; this.sortField = index; } }, field.displayName || field.name) ])))]),
                     h("tbody", sorted.map((row, at) => h("tr", { key: at }, visible.map(({ field, index }) => {
                         const value = row[index], text = report.cellText(value, field,row.sourceRow), record = Object.fromEntries(fields.map((item, i) => [item.name, row[i]]));
-                        const link = field.link ? report.dataLink(field.link, value, record) : "", spark = report.sparklineCell(field, value);
+                        const link = field.link ? report.dataLink(field.link, value, record, this.range) : "", spark = report.sparklineCell(field, value);
                         return h("td", { style: { color: report.thresholdColor(value, field), ...(field.frozen ? { position: "sticky", left: "0", background: "var(--m-panel-bg)" } : {}) } },
                             spark ? h("svg", { viewBox: "0 0 100 24", height: "24", width: "120", role: "img", class: "m-report-sparkline", "aria-label": (field.displayName || field.name) + ": " + spark.filter(finite).length + " values, last " + report.format(report.reduce(spark, "last"), {}) },
                                 [h("path", { d: report.sparkline(spark), fill: "none", stroke: "var(--q-primary)", "stroke-width": "1.5" })]) :
@@ -1004,27 +1261,27 @@
             reset(){this.from=report.localInput(this.absolute.from);this.thru=report.localInput(this.absolute.thru);this.error='';},
             apply(range){if(!range || !range.from)return;this.recent=report.recentRanges.add(this.viewerId,range);this.open=false;this.$emit('apply',{from:range.from,thru:range.thru || 'now'});},
             applyAbsolute(){const from=report.fromLocalInput(this.from),thru=report.fromLocalInput(this.thru);
-                if(!from || !thru){this.error='Enter a from and a through time';return;}
-                if(Date.parse(thru)<=Date.parse(from)){this.error='The through time must be after the from time';return;}
+                if(!from || !thru){this.error=T('Enter a from and a through time');return;}
+                if(Date.parse(thru)<=Date.parse(from)){this.error=T('The through time must be after the from time');return;}
                 this.error='';this.apply({from,thru});},
             shift(key){const range=report.shiftRange(this.absolute,key);if(range)this.apply(range);},
             key(event){if(event.key==='Escape' && this.open){event.preventDefault();event.stopPropagation();this.open=false;}}
         },
-        render(){const h=root.Vue.h,label=report.rangeLabel(this.value && this.value.from?this.value:this.absolute) || 'Choose a time range';
+        render(){const h=root.Vue.h,label=report.rangeLabel(this.value && this.value.from?this.value:this.absolute) || T('Choose a time range');
             const choice=(range,text)=>h('li',{key:range.from+'|'+range.thru},[h('button',{type:'button',class:'q-btn q-pa-xs','aria-current':range.from===this.value.from && (range.thru || 'now')===(this.value.thru || 'now')?'true':undefined,onClick:()=>this.apply(range)},text || report.rangeLabel(range))]);
             return h('div',{class:'m-report-time-picker',onKeydown:this.key},[
                 h('div',{class:'row items-center q-gutter-xs'},[
                     E.button('Earlier',()=>this.shift('ArrowLeft'),!this.absolute.from),
-                    h('button',{type:'button',class:'q-btn q-pa-xs','aria-expanded':this.open?'true':'false','aria-haspopup':'dialog','aria-label':'Time range: '+label,onClick:()=>{this.open=!this.open;if(this.open)this.reset();}},label),
+                    h('button',{type:'button',class:'q-btn q-pa-xs','aria-expanded':this.open?'true':'false','aria-haspopup':'dialog','aria-label':T('Time range: {0}',label),onClick:()=>{this.open=!this.open;if(this.open)this.reset();}},label),
                     E.button('Later',()=>this.shift('ArrowRight'),!this.absolute.from),E.button('Zoom out',()=>this.shift('-'),!this.absolute.from)]),
-                this.open?h('div',{role:'dialog','aria-label':'Choose a time range',class:'m-report-time-ranges q-pa-sm',style:{border:'1px solid var(--q-secondary)',background:'var(--m-panel-bg,white)',display:'flex',flexWrap:'wrap',gap:'16px'}},[
-                    h('section',[h('h5',{class:'q-my-xs'},'Absolute range'),
-                        h('label',{class:'m-report-editor-control'},[h('span','From'),h('input',{type:'datetime-local',value:this.from,onInput:event=>{this.from=event.target.value;}})]),
-                        h('label',{class:'m-report-editor-control'},[h('span','Through'),h('input',{type:'datetime-local',value:this.thru,onInput:event=>{this.thru=event.target.value;}})]),
+                this.open?h('div',{role:'dialog','aria-label':T('Choose a time range'),class:'m-report-time-ranges q-pa-sm',style:{border:'1px solid var(--q-secondary)',background:'var(--m-panel-bg,white)',display:'flex',flexWrap:'wrap',gap:'16px'}},[
+                    h('section',[h('h5',{class:'q-my-xs'},T('Absolute range')),
+                        h('label',{class:'m-report-editor-control'},[h('span',T('From')),h('input',{type:'datetime-local',value:this.from,onInput:event=>{this.from=event.target.value;}})]),
+                        h('label',{class:'m-report-editor-control'},[h('span',T('Through')),h('input',{type:'datetime-local',value:this.thru,onInput:event=>{this.thru=event.target.value;}})]),
                         E.button('Apply time range',this.applyAbsolute),this.error?h('p',{role:'alert',class:'text-negative'},this.error):null,
-                        h('h5',{class:'q-my-xs'},'Recent ranges'),this.recent.length?h('ul',{class:'q-pl-none',style:{listStyle:'none'}},this.recent.map(range=>choice(range))):h('p','No recent ranges yet.'),
+                        h('h5',{class:'q-my-xs'},T('Recent ranges')),this.recent.length?h('ul',{class:'q-pl-none',style:{listStyle:'none'}},this.recent.map(range=>choice(range))):h('p',T('No recent ranges yet.')),
                         this.recent.length?E.button('Clear recent ranges',()=>{this.recent=report.recentRanges.clear(this.viewerId);}):null]),
-                    h('section',[h('h5',{class:'q-my-xs'},'Quick ranges'),h('ul',{class:'q-pl-none',style:{listStyle:'none',columns:'2'}},report.quickRanges.map(range=>choice(range,range.label)))])]):null]);
+                    h('section',[h('h5',{class:'q-my-xs'},T('Quick ranges')),h('ul',{class:'q-pl-none',style:{listStyle:'none',columns:'2'}},report.quickRanges.map(range=>choice(range,T(range.label))))])]):null]);
         }
     };
     components['m-dashboard-filters']={

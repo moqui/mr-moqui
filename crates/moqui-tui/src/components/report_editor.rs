@@ -157,6 +157,7 @@ fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
         let mut value = panel();
         value["panelRef"] = json!("");
         value["description"] = json!("");
+        value["repeat"] = json!({"variable":"","direction":"h","maxPerRow":4});
         value
     } else {
         json!({})
@@ -171,6 +172,95 @@ fn add_options(row: &Row, kind: &str) -> Vec<(String, Value)> {
     options.push(("Add named field…".into(), Value::Null));
     options
 }
+/// Visualizations for a panel's queries, best first, each with why, by the rules the web editor's suggestions use
+/// (`report.queryShape` and `report.suggestVisualizations` in WebrootReport.js).
+fn suggested_visualizations(panel: &Value) -> Vec<(&'static str, &'static str)> {
+    let (mut time, mut numbers, mut categories, mut buckets) = (0, 0, 0, 0);
+    let (mut logs, mut spans, mut edges, mut paths) = (false, false, false, false);
+    for query in panel["queries"].as_array().into_iter().flatten() {
+        match query["mode"].as_str() {
+            Some("serviceMap") => edges = true,
+            Some("flame") => paths = true,
+            Some("documents") => match query["datasetId"].as_str() {
+                Some("otel_logs") => logs = true,
+                Some("otel_spans") => spans = true,
+                _ => categories += 1,
+            },
+            _ => {
+                for aggregation in query["aggregations"].as_array().into_iter().flatten() {
+                    let kind = aggregation["type"].as_str().unwrap_or("");
+                    let role = aggregation["role"].as_str().unwrap_or("metric");
+                    if kind == "date_histogram" {
+                        time += 1;
+                    } else if kind == "histogram_merge" {
+                        buckets += 1;
+                        numbers += 3;
+                    } else if role != "metric"
+                        || ["terms", "histogram", "range", "date_range", "filters"].contains(&kind)
+                    {
+                        categories += 1;
+                    } else {
+                        numbers += 1;
+                    }
+                }
+            }
+        }
+    }
+    let mut out: Vec<(&'static str, &'static str)> = Vec::new();
+    let mut add = |visualization: &'static str, reason: &'static str| {
+        if !out.iter().any(|(name, _)| *name == visualization) {
+            out.push((visualization, reason));
+        }
+    };
+    if edges {
+        add("nodeGraph", "Calls between services");
+    }
+    if paths {
+        add("flameGraph", "Paths with their time");
+    }
+    if spans {
+        add("traceWaterfall", "Trace spans");
+    }
+    if logs {
+        add("logs", "Log lines");
+    }
+    if time > 0 && buckets > 0 {
+        add("heatmap", "Histogram buckets over time");
+    }
+    if time > 0 && numbers > 0 {
+        add("timeSeries", "Time and a number");
+        add("stat", "Latest value of each series");
+    }
+    if time > 0 && numbers == 0 && categories > 0 {
+        add("stateTimeline", "States over time");
+    }
+    if time == 0 && categories > 0 && numbers > 0 {
+        add("bar", "A category and a number");
+        if numbers == 1 {
+            add("pie", "Parts of a whole");
+        }
+        add("barGauge", "A category and a number");
+        add("funnel", "Steps of a process");
+    }
+    if time == 0 && categories == 0 && numbers > 0 {
+        add("stat", "One number");
+        add("gauge", "A number against its range");
+    }
+    if categories > 0 || numbers > 0 {
+        add("table", "Every column");
+    }
+    out
+}
+
+/// The panel a `visualization` row belongs to.
+fn row_panel(props: &Value, state: &ComponentState, row: &Row) -> Value {
+    let parent = &row.path[..row.path.len().saturating_sub(1)];
+    document(props, state)
+        .pointer(&pointer(parent))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<String> {
     let key = row.path.last().map(String::as_str).unwrap_or("");
     let choices: Vec<String> = match key {
@@ -188,30 +278,45 @@ fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<Strin
             .filter_map(|item| item["id"].as_str())
             .map(str::to_string)
             .collect(),
-        "visualization" => [
-            "table",
-            "timeSeries",
-            "stat",
-            "gauge",
-            "barGauge",
-            "bar",
-            "pie",
-            "heatmap",
-            "histogram",
-            "text",
-            "logs",
-            "stateTimeline",
-            "statusHistory",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect(),
-        "mode" => vec!["documents".into(), "aggregate".into()],
+        "visualization" => {
+            let suggested = suggested_visualizations(&row_panel(props, state, row));
+            let mut all: Vec<String> = suggested.iter().map(|(name, _)| name.to_string()).collect();
+            all.extend(
+                [
+                    "table",
+                    "timeSeries",
+                    "stat",
+                    "gauge",
+                    "barGauge",
+                    "bar",
+                    "pie",
+                    "heatmap",
+                    "histogram",
+                    "text",
+                    "logs",
+                    "stateTimeline",
+                    "statusHistory",
+                    "funnel",
+                    "nodeGraph",
+                    "flameGraph",
+                    "geomap",
+                ]
+                .into_iter()
+                .filter(|name| !suggested.iter().any(|(first, _)| first == name))
+                .map(str::to_string),
+            );
+            all
+        }
+        "mode" => ["documents", "aggregate", "serviceMap", "flame"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         "kind" => ["constant", "custom", "query", "groupBy", "report", "playlist"]
             .into_iter()
             .map(str::to_string)
             .collect(),
         "orientation" => vec!["portrait".into(), "landscape".into()],
+        "direction" => vec!["h".into(), "v".into()],
         "paper" => vec!["letter".into(), "a4".into()],
         "op" => ["eq", "in", "exists", "prefix", "wildcard", "range"]
             .into_iter()
@@ -300,10 +405,19 @@ impl Component for ReportDefinitionEditor {
         let at = state.at.min(all.len().saturating_sub(1));
         if state.closed.contains("__editor_input") {
             if let Some(row) = all.get(at) {
+                let suggested = if row.path.last().map(String::as_str) == Some("visualization") {
+                    suggested_visualizations(&row_panel(props, state, row))
+                } else {
+                    Vec::new()
+                };
                 for (index, value) in scalar_choices(props, state, row).iter().enumerate() {
+                    let why = suggested
+                        .iter()
+                        .find(|(name, _)| name == value)
+                        .map_or_else(String::new, |(_, reason)| format!(" — suggested: {reason}"));
                     lines.push(vec![Span::new(
                         format!(
-                            "{} {value} (Tab completes)",
+                            "{} {value}{why} (Tab completes)",
                             if index == state.choosing.unwrap_or(0) {
                                 "▶"
                             } else {
@@ -747,6 +861,22 @@ impl Component for ReportQueryEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn visualization_choices_put_the_suggested_ones_first() {
+        let panel = json!({"queries":[{"aggregations":[{"id":"t","type":"date_histogram","role":"x-axis"},{"id":"n","type":"sum","role":"metric"}]}]});
+        assert_eq!(suggested_visualizations(&panel)[0], ("timeSeries", "Time and a number"));
+        let props = json!({"value":{"panels":{"p":panel.clone()}}});
+        let row = Row {
+            path: vec!["panels".into(), "p".into(), "visualization".into()],
+            label: "visualization".into(),
+            value: json!(""),
+        };
+        let choices = scalar_choices(&props, &ComponentState::default(), &row);
+        assert_eq!(&choices[..2], ["timeSeries", "stat"]);
+        assert_eq!(choices.iter().filter(|name| *name == "stat").count(), 1);
+        let map = json!({"queries":[{"mode":"serviceMap"}]});
+        assert_eq!(suggested_visualizations(&map)[0].0, "nodeGraph");
+    }
     fn key(props: &Value, state: &mut ComponentState, key: Key) -> Vec<Act> {
         ReportDefinitionEditor
             .key(props, state, &KeyPress::plain(key), false)

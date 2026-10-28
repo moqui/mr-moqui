@@ -63,7 +63,8 @@ with an `artifact` override and the receiver limits written out:
 - **`artifact`** turns spans and metrics on or off per artifact type. Entity frames are off by default and screen
   content gets metrics only; the dev conf (`runtime/conf/MoquiDevConf.xml`) adds content spans and entity metrics.
   Its `sample-ratio` (0 to 1) overrides the global ratio for that type's frame spans (and `AT_LLM` provider spans);
-  roots and the tail rule are unchanged, and SQL and other child spans follow the global ratio.
+  roots and the tail rule are unchanged. A SQL span keeps its frame's decision, so a frame sampled by its type's ratio
+  keeps its statements; other child spans follow the global ratio.
 - **`metric`** sets the attributes kept on one instrument, replacing the global allow-list for it; `attributes=""`
   keeps none. Instruments without one keep the global list.
 - **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
@@ -95,17 +96,44 @@ with an `artifact` override and the receiver limits written out:
   works on it unchanged.
 
 **Out.** `otlp-endpoint` (for example `http://collector:4318`) also sends everything to an OpenTelemetry Collector or
-any OTLP/HTTP backend. `otlp-protocol` is `http/protobuf` (the default) or `http/json`. Each request groups its
-records by resource and scope. `otlp-headers` is a comma-separated `name=value` list; header values are never
-logged. The remote export runs on its own thread with a bounded queue (8,192 records, 64 batches; 2 s connect and 5 s
-request timeouts), so a slow or down collector drops and counts records (`remote_dropped`) and never holds up local
-storage. Local storage and the remote export fail separately and are counted separately.
+any OTLP/HTTP backend. `otlp-protocol` is `http/protobuf` (the default) or `http/json`, and `otlp-compression` is
+`gzip` (the default, sent as `Content-Encoding: gzip`) or `none`. Each request groups its records by resource and
+scope, and batches of one signal waiting in the queue are merged into one request of up to 2,048 records.
+`otlp-headers` is a comma-separated `name=value` list; header values are never logged. The remote export runs on its
+own thread with a bounded queue (8,192 records, 64 batches; 2 s connect and 5 s request timeouts), so a slow or down
+collector drops and counts records (`remote_dropped`) and never holds up local storage. Local storage and the remote
+export fail separately and are counted separately.
 
 **Scrape.** `/metrics` answers Prometheus text (format 0.0.4) for `?format=prometheus` or a Prometheus `Accept`
 header, and the plain `name value` lines otherwise. The text comes from a cumulative reader of this server's own
-instruments (metrics received over OTLP are not on it), plus the pool, statement, guard and telemetry loss totals,
-and a `target_info` series with the resource. It has the same address gate as `/health`, and a public site never
-takes either path.
+instruments, plus the pool, statement, guard and telemetry loss totals, and a `target_info` series with the resource.
+After them come the metrics received over OTLP and from scrape targets: sums and histograms added up since start
+(a monotonic sum is a `_total` counter), gauges at their last value, each labelled by its attributes and
+`service_name`, `service_instance_id` and `source`. At most 5,000 received series are kept; a series past that, or a
+family named like one of this server's own (so scraping this server's own `/metrics` adds nothing), is left out and
+counted in `moqui_telemetry_received_series_dropped_total`. Exponential histograms are not on it. It has the same
+address gate as `/health`, and a public site never takes either path.
+
+**Pull.** Monitor › Checks holds two kinds of pulled telemetry, run by ServiceJobs each minute; each target or check
+runs when its own `intervalSeconds` (60 by default) has passed, and a failure is recorded on its row and logged without
+holding up the others.
+- **Scrape targets** (`moqui.monitor.ScrapeTarget`, `scrape#Targets`, job `scrape_TelemetryTargets_minute`): a
+  Prometheus-text or OpenMetrics endpoint, read with an optional bearer token (stored encrypted) into `otel_metrics`
+  with `source.id` `scrape:<targetId>`, `service.name` from the target (its `host:port` when empty) and
+  `service.instance.id` `host:port`. Samples become OTLP points and pass through the receiver's decoder: counters and
+  histograms are cumulative, so a series' first scrape is its baseline (not counted as loss) and later scrapes are
+  deltas; a counter that goes down is a reset. A summary becomes a gauge per quantile plus `_sum` and `_count` counters.
+  Each scrape also writes `up` (1 or 0), `scrape_duration_seconds` and `scrape_samples_scraped`. The body is capped at
+  8 MiB and 10,000 points; NaN values and histograms whose buckets do not add up are skipped.
+- **Synthetic checks** (`moqui.monitor.SyntheticCheck`, `run#Checks`, job `run_SyntheticChecks_minute`): an HTTP GET,
+  HEAD or POST with an expected status (200 by default) and optional body text. Each run is the root of its own trace,
+  `check <name>` with `moqui.synthetic.check`, `synthetic.check.id` and `synthetic.check.name`, kept and head-sampled
+  whatever the sample ratio, with the request as its CLIENT child carrying `traceparent`, so a Moqui or other traced
+  target joins the trace. A wrong status, missing body text or a transport error marks it ERROR. (When a check calls a
+  page of this same server, that page's request span, unless sampled, decides the trace first and the CLIENT child is
+  left out; the check span and the page's span are still kept.)
+- The shipped `monitor-checks` dashboard shows runs and mean duration per check, failures, runs by status over time,
+  and scrape targets' `up`. Targets and checks are set by a `MONITOR_APP` user and may be internal addresses.
 
 ## Deploy markers and annotations
 
@@ -126,13 +154,15 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | --- | --- |
 | Overview | Request rate and duration, job runs, top error groups and telemetry loss |
 | Services | Services, endpoints and instances (with version) as tables that narrow the dashboard when clicked; request rate, 5xx errors and duration percentiles over time; the busiest artifacts, linking to Artifacts |
-| Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes and the trace's logs |
-| Logs | Explore over `otel_logs`: query, filters, paging both ways, context lines, a live tail, the trace link per line, CSV |
+| Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes, a flame graph of self time by span path, and the trace's logs |
+| Logs | Explore over `otel_logs`: query, filters, paging both ways, context lines, a live tail, the trace link per line, CSV, and log patterns |
 | Errors | Failed requests and jobs over time, error groups by fingerprint, then samples, the stack and their traces and logs |
 | Compare | Two ranges or versions side by side: requests, 5xx errors and duration percentiles per `service.version`, and the documents |
+| AI | Traces with LLM calls: calls, input and output tokens, models, providers, the slowest call and errors per trace, named by the agent, gateway or assist frame that made them; filters by provider, model, frame name and errors; links to TraceDetail (whose waterfall shows each call's model and tokens), the AI dashboard and System › LLM › Usage for cost |
 | Metrics | A metric picker (statistic, including p50/p95/p99 from the buckets, and group by an attribute) over Explore on `otel_metrics` |
 | Artifacts | Hits, total, min, max, average, p50/p95/p99, std dev, slow hits and last active minute per artifact, by type, sub type and name, plus the same stats over time |
 | Sources | Ingest keys (a new key's token shows once, in a message; the log masks it), the latest data from each source, exporter status and loss counters |
+| Checks | Synthetic checks and Prometheus scrape targets: add, edit, enable, run now, last result, and links to each check's runs and last trace, a target's metrics and the checks dashboard |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
 export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
@@ -145,10 +175,22 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 
 - **Datasets** are what a query may read: a DataDocument (with its time field), an index-wide `index:NAME` dataset
   over every document type of an index, or a telemetry index. A dataset definition can add field defaults (unit,
-  decimals, entity lookups, status and enumeration labels) and row filters.
+  decimals, entity lookups, status and enumeration labels) and row filters. A lookup reads its label table (a
+  product's name, a status or unit description) without an entity grant of its own: it only labels ids already in the
+  authorized frame. `unitField` names the column an amount's unit comes from (mr-mantle's amounts use
+  `currencyUomId`, with `USD` as the fallback `unit`): one currency in the frame is the field's unit, several give each
+  row its own, and an aggregation without the column asks the same documents for their currencies, so a sum in one
+  currency shows it and a sum across currencies shows a plain number.
 - **Explore** queries one dataset: a query string (the Lucene subset), filter pills (pin, negate, disable, label),
   a field sidebar with top values, a count over time, the document table, Split to compare two ranges or filters,
   saved searches, and "add to dashboard".
+- **Log patterns.** On a dataset with a `body` field (Monitor › Logs), "Show log patterns" groups the newest 1,000
+  matching lines by template, after Drain: numbers, ids, hex and quoted text become `<*>`, lines of the same length and
+  first word are compared word by word, and a line joins the closest template when at least half its words agree. Each
+  pattern shows its count, share, most common level, latest time and newest line, and clicking it narrows the search to
+  the pattern's constant words. Search highlights show in the row as marked text. The same grouping is the `patterns` transformation (`field`, `limit`, `buckets`) on a
+  documents-mode panel query, which adds `first`, `last`, a `sparkline` of counts over time and the narrowing `query`.
+  It reads at most 5,000 lines and keeps 200 patterns; the rest join an `(other)` pattern.
 - **Dashboards** are panels and a layout. Panels run report queries (aggregations by role: metric, x-axis, split
   series, split rows), then transformations, then a visualization: time series, bar, stat, gauge, bar gauge, table,
   pie and donut, heatmap, state timeline, text and the trace waterfall. Variables sync to the URL as `var-NAME`, along
@@ -160,17 +202,67 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   edit, share (a link with the time made absolute), explore, inspect, duplicate, remove and new alert rule. The
   editor suggests visualizations from the query's or the data's columns. Tables can have footer calculations
   (computed from every row, not the ones shown) and sparkline cells; text panels take `${name}` variables and
-  `${__from}`/`${__thru}`, escaped as text; a heatmap draws latency from histogram buckets. The TUI draws the same
-  charts with block characters, formats currency, and has kiosk mode and auto refresh.
+  `${__from}`/`${__thru}`, escaped as text, and a data link takes `${__from}`/`${__thru}` too, so a drill-down (such as
+  the Services dashboard's) keeps the range; a heatmap draws latency from histogram buckets (the Services dashboard has
+  one). The TUI draws the same charts with block characters, formats currency, and has kiosk mode (↑/↓ go a panel at a
+  time, PgUp/PgDn scroll) and auto refresh; `p` opens its time picker of quick ranges, `m` the selected panel's menu
+  (Remove asks for a second Enter), and its editor lists the suggested visualizations first, with why. Titles of
+  dashboards, panels, rows, tabs and variables, and the widgets' own text, show in the viewer's language when the
+  catalog has them (mr-l10n).
+- **Repeats.** A panel, or a row or tab item, with `repeat: {variable, direction: "h"|"v", maxPerRow}` is copied once
+  for each selected value of the variable (for All, each of its options), with the variable pinned to that value in
+  the copy's queries, title and text. Repeats are expanded on the server, so the browser, the TUI and the print
+  document get the same panels. The first copy keeps the panel's id, and the others are `<id>~<n>` (`<id>~<row>-<n>`
+  inside a repeated row). The single-panel view and exports work on any copy, and edit, duplicate and remove act on
+  the panel being repeated. A horizontal repeat in a grid places `maxPerRow` copies (4 by default) on each row and
+  moves the items below it down. One repeat makes at most 24 copies and a dashboard has at most 100 panels; past
+  either limit a notice says what was left out.
+- **Funnel, node graph, flame graph and geomap.**
+  - A funnel takes a category and a number, or a single row of numbers. Each step shows its share of the first step
+    and of the one before.
+  - A node graph takes `source`, `target` and `count` rows (and `errors` and `duration` when present). It draws
+    layered nodes, with the edges that close a cycle drawn back.
+  - A flame graph takes `path` rows (`a;b;c`) and a value. Click a frame to zoom into it.
+  - A geomap draws points from latitude and longitude fields, sized by a value. Without those fields, it shades
+    countries from a country field: a Moqui `geoId` (ISO alpha-3), alpha-2 or a numeric code. The outline is Natural
+    Earth's 110m countries (`libs/naturalearth`, inlined into the print document). The TUI plots braille points over
+    a land mask.
+  - Two query modes over spans feed the first two:
+    - `mode: "serviceMap"` gives the calls between services: a span whose parent is in another service, a CLIENT span
+      to a database (`db:<system>`), and a CLIENT span to a `server.address` that no span answered.
+    - `mode: "flame"` gives the self time of each span-name path.
+
+    Both read at most the newest 10000 spans of the range, as the viewer, with the query string, filters and
+    variables applied. Monitor ships a Service map dashboard, and Trace detail shows the trace's flame graph.
+- **Git sync** (Dashboards › Git sync, `REPORT_GIT_SYNC_ADMIN`) keeps a definition folder (`body.folder`) in a
+  directory of a git repository, `git://<repositoryId>/<path>/<id>.json`, one file per definition in the shipped
+  format.
+  - Saving a definition in the folder writes its file once the save commits.
+  - A push or fetch to the repository's branch saves the files that changed, by their ids (the
+    `FrameworkPullDefinitionGitSyncs` gitECA). The sync's own writes are not pulled back, and a file that already
+    matches is skipped, so nothing loops.
+  - Push now and Pull now are on the screen, along with the last push, the last pull and the last error.
+  - Both run as the sync's user, so its git and definition rights apply: a definition another user owns is not saved.
+  - A file that fails is named, and the rest still sync.
+  - Deletes: each definition a sync wrote or read is tracked (`DefinitionGitFile`). A pull deletes a tracked definition
+    whose file was removed (as the sync's user, so only one it owns and nothing still references); an untracked one is
+    only listed, and a directory with no definition files deletes nothing. Deleting a tracked definition removes its
+    file once the delete commits, and Push now removes any left behind.
 - **Embedding.** `<report-embed definition-id="" panel-id="" from="now-7d" thru="now" variables="[map expression]"/>`
   places a saved dashboard, one of its panels or a library panel on any screen. It renders as the viewer, so a
   visitor who is not signed in (such as on a public site) gets nothing, and one that cannot be read logs a warning
   and renders nothing.
+- **Reusing the dashboard list.** `Dashboards/Home.xml`'s links run through its own transitions (`dashboard`, `star`,
+  `edit`, `new`, `explore`), so a screen that includes it takes them in with `transition-include`, as
+  `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. A dashboard then opens in that screen's sibling `Dashboard`
+  screen (in BOSS, Insights › Dashboard); editing and Explore open the Dashboards app.
 - **Definitions.** Dashboards, library panels, datasets, saved searches, alert rules and report schedules are JSON in
   `moqui.report.Definition`, with versions (diff and restore) and references (the "used in" lists, export and
   import). Components ship them as `report/*.json`, one file each with `id`, `type`, `title` and `body`; shipped ones
   are read-only until saved as a copy. A shipped alert rule is a template: it runs only once copied, which gives it an
-  owner.
+  owner. The owner can delete a saved definition (`delete#Definition`; Delete on the Definition, Alerts and shared item
+  screens) with its versions and an alert rule's state; a shipped one cannot be deleted, nor one that other definitions
+  still reference (the error names them). Deletes are logged to `moqui.report.audit`.
 - **Alerts.** A rule is a report query, a reduce to one value per series, and a condition (above, below, within or
   outside, with an optional recovery threshold). The `evaluate_ReportAlerts_minute` job runs each rule at its own
   interval, as its owner. States: Normal, Pending, Firing, Recovering, No Data and Error; missing or failed data never
@@ -179,7 +271,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   notification topic (or another), email through an `EmailTemplate`, and webhooks (which need `REPORT_CONTACT_ADMIN`;
   credentials come from server properties, never from the rule). Group wait and repeat are set per contact point.
   Contact points, silences and mute timings are set in the rule or shared as their own definitions (Dashboards ›
-  Alerts), which rules name in `contactPointRefs`, `silenceRefs` and `muteTimingRefs`. A rule's query and deliveries
+  Alerts), which rules name in `contactPointRefs`, `silenceRefs` and `muteTimingRefs`. A shared silence with matchers
+  also mutes every rule whose owner may read it (the owner's own, or one shared with their group) and whose series
+  labels match, referenced or not; one with no matchers mutes only rules that reference it. A delivery is recorded as
+  sent just before it goes out, so a retry after a failed state write does not send the same state again (a failed
+  send is put back for retry). A rule's query and deliveries
   run outside its lock, with rules evaluated on `alert-workers` threads (`<report>`, default 4). Relative ranges use
   the evaluator's effective time. State changes are written as annotations. mr-mantle ships a "Daily sales below
   floor" rule template.

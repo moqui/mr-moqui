@@ -10,4 +10,34 @@
         <field name="revoked" type="text-indicator"/>
         <relationship type="one" related="moqui.security.UserAccount"/>
     </entity>
+    <entity entity-name="ScrapeTarget" package="moqui.monitor" use="configuration" cache="never">
+        <description>A Prometheus-text endpoint that scrape#Targets reads into otel_metrics each intervalSeconds.</description>
+        <field name="targetId" type="id" is-pk="true"/>
+        <field name="url" type="text-medium"><description>http or https URL of the exposition, such as http://host:9100/metrics</description></field>
+        <field name="serviceName" type="text-medium"><description>service.name of the scraped metrics; the URL's host:port when empty</description></field>
+        <field name="intervalSeconds" type="number-integer"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <field name="bearerToken" type="text-medium" encrypt="true"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="lastScrapeDate" type="date-time"/>
+        <field name="lastStatus" type="text-short"/>
+        <field name="lastSamples" type="number-integer"/>
+        <field name="lastError" type="text-long"/>
+    </entity>
+    <entity entity-name="SyntheticCheck" package="moqui.monitor" use="configuration" cache="never">
+        <description>An HTTP request run#Checks makes each intervalSeconds, recorded as a root span with the request as its child.</description>
+        <field name="checkId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="url" type="text-medium"/>
+        <field name="method" type="text-short"><description>GET (default), HEAD or POST</description></field>
+        <field name="expectStatus" type="number-integer"><description>200 when empty</description></field>
+        <field name="expectBodyContains" type="text-medium"/>
+        <field name="intervalSeconds" type="number-integer"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="lastCheckDate" type="date-time"/>
+        <field name="lastStatus" type="text-short"/>
+        <field name="lastMessage" type="text-long"/>
+        <field name="lastTraceId" type="text-short"/>
+    </entity>
 </entities>

@@ -90,9 +90,7 @@
         try {
             const rendered = ec.service.sync().name("org.moqui.report.ReportServices.render#Dashboard").throwOnError(true).parameters({definitionId,
                 panelId: panelId || undefined, from: from || "now-7d", thru: thru || "now", variables: variables || {}, filters: []}).call().dashboard;
-            const plain = value => value == null || typeof value !== "object" ? value : typeof value.toNumber === "function" ? value.toNumber() :
-                Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]));
-            const dashboard = plain(rendered);
+            const dashboard = rendered;
             const frames = {};
             for (const [id, panel] of Object.entries(dashboard.panels || {})) frames[id] = panel.frames || [];
             Object.assign(dashboard, {definitionId, embedded: true, absoluteTime: dashboard.range, requestedTime: {from: from || "now-7d", thru: thru || "now"},

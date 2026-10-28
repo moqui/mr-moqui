@@ -21,6 +21,9 @@ pub struct Decoded {
     pub index: &'static str,
     pub documents: Vec<Document>,
     pub rejected: u64,
+    /// The part of `rejected` that is a cumulative series' first, reset or rebased point: a baseline the next point is
+    /// measured from, not a record lost. A puller sees one per series on its first scrape.
+    pub baselines: u64,
     pub message: String,
 }
 
@@ -82,6 +85,7 @@ impl Decoder {
             },
             documents: Vec::new(),
             rejected: 0,
+            baselines: 0,
             message: String::new(),
         };
         let (resources, scope_key, entries) = match signal {
@@ -198,6 +202,7 @@ impl Decoder {
                     if interval_start == time {
                         state.points.insert(fingerprint.clone(), next);
                         decoded.rejected += 1;
+                        decoded.baselines += 1;
                         decoded.message = "zero-duration cumulative point established an unknown-start baseline".into();
                         continue;
                     }
@@ -207,6 +212,7 @@ impl Decoder {
                         {
                             state.points.insert(fingerprint.clone(), next);
                             decoded.rejected += 1;
+                            decoded.baselines += 1;
                             decoded.message =
                                 "cumulative reset established a baseline; interval data is unavailable".into();
                             continue;
@@ -224,6 +230,7 @@ impl Decoder {
                                 Ok(None) => {
                                     state.points.insert(fingerprint.clone(), next);
                                     decoded.rejected += 1;
+                                    decoded.baselines += 1;
                                     decoded.message = "cumulative population decreased without a new start; reset baseline established".into();
                                     continue;
                                 }
@@ -237,6 +244,7 @@ impl Decoder {
                     } else if interval_start <= 0 || time.saturating_sub(interval_start) > 60_000_000_000 {
                         state.points.insert(fingerprint.clone(), next);
                         decoded.rejected += 1;
+                        decoded.baselines += 1;
                         decoded.message =
                             "initial cumulative point established a baseline; interval data is unavailable".into();
                         continue;
@@ -394,6 +402,7 @@ impl Decoder {
                 if interval_start == time {
                     cache.insert(fingerprint.clone(), previous);
                     decoded.rejected += 1;
+                    decoded.baselines += 1;
                     decoded.message = "zero-duration cumulative point established an unknown-start baseline".into();
                     continue;
                 }
@@ -402,6 +411,7 @@ impl Decoder {
                 {
                     cache.insert(fingerprint, previous);
                     decoded.rejected += 1;
+                    decoded.baselines += 1;
                     if decoded.message.is_empty() {
                         decoded.message =
                             "initial cumulative point established a baseline; interval data is unavailable".into();
@@ -423,6 +433,7 @@ impl Decoder {
                     {
                         cache.insert(fingerprint.clone(), previous);
                         decoded.rejected += 1;
+                        decoded.baselines += 1;
                         decoded.message = "cumulative numeric representation changed outside the exact double range; baseline established".into();
                         continue;
                     }
@@ -441,6 +452,7 @@ impl Decoder {
                     {
                         cache.insert(fingerprint.clone(), previous);
                         decoded.rejected += 1;
+                        decoded.baselines += 1;
                         decoded.message =
                             "cumulative reset established a baseline; interval data is unavailable".into();
                         continue;
@@ -500,6 +512,10 @@ impl Decoder {
                 }),
             );
             document.insert("count".into(), Value::I64(count as i64));
+            if !histogram && field(metric, "gauge").is_null() {
+                // A Prometheus counter on `/metrics` only for a monotonic sum.
+                document.insert("monotonic".into(), Value::Bool(monotonic));
+            }
             if let Some(sum) = sum {
                 document.insert("sum".into(), Value::F64(sum));
             }

@@ -22,6 +22,10 @@
         <actions><service-call name="org.moqui.report.ReportServices.restore#Definition" in-map="{definitionId:definitionId,version:parseInt(version,10),note:note || 'Restored version'}"/></actions>
         <default-response url="."><parameter name="definitionId"/></default-response>
     </transition>
+    <transition name="delete" method="post" authz-action="delete">
+        <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
+        <default-response url="//apps/dashboards/Home"/><error-response url="."/>
+    </transition>
     <transition name="export" method="get" read-only="true">
         <actions><script><![CDATA[
             ec.web.sendJsonResponse(ec.service.sync().name('org.moqui.report.ReportServices.export#Definitions').parameters({definitionId}).call().bundle)
@@ -86,6 +90,12 @@
                 <field name="copyTitle"><default-field title="Copy title"><text-line/></default-field></field>
                 <field name="copy"><default-field><submit text="Save as copy"/></default-field></field>
             </form-single>
+            <section name="DeleteDefinitionSection" condition="!definition.readOnly &amp;&amp; definition.ownerId === ec.user.userId"><widgets>
+                <form-single name="DeleteDefinition" transition="delete">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="delete"><default-field title=""><submit text="Delete definition" confirmation="Delete this definition and all its versions? Definitions that still use it must drop it first; git syncs remove its file."/></default-field></field>
+                </form-single>
+            </widgets></section>
             <form-list name="DefinitionVersions" list="versionList" skip-form="true">
                 <field name="version"><default-field><display/></default-field></field>
                 <field name="note"><default-field><display/></default-field></field>

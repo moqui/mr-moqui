@@ -12,6 +12,11 @@
         spans = (result.hits || []).map(hit => hit.body || {})
         spanLimitReached = result.total > spans.length
         const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString() }
+        // The flame graph of the same trace: span-name paths and their self time, computed on the server.
+        const flame = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({
+            query:{datasetId:'otel_spans',mode:'flame',queryString:'trace_id:'+traceId,from,thru}
+        }).call()
+        flameFrame = (flame.frames || [])[0] || {fields:[]}
         spanItems = spans.map(span => ({time:stamp(span.start),title:span.name,
             text:span.status_code+' · '+(Number(span.duration_nano)/1000000).toFixed(2)+' ms · '+span.span_id,kind:span.status_code==='ERROR'?'error':'info'}))
     ]]></script></actions>
@@ -24,5 +29,6 @@
             <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'trace-waterfall',props:{spans:spans}})}]]></text>
             <text type="html,html-print,text"><![CDATA[<pre>${WebUtilities.encodeHtml(JSON.stringify(spanItems,null,2))}</pre>]]></text>
         </render-mode>
+        <report-panel frame="flameFrame" panel="{title:'Flame graph (self time by span path)',visualization:'flameGraph'}"/>
     </widgets>
 </screen>

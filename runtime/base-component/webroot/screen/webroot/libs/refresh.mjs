@@ -364,6 +364,13 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE.md'],
   },
   {
+    // The country outline of geomap panels: Natural Earth's 1:110m Admin 0 boundaries (public domain) as TopoJSON.
+    id: 'naturalearth', name: 'world-atlas (Natural Earth 110m countries)', npm: 'world-atlas', version: '2.0.2', license: 'ISC',
+    licenseNote: 'The map data is Natural Earth 4.1.0, in the public domain (https://www.naturalearthdata.com/about/terms-of-use/).',
+    copy: [['countries-110m.json', 'naturalearth/countries-110m.json']],
+    licenseFiles: ['LICENSE'],
+  },
+  {
     id: 'mermaid', name: 'Mermaid', npm: 'mermaid', version: '11.17.2', license: 'MIT',
     copy: [['dist/mermaid.min.js', 'mermaid/mermaid.min.js']],
     licenseFiles: ['LICENSE'],

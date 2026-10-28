@@ -53,6 +53,11 @@
     <service verb="restore" noun="Definition" type="rust" location="moqui_core::report::restore_definition">
         <in-parameters><parameter name="definitionId" required="true"/><parameter name="version" type="Long" required="true"/><parameter name="note"/></in-parameters><out-parameters><parameter name="definition" type="Map"/></out-parameters>
     </service>
+    <service verb="delete" noun="Definition" type="rust" location="moqui_core::report::delete_definition">
+        <description>Delete a saved definition the viewer owns, with its versions and an alert rule's state. Shipped and read-only
+            definitions cannot be deleted, nor one that other definitions still reference. Git syncs remove its file.</description>
+        <in-parameters><parameter name="definitionId" required="true"/></in-parameters><out-parameters><parameter name="deleted" type="Map"/></out-parameters>
+    </service>
     <service verb="export" noun="Definitions" type="rust" location="moqui_core::report::export_definitions">
         <in-parameters><parameter name="definitionId" required="true"/></in-parameters><out-parameters><parameter name="bundle" type="Map"/></out-parameters>
     </service>
@@ -71,4 +76,23 @@
     <service verb="preview" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::preview_report"><in-parameters><parameter name="definitionId" required="true"/><parameter name="renderMode"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/><parameter name="variables" type="Map"/><parameter name="filters" type="List"/></in-parameters><out-parameters><parameter name="contentBase64"/><parameter name="contentType"/><parameter name="filename"/><parameter name="files" type="List"/><parameter name="empty" type="Boolean"/></out-parameters></service>
     <service verb="send" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::send_report"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
     <service verb="run" noun="ScheduledReport" type="rust" authenticate="anonymous-all" allow-remote="false" transaction="ignore" location="moqui_core::report_schedule::run_scheduled"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
+    <!-- Git sync of definition folders (report/git_sync.rs). Push and pull run as the sync's user in contexts of their own. -->
+    <service verb="store" noun="DefinitionGitSync" type="rust" location="moqui_core::report::store_git_sync">
+        <in-parameters><parameter name="syncId"/><parameter name="folder"/><parameter name="repositoryId"/><parameter name="path"/><parameter name="userId"/><parameter name="enabled"/></in-parameters>
+        <out-parameters><parameter name="sync" type="Map"/></out-parameters>
+    </service>
+    <service verb="list" noun="DefinitionGitSyncs" type="rust" location="moqui_core::report::list_git_syncs"><out-parameters><parameter name="syncs" type="List"/></out-parameters></service>
+    <service verb="push" noun="DefinitionGitSync" type="rust" transaction="ignore" location="moqui_core::report::push_git_sync">
+        <in-parameters><parameter name="syncId" required="true"/></in-parameters>
+        <out-parameters><parameter name="written" type="Integer"/><parameter name="unchanged" type="Integer"/></out-parameters>
+    </service>
+    <service verb="pull" noun="DefinitionGitSync" type="rust" transaction="ignore" location="moqui_core::report::pull_git_sync">
+        <in-parameters><parameter name="syncId" required="true"/></in-parameters>
+        <out-parameters><parameter name="saved" type="List"/><parameter name="unchanged" type="Integer"/><parameter name="failed" type="List"/><parameter name="missing" type="List"/></out-parameters>
+    </service>
+    <service verb="pull" noun="DefinitionGitSyncs" type="rust" allow-remote="false" transaction="ignore" location="moqui_core::report::pull_git_syncs">
+        <description>For the gitECA of a push or fetch: pull every enabled sync of the repository when its default branch changed.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/><parameter name="isDefaultBranch" type="Boolean"/></in-parameters>
+        <out-parameters><parameter name="pulled" type="Integer"/></out-parameters>
+    </service>
 </services>

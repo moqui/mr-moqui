@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Checks" default-menu-index="10">
+    <transition name="createTarget" method="post" authz-action="create">
+        <service-call name="create#moqui.monitor.ScrapeTarget" in-map="{targetId:targetId,url:url,serviceName:serviceName,intervalSeconds:intervalSeconds || 60,timeoutSeconds:timeoutSeconds || 10,bearerToken:bearerToken,enabled:'Y'}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateTarget" method="post" authz-action="update">
+        <service-call name="update#moqui.monitor.ScrapeTarget" in-map="{targetId:targetId,url:url,serviceName:serviceName,intervalSeconds:intervalSeconds,timeoutSeconds:timeoutSeconds,enabled:enabled}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteTarget" method="post" authz-action="delete">
+        <service-call name="delete#moqui.monitor.ScrapeTarget" in-map="{targetId:targetId}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="scrapeNow" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            try {
+                const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.scrape#Targets').parameters({targetId}).call()
+                ec.message.addPublic((result.failed ? ec.l10n.localize('Scrape of {0} failed') : ec.l10n.localize('Scraped {0}: {1} points written')).replace('{0}',targetId).replace('{1}',result.written || 0),result.failed ? 'warning' : 'success')
+            } catch (error) { ec.message.addError(ec.l10n.localize('Scrape of {0} failed').replace('{0}',targetId)+': '+String(error)) }
+        ]]></script></actions><default-response url="."/>
+    </transition>
+    <transition name="createCheck" method="post" authz-action="create">
+        <service-call name="create#moqui.monitor.SyntheticCheck" in-map="{checkId:checkId,name:name,url:url,method:method || 'GET',expectStatus:expectStatus || 200,expectBodyContains:expectBodyContains,intervalSeconds:intervalSeconds || 60,timeoutSeconds:timeoutSeconds || 10,enabled:'Y'}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateCheck" method="post" authz-action="update">
+        <service-call name="update#moqui.monitor.SyntheticCheck" in-map="{checkId:checkId,name:name,url:url,method:method,expectStatus:expectStatus,expectBodyContains:expectBodyContains,intervalSeconds:intervalSeconds,timeoutSeconds:timeoutSeconds,enabled:enabled}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteCheck" method="post" authz-action="delete">
+        <service-call name="delete#moqui.monitor.SyntheticCheck" in-map="{checkId:checkId}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="checkNow" method="post" authz-action="update">
+        <actions><script><![CDATA[
+            try {
+                const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.run#Checks').parameters({checkId}).call()
+                ec.message.addPublic((result.failed ? ec.l10n.localize('Check {0} failed') : ec.l10n.localize('Check {0} passed')).replace('{0}',checkId)+(result.traceId ? ', '+ec.l10n.localize('trace')+' '+result.traceId : ''),result.failed ? 'warning' : 'success')
+            } catch (error) { ec.message.addError(ec.l10n.localize('Check {0} could not run').replace('{0}',checkId)+': '+String(error)) }
+        ]]></script></actions><default-response url="."/>
+    </transition>
+    <transition name="traceDetail"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="traces"><default-response url="//apps/monitor/Traces"/></transition>
+    <transition name="metrics"><default-response url="//apps/monitor/Metrics"/></transition>
+    <transition name="dashboard"><default-response url="//apps/dashboards/Dashboard"/></transition>
+    <actions>
+        <entity-find entity-name="moqui.monitor.ScrapeTarget" list="targetList"><order-by field-name="targetId"/></entity-find>
+        <entity-find entity-name="moqui.monitor.SyntheticCheck" list="checkList"><order-by field-name="checkId"/></entity-find>
+    </actions>
+    <widgets>
+        <label text="Pulled telemetry" type="h4"/>
+        <label text="Scrape targets are Prometheus-text endpoints read into otel_metrics. Synthetic checks are HTTP requests, each recorded as a trace that is kept whatever the sample ratio. Jobs run each minute and take each target or check whose interval has passed. A failure is shown on its row and does not stop the others." type="p"/>
+        <link url="dashboard" text="Checks dashboard" link-type="anchor"><parameter name="definitionId" value="monitor-checks"/></link>
+
+        <label text="Synthetic checks" type="h5"/>
+        <form-list name="SyntheticChecks" list="checkList" transition="updateCheck">
+            <field name="checkId"><default-field title="Check"><hidden/><display/></default-field></field>
+            <field name="name"><default-field><text-line size="20"/></default-field></field>
+            <field name="url"><default-field title="URL"><text-line size="40"/></default-field></field>
+            <field name="method"><default-field><drop-down><option key="GET"/><option key="HEAD"/><option key="POST"/></drop-down></default-field></field>
+            <field name="expectStatus"><default-field title="Status"><text-line size="4"/></default-field></field>
+            <field name="expectBodyContains"><default-field title="Body contains"><text-line size="15"/></default-field></field>
+            <field name="intervalSeconds"><default-field title="Every (s)"><text-line size="5"/></default-field></field>
+            <field name="timeoutSeconds"><default-field title="Timeout (s)"><text-line size="4"/></default-field></field>
+            <field name="enabled"><default-field><drop-down><option key="Y" text="Yes"/><option key="N" text="No"/></drop-down></default-field></field>
+            <field name="lastStatus"><default-field title="Last"><display/></default-field></field>
+            <field name="lastMessage"><default-field title="Result"><display/></default-field></field>
+            <field name="lastCheckDate"><default-field title="At"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+            <field name="lastTraceId"><default-field title="Trace"><link condition="lastTraceId" url="traceDetail" text="${lastTraceId}" link-type="anchor"><parameter name="traceId" from="lastTraceId"/><parameter name="from" value="now-7d"/></link></default-field></field>
+            <field name="history"><default-field title="Runs"><link url="traces" text="Runs" link-type="anchor" parameter-map="{queryString:'synthetic.check.id:&quot;'+checkId+'&quot;',spanKind:'all',from:'now-24h'}"/></default-field></field>
+            <field name="update"><default-field><submit text="Save"/></default-field></field>
+            <field name="run"><default-field title=""><link url="checkNow" text="Run now" link-type="hidden-form"><parameter name="checkId"/></link></default-field></field>
+            <field name="delete"><default-field title=""><link url="deleteCheck" text="Delete" link-type="hidden-form" confirmation="Delete this check?"><parameter name="checkId"/></link></default-field></field>
+        </form-list>
+        <form-single name="CreateCheck" transition="createCheck">
+            <field name="checkId"><default-field title="Check ID"><text-line size="20"/></default-field></field>
+            <field name="name"><default-field><text-line size="30"/></default-field></field>
+            <field name="url"><default-field title="URL"><text-line size="60"/></default-field></field>
+            <field name="method"><default-field><drop-down><option key="GET"/><option key="HEAD"/><option key="POST"/></drop-down></default-field></field>
+            <field name="expectStatus"><default-field title="Expected status"><text-line size="4" default-value="200"/></default-field></field>
+            <field name="expectBodyContains"><default-field title="Body contains"><text-line size="30"/></default-field></field>
+            <field name="intervalSeconds"><default-field title="Every (seconds)"><text-line size="6" default-value="60"/></default-field></field>
+            <field name="timeoutSeconds"><default-field title="Timeout (seconds)"><text-line size="4" default-value="10"/></default-field></field>
+            <field name="submitButton"><default-field title=""><submit text="Add check"/></default-field></field>
+        </form-single>
+
+        <label text="Scrape targets" type="h5"/>
+        <form-list name="ScrapeTargets" list="targetList" transition="updateTarget">
+            <field name="targetId"><default-field title="Target"><hidden/><display/></default-field></field>
+            <field name="url"><default-field title="URL"><text-line size="40"/></default-field></field>
+            <field name="serviceName"><default-field title="Service"><text-line size="15"/></default-field></field>
+            <field name="intervalSeconds"><default-field title="Every (s)"><text-line size="5"/></default-field></field>
+            <field name="timeoutSeconds"><default-field title="Timeout (s)"><text-line size="4"/></default-field></field>
+            <field name="enabled"><default-field><drop-down><option key="Y" text="Yes"/><option key="N" text="No"/></drop-down></default-field></field>
+            <field name="lastStatus"><default-field title="Last"><display/></default-field></field>
+            <field name="lastError"><default-field title="Result"><display/></default-field></field>
+            <field name="lastScrapeDate"><default-field title="At"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+            <field name="metrics"><default-field title="Metrics"><link url="metrics" text="Metrics" link-type="anchor" parameter-map="{queryString:'source.id:&quot;scrape:'+targetId+'&quot;',from:'now-1h'}"/></default-field></field>
+            <field name="update"><default-field><submit text="Save"/></default-field></field>
+            <field name="run"><default-field title=""><link url="scrapeNow" text="Scrape now" link-type="hidden-form"><parameter name="targetId"/></link></default-field></field>
+            <field name="delete"><default-field title=""><link url="deleteTarget" text="Delete" link-type="hidden-form" confirmation="Delete this scrape target?"><parameter name="targetId"/></link></default-field></field>
+        </form-list>
+        <label text="The bearer token is stored encrypted and never shown; scraped series are tagged source.id scrape:TARGET. The first scrape of a counter or histogram is its baseline, so its data starts with the second scrape." type="p"/>
+        <form-single name="CreateTarget" transition="createTarget">
+            <field name="targetId"><default-field title="Target ID"><text-line size="20"/></default-field></field>
+            <field name="url"><default-field title="URL"><text-line size="60"/></default-field></field>
+            <field name="serviceName"><default-field title="Service name"><text-line size="30"/></default-field></field>
+            <field name="intervalSeconds"><default-field title="Every (seconds)"><text-line size="6" default-value="60"/></default-field></field>
+            <field name="timeoutSeconds"><default-field title="Timeout (seconds)"><text-line size="4" default-value="10"/></default-field></field>
+            <field name="bearerToken"><default-field title="Bearer token"><password size="40"/></default-field></field>
+            <field name="submitButton"><default-field title=""><submit text="Add target"/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

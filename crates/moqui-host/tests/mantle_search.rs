@@ -242,6 +242,40 @@ fn shipped_sales_dashboard(factory: &Arc<ExecutionContextFactory>, from: &str, t
     assert_eq!(total("status", "orders"), 2.0);
     assert_eq!(total("products", "sales"), 35.0);
     assert_eq!(total("products", "quantity"), 5.0);
+    // The datasets' field defaults: entity lookups and status labels for ids, and the amount's unit from currencyUomId.
+    let field = |panel: &str, name: &str| -> serde_json::Value {
+        rendered["panels"][panel]["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|frame| frame["fields"].as_array().unwrap())
+            .find(|field| field["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{panel}.{name}: {}", rendered["panels"][panel]))
+    };
+    let label = |field: &serde_json::Value, value: &str| -> String {
+        field["config"]["mappings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|mapping| mapping["value"] == value)
+            .and_then(|mapping| mapping["text"].as_str())
+            .unwrap_or_else(|| panic!("no label for {value}: {field}"))
+            .to_string()
+    };
+    let product = field("products", "product");
+    assert!(
+        !label(&product, "DEMO_1_1").is_empty() && label(&product, "DEMO_1_1") != "DEMO_1_1",
+        "{product}"
+    );
+    let status = field("status", "status");
+    assert_eq!(label(&status, "OrderCompleted"), "Completed", "{status}");
+    let sales = field("products", "sales");
+    assert_eq!(sales["config"]["unitField"], "currencyUomId", "{sales}");
+    assert_eq!(
+        sales["unit"], "USD",
+        "the unit comes from the orders' currency: {sales}"
+    );
     assert!(rendered["panels"]["monthly"]["frames"]
         .as_array()
         .unwrap()

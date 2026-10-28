@@ -6,6 +6,10 @@
         <artifacts artifactName="org.moqui.report.dataset.otel_.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <artifacts artifactName="org.moqui.report.dataset.monitor_annotations" artifactTypeEnumId="AT_SERVICE"/>
         <artifacts artifactName="org.moqui.monitor.MonitorServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <artifacts artifactName="org.moqui.impl.TelemetryServices.scrape#Targets" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="org.moqui.impl.TelemetryServices.run#Checks" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="moqui.monitor.ScrapeTarget" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.monitor.SyntheticCheck" artifactTypeEnumId="AT_ENTITY"/>
         <authz artifactAuthzId="MONITOR_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
     <artifactGroups artifactGroupId="DASHBOARDS_APP" description="Dashboards and report execution">
@@ -17,6 +21,10 @@
     <artifactGroups artifactGroupId="REPORT_DATASETS_ADMIN" description="Dataset administration and unrestricted dataset access">
         <artifacts artifactName="org.moqui.report.dataset.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="REPORT_DATASETS_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+    <artifactGroups artifactGroupId="REPORT_GIT_SYNC_ADMIN" description="Create, push and pull git syncs of definition folders">
+        <artifacts artifactName="org.moqui.report.gitSync" artifactTypeEnumId="AT_SERVICE"/>
+        <authz artifactAuthzId="REPORT_GIT_SYNC_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
     <artifactGroups artifactGroupId="REPORT_CONTACT_ADMIN" description="Allow outgoing report alert webhooks">
         <artifacts artifactName="org.moqui.report.contact.webhook" artifactTypeEnumId="AT_SERVICE"/>

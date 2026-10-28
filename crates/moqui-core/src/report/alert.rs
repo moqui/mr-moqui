@@ -610,6 +610,22 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     }
 }
 
+/// Save a notification group's row now, in its own transaction, outside the rule's state write.
+fn record_notification(
+    ec: &ExecutionContext,
+    entity: &crate::entity::EntityFacade,
+    row: &crate::entity::EntityValue,
+) -> Result<(), Error> {
+    entity.transactions_for("moqui.report.AlertNotification")?.run(
+        crate::transaction::TransactionAttribute::ForceNew,
+        None,
+        || {
+            let _storage = ec.disable_authz();
+            row.create_or_update(entity)
+        },
+    )
+}
+
 /// Groups events per contact point, delivers what is due, and returns the notification rows to save. Nothing here
 /// holds a lock: the rule's claim keeps other evaluators away while contact I/O runs. A failed group or delivery is
 /// logged and left pending for retry; the other groups go on.
@@ -696,13 +712,19 @@ fn notify(
                 if now.saturating_sub(first) >= group_wait
                     && (pending || sent == 0 || now.saturating_sub(sent) >= repeat)
                 {
-                    match send_contact(contact, &payload) {
-                        Ok(()) => {
-                            row.set("lastSent", stamp(now));
-                            row.set("lastSentHash", Value::string(&hash));
-                        }
-                        Err(error) => {
-                            tracing::error!(rule=id,contact=%contact_id,%error,"alert delivery failed; will retry")
+                    // Recorded as sent before sending, in a transaction of its own: if the rule's state write then
+                    // fails, the retry finds this group's state already sent and does not send it again. A failed send
+                    // puts the previous record back, so it is retried.
+                    let previous = (row.get("lastSent").cloned(), row.get("lastSentHash").cloned());
+                    row.set("lastSent", stamp(now));
+                    row.set("lastSentHash", Value::string(&hash));
+                    record_notification(ec, &entity, &row)?;
+                    if let Err(error) = send_contact(contact, &payload) {
+                        tracing::error!(rule=id,contact=%contact_id,%error,"alert delivery failed; will retry");
+                        row.set("lastSent", previous.0.unwrap_or(Value::Null));
+                        row.set("lastSentHash", previous.1.unwrap_or(Value::Null));
+                        if let Err(error) = record_notification(ec, &entity, &row) {
+                            tracing::error!(rule=id,contact=%contact_id,%error,"failed alert delivery could not be marked for retry; it is retried at the repeat interval");
                         }
                     }
                 }
@@ -839,9 +861,51 @@ fn validate_refs(ec: &ExecutionContext, body: &Json) -> Result<(), Error> {
     Ok(())
 }
 
-/// The rule body with the shared contact points, silences and mute timings it references added to its own. A
-/// reference the owner cannot read, or that names another type, is logged and left out; the rest still apply.
-fn effective_body(ec: &ExecutionContext, id: &str, body: &Json) -> Json {
+/// The most shared silences one evaluation pass loads to match by labels.
+const MAX_SHARED_SILENCES: usize = 500;
+
+/// The saved shared silences, read once per evaluation pass. Each applies by its matchers to every rule whose owner may
+/// read it, not only to rules that reference it; one with no matchers applies only where referenced.
+fn shared_silences(ec: &ExecutionContext) -> Vec<Json> {
+    let rows = {
+        let _metadata = ec.disable_authz();
+        ec.factory().entity().map(|entity| {
+            entity
+                .find("moqui.report.Definition")
+                .and_then(|find| find.eq("definitionType", Value::string("silence")).list())
+        })
+    };
+    let rows = match rows {
+        Some(Ok(rows)) => rows,
+        Some(Err(error)) => {
+            tracing::error!(%error, "shared silences could not be read; only referenced silences apply this pass");
+            return Vec::new();
+        }
+        None => return Vec::new(),
+    };
+    let mut silences = Vec::new();
+    for row in rows.iter() {
+        match super::definitions::row_json(row) {
+            Ok(silence) if silence["body"]["matchers"].as_object().is_some_and(|m| !m.is_empty()) => {
+                silences.push(silence)
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(silence=?row.get("definitionId"),%error,"shared silence could not be read, continuing")
+            }
+        }
+        if silences.len() >= MAX_SHARED_SILENCES {
+            tracing::warn!("more than {MAX_SHARED_SILENCES} shared silences; the rest apply only where referenced");
+            break;
+        }
+    }
+    silences
+}
+
+/// The rule body with the shared contact points, silences and mute timings it references added to its own, plus each
+/// of `silences` (the pass's shared silences) its owner may read. A reference the owner cannot read, or that names
+/// another type, is logged and left out; the rest still apply.
+fn effective_body(ec: &ExecutionContext, id: &str, body: &Json, silences: &[Json]) -> Json {
     let mut effective = body.clone();
     for (kind, key, collection) in SHARED {
         for reference in shared_refs(body, key).take(MAX_REFS) {
@@ -867,6 +931,26 @@ fn effective_body(ec: &ExecutionContext, id: &str, body: &Json) -> Json {
             }
             if let Some(items) = effective[collection].as_array_mut() {
                 items.push(item);
+            }
+        }
+    }
+    let referenced: BTreeSet<&str> = shared_refs(body, "silenceRefs").collect();
+    for silence in silences {
+        if referenced.contains(text(silence, "id", "")) {
+            continue;
+        }
+        match super::definitions::readable(silence) {
+            Ok(true) => {
+                if !effective["silences"].is_array() {
+                    effective["silences"] = json!([]);
+                }
+                if let Some(items) = effective["silences"].as_array_mut() {
+                    items.push(silence["body"].clone());
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(rule=id,silence=?silence["id"],%error,"shared silence access could not be checked, skipping")
             }
         }
     }
@@ -974,7 +1058,12 @@ fn finish(
 
 /// Claims the rule, evaluates and delivers with no lock held, then saves the result. A failure gives the claim back
 /// without moving the rule's evaluation time, so the next pass retries it.
-fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<(usize, Vec<Json>), Error> {
+fn evaluate_owned(
+    ec: &ExecutionContext,
+    definition: &Json,
+    now: i64,
+    silences: &[Json],
+) -> Result<(usize, Vec<Json>), Error> {
     let entity = ec
         .factory()
         .entity()
@@ -984,7 +1073,7 @@ fn evaluate_owned(ec: &ExecutionContext, definition: &Json, now: i64) -> Result<
     let Some(token) = claim(ec, &entity, id, now, interval)? else {
         return Ok((0, Vec::new()));
     };
-    let result = evaluate_claimed(ec, &entity, definition, now, interval)
+    let result = evaluate_claimed(ec, &entity, definition, now, interval, silences)
         .and_then(|outcome| finish(ec, &entity, id, &token, now, Some(&outcome)).map(|()| outcome));
     match result {
         Ok(outcome) => {
@@ -1014,6 +1103,7 @@ fn evaluate_claimed(
     definition: &Json,
     now: i64,
     interval: i64,
+    silences: &[Json],
 ) -> Result<Outcome, Error> {
     let id = text(definition, "id", "");
     let body = &definition["body"];
@@ -1213,7 +1303,7 @@ fn evaluate_claimed(
         );
     }
     if !events.is_empty() {
-        let effective = effective_body(ec, id, body);
+        let effective = effective_body(ec, id, body, silences);
         outcome.saved.extend(notify(ec, definition, &effective, &events, now)?);
     }
     Ok(outcome)
@@ -1225,6 +1315,7 @@ fn evaluate_rule(
     factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
     definition: &Json,
     now: i64,
+    silences: &[Json],
 ) -> Result<(usize, Vec<Json>), Error> {
     let entity = factory.entity().ok_or_else(|| fail("entity facade is unavailable"))?;
     let context = factory.new_context();
@@ -1240,7 +1331,7 @@ fn evaluate_rule(
     };
     crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or("")).map_err(fail)?;
     context.set_effective_time(Some(now));
-    evaluate_owned(&context, definition, now)
+    evaluate_owned(&context, definition, now, silences)
 }
 
 /// Scheduled pass: definitions are loaded as system metadata, then each rule runs in a fresh context authenticated
@@ -1289,6 +1380,7 @@ pub fn evaluate_rules(
         }
         (definitions, invalid)
     };
+    let silences = shared_silences(ec);
     let factory = ec.factory().clone();
     let workers = factory
         .conf_number::<usize>("report", "alert-workers", 4)
@@ -1301,7 +1393,7 @@ pub fn evaluate_rules(
             break;
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            evaluate_rule(&factory, &definition, now)
+            evaluate_rule(&factory, &definition, now, &silences)
         }))
         .unwrap_or_else(|_| Err(fail("alert rule evaluation panicked")));
         let mut totals = totals.lock().unwrap_or_else(|e| e.into_inner());

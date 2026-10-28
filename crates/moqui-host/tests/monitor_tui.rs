@@ -146,6 +146,11 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     let facade = search::installed(factory).unwrap();
     facade.index_entries("otel_spans",vec![document(json!({"_id":"tui-root","trace_id":TRACE,"span_id":"1111111111111111","name":"TUI monitored request","kind":"SERVER","start":now-5000,"start_nano":(now-5000)*1_000_000,"duration_nano":10000000,"status_code":"ERROR","service.name":"monitor-tui","service.instance.id":"tui-instance","source.id":"tui-source","source.name":"TUI fixture","attributes":{"http.route":"/native-monitor"},"events":[{"name":"exception","attributes":{"exception.message":"tui exception"}}]}))]).unwrap();
     facade.index_entries("otel_logs",(0..3).map(|at|document(json!({"_id":format!("tui-log-{at}"),"timestamp":stamp,"severity_text":"ERROR","severity_number":17,"body":format!("tui-marker line {at}"),"trace_id":TRACE,"span_id":"1111111111111111","service.name":"monitor-tui","service.instance.id":"tui-instance","source.id":"tui-source","source.name":"TUI fixture","thread.name":"tui-worker","user.id":"EX_JOHN_DOE","exception.type":"TuiError","exception.stacktrace":"monitor_tui.rs:42"}))).collect()).unwrap();
+    // An agent run: its AT_LLM frame and one LLM call with gen_ai.* attributes, for the AI screen.
+    facade.index_entries("otel_spans",vec![
+        document(json!({"_id":"tui-agent-frame","trace_id":"cccccccccccccccccccccccccccccccc","span_id":"3333333333333333","name":"agent:tui-helper","kind":"INTERNAL","start":now-4000,"start_nano":(now-4000)*1_000_000,"duration_nano":30000000,"status_code":"UNSET","moqui.artifact.type":"AT_LLM","service.name":"monitor-tui"})),
+        document(json!({"_id":"tui-agent-call","trace_id":"cccccccccccccccccccccccccccccccc","span_id":"4444444444444444","parent_span_id":"3333333333333333","name":"tui-endpoint:tui-model","kind":"CLIENT","start":now-3990,"start_nano":(now-3990)*1_000_000,"duration_nano":20000000,"status_code":"UNSET","moqui.artifact.type":"AT_LLM","gen_ai.operation.name":"chat","gen_ai.provider.name":"tui-endpoint","gen_ai.request.model":"tui-model","gen_ai.usage.input_tokens":120,"gen_ai.usage.output_tokens":30,"service.name":"monitor-tui"})),
+    ]).unwrap();
     facade.index_entries("otel_errors",vec![document(json!({"_id":"tui-error","fingerprint":"tui-error","message":"TUI failure group","count":3,"first_seen":now-5000,"last_seen":now-5000,"stacktrace":"monitor_tui.rs:42","service.name":"monitor-tui","sample_trace_ids":[TRACE]}))]).unwrap();
     facade.index_entries("otel_metrics",vec![document(json!({"_id":"tui-metric","name":"moqui.artifact.duration","bucket_start":now-60000,"bucket_end":now,"granularity":"minute","count":3,"sum":0.03,"min":0.01,"max":0.01,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.name":"monitor.tui","service.name":"monitor-tui","service.instance.id":"tui-instance"}))]).unwrap();
     // Request metrics for two versions, one with server errors, for the Services drill-down, the Metrics picker and Compare.
@@ -193,6 +198,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "/apps/monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
         ),
         ("Monitor/Logs", "/apps/monitor/Logs?from=now-1h&thru=now"),
+        ("Monitor/AgentTraces", "/apps/monitor/AgentTraces?from=now-1h&thru=now"),
+        ("Monitor/Checks", "/apps/monitor/Checks"),
         (
             "Monitor/Metrics",
             "/apps/monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
@@ -221,6 +228,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "/apps/dashboards/Definition?definitionId=tui-dashboard&leftVersion=0&rightVersion=1",
         ),
         ("Dashboards/Panels", "/apps/dashboards/Panels"),
+        ("Dashboards/GitSync", "/apps/dashboards/GitSync"),
         ("Dashboards/Datasets", "/apps/dashboards/Datasets"),
         (
             "Dashboards/Explore",
@@ -307,6 +315,15 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     ] {
         assert!(seen.contains(name), "specialized twin {name} was not reachable");
     }
+    // The AI screen groups LLM calls by trace and names each by its agent frame.
+    let ai = open(&link, "/apps/monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);
+    assert!(
+        ai.contains("agent:tui-helper") && ai.contains("tui-model") && ai.contains("120"),
+        "{ai}"
+    );
+    // Log patterns group the fixture's three lines into one template.
+    let patterns = open(&link, "/apps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y&queryString=body%3Atui-marker").screen_text(220, 120);
+    assert!(patterns.contains("tui-marker line <*>"), "{patterns}");
     let mut dashboard = open(
         &link,
         "/apps/dashboards/Dashboard?definitionId=tui-dashboard&from=now-1h&thru=now",

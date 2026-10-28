@@ -1,7 +1,7 @@
 <screen require-authentication="false">
     <actions><script><![CDATA[
         reportFrame = {fields:[{name:'product',type:'string',values:['<script>bad()</script>','=SUM(A1)']},
-            {name:'amount',type:'number',values:[12.5,null]}]}
+            {name:'amount',type:'number',values:[12.5,null]},{name:'rate',type:'number',values:[basicConvert('7.25','BigDecimal'),null]}]}
         reportPanel = {title:'Sales & returns',visualization:'table'}
         reportDashboard = {panels:{sales:reportPanel}}
         reportFrames = {sales:[reportFrame]}

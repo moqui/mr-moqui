@@ -23,10 +23,14 @@ pub mod ingest;
 pub mod maintenance;
 #[cfg(feature = "http")]
 pub mod otlp;
+pub mod received;
+pub mod scrape;
 
 pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crate::context::Error> {
     registry.service_function("moqui_core::telemetry::clean", clean)?;
     registry.service_function("moqui_core::telemetry::rollup", rollup)?;
+    registry.service_function("moqui_core::telemetry::scrape_targets", scrape::scrape_targets)?;
+    registry.service_function("moqui_core::telemetry::run_checks", scrape::run_checks)?;
     Ok(())
 }
 
@@ -75,6 +79,9 @@ pub struct TraceContext {
     pub span_id: String,
     pub sampled: bool,
     pub tracestate: String,
+    /// Made by this process's SDK, so `sampled` is this server's own head decision. A context extracted from a caller's
+    /// `traceparent` is not local: its flag never turns sampling on here.
+    pub local: bool,
 }
 
 impl TraceContext {
@@ -101,6 +108,7 @@ impl TraceContext {
             span_id: parts[2].to_string(),
             sampled: u8::from_str_radix(parts[3], 16).ok()? & 1 != 0,
             tracestate: tracestate.to_string(),
+            local: false,
         })
     }
 
@@ -574,6 +582,8 @@ struct Shared {
     warned_legacy: AtomicBool,
     gauges_registered: AtomicBool,
     slow: Mutex<HashMap<u64, RunningStats>>,
+    /// Running totals of received metrics, for `/metrics`.
+    received: Mutex<received::Received>,
 }
 
 pub struct Telemetry {
@@ -599,6 +609,7 @@ impl Telemetry {
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
             slow: Mutex::default(),
+            received: Mutex::default(),
         });
         let worker = if shared.config.enabled {
             let state = Arc::clone(&shared);
@@ -679,6 +690,38 @@ impl Telemetry {
             }
         }
         let _ = (name, kind, parent);
+        Span::noop()
+    }
+
+    /// A child that keeps its local parent's head decision: a sampled frame keeps its statements, an unsampled one
+    /// leaves them to tail promotion (errors and slow roots). A parent extracted from a caller uses the global ratio,
+    /// so a caller's flag cannot turn on full tracing.
+    pub fn start_child_span(&self, name: &str, kind: SpanKind, parent: TraceContext) -> Span {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                let ratio = match (parent.local, parent.sampled) {
+                    (true, true) => 1.0,
+                    (true, false) => 0.0,
+                    (false, _) => self.shared.config.sample_ratio,
+                };
+                return sdk.start_span(name, kind, Some(parent), None, false, ratio);
+            }
+        }
+        let _ = (name, kind, parent);
+        Span::noop()
+    }
+
+    /// A root of its own trace that is always head-sampled, so its children are kept with it: for low-volume work
+    /// whose every trace is wanted whole, such as a synthetic check.
+    pub fn start_sampled_root(&self, name: &str, kind: SpanKind) -> Span {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                return sdk.start_span(name, kind, None, None, false, 1.0);
+            }
+        }
+        let _ = (name, kind);
         Span::noop()
     }
 
@@ -765,6 +808,9 @@ impl Telemetry {
         if !self.accepting() {
             return Err(Error::new("telemetry is disabled"));
         }
+        if index == "otel_metrics" {
+            lock(&self.shared.received).record(&documents);
+        }
         self.shared.try_enqueue(index, documents, false)
     }
 
@@ -773,13 +819,17 @@ impl Telemetry {
         self.shared.config.enabled && !self.shared.stopped.load(Ordering::Acquire)
     }
 
-    /// The SDK's instruments as Prometheus text (exposition format 0.0.4), cumulative since start; None when telemetry
-    /// is off or its metrics cannot be collected.
+    /// The SDK's instruments as Prometheus text (exposition format 0.0.4), cumulative since start, then the metrics
+    /// received over OTLP and from scrape targets (a received family named like one of this server's is left out);
+    /// None when telemetry is off or its metrics cannot be collected.
     pub fn prometheus_text(&self) -> Option<String> {
         #[cfg(feature = "telemetry")]
         if self.shared.config.enabled {
             if let Some(sdk) = &self.sdk {
-                return sdk.prometheus_text();
+                let mut text = sdk.prometheus_text()?;
+                let received = prometheus::render_received(&lock(&self.shared.received), &text);
+                text.push_str(&received);
+                return Some(text);
             }
         }
         None
@@ -1393,7 +1443,9 @@ fn true_field(document: &Document, key: &str) -> bool {
 }
 
 fn mandatory_root(document: &Document) -> bool {
-    string_field(document, "kind") == "SERVER" || true_field(document, "moqui.job.root")
+    string_field(document, "kind") == "SERVER"
+        || true_field(document, "moqui.job.root")
+        || true_field(document, "moqui.synthetic.check")
 }
 
 /// Tail promotion may make a large batch. Charge mandatory local roots first,
@@ -1776,6 +1828,12 @@ pub fn error_fingerprint(kind: &str, message: &str, stack: &str) -> String {
         "{:x}",
         Sha256::digest(format!("{kind}\n{normalized}\n{frames}").as_bytes())
     )
+}
+
+/// `text` with each variable part (quoted text, hex, a UUID, a number) replaced by `replacement`: the masking that
+/// error fingerprints and log patterns share.
+pub fn mask_message(text: &str, replacement: &str) -> String {
+    regex_for_fingerprint().replace_all(text, replacement).into_owned()
 }
 
 fn regex_for_fingerprint() -> &'static regex::Regex {

@@ -427,6 +427,46 @@ mod enabled {
     }
 
     #[test]
+    fn received_metrics_show_on_the_prometheus_text() {
+        let (telemetry, _memory) = telemetry(0.0);
+        let decoded = super::ingest::Decoder::default()
+            .decode(
+                super::ingest::Signal::Metrics,
+                "application/json",
+                br#"{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"edge-app"}}]},
+                    "scopeMetrics":[{"metrics":[{"name":"queue.depth","gauge":{"dataPoints":[{"timeUnixNano":"1000000000","asDouble":4}]}}]}]}]}"#,
+                "edge",
+            )
+            .unwrap();
+        telemetry.try_ingest(decoded.index, decoded.documents).unwrap();
+        let text = telemetry.prometheus_text().unwrap();
+        assert!(
+            text.contains("queue_depth{service_name=\"edge-app\",source=\"edge\"} 4\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn statement_children_keep_a_local_parents_decision_but_not_a_callers_flag() {
+        let (telemetry, _memory) = telemetry(0.0);
+        let sampled = telemetry.start_sampled_root("frame", SpanKind::Internal);
+        let parent = sampled.context().unwrap();
+        assert!(parent.local && parent.sampled);
+        let child = telemetry.start_child_span("sql", SpanKind::Client, parent);
+        assert!(child.context().unwrap().sampled, "a sampled frame keeps its statements");
+        let unsampled = telemetry.start_span("frame", SpanKind::Internal, None);
+        let child = telemetry.start_child_span("sql", SpanKind::Client, unsampled.context().unwrap());
+        assert!(!child.context().unwrap().sampled);
+        let caller = TraceContext::extract("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "").unwrap();
+        assert!(!caller.local);
+        let child = telemetry.start_child_span("sql", SpanKind::Client, caller);
+        assert!(
+            !child.context().unwrap().sampled,
+            "a caller's sampled flag does not turn on tracing"
+        );
+    }
+
+    #[test]
     fn sdk_tree_log_correlation_and_delta_metrics() {
         let (telemetry, memory) = telemetry(1.0);
         let root = telemetry.start_span("request", SpanKind::Server, None);
@@ -1124,6 +1164,7 @@ fn admission_shared() -> (Shared, mpsc::Receiver<Command>) {
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
             slow: Mutex::default(),
+            received: Mutex::default(),
         },
         receiver,
     )

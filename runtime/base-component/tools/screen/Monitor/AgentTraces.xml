@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="AI" default-menu-index="6">
+    <parameter name="from"/><parameter name="thru"/><parameter name="provider"/><parameter name="model"/><parameter name="agent"/><parameter name="errorsOnly"/>
+    <transition name="traceDetail"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="dashboard"><default-response url="//apps/dashboards/Dashboard"/></transition>
+    <transition name="usage"><default-response url="//apps/system/Llm/Usage"/></transition>
+    <actions><script><![CDATA[
+        // LLM calls are CLIENT spans with OTel gen_ai.* attributes, under an AT_LLM frame named agent:, gateway:, assist: or
+        // mcp: (llm/provider/mod.rs). Calls are read newest first and grouped by trace here; the frames name each trace.
+        from = from || 'now-24h'; thru = thru || 'now'
+        const quote = value => '"'+String(value).replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"'
+        const clauses = ['gen_ai.operation.name:*']
+        if (provider) clauses.push('gen_ai.provider.name:'+quote(provider))
+        if (model) clauses.push('(gen_ai.request.model:'+quote(model)+' OR gen_ai.response.model:'+quote(model)+')')
+        queryNotices = []
+        const query = (queryString,pageSize,sort) => ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
+            datasetId:'otel_spans',from,thru,queryString,pageSize,sort:sort || ['-time','-__cursor']}).call()
+        const options = (field) => {
+            try {
+                const output = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_spans',from,thru,
+                    queryString:'gen_ai.operation.name:*',aggregations:[{id:'value',type:'terms',role:'x-axis',params:{field,size:50}}]}}).call()
+                const frame=(output.frames || [])[0] || {fields:[]},values=frame.fields.find(item=>item.name==='value')
+                return values ? values.values.filter(value=>value != null).map(value=>({value,text:value})) : []
+            } catch (error) { queryNotices.push(String(error)); return [] }
+        }
+        providerOptions = options('gen_ai.provider.name'); modelOptions = options('gen_ai.request.model')
+        let calls = []
+        try {
+            const result = query(clauses.join(' AND '),1000)
+            calls = (result.hits || []).map(hit=>hit.body || {})
+            if ((result.total || 0) > calls.length) queryNotices.push(ec.l10n.localize('Showing the traces of the newest {0} of {1} LLM calls; narrow the time range to see older ones.').replace('{0}',calls.length).replace('{1}',result.total))
+            queryNotices.push(...(result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
+        } catch (error) { queryNotices.push(String(error)) }
+        const number = value => { const parsed=Number(value); return Number.isFinite(parsed) ? parsed : 0 }
+        const traces = new Map()
+        for (const call of calls) {
+            const id = call.trace_id; if (!id) continue
+            let trace = traces.get(id)
+            if (!trace) { trace = {traceId:id,started:call.start,calls:0,inputTokens:0,outputTokens:0,errors:0,maxMillis:0,models:new Set(),providers:new Set(),service:call['service.name'] || '',agent:''}; traces.set(id,trace) }
+            trace.calls++
+            trace.inputTokens += number(call['gen_ai.usage.input_tokens']); trace.outputTokens += number(call['gen_ai.usage.output_tokens'])
+            if (call.status_code === 'ERROR') trace.errors++
+            trace.maxMillis = Math.max(trace.maxMillis,number(call.duration_nano)/1000000)
+            const model = call['gen_ai.response.model'] || call['gen_ai.request.model']; if (model) trace.models.add(model)
+            if (call['gen_ai.provider.name']) trace.providers.add(call['gen_ai.provider.name'])
+            if (String(call.start) < String(trace.started)) trace.started = call.start
+        }
+        // The AT_LLM frames of these traces give each one its agent, gateway or assist name (the outermost frame wins).
+        const ids = Array.from(traces.keys()).slice(0,200)
+        for (let at=0;at<ids.length;at+=50) {
+            const batch = ids.slice(at,at+50)
+            try {
+                const frames = query('moqui.artifact.type:AT_LLM AND kind:INTERNAL AND trace_id:('+batch.join(' OR ')+')',1000,['start','__cursor'])
+                for (const hit of frames.hits || []) {
+                    const frame = hit.body || {}, trace = traces.get(frame.trace_id)
+                    if (trace && !trace.agent) trace.agent = frame.name || frame['moqui.artifact.name'] || ''
+                }
+            } catch (error) { queryNotices.push(String(error)) }
+        }
+        traceList = Array.from(traces.values())
+            .filter(trace => !agent || String(trace.agent).toLowerCase().includes(String(agent).toLowerCase()))
+            .filter(trace => errorsOnly !== 'Y' || trace.errors > 0)
+            .slice(0,200)
+            .map(trace => Object.assign(trace,{models:Array.from(trace.models).join(', '),providers:Array.from(trace.providers).join(', '),
+                totalTokens:trace.inputTokens+trace.outputTokens,maxMillis:Math.round(trace.maxMillis*10)/10}))
+        totals = traceList.reduce((sum,trace)=>({traces:sum.traces+1,calls:sum.calls+trace.calls,inputTokens:sum.inputTokens+trace.inputTokens,outputTokens:sum.outputTokens+trace.outputTokens,errors:sum.errors+trace.errors}),{traces:0,calls:0,inputTokens:0,outputTokens:0,errors:0})
+    ]]></script></actions>
+    <widgets>
+        <label text="AI and agent traces" type="h4"/>
+        <label text="Traces with LLM calls (OTel gen_ai.* spans): calls, token use, models and errors per trace, named by the agent, gateway or assist frame that made them. Prompts and replies are never recorded. Missing traces may reflect sampling or telemetry loss." type="p"/>
+        <container>
+            <link url="dashboard" text="AI dashboard" link-type="anchor"><parameter name="definitionId" value="monitor-ai"/><parameter name="from"/><parameter name="thru"/></link>
+            <link url="usage" text="Usage and cost" link-type="anchor"/>
+        </container>
+        <form-single name="AiFilters" transition=".">
+            <field name="provider"><default-field title="Provider"><drop-down allow-empty="true"><list-options list="providerOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="model"><default-field title="Model"><drop-down allow-empty="true"><list-options list="modelOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="agent"><default-field title="Agent or frame contains"><text-line size="20"/></default-field></field>
+            <field name="errorsOnly"><default-field title="Only traces with errors"><check><option key="Y" text=" "/></check></default-field></field>
+            <field name="from"><default-field title="From"><text-line default-value="now-24h"/></default-field></field>
+            <field name="thru"><default-field title="Through"><text-line default-value="now"/></default-field></field>
+            <field name="find"><default-field><submit text="Search"/></default-field></field>
+        </form-single>
+        <label text="${totals.traces} traces, ${totals.calls} LLM calls, ${totals.inputTokens} input and ${totals.outputTokens} output tokens, ${totals.errors} failed calls" type="p"/>
+        <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <form-list name="AgentTraceList" list="traceList" skip-form="true" paginate="false">
+            <field name="started"><default-field title="Started"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+            <field name="agent"><default-field title="Agent or frame"><display/></default-field></field>
+            <field name="service"><default-field title="Service"><display/></default-field></field>
+            <field name="calls"><default-field title="Calls"><display/></default-field></field>
+            <field name="inputTokens"><default-field title="Input tokens"><display/></default-field></field>
+            <field name="outputTokens"><default-field title="Output tokens"><display/></default-field></field>
+            <field name="models"><default-field title="Models"><display/></default-field></field>
+            <field name="providers"><default-field title="Providers"><display/></default-field></field>
+            <field name="maxMillis"><default-field title="Slowest call (ms)"><display/></default-field></field>
+            <field name="errors"><default-field title="Errors"><display style="${errors ? 'text-negative' : ''}"/></default-field></field>
+            <field name="traceId"><default-field title="Trace"><link url="traceDetail" text="${traceId}" link-type="anchor"><parameter name="traceId"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

@@ -217,10 +217,11 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
         .flatten()
     });
     // A statement is a span only inside a trace: a scheduler poll or a data load outside any request or job would
-    // otherwise write a trace per statement. Its duration metric is recorded either way.
+    // otherwise write a trace per statement. Its duration metric is recorded either way. It keeps its frame's head
+    // decision, so a frame sampled by its type's ratio keeps its statements.
     let parent = telemetry.as_ref().and_then(|_| crate::telemetry::capture());
     let mut span = telemetry.as_ref().zip(parent).map(|(telemetry, parent)| {
-        let mut span = telemetry.start_span("sql", crate::telemetry::SpanKind::Client, Some(parent));
+        let mut span = telemetry.start_child_span("sql", crate::telemetry::SpanKind::Client, parent);
         if span.is_recording() {
             span.set_attribute("db.query.text", Value::String(crate::telemetry::redact_sql(sql)));
             if let Some(system) = &system {

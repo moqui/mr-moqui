@@ -53,10 +53,6 @@
         }
         for (const version of [leftVersion,rightVersion]) if (version) versions.add(String(version))
         versionOptions=Array.from(versions).sort().map(value=>({value,text:value}))
-        // A fractional number comes back from the service as a decimal, which JSON.stringify writes as {}; the widgets take numbers.
-        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
-            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
-        redFrames=plain(redFrames)
     ]]></script></actions>
     <widgets>
         <form-single name="CompareOptions" transition=".">

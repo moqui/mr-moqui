@@ -1,6 +1,6 @@
 # Monitoring
 
-M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. The Later stages are not started. The user guide is [docs/Monitoring.md](../docs/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
+M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. A third pass on Oct 28 built the Dashboards later items (repeats; funnel, node graph, flame graph and geomap; log patterns; the agent-traces view; Git sync) and pulling (scrape targets and synthetic checks), and closed those follow-ups: received metrics on `/metrics`, SQL spans following their frame's sampling, gzip and merged OTLP export, shared silences matched by label, definition delete, notifications not sent twice, the TUI time picker, panel menu, suggestions and kiosk scrolling, data links that keep the time range, a signed-in `report-embed` test, a shipped latency heatmap, inline search highlights, Dashboards list links that work under BOSS Insights, decimals in TUI props, localization of the widgets and shipped dashboards, `unitField` amounts, and lookup labels without entity grants. The overhead measurements remain. The Later stages are not started. The user guide is [docs/Monitoring.md](../docs/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
 
 ## Objective and scope
 
@@ -204,7 +204,7 @@ Internal and external sources share the same documents and the same screens, tol
   - Attributes: `moqui.artifact.type`, `.name`, `.action`, `.sub_type`, user and visit ids, and the error status from `ec.message` errors.
   - These spans replace ArtifactHit rows.
   - User and visit ids are span attributes, never metric labels.
-  - Each LLM provider call gets a CLIENT span under its `AT_LLM` frame, with the OTel `gen_ai.*` attributes: provider, model, input and output tokens, and finish reason. AI telemetry (requirement 2) then needs no separate store. An agent-traces view comes later.
+  - Each LLM provider call gets a CLIENT span under its `AT_LLM` frame, with the OTel `gen_ai.*` attributes: provider, model, input and output tokens, and finish reason. AI telemetry (requirement 2) then needs no separate store. The agent-traces view (Monitor › AI, built Oct 28) groups these calls by trace and names each by its AT_LLM frame.
 - **SQL:** a CLIENT span per statement inside a trace, with `db.system.name` and the parameterized `db.query.text`. A statement outside any trace (a scheduler poll, a data load) gets no span, but its duration metric is still recorded. The slow-statement warning (now with the SQL redacted) and the statement counters stay.
 - **Jobs:** a root span per `ServiceJobRun`, with the trace id saved on the run so the job screens can link to it. Its error is the job's first error message.
 - **Not recorded:** `/health`, `/metrics` and the OTLP receiver paths write no request span.
@@ -280,7 +280,7 @@ These go into `Agg` and both backends, with tests on each. The report tool needs
 - **Decoding:** `opentelemetry-proto` decodes into the same documents the local exporter writes, so every screen works on external data unchanged.
 - **Temporality:** many senders, Prometheus-style ones among them, send cumulative points. These become deltas through a bounded per-series cache of the last point, keyed by series fingerprint and start time; a lower value or a new start time is a reset. Exponential histograms became deltas the same way in the completion wave, and are merged for the rollups by scaling down to common buckets (`telemetry/exponential.rs`).
 - **gRPC** (tonic on 4317) is deferred behind a feature.
-- **Pulling later:** a ServiceJob that scrapes Prometheus-text endpoints into `otel_metrics`, and synthetic checks recorded as spans.
+- **Pulling** (built Oct 28): ServiceJobs scrape Prometheus-text endpoints (`moqui.monitor.ScrapeTarget`) into `otel_metrics` through the same decoder, so cumulative series become deltas, and run synthetic HTTP checks (`moqui.monitor.SyntheticCheck`), each recorded as a kept, fully sampled root span with its request as a CLIENT child (`telemetry/scrape.rs`, Monitor › Checks).
 
 ### Failure tolerance
 
@@ -539,7 +539,7 @@ A panel is queries, then transformations, then a visualization with its options 
   - logs
   - the trace waterfall
   - text: Markdown with variables
-- **Visualizations, later:** node graph (service map), flame graph (profiles), funnel, geomap.
+- **Visualizations, second set** (built Oct 28): node graph (service map), flame graph (span self time; no profiles are stored), funnel, geomap.
 - **Field config,** shared by every visualization:
   - unit (duration, bytes, percent, count, and currency from `Uom`), decimals, min and max, and no-value text
   - thresholds, absolute or percent, with colours
@@ -558,7 +558,7 @@ A panel is queries, then transformations, then a visualization with its options 
 
 - **Model:** a map of panels, plus a separate layout tree (Grafana's v2 shape). The same panels can then be laid out again for the screen, a PDF or the TUI.
   - Layouts: a 24-column grid, an auto grid, collapsible rows, and tabs.
-  - Repeating a panel or row for each value of a variable comes later.
+  - Repeating a panel or row for each value of a variable (built Oct 28), expanded on the server.
   - A panel is either stored by value, or a reference to a library panel.
 - **Variables:**
   - Kinds: query (terms over a dataset field), custom list, constant, interval, text box, ad hoc filters, and group-by.
@@ -762,11 +762,11 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
   - Advisory by default. Never reverse committed business transactions automatically.
 - **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver.
 - **Dashboards, later:**
-  - repeating rows and panels
-  - node graph, flame graph, funnel and geomap
-  - grouping log lines into patterns
-  - an agent-traces view over `gen_ai.*`
-  - Git sync of definitions
+  - repeating rows and panels (built Oct 28)
+  - node graph, flame graph, funnel and geomap (built Oct 28)
+  - grouping log lines into patterns (built Oct 28: `report/patterns.rs`, Explore's log patterns)
+  - an agent-traces view over `gen_ai.*` (built Oct 28: Monitor › AI)
+  - Git sync of definitions (built Oct 28: two-way, per folder)
   - public links, if they are wanted
 
 Completion of the later stages is gated on: correlated failures, tenant and privacy isolation, tolerance of a telemetry outage, measured overhead, regression detection, and safe, retried and failed recovery tests. Other signal types and specialized infrastructure wait until they are needed. No extra server is required by default, and an OpenTelemetry Collector stays optional.

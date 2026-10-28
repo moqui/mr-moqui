@@ -412,3 +412,25 @@ feature('the dashboard time picker, panel menu and an embed work against the ser
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
     },
 })
+feature('a synthetic check added on Checks runs now and links its trace; AI and log patterns render',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/monitor/Checks').status==200
+        page.waitFor(()=>!!document.querySelector('form input[name="checkId"]'))
+        page.evaluate(()=>{const form=[...document.querySelectorAll('form')].find(form=>form.querySelector('input[name="checkId"]') && form.querySelector('input[name="expectStatus"]'))
+            for(const [name,value] of [['checkId','browser_health'],['name','Browser health'],['url',location.origin+'/health']]){const input=form.querySelector('input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}))}return true})
+        page.getByRole('button',{name:'Add check'}).click()
+        page.waitFor(()=>document.body.innerText.includes('browser_health'))
+        page.getByRole('button',{name:'Run now'}).first().click()
+        page.waitFor(()=>/Check browser_health passed, trace [0-9a-f]{32}/.test(document.body.innerText))
+        page.waitFor(()=>/\b[0-9a-f]{32}\b/.test(document.body.innerText) && document.body.innerText.includes('HTTP 200'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto('/qapps/monitor/AgentTraces?from=now-1h&thru=now').status==200
+        page.waitFor(()=>document.body.innerText.includes('AI and agent traces'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto('/qapps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y').status==200
+        page.waitFor(()=>document.body.innerText.includes('Hide log patterns'))
+        page.waitFor(()=>/Patterns of the newest \d+ of \d+ matching lines/.test(document.body.innerText))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+    },
+})

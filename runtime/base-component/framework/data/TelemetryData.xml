@@ -4,4 +4,8 @@
             serviceName="org.moqui.impl.TelemetryServices.rollup#Metrics" cronExpression="0 5 * * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="clean_TelemetryData_daily" description="Apply configured telemetry retention"
             serviceName="org.moqui.impl.TelemetryServices.clean#TelemetryData" cronExpression="0 15 2 * * ?" paused="N"/>
+    <moqui.service.job.ServiceJob jobName="scrape_TelemetryTargets_minute" description="Scrape Prometheus-text targets whose interval has passed"
+            serviceName="org.moqui.impl.TelemetryServices.scrape#Targets" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="run_SyntheticChecks_minute" description="Run synthetic checks whose interval has passed"
+            serviceName="org.moqui.impl.TelemetryServices.run#Checks" cronExpression="30 * * * * ?" paused="N" errorHistoryOnly="Y"/>
 </entity-facade-xml>

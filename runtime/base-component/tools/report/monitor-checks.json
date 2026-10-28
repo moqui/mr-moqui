@@ -1,0 +1,265 @@
+{
+  "id": "monitor-checks",
+  "type": "dashboard",
+  "title": "Synthetic checks and scrapes",
+  "body": {
+    "folder": "Monitor",
+    "variables": [
+      {
+        "name": "check",
+        "label": "Check",
+        "kind": "query",
+        "datasetId": "otel_spans",
+        "field": "synthetic.check.name",
+        "multi": true,
+        "includeAll": true
+      }
+    ],
+    "panels": {
+      "summary": {
+        "title": "Runs and mean duration by check",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "moqui.synthetic.check:true",
+            "aggregations": [
+              {
+                "id": "check",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "synthetic.check.name",
+                  "size": 100
+                }
+              },
+              {
+                "id": "runs",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              },
+              {
+                "id": "duration",
+                "type": "avg",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "name": "duration"
+              },
+              "config": {
+                "unit": "ns",
+                "decimals": 1
+              }
+            }
+          ]
+        }
+      },
+      "failures": {
+        "title": "Failed runs by check",
+        "visualization": "bar",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "moqui.synthetic.check:true AND status_code:ERROR",
+            "aggregations": [
+              {
+                "id": "check",
+                "type": "terms",
+                "role": "x-axis",
+                "params": {
+                  "field": "synthetic.check.name",
+                  "size": 20
+                }
+              },
+              {
+                "id": "runs",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "title": "Check runs by status",
+        "visualization": "timeSeries",
+        "stacked": true,
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "moqui.synthetic.check:true",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "status",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "status_code",
+                  "size": 5
+                }
+              },
+              {
+                "id": "runs",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "latency": {
+        "title": "Mean check duration",
+        "visualization": "timeSeries",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ns",
+            "decimals": 1
+          }
+        },
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "moqui.synthetic.check:true",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "check",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "synthetic.check.name",
+                  "size": 20
+                }
+              },
+              {
+                "id": "duration",
+                "type": "avg",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "up": {
+        "title": "Scrape targets up (1) or down (0)",
+        "visualization": "stateTimeline",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "queryString": "name:\"up\" AND source.id:scrape*",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "target",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "service.instance.id",
+                  "size": 50
+                }
+              },
+              {
+                "id": "up",
+                "type": "min",
+                "role": "metric",
+                "params": {
+                  "field": "min"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ],
+            "metricGranularity": "auto"
+          }
+        ]
+      }
+    }
+  }
+}

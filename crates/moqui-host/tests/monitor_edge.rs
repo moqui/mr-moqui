@@ -872,3 +872,271 @@ service:
     }
     drop(collector);
 }
+#[test]
+fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
+    let gate = common::start_with_conf_properties("monitor-pull", None, "<telemetry sample-ratio=\"0\"/>", &[]);
+    let factory = gate.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let base = format!("http://{}", gate.server.address());
+    {
+        let _authz = context.disable_authz();
+        let entity = factory.entity().unwrap();
+        for (name, fields) in [
+            (
+                "moqui.monitor.ScrapeTarget",
+                vec![
+                    ("targetId", "self".into()),
+                    ("url", format!("{base}/metrics?format=prometheus")),
+                    ("serviceName", "pulled-self".into()),
+                    ("enabled", "Y".into()),
+                ],
+            ),
+            (
+                "moqui.monitor.ScrapeTarget",
+                vec![
+                    ("targetId", "gone".into()),
+                    ("url", format!("{base}/no-such-metrics")),
+                    ("enabled", "Y".into()),
+                ],
+            ),
+            (
+                "moqui.monitor.SyntheticCheck",
+                vec![
+                    ("checkId", "health".into()),
+                    ("name", "Health".into()),
+                    ("url", format!("{base}/health")),
+                    ("enabled", "Y".into()),
+                ],
+            ),
+            (
+                "moqui.monitor.SyntheticCheck",
+                vec![
+                    ("checkId", "missing".into()),
+                    ("name", "Missing page".into()),
+                    ("url", format!("{base}/no-such-check-page")),
+                    ("expectStatus", "200".into()),
+                    ("enabled", "Y".into()),
+                ],
+            ),
+        ] {
+            let mut row = entity.make_value(name).unwrap();
+            for (key, value) in fields {
+                row.set(key, Value::string(value));
+            }
+            row.create(&entity).unwrap();
+        }
+    }
+    // Every due target runs; the bad one fails on its own row and the good one is still scraped.
+    let first = invoke("org.moqui.impl.TelemetryServices.scrape#Targets", json!({}));
+    assert_eq!(first["scraped"], 2, "{first}");
+    assert_eq!(first["failed"], 1, "{first}");
+    // Not due again within its interval.
+    assert_eq!(
+        invoke("org.moqui.impl.TelemetryServices.scrape#Targets", json!({}))["scraped"],
+        0
+    );
+    let dropped = moqui_core::telemetry::for_factory(factory).counters().dropped;
+    // Forced; the second scrape turns the first one's cumulative baselines into deltas.
+    std::thread::sleep(Duration::from_millis(1100));
+    let second = invoke(
+        "org.moqui.impl.TelemetryServices.scrape#Targets",
+        json!({"targetId":"self"}),
+    );
+    assert_eq!(second["failed"], 0, "{second}");
+    assert!(second["written"].as_i64().unwrap() > 3, "{second}");
+    assert_eq!(
+        moqui_core::telemetry::for_factory(factory).counters().dropped,
+        dropped,
+        "baselines are not telemetry loss"
+    );
+    let checks = invoke("org.moqui.impl.TelemetryServices.run#Checks", json!({}));
+    assert_eq!(checks["run"], 2, "{checks}");
+    assert_eq!(checks["failed"], 1, "{checks}");
+    let (gone, missing, health) = {
+        let _authz = context.disable_authz();
+        let entity = factory.entity().unwrap();
+        let gone = entity
+            .find("moqui.monitor.ScrapeTarget")
+            .unwrap()
+            .use_cache(false)
+            .eq("targetId", Value::string("gone"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let missing = entity
+            .find("moqui.monitor.SyntheticCheck")
+            .unwrap()
+            .use_cache(false)
+            .eq("checkId", Value::string("missing"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let health = entity
+            .find("moqui.monitor.SyntheticCheck")
+            .unwrap()
+            .use_cache(false)
+            .eq("checkId", Value::string("health"))
+            .one()
+            .unwrap()
+            .unwrap();
+        (gone, missing, health)
+    };
+    assert_eq!(gone.get("lastStatus").and_then(Value::as_str), Some("failed"));
+    assert!(gone
+        .get("lastError")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .contains("404"));
+    assert_eq!(missing.get("lastStatus").and_then(Value::as_str), Some("failed"));
+    let trace_id = missing.get("lastTraceId").and_then(Value::as_str).unwrap().to_string();
+    assert_eq!(trace_id.len(), 32);
+    let health_trace = health.get("lastTraceId").and_then(Value::as_str).unwrap().to_string();
+    assert_eq!(health.get("lastStatus").and_then(Value::as_str), Some("ok"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        moqui_core::telemetry::for_factory(factory).flush();
+        let page = |dataset: &str, query: Json| {
+            moqui_core::report::documents(
+                &context,
+                &json!({"datasetId":dataset,"from":"now-1h","thru":"now+1h","query":query,"pageSize":200}),
+            )
+            .unwrap()
+        };
+        let metrics = page(
+            "otel_metrics",
+            json!({"field":{"name":"source.id","op":"eq","value":"scrape:self"}}),
+        );
+        let names: Vec<&str> = metrics["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|hit| hit["body"]["name"].as_str())
+            .collect();
+        let down = page(
+            "otel_metrics",
+            json!({"field":{"name":"source.id","op":"eq","value":"scrape:gone"}}),
+        );
+        let checks = page(
+            "otel_spans",
+            json!({"field":{"name":"moqui.synthetic.check","op":"eq","value":true}}),
+        );
+        let trace = page(
+            "otel_spans",
+            json!({"field":{"name":"trace_id","op":"eq","value":trace_id}}),
+        );
+        let kinds = |page: &Json| -> Vec<String> {
+            page["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|hit| hit["body"]["kind"].as_str().map(str::to_string))
+                .collect()
+        };
+        // The failed check's request reached this server, whose SERVER span joined the check's trace.
+        let missing_kinds = kinds(&trace);
+        // A check's trace is sampled whole: its request is the CLIENT child. (The 404 page's own unsampled SERVER
+        // span decides that trace first in this process, so the health check, which has no request span, shows it.)
+        let health_kinds = kinds(&page(
+            "otel_spans",
+            json!({"field":{"name":"trace_id","op":"eq","value":health_trace}}),
+        ));
+        let ready = names.contains(&"up")
+            && names.contains(&"moqui_db_statements_total")
+            && down["total"].as_u64().unwrap_or(0) > 0
+            && checks["total"].as_u64().unwrap_or(0) >= 2
+            && missing_kinds.iter().any(|kind| kind == "SERVER")
+            && health_kinds.iter().any(|kind| kind == "CLIENT")
+            && health_kinds.iter().any(|kind| kind == "INTERNAL");
+        if ready {
+            for hit in metrics["hits"].as_array().unwrap() {
+                assert_eq!(hit["body"]["service.name"], "pulled-self");
+            }
+            let failed = checks["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|hit| hit["body"]["synthetic.check.id"] == "missing")
+                .unwrap();
+            assert_eq!(failed["body"]["status_code"], "ERROR", "{failed}");
+            assert_eq!(failed["body"]["trace_id"], trace_id.as_str());
+            // `up` of the failed target is 0.
+            let up = down["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|hit| hit["body"]["name"] == "up")
+                .unwrap();
+            assert_eq!(up["body"]["last"].as_f64(), Some(0.0), "{up}");
+            // The shipped checks and AI dashboards render every panel without an error.
+            for definition in ["monitor-checks", "monitor-ai"] {
+                let rendered = invoke(
+                    "org.moqui.report.ReportServices.render#Dashboard",
+                    json!({"definitionId":definition,"from":"now-1h","thru":"now+1m"}),
+                );
+                let panels = rendered["dashboard"]["panels"].as_object().unwrap();
+                assert!(!panels.is_empty(), "{definition}");
+                for (id, panel) in panels {
+                    let notices = panel["notices"].as_array().cloned().unwrap_or_default();
+                    assert!(
+                        !notices.iter().any(|notice| notice["level"] == "error"),
+                        "{definition} {id}: {notices:?}"
+                    );
+                    assert!(panel["frames"].is_array(), "{definition} {id}: {panel}");
+                }
+                if definition == "monitor-checks" {
+                    let summary = panels["summary"]["frames"].to_string();
+                    assert!(
+                        summary.contains("Missing page") && summary.contains("Health"),
+                        "{summary}"
+                    );
+                }
+            }
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "pulled telemetry not persisted: metrics {names:?}, down {down}, checks {checks}, trace kinds {missing_kinds:?} {health_kinds:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+#[test]
+fn report_embed_renders_the_dashboard_for_a_signed_in_viewer_only() {
+    let gate = common::start_with_conf_properties("monitor-embed", None, "<telemetry/>", &[]);
+    let address = gate.server.address();
+    let path = "/apps/dashboards/Panels.html?previewPanelId=monitor-overview";
+    let auth = common::basic("john.doe", "moqui");
+    let (status, _, body) = common::exchange(
+        address,
+        &common::http_request("GET", path, &[("Authorization", &auth)], ""),
+    );
+    assert_eq!(status, 200, "{body}");
+    // The embedded dashboard's panels, rendered as the viewer in html mode, around the rest of the screen.
+    for text in ["HTTP requests", "Job runs by outcome", "Preview a library panel"] {
+        assert!(body.contains(text), "{text}: {body}");
+    }
+    assert!(!body.contains("is not shown"), "{body}");
+    // The Home list's links run through Panels' own transitions (html mode shows a transition's target).
+    assert!(body.contains("href=\"/apps/dashboards/Definition?definitionType=panel\""), "{body}");
+    // An unknown definition shows nothing, and the screen still renders.
+    let (status, _, body) = common::exchange(
+        address,
+        &common::http_request(
+            "GET",
+            "/apps/dashboards/Panels.html?previewPanelId=no-such-definition",
+            &[("Authorization", &auth)],
+            "",
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.contains("Preview a library panel") && !body.contains("Job runs by outcome"),
+        "{body}"
+    );
+    // Without a sign-in the screen itself is refused, so the embed is never rendered.
+    let (status, _, body) = common::exchange(address, &common::http_request("GET", path, &[], ""));
+    assert_ne!(status, 200, "{body}");
+    assert!(!body.contains("Job runs by outcome"), "{body}");
+}

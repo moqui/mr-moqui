@@ -222,6 +222,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="day-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="otlp-endpoint" type="xs:string"/>
         <xs:attribute name="otlp-headers" type="xs:string"/>
+        <xs:attribute name="otlp-compression" type="xs:string"><xs:annotation><xs:documentation>gzip (the default) or none: whether outgoing OTLP request bodies are gzipped (Content-Encoding: gzip).</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="otlp-protocol" type="xs:string"><xs:annotation><xs:documentation>The encoding sent to
             otlp-endpoint: http/protobuf (application/x-protobuf, the OTLP default, used when empty) or http/json
             (application/json). Another value is warned about and http/protobuf is used.</xs:documentation>

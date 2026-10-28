@@ -33,6 +33,10 @@
             definitionId=saved.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/><parameter name="sharedType"/></default-response>
     </transition>
+    <transition name="delete" method="post" authz-action="delete">
+        <actions><service-call name="org.moqui.report.ReportServices.delete#Definition" in-map="{definitionId:definitionId}"/></actions>
+        <default-response url="//apps/dashboards/Alerts"/><error-response url="."/>
+    </transition>
     <transition name="copy" method="post" authz-action="create">
         <actions><script><![CDATA[
             const saved=ec.service.sync().name('org.moqui.report.ReportServices.copy#Definition').parameters({definitionId,newDefinitionId:copyId,title:copyTitle || undefined}).call().definition
@@ -43,7 +47,7 @@
         const kinds={contactPoint:'Contact point',silence:'Silence',muteTiming:'Mute timing'}
         const item=definitionId?ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition:{id:'',type:sharedType || 'contactPoint',title:'',body:{}}
         if (!kinds[item.type]) throw new Error('This definition is not a shared contact point, silence or mute timing')
-        sharedType=item.type;sharedKind=kinds[sharedType];readOnly=item.readOnly===true;component=item.component || ''
+        sharedType=item.type;sharedKind=kinds[sharedType];readOnly=item.readOnly===true;component=item.component || '';ownerId=item.ownerId || ''
         const body=item.body || {}
         sharedTitle=item.title || '';userGroupId=item.userGroupId || ''
         contactType=body.type || 'notification';topic=body.topic || 'ReportAlert';contactUserId=body.userId || '';contactGroupId=body.userGroupId || ''
@@ -110,6 +114,10 @@
                     <field name="note"><default-field title="Version note"><text-line/></default-field></field>
                     <field name="save"><default-field title=""><submit text="Save mute timing"/></default-field></field>
                 </form-single>
+            </widgets></section>
+            <section name="DeleteSharedItem" condition="definitionId &amp;&amp; ownerId === ec.user.userId"><widgets>
+                <form-single name="DeleteShared" transition="delete"><field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="delete"><default-field title=""><submit text="Delete" confirmation="Delete this shared item? Rules that still reference it must drop it first."/></default-field></field></form-single>
             </widgets></section>
         </fail-widgets></section>
         <section name="UsedIn" condition="definitionId"><widgets>

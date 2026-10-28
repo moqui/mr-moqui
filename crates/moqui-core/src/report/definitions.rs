@@ -35,7 +35,7 @@ fn viewer() -> Result<String, Error> {
         .ok_or_else(|| fail("saved definitions require an authenticated viewer"))
 }
 
-fn readable(definition: &Json) -> Result<bool, Error> {
+pub(super) fn readable(definition: &Json) -> Result<bool, Error> {
     if definition["readOnly"] == true {
         return Ok(true);
     }
@@ -233,6 +233,11 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Save a definition read from a synced git file, as the sync's user.
+pub(super) fn save_pulled(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
+    save(ec, definition, note)
+}
+
 fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
     let current = viewer()?;
     let id = text(definition, "id", "");
@@ -384,7 +389,9 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
         row.set("referencedId", Value::String(reference));
         row.create(&facade)?;
     }
-    row_json(&row)
+    let saved = row_json(&row)?;
+    super::git_sync::after_save(ec, &saved);
+    Ok(saved)
 }
 
 pub fn get_definition(
@@ -558,6 +565,91 @@ pub fn restore_definition(
     Ok(output(
         json!({"definition":save(ec,&definition,text(&params,"note","Restored previous version"))?}),
     ))
+}
+
+/// Delete a saved definition the viewer owns, with its versions, its own references and an alert rule's state. A
+/// shipped or read-only definition cannot be deleted, nor one other definitions still reference (they are named).
+/// Files of git syncs that hold it are removed once the delete commits.
+pub(super) fn delete(ec: &ExecutionContext, id: &str) -> Result<Json, Error> {
+    let current = viewer()?;
+    if shipped(ec).iter().any(|d| text(d, "id", "") == id) {
+        return Err(fail("shipped definition is read-only and cannot be deleted"));
+    }
+    let facade = entity(ec)?;
+    let row = internal(ec, || {
+        facade
+            .find(ENTITY)?
+            .eq("definitionId", Value::string(id))
+            .for_update(true)
+            .one()
+    })?
+    .ok_or_else(|| fail(format!("report definition {id} does not exist")))?;
+    let definition = row_json(&row)?;
+    if text(&definition, "ownerId", "") != current {
+        return Err(fail("only the owner may delete a report definition"));
+    }
+    if definition["readOnly"] == true {
+        return Err(fail("definition is read-only"));
+    }
+    let users = internal(ec, || {
+        facade.find(REFERENCE)?.eq("referencedId", Value::string(id)).list()
+    })?;
+    let users: Vec<String> = users
+        .iter()
+        .filter_map(|row| row.get("definitionId").and_then(Value::as_str))
+        .filter(|user| *user != id)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !users.is_empty() {
+        let named: Vec<String> = users
+            .iter()
+            .map(|user| {
+                let title = internal(ec, || {
+                    facade.find(ENTITY)?.eq("definitionId", Value::string(user)).one()
+                })
+                .ok()
+                .flatten()
+                .and_then(|row| row.get("title").and_then(Value::as_str).map(str::to_owned))
+                .filter(|title| !title.is_empty() && title != user);
+                title.map_or_else(|| user.clone(), |title| format!("{user} ({title})"))
+            })
+            .collect();
+        return Err(fail(format!(
+            "definition {id} is still used by {}; remove those references first",
+            named.join(", ")
+        )));
+    }
+    // The owner and reference checks above ran with the viewer's rights; only the storage bypasses entity auth.
+    let _storage = ec.disable_authz();
+    for dependent in [
+        VERSION,
+        REFERENCE,
+        "moqui.report.AlertInstance",
+        "moqui.report.AlertNotification",
+        "moqui.report.AlertRuleLock",
+    ] {
+        facade
+            .find(dependent)?
+            .eq("definitionId", Value::string(id))
+            .delete_all()?;
+    }
+    row.delete(&facade)?;
+    let user = current;
+    tracing::info!(target: "moqui.report.audit", user = %user, kind = %text(&definition, "type", ""),
+        definition = id, "report definition deleted");
+    super::git_sync::after_delete(ec, &definition);
+    Ok(json!({"id":id,"type":definition["type"],"title":definition["title"]}))
+}
+
+pub fn delete_definition(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    params: &Parameters,
+) -> Result<Parameters, Error> {
+    let params = input(params);
+    Ok(output(json!({"deleted":delete(ec,text(&params,"definitionId",""))?})))
 }
 
 pub fn export_definitions(

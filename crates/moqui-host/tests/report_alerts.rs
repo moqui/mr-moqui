@@ -342,7 +342,7 @@ fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
         factory,
         "ops-silence",
         "silence",
-        &json!({"from":(at-1000).to_string(),"thru":(at+86_400_000).to_string(),"matchers":{"team":"operations"},"comment":"maintenance"}),
+        &json!({"from":(at-1000).to_string(),"thru":(at+86_400_000).to_string(),"matchers":{"window":"maintenance"},"comment":"maintenance"}),
     )
     .unwrap();
     save_typed(
@@ -387,27 +387,40 @@ fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
     save(factory, "shared-contact-alert", &base);
     let mut silenced = base.clone();
     silenced["silenceRefs"] = json!(["ops-silence"]);
+    silenced["labels"] = json!({"team":"operations","window":"maintenance"});
     save(factory, "shared-silence-alert", &silenced);
+    // A shared silence also mutes a rule that does not reference it, when the rule's labels match its matchers.
+    let mut labelled = base.clone();
+    labelled["labels"] = json!({"team":"operations","window":"maintenance"});
+    save(factory, "label-silenced-alert", &labelled);
     let mut muted = base.clone();
     muted["muteTimingRefs"] = json!(["always-mute"]);
     save(factory, "shared-mute-alert", &muted);
     let uses = with_owner(factory, |ec| {
         result(report::find_definition_uses(ec, &service(), &parameters(json!({"definitionId":"ops-header"}))).unwrap())
     });
-    assert_eq!(uses["usedIn"].as_array().unwrap().len(), 3, "{uses}");
+    assert_eq!(uses["usedIn"].as_array().unwrap().len(), 4, "{uses}");
 
     let output = with_owner(factory, |ec| {
         ec.set_effective_time(Some(at));
         result(report::evaluate_rules(ec, &service(), &parameters(json!({}))).unwrap())
     });
     assert_eq!(output["failed"], 0, "{output}");
-    assert_eq!(output["evaluated"], 3, "{output}");
-    for id in ["shared-contact-alert", "shared-silence-alert", "shared-mute-alert"] {
+    assert_eq!(output["evaluated"], 4, "{output}");
+    for id in [
+        "shared-contact-alert",
+        "shared-silence-alert",
+        "shared-mute-alert",
+        "label-silenced-alert",
+    ] {
         assert_eq!(states(factory, id), ["Firing", "Firing"], "{id}");
     }
     assert_eq!(notification_count(factory, "shared-contact-alert"), 1);
     assert_eq!(notification_count(factory, "shared-silence-alert"), 0);
     assert_eq!(notification_count(factory, "shared-mute-alert"), 0);
+    assert_eq!(notification_count(factory, "label-silenced-alert"), 0);
+    let sent = rows(factory, "moqui.report.AlertNotification", Some("shared-contact-alert"));
+    assert!(sent[0]["lastSentHash"].is_string(), "{sent:?}");
     let lock = rows(factory, "moqui.report.AlertRuleLock", Some("shared-contact-alert"));
     assert!(
         lock[0]["claimToken"].is_null() && lock[0]["claimedUntil"].is_null(),
@@ -420,6 +433,74 @@ fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
     });
     assert_eq!(again["failed"], 0, "{again}");
     assert_eq!(notification_count(factory, "shared-contact-alert"), 1);
+
+    // A state write that was lost after delivery: the retry finds the group's state already sent and does not send
+    // it again.
+    with_owner(factory, |ec| {
+        let _storage = ec.disable_authz();
+        let entity = factory.entity().unwrap();
+        entity
+            .find("moqui.report.AlertInstance")
+            .unwrap()
+            .eq("definitionId", Value::string("shared-contact-alert"))
+            .delete_all()
+            .unwrap();
+        entity
+            .find("moqui.report.AlertRuleLock")
+            .unwrap()
+            .eq("definitionId", Value::string("shared-contact-alert"))
+            .update_all([("lastEvaluated".to_string(), Value::Null)])
+            .unwrap();
+    });
+    assert_eq!(evaluate(factory, "shared-contact-alert", at + 60_000)["failed"], 0);
+    assert_eq!(states(factory, "shared-contact-alert"), ["Firing", "Firing"]);
+    assert_eq!(
+        notification_count(factory, "shared-contact-alert"),
+        1,
+        "no repeat of a sent state"
+    );
+
+    // Delete: refused while referenced (naming the users), for a shipped definition and for another owner's.
+    let delete = |id: &str| {
+        with_owner(factory, |ec| {
+            let entity = factory.entity().unwrap();
+            let tx = entity.transactions_for("moqui.report.Definition").unwrap();
+            tx.run(TransactionAttribute::UseOrBegin, None, || {
+                report::delete_definition(ec, &service(), &parameters(json!({"definitionId":id})))
+            })
+            .map(result)
+            .map_err(|error| error.to_string())
+        })
+    };
+    let refused = delete("ops-header").unwrap_err();
+    assert!(
+        refused.contains("shared-contact-alert") && refused.contains("shared-mute-alert"),
+        "{refused}"
+    );
+    assert!(delete("monitor-overview").unwrap_err().contains("read-only"));
+    assert!(delete("no-such-definition").is_err());
+    assert_eq!(
+        delete("shared-mute-alert").unwrap()["deleted"]["id"],
+        "shared-mute-alert"
+    );
+    for entity_name in [
+        "moqui.report.AlertInstance",
+        "moqui.report.AlertRuleLock",
+        "moqui.report.AlertNotification",
+        "moqui.report.DefinitionVersion",
+    ] {
+        assert!(
+            rows(factory, entity_name, Some("shared-mute-alert")).is_empty(),
+            "{entity_name}"
+        );
+    }
+    // Its mute timing is no longer referenced, so it can go too.
+    delete("always-mute").unwrap();
+    assert!(
+        with_owner(factory, |ec| report::definitions::read_optional(ec, "always-mute")
+            .unwrap())
+        .is_none()
+    );
 }
 
 fn verify_rule_validation(factory: &Arc<ExecutionContextFactory>, body: &Json) {

@@ -538,3 +538,75 @@ test('the transformation editor accepts calculation lists, modes and the full fi
         assert.deepEqual(Array.from(operators).map(option=>option.value),['eq','ne','gt','gte','lt','lte','range','regex','exists','missing']);
     } finally {view.close();}
 });
+test('funnel steps carry their share of the first and previous step and render as centred bars',async()=>{
+    const frame={fields:[{name:'step',type:'string',values:['Visited','Carted','Bought']},{name:'visitors',type:'number',values:[200,50,10]}]};
+    const steps=report.funnel(frame,{});
+    assert.deepEqual(steps.map(step=>[step.label,step.width,step.ofFirst,step.ofPrevious]),[['Visited',100,100,null],['Carted',25,25,25],['Bought',5,5,20]]);
+    assert.deepEqual(report.funnel({fields:[{name:'visited',type:'number',values:[10]},{name:'bought',type:'number',values:[4]}]},{}).map(step=>step.label),['visited','bought']);
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'funnel'}});
+    try {app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('.m-report-funnel [data-step]').length,3);assert.equal(target.querySelector('[data-step="Bought"]').textContent.includes('20.0% of previous'),true);}
+    finally {app.unmount();target.remove();}
+});
+test('node graphs place services in layers, keep cycles bounded and draw edges by count',async()=>{
+    const frame={fields:[{name:'source',type:'string',values:['web','web','orders','orders']},{name:'target',type:'string',values:['orders','db:postgresql','db:postgresql','web']},
+        {name:'count',type:'number',values:[10,4,30,1]},{name:'errors',type:'number',values:[2,0,0,0]},{name:'duration',type:'number',unit:'ns',values:[2e6,1e6,5e5,1e6]}]};
+    const graph=report.nodeGraph(frame,{});
+    const layer=Object.fromEntries(graph.nodes.map(node=>[node.id,node.layer]));
+    assert.deepEqual(layer,{web:0,orders:1,'db:postgresql':2});
+    assert.equal(graph.edges.find(edge=>edge.from==='orders' && edge.to==='web').back,true);
+    assert.equal(graph.edges.find(edge=>edge.to==='db:postgresql' && edge.from==='orders').width,6);
+    assert.equal(graph.nodes.find(node=>node.id==='orders').errorRate,20);
+    assert.equal(report.nodeGraph({fields:[{name:'a',type:'string',values:['x']}]},{}),null);
+    assert.equal(report.suggestVisualizations(report.queryShape({queries:[{datasetId:'otel_spans',mode:'serviceMap'}]}))[0].visualization,'nodeGraph');
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'nodeGraph'}});
+    try {app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('svg.m-report-node-graph [data-node]').length,3);assert.equal(target.querySelectorAll('svg.m-report-node-graph [data-edge]').length,4);}
+    finally {app.unmount();target.remove();}
+});
+test('flame graphs lay out paths by share and zoom into a clicked frame',async()=>{
+    const frame={fields:[{name:'path',type:'string',values:['GET /','GET /;find','GET /;find;SELECT','GET /;render']},{name:'value',type:'number',unit:'ms',values:[2,1,5,2]}]};
+    const flame=report.flame(frame,{});
+    assert.equal(flame.total,10);assert.equal(flame.depth,3);
+    const find=flame.rects.find(rect=>rect.path.join(';')==='GET /;find');assert.equal(find.w,0.6);assert.equal(find.self,1);
+    assert.equal(flame.rects.find(rect=>rect.path.join(';')==='GET /;render').x,0.6);
+    const zoomed=report.flame(frame,{},['GET /','find']);assert.equal(zoomed.total,6);assert.deepEqual(zoomed.focus,['GET /','find']);
+    assert.equal(report.suggestVisualizations(report.frameShape(frame))[0].visualization,'flameGraph');
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'flameGraph'}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,5);
+        target.querySelector('[data-frame="GET /;find"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));await Vue.nextTick();
+        assert.equal(target.textContent.includes('Focused on GET / › find'),true);assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,2);
+    } finally {app.unmount();target.remove();}
+});
+test('geomaps read the bundled outline, match Moqui, alpha-2 and numeric country codes and plot points',async()=>{
+    assert.equal(report.countryNumeric('USA'),'840');assert.equal(report.countryNumeric('fr'),'250');assert.equal(report.countryNumeric(36),'036');assert.equal(report.countryNumeric('ZZZ'),null);
+    const outline=await report.loadOutline();
+    assert.equal(outline.length>150,true);
+    const france=outline.find(country=>country.id==='250');assert.equal(france.name,'France');
+    assert.equal(france.centroid[0]>-5 && france.centroid[0]<8 && france.centroid[1]>42 && france.centroid[1]<50,true);
+    const countries=report.geomap({fields:[{name:'countryGeoId',type:'string',values:['USA','FRA','USA','XXX']},{name:'sales',type:'number',values:[1,2,3,4]}]},{},outline);
+    assert.equal(countries.mode,'countries');assert.deepEqual(countries.listed.map(item=>[item.id,item.value]),[['840',4],['250',2]]);assert.deepEqual(countries.unmatched,['XXX']);
+    assert.equal(countries.countries.find(country=>country.id==='840').shade,1);
+    const points=report.geomap({fields:[{name:'city',type:'string',values:['Paris','Sydney']},{name:'lat',type:'number',values:[48.85,-33.87]},{name:'lon',type:'number',values:[2.35,151.21]},{name:'orders',type:'number',values:[5,20]}]},{},outline);
+    assert.equal(points.mode,'points');assert.deepEqual([points.points[0].x,points.points[0].y],[182.4,41.2]);assert.equal(points.points[1].r>points.points[0].r,true);
+    const target=document.createElement('div');document.body.appendChild(target);
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame:{fields:[{name:'countryGeoId',type:'string',values:['USA']},{name:'sales',type:'number',values:[3]}]},panel:{visualization:'geomap'}});
+    try {app.mount(target);await Vue.nextTick();const shaded=target.querySelector('svg [data-country="840"]');assert.equal(shaded.getAttribute('fill-opacity'),'1');assert.equal(target.querySelectorAll('figure.m-report-geomap svg path').length,outline.length);}
+    finally {app.unmount();target.remove();}
+});
+test('a repeated copy shows its own variable value and edits the panel it repeats',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);const navigate=report.navigate,visited=[];report.navigate=href=>visited.push(href);
+    const panel={title:'Sales in west',visualization:'text',text:'Region $region',repeatOf:'sales',repeatValues:{region:'west'}};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{panel,dashboardId:'shop',panelId:'sales~1',variables:{region:'$__all'}});
+    app.component('m-markdown',{props:['text'],render(){return Vue.h('div',{class:'md'},this.text);}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelector('.md').textContent,'Region west');
+        target.querySelector('[aria-haspopup="menu"]').click();await Vue.nextTick();
+        Array.from(target.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent==='Edit').click();
+        assert.equal(visited[0].endsWith('definitionId=shop&panelId=sales'),true,visited[0]);
+    } finally {app.unmount();target.remove();report.navigate=navigate;}
+});

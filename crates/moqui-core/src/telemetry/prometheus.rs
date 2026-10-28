@@ -83,6 +83,116 @@ pub(super) fn render(request: &ExportMetricsServiceRequest, resource: &Resource)
     out
 }
 
+/// Received metrics after this server's own: one family per Prometheus name, labelled by their attributes and
+/// `service_name`, `service_instance_id` and `source`. A family whose name `local` already has is left out (scraping
+/// this server's own `/metrics` adds nothing), as is a series whose kind differs from its family's first one; the
+/// series not kept show as `moqui_telemetry_received_series_dropped_total`.
+pub(super) fn render_received(received: &super::received::Received, local: &str) -> String {
+    use super::received::Kind;
+    let taken: HashSet<&str> = local
+        .lines()
+        .filter_map(|line| line.strip_prefix("# TYPE "))
+        .filter_map(|line| line.split(' ').next())
+        .collect();
+    let mut families: std::collections::BTreeMap<String, (Kind, Vec<&super::received::Series>)> = Default::default();
+    let mut skipped = received.overflow;
+    for series in received.series.values() {
+        let base = metric_name(&series.name, &series.unit);
+        let name = match series.kind {
+            Kind::Counter => format!("{}_total", base.trim_end_matches("_total")),
+            _ => base,
+        };
+        let clashes = |name: &str| {
+            taken.contains(name)
+                || (series.kind == Kind::Histogram
+                    && ["_bucket", "_sum", "_count"]
+                        .iter()
+                        .any(|suffix| taken.contains(format!("{name}{suffix}").as_str())))
+        };
+        if clashes(&name) {
+            skipped += 1;
+            continue;
+        }
+        let family = families
+            .entry(name)
+            .or_insert_with(|| (series.kind.clone(), Vec::new()));
+        if family.0 == series.kind {
+            family.1.push(series);
+        } else {
+            skipped += 1;
+        }
+    }
+    let mut out = String::new();
+    for (name, (kind, mut members)) in families {
+        members.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let _ = writeln!(
+            out,
+            "# TYPE {name} {}",
+            match kind {
+                Kind::Counter => "counter",
+                Kind::Histogram => "histogram",
+                Kind::UpDown | Kind::Gauge => "gauge",
+            }
+        );
+        for series in members {
+            let labels: Vec<(String, String)> = series
+                .labels
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if kind == Kind::Histogram {
+                let mut cumulative = 0u64;
+                for (index, bound) in series.bounds.iter().enumerate() {
+                    cumulative = cumulative.saturating_add(series.buckets.get(index).copied().unwrap_or(0));
+                    line(
+                        &mut out,
+                        &format!("{name}_bucket"),
+                        &labels,
+                        Some(&value(*bound)),
+                        cumulative as f64,
+                    );
+                }
+                line(
+                    &mut out,
+                    &format!("{name}_bucket"),
+                    &labels,
+                    Some("+Inf"),
+                    series.count as f64,
+                );
+                line(&mut out, &format!("{name}_sum"), &labels, None, series.value);
+                line(&mut out, &format!("{name}_count"), &labels, None, series.count as f64);
+            } else {
+                line(&mut out, &name, &labels, None, series.value);
+            }
+        }
+    }
+    if skipped > 0 || !received.series.is_empty() {
+        let _ = writeln!(out, "# TYPE moqui_telemetry_received_series_dropped_total counter");
+        let _ = writeln!(out, "moqui_telemetry_received_series_dropped_total {skipped}");
+    }
+    out
+}
+
+fn line(out: &mut String, name: &str, labels: &[(String, String)], le: Option<&str>, number: f64) {
+    out.push_str(name);
+    let mut labels = labels.to_vec();
+    if let Some(le) = le {
+        labels.retain(|(key, _)| key != "le");
+        labels.push(("le".to_string(), le.to_string()));
+    }
+    if !labels.is_empty() {
+        out.push('{');
+        for (index, (key, text)) in labels.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "{key}=\"{}\"", escape(text));
+        }
+        out.push('}');
+    }
+    let _ = writeln!(out, " {}", value(number));
+}
+
 fn header(out: &mut String, typed: &mut HashSet<String>, name: &str, kind: &str) {
     if typed.insert(name.to_string()) {
         let _ = writeln!(out, "# TYPE {name} {kind}");
@@ -179,4 +289,69 @@ fn sanitize(text: &str, colon: bool) -> String {
 
 fn escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+}
+
+#[cfg(test)]
+mod received_tests {
+    use super::super::received::Received;
+    use super::render_received;
+    use crate::entity::document::Document;
+    use moqui_lib::object::Value;
+
+    fn document(pairs: Vec<(&str, Value)>) -> Document {
+        pairs.into_iter().map(|(key, value)| (key.to_string(), value)).collect()
+    }
+
+    #[test]
+    fn received_families_render_after_local_ones_without_clashing() {
+        let mut received = Received::default();
+        received.record(&[
+            document(vec![
+                ("series_fingerprint", Value::string("a")),
+                ("name", Value::string("orders.placed")),
+                ("aggregation", Value::string("sum")),
+                ("monotonic", Value::Bool(true)),
+                ("sum", Value::F64(5.0)),
+                ("service.name", Value::string("shop")),
+                ("source.name", Value::string("edge")),
+                (
+                    "attributes",
+                    Value::Map([("status".to_string(), Value::string("paid"))].into_iter().collect()),
+                ),
+            ]),
+            document(vec![
+                ("series_fingerprint", Value::string("b")),
+                ("name", Value::string("http.server.request.duration")),
+                ("unit", Value::string("s")),
+                ("aggregation", Value::string("histogram")),
+                ("sum", Value::F64(0.5)),
+                ("count", Value::I64(2)),
+                ("bounds", Value::List(vec![Value::F64(0.1)])),
+                ("buckets", Value::List(vec![Value::I64(1), Value::I64(1)])),
+            ]),
+            document(vec![
+                ("series_fingerprint", Value::string("c")),
+                ("name", Value::string("queue.depth")),
+                ("aggregation", Value::string("gauge")),
+                ("last", Value::F64(9.0)),
+            ]),
+        ]);
+        let local =
+            "# TYPE http_server_request_duration_seconds histogram\nhttp_server_request_duration_seconds_count 1\n";
+        let text = render_received(&received, local);
+        assert!(text.contains("# TYPE orders_placed_total counter\n"), "{text}");
+        assert!(
+            text.contains("orders_placed_total{service_name=\"shop\",source=\"edge\",status=\"paid\"} 5\n"),
+            "{text}"
+        );
+        assert!(text.contains("# TYPE queue_depth gauge\nqueue_depth 9\n"), "{text}");
+        assert!(!text.contains("http_server_request_duration_seconds"), "{text}");
+        assert!(
+            text.contains("moqui_telemetry_received_series_dropped_total 1\n"),
+            "{text}"
+        );
+        // Every sample parses back with the scrape parser.
+        let parsed = super::super::scrape::parse(&text);
+        assert_eq!(parsed.skipped, 0);
+    }
 }

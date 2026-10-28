@@ -2,6 +2,12 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Library panels" default-menu-index="4">
     <parameter name="previewPanelId"/>
+    <!-- The included Home list's links run here. -->
+    <transition-include name="dashboard" location="component://tools/screen/Dashboards/Home.xml"/>
+    <transition-include name="star" location="component://tools/screen/Dashboards/Home.xml"/>
+    <transition-include name="edit" location="component://tools/screen/Dashboards/Home.xml"/>
+    <transition-include name="new" location="component://tools/screen/Dashboards/Home.xml"/>
+    <transition-include name="explore" location="component://tools/screen/Dashboards/Home.xml"/>
     <pre-actions><set field="definitionType" value="panel"/></pre-actions>
     <actions><script><![CDATA[
         panelOptions = (ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'panel'}).call().definitions || [])

@@ -77,7 +77,7 @@
     <actions><script><![CDATA[
         from = from || 'now-7d'; thru = thru || 'now'
         const definition = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-        dashboardTitle = definition.title
+        dashboardTitle = ec.l10n.localize(definition.title || "")
         dashboardDefinition = JSON.parse(JSON.stringify(definition.body || {}))
         const activeFilters = [...(dashboardDefinition.filters || []),...JSON.parse(filtersJson || '[]')]
         dashboardDefinition.variableValues = {}
@@ -85,6 +85,8 @@
         let carriedValues = {}
         try { carriedValues = JSON.parse(ec.web.parameters.variableValuesJson || '{}') || {} } catch (error) { ec.logger.warn('Dashboard variableValuesJson ignored: '+String(error)) }
         for (const variable of dashboardDefinition.variables || []) {
+            // A label in the viewer's language when the catalog has it, as the panel titles are (report/mod.rs).
+            if (variable.label) variable.label = ec.l10n.localize(variable.label)
             if (variable.kind === 'query') {
                 try {
                     const found = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{
@@ -134,18 +136,13 @@
         dashboardNotices.push(...(rendered.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
         dashboardVariables=(dashboardDefinition.variables || []).filter(variable=>variable.kind!=='constant').map(variable=>Object.assign({},variable,{
             currentValue:Array.isArray(dashboardDefinition.variableValues[variable.name])?dashboardDefinition.variableValues[variable.name].join(','):dashboardDefinition.variableValues[variable.name] || '',
-            valueOptions:[...(variable.includeAll?[{value:'$__all',text:'All'}]:[]),...(variable.options || []).map(item=>typeof item==='object'?{value:item.value,text:item.text || item.value}:{value:item,text:String(item)})]
+            valueOptions:[...(variable.includeAll?[{value:'$__all',text:ec.l10n.localize('All')}]:[]),...(variable.options || []).map(item=>typeof item==='object'?{value:item.value,text:item.text || item.value}:{value:item,text:String(item)})]
         }))
         dashboardDefinition.panels = rendered.panels || {}
         for (const [panelId,panel] of Object.entries(rendered.panels || {})) {
             dashboardFrames[panelId] = panel.frames || []
             dashboardNotices.push(...(panel.notices || []).map(notice=>panelId+': '+(typeof notice === 'string' ? notice : notice.message || JSON.stringify(notice))))
         }
-        // A fractional number comes back from the service as a decimal. JSON.stringify writes it as a number (its toJSON),
-        // but the TUI and other host conversions of these values do not call toJSON; the widgets take numbers.
-        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
-            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
-        dashboardFrames = plain(dashboardFrames); dashboardDefinition = plain(dashboardDefinition)
     ]]></script></actions>
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>
