@@ -120,7 +120,7 @@ fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> 
                 if definition["type"] == "alert" {
                     super::alert::validate_contacts(&definition["body"])?;
                     // The evaluator reads only saved rules, which run as their owner.
-                    tracing::warn!(file=%path.display(),definition=%text(&definition,"id",""),"shipped alert rules are templates and are not evaluated; save a copy to enable one");
+                    tracing::info!(file=%path.display(),definition=%text(&definition,"id",""),"shipped alert rules are templates and are not evaluated; save a copy to enable one");
                 }
                 definition["readOnly"] = json!(true);
                 definition["component"] = json!(component.name);
