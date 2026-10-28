@@ -40,6 +40,7 @@ Name a file as `component://<component>/<path>`. Each file is checked before the
 its rule and skill section and nothing is proposed.
 
 ## Reloading
-A service, SECA, EECA, screen, screen-extend, REST or skill file is live a moment after it is saved. An entity change
-needs a restart, which the user starts from the banner; the restart adds the new columns. A data file is loaded, not
-reloaded.
+A service, SECA, EECA, screen, screen-extend, REST or skill file is live a moment after it is saved. So is an entity
+file: the entity model is linked again and the table check adds the new tables and columns (the reload report lists the
+DDL); only when a file does not parse does it say "restart to apply", with the problem. A data file is loaded, not
+reloaded: the entity view's Save loads its seed records, and Load this file in the Workspace loads any data file.

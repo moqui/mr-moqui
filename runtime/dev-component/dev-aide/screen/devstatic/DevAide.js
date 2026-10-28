@@ -126,6 +126,9 @@
     devAide.registerView = (spec) => {
         devAide.viewSpecs = devAide.viewSpecs.filter((have) => have.name !== spec.name).concat([spec]);
     };
+    // The views of the dev-aide, whose scripts load on first use and register their components.
+    devAide.registerView({ name: "entity", label: "Entity", roots: ["entities", "entity-facade-xml"], component: "m-dev-entity-view",
+        script: "/devstatic/DevAideEntity.js", ready: () => !!devAide.entityViewRegistered });
     // The views offered for a file: Text first, then each spec whose roots take the file's root element.
     pure.viewsFor = (specs, path, element) => {
         const offered = [{ name: "text", label: "Text" }];
@@ -384,7 +387,7 @@
                 const vm = this;
                 return {
                     tab, base: this.base, tier: this.tier, rootId: this.rootId, root: this.root, roots: this.roots,
-                    site: this.siteComponent, canWrite: this.canWrite && !tab.readOnly, upstreamEdits: this.upstreamEdits,
+                    site: this.siteComponent, canWrite: this.canWrite && !tab.readOnly, mayWrite: this.canWrite, upstreamEdits: this.upstreamEdits,
                     get: (name, params) => vm.get(name, params), post: (name, params) => vm.post(name, params),
                     note: (message, type) => vm.note(message, type), fail: (error) => vm.fail(error),
                     apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),

@@ -748,3 +748,137 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
     assert!(!gate.runtime.join("component/my-site/screen-extend").exists());
     assert!(!text(&render()).contains("Extra Note"));
 }
+
+const ENTITY: &str = "org.moqui.devaide.EntityServices.";
+
+/// The entity modeler's save (plans/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
+/// entity file as where its edits go; a save of the site's `extend-entity` relinks the model at once and adds the
+/// column, no restart; a file that does not parse keeps the model there was, with "restart to apply" and the problem;
+/// a site's seed data file loads.
+#[test]
+fn an_entity_save_relinks_and_adds_its_column() {
+    let upstream_entities = r#"<entities>
+    <entity entity-name="Widget" package="upapp">
+        <field name="widgetId" type="id" is-pk="true"/>
+        <field name="widgetName" type="text-medium"/>
+    </entity>
+</entities>
+"#;
+    let site_entities = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n</entities>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/entity/MySiteEntities.xml", site_entities),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-entity",
+        Some(include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let facade = factory.entity().unwrap();
+    let columns = |facade: &moqui_core::entity::EntityFacade| -> Vec<String> {
+        facade
+            .table_columns("upapp.Widget")
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect()
+    };
+    assert!(!columns(&facade).contains(&"due_date".to_string()));
+
+    // the view of the upstream entity: its edits go to the site's entity file
+    let view = call(&factory, "john.doe", &format!("{ENTITY}get#EntityView"), &[("artifactId", "entity:upapp.Widget")]).unwrap();
+    let view = moqui_lib::json::to_json(&view["view"]);
+    assert_eq!(view["upstream"], true, "{view}");
+    assert_eq!(view["target"]["rootId"], "my-site", "{view}");
+    assert_eq!(view["target"]["path"], "entity/MySiteEntities.xml");
+    assert_eq!(view["target"]["exists"], true);
+    assert_eq!(view["seedFile"]["path"], "data/MySiteSeedData.xml");
+    assert!(view["fields"].as_array().unwrap().iter().any(|field| field["name"] == "widgetName" && field["component"] == "upstream-app"), "{view}");
+
+    // the save of the extension: relinked, the column added, no restart
+    let path = "entity/MySiteEntities.xml";
+    let base = text(&call(&factory, "john.doe", &format!("{WS}get#File"), &[("rootId", "my-site"), ("path", path)]).unwrap(), "hash");
+    let extended = site_entities.replace(
+        "</entities>",
+        "    <extend-entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>",
+    );
+    let saved = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[("rootId", "my-site"), ("path", path), ("text", &extended), ("baseHash", &base)],
+    )
+    .unwrap();
+    let report = moqui_lib::json::to_json(&saved["reload"]);
+    let entity_file = &report["files"][0];
+    assert_eq!(saved["restart"], Value::Bool(false), "{report}");
+    assert!(entity_file["summary"].as_str().unwrap().contains("relinked"), "{report}");
+    assert!(entity_file["ddl"].as_array().unwrap().iter().any(|sql| sql.as_str().unwrap().contains("due_date")), "{report}");
+    assert!(columns(&facade).contains(&"due_date".to_string()));
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let mut widget = facade.make_value("upapp.Widget").unwrap();
+        widget.set("widgetId", Value::string("W1"));
+        widget.set("dueDate", Value::string("2026-11-01"));
+        widget.create(&facade).unwrap();
+        let found = facade.find("upapp.Widget").unwrap().eq("widgetId", Value::string("W1")).one().unwrap().unwrap();
+        assert!(!matches!(found.fields()["dueDate"], Value::Null), "the new column holds the date");
+    }
+
+    // a file that does not parse keeps the model there was
+    let base = text(&saved, "hash");
+    let broken = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[("rootId", "my-site"), ("path", path), ("text", "<entities><extend-entity entity-name="), ("baseHash", &base)],
+    )
+    .unwrap();
+    assert_eq!(broken["restart"], Value::Bool(true));
+    assert!(moqui_lib::json::to_json(&broken["problems"]).to_string().contains("reload.entity"));
+    assert!(facade
+        .with_entity_table("upapp.Widget")
+        .is_some());
+    let fields = moqui_core::entity::info::definition_info(&facade, "upapp.Widget").unwrap();
+    assert!(moqui_lib::json::to_json(&Value::Map(fields)).to_string().contains("dueDate"));
+
+    // a site's seed data loads
+    let seed = "<entity-facade-xml type=\"seed\">\n    <moqui.basic.EnumerationType enumTypeId=\"WidgetPriority\" description=\"Priority\"/>\n    <moqui.basic.Enumeration enumId=\"WpHigh\" enumTypeId=\"WidgetPriority\" description=\"High\"/>\n</entity-facade-xml>\n";
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml"), ("text", seed), ("baseHash", "")],
+    )
+    .unwrap();
+    let loaded = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}load#SeedFile"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+    )
+    .unwrap();
+    assert_eq!(text(&loaded, "records"), "2");
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    assert!(facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumId", Value::string("WpHigh"))
+        .one()
+        .unwrap()
+        .is_some());
+}

@@ -7,6 +7,11 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Workspace** is the IDE: the roots (the repositories and directories of the loaded components), the file tree with
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
   Changes (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish.
+- **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
+  site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the
+  relationships, the incoming ones, indexes, a view entity's members and aliases, the table against the fields, and for
+  the full tier the changes the table check never makes, behind a typed confirm. Saving relinks the model and adds the
+  columns, no restart. A data file's records show as tables, with Load this file.
 - **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
   publish branches, more directories, and network git on a shared dev server.
 
@@ -27,5 +32,7 @@ and the services say they are not built in.
 
 - **Tests:** `./moq test dev-aide` (the screens), `cargo test -p dev-aide` (confinement, the git parsers),
   `moqui test-client runtime/dev-component/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
-  repositories), and `cargo test -p moqui-host --test gate3_browser the_workspace` (Chromium).
+  repositories, an entity save's relink), and `cargo test -p moqui-host --test gate3_browser the_workspace` and
+  `the_entity_modeler` (Chromium). `test/vectors/` are the visual views' operations, which the page tests make and the
+  crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).
 - **Screenshots:** `MOQUI_DEV_SHOTS=<dir>` writes them in light, dark and 390 px.

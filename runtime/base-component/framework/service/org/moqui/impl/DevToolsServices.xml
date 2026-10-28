@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
             Pure text: nothing is read or written.</description>
         <in-parameters>
             <parameter name="text" required="true" allow-html="any"/>
-            <parameter name="ops" type="Object" required="true"><description>A list of operations, or the JSON text of
+            <parameter name="ops" type="Object" required="true" allow-html="any"><description>A list of operations, or the JSON text of
                 one: {op: "set-attribute", at: [0, 2] or "services/service[verb=run]", name, value}, and the like.</description></parameter>
         </in-parameters>
         <out-parameters>

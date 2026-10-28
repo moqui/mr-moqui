@@ -1,6 +1,6 @@
 # Dev AIDE: the assisted IDE
 
-Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 and P4 on Oct 28, 2026; what is not built yet is listed
+Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3, P4 and P5 on Oct 28, 2026; what is not built yet is listed
 in "Built so far" at the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
@@ -1470,6 +1470,40 @@ are independent of P4 and may run beside it.
   run is `--llm-profile` (there is no `--live` flag), not yet run against a model. The Chromium smoke
   `a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium` covers the card, Preview, Review with a rejected
   chunk, and the approval's outcome.
+
+**P5, the entity modeler** (Oct 28, 2026), with F5 taken up and the visual views' groundwork, with these differences:
+
+- **The outline is the server's.** `moqui_lib::xml_edit::outline` reads the elements with the paths the operations take
+  (comments, CDATA and processing instructions not counted), their attributes as values, lines and UTF-16 spans;
+  `apply#XmlOps` answers it with the new text and `get#XmlOutline` is new, so one parser defines what a view edits. Lezer
+  keeps highlighting. Both services, and the schema digest, are for any dev-aide permission (they read and write nothing).
+- **Views.** A registry by the file's root element offers Text and the views; Text stays mounted beneath a view, so the
+  two share one undo history (Mod+Z in a view), and `m-code-editor` keeps each tab's state by key across tab switches. A
+  view may open companion buffers in any root (the site's entity file, its seed data file), made on their first save;
+  Save writes them by kind with the tab. The guided arrangement is `dev/Entities/Edit?artifact=`: the Workspace's client
+  with no tree or tabs, and Open in Workspace.
+- **F5.** `SharedModel` holds an `Arc` behind a lock; each facade call takes the model once, so a find in flight keeps the
+  one it started with. `EntityFacade::relink` reads every entity file again with the configuration kept as text, swaps
+  the model in, drops what was read from the old one (definitions built at runtime and every cache kept by definition,
+  the read shapes and their SQL, the views by member, the list and count caches, data documents, what is known of the
+  tables, the EECA index) and runs the table check of the changed entities whatever the group's add-missing settings,
+  answering its DDL. A component's `entity` directory that appeared since the start (a site's first entity file) is read
+  from then on. The reload of an entity file relinks, clears the screen definitions (forms over the entity), and reports
+  the DDL; a file that does not parse, or a model that does not link, keeps the old model with "restart to apply".
+- **The destructive changes** are planned by the framework (`plan_ddl`: drop a column no field names, change a column's
+  type, copy a renamed field's old column into its new one and drop the old, drop and create the table) and run by the
+  dev-aide for the full tier only, after the table's name is typed back, statement by statement through `run_sql`, each
+  audited (`DAA_DDL`). A type change on SQLite says to recreate the table.
+- **The view.** Fields show the server's merged definition with the target element of the buffer over it, so an edit shows
+  before Save (marked unsaved); an attribute of an upstream field becomes an override field of the site's
+  `extend-entity`. Remove is offered for the target's own fields, with their uses from the index first; reorder is a
+  drag. Picklist and Status write the field and its relationship as one operation list (one undo step) and the seed
+  records into the site's seed data file, which Save loads (`load#SeedFile`, audited `DAA_LOAD`). "Show it on a form"
+  lists the screens using the entity and opens them in the Workspace.
+- **Not built:** the header's panel of the entity's other attributes from the digest (edited in Text); a label in another
+  language to the L10n messages; the view entity's condition editor (Text) and its member diagram (P9, with the
+  pan-and-zoom layer); the SQL of a view entity's Run (its first rows show); a link to Tools' Data Edit; data files' Load
+  the changed records, Check and Export (§12; Load this file is built).
 
 ---
 

@@ -90,6 +90,15 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="completeReview"><service-call name="org.moqui.devaide.ChangeSetServices.complete#Review" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- the entity view (EntityServices) -->
+    <transition name="entityView" read-only="true"><service-call name="org.moqui.devaide.EntityServices.get#EntityView" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="planDdl" read-only="true"><service-call name="org.moqui.devaide.EntityServices.plan#EntityDdl" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="runDdl"><service-call name="org.moqui.devaide.EntityServices.run#EntityDdl" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="loadSeed"><service-call name="org.moqui.devaide.EntityServices.load#SeedFile" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 

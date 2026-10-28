@@ -26,7 +26,7 @@ Add a field with `extend-entity` in the site component's entity file (`entity/<S
     <field name="dueDate" type="date"/>
 </extend-entity>
 ```
-The column is added when the server restarts. A picklist field is an `...EnumId` field with a `one` relationship to
+The column is added when the file is saved. A picklist field is an `...EnumId` field with a `one` relationship to
 `moqui.basic.Enumeration` (title the enumeration type) and its `EnumerationType` and `Enumeration` rows in the site's
 seed data file.
 
@@ -48,4 +48,4 @@ A rule on an upstream service is a SECA in the site component (`service/<Site>.s
 - When the base screen has no named element where the change goes, the anchor is added to the base screen as its own
   change (upstream, by a framework developer), never generated.
 - DbForm (System, Form Configuration) changes forms in production per user group; it is configuration, not code.
-- An entity change needs a restart; a screen, service or rule change is live at once.
+- An entity, screen, service or rule change is live at once; a restart only when the reload says so.

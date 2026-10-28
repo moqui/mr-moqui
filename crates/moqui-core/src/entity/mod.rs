@@ -34,6 +34,7 @@ mod find;
 mod fk;
 pub mod info;
 mod meta;
+mod relink;
 mod params;
 mod schema;
 mod search_form;
@@ -52,6 +53,7 @@ pub use exec::statement_stats;
 pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter};
 pub use find::{EntityFind, EntityListIterator};
 pub use meta::{DdlConf, EntityDbMeta};
+pub use relink::RelinkReport;
 /// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
 pub use moqui_db::sql::{CompareOp, Condition};
 pub(crate) use schema::{FieldEnums, document as schema_document};

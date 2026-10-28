@@ -1,0 +1,42 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The guided arrangement (plans/design-dev-aide.md D18): one artifact in its visual view, with the file status strip,
+    Save, Text one click away, Problems and the Assist drawer, nothing else. Entities/Edit, Services/Edit, Eca/Edit and
+    Screens/Edit render it; the view is the one of the tool (entity, service, eca, screen) and the Workspace's
+    transitions answer the client. -->
+<template><div class="m-dev-workspace-page">
+    <m-dev-workspace v-if="ready" :base="base" mode="guided" :query="query"></m-dev-workspace>
+    <div v-else class="q-pa-md m-muted" id="DevWorkspaceLoading">{{failed || 'Loading…'}}</div>
+</div></template>
+
+<script>
+module.exports = {
+    inject: { mScreen: { default: null } },
+    data() { return { ready: false, failed: '' }; },
+    computed: {
+        base() { return window.moqui.devAide.pure.workspaceBase(this.mScreen.path); },
+        query() {
+            const path = String(this.mScreen.path || '');
+            const view = /\/Entities\//.test(path) ? 'entity' : /\/Services\//.test(path) ? 'service' : /\/Eca\//.test(path) ? 'eca' : 'screen';
+            return Object.assign({ view }, this.mScreen.parameters || {});
+        }
+    },
+    mounted() {
+        const moqui = window.moqui;
+        moqui.loadScript('/devstatic/DevAide.js', null, () => !!(moqui.devAide && moqui.devAide.components))
+            .then(() => moqui.devAide.start())
+            .then(() => { this.ready = true; }, (err) => { this.failed = 'The view could not load: ' + (err && err.message || err); });
+    }
+};
+</script>

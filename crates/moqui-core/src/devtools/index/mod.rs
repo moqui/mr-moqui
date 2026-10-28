@@ -1340,6 +1340,44 @@ pub fn find(
     Ok(rank(candidates, text_query, limit))
 }
 
+/// Every artifact of `kinds` (in `components` when not empty), by name, at most `limit`: the lists of the dev-aide's
+/// Entities, Services and ECA rules.
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn of_kinds(
+    factory: &Arc<ExecutionContextFactory>,
+    kinds: &[String],
+    components: &[String],
+    limit: usize,
+) -> Result<Vec<ArtifactRow>, Error> {
+    ensure(factory)?;
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _lifted = fence::lift();
+    let mut find = facade.find(ARTIFACT)?.disable_authz().condition(Condition::is_in(
+        "artifactKind",
+        kinds.iter().map(|kind| Value::string(kind.as_str())).collect(),
+    ));
+    if !components.is_empty() {
+        find = find.condition(Condition::is_in(
+            "component",
+            components
+                .iter()
+                .map(|component| Value::string(component.as_str()))
+                .collect(),
+        ));
+    }
+    Ok(find
+        .order_by("artifactName", false)
+        .limit(i64::try_from(limit).unwrap_or(i64::MAX))
+        .list()?
+        .values()
+        .iter()
+        .map(artifact_of)
+        .collect())
+}
+
 /// The artifact `id`.
 ///
 /// # Errors

@@ -23,12 +23,14 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Home" menu-title="Home" menu-index="1" location="component://dev-aide/screen/DevAide/Home.xml"/>
         <subscreens-item name="Workspace" menu-title="Workspace" menu-index="2" location="component://dev-aide/screen/DevAide/Workspace.xml"/>
         <subscreens-item name="Artifacts" menu-title="Artifacts" menu-index="3" location="component://dev-aide/screen/DevAide/Artifacts.xml"/>
+        <subscreens-item name="Entities" menu-title="Entities" menu-index="4" location="component://dev-aide/screen/DevAide/Entities.xml"/>
         <subscreens-item name="Settings" menu-title="Settings" menu-index="9" location="component://dev-aide/screen/DevAide/Settings.xml"/>
     </subscreens>
     <shell-providers>
         <palette-action label="Dev AIDE Workspace" icon="sym_o_code" screen="dev/Workspace" sequence="70"/>
         <palette-action label="Dev AIDE Home: publish site changes" icon="sym_o_publish" screen="dev/Home" sequence="71"/>
         <palette-action label="Dev AIDE Settings" icon="sym_o_settings" screen="dev/Settings" sequence="72"/>
+        <palette-action label="Dev AIDE Entities: the entity modeler" icon="sym_o_table" screen="dev/Entities" sequence="75"/>
         <palette-action label="Go to artifact" icon="sym_o_travel_explore" screen="dev/Artifacts/Search" sequence="73"/>
         <palette-action label="Dev AIDE Customizations: what the site extends" icon="sym_o_extension" screen="dev/Artifacts/Customizations" sequence="74"/>
         <!-- the artifact index: entities, services, screens and rules by name, each opening in the Workspace at its line -->

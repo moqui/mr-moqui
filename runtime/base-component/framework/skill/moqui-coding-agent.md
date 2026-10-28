@@ -24,7 +24,8 @@ you say it is done.
 - A screen file, a `screen-extend` file, a `.qvue`, a template or a script: dropped from the caches at once and read on
   next use.
 - A REST API file (`service/*.rest.xml`): the REST roots are read again. A skill file: synced into the skill index.
-- An entity file: restart to apply. The restart's startup check adds the new tables and columns.
+- An entity file: on a dev instance the entity model is linked again and the table check adds the new tables and columns
+  (the reload report lists the DDL). A file that does not parse keeps the old model and says restart to apply.
 - `component.xml`, `MoquiConf.xml` or the runtime conf: restart to apply. Rust source or a `Cargo.toml`: rebuild with
   `./moq build`, then restart.
 - A file that does not parse keeps the definitions loaded before; the server log names the file and the error.

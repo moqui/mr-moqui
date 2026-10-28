@@ -15,4 +15,5 @@ risk: confirm
 2. `propose_edit`: in the site's entity file an `extend-entity` with an `...EnumId` field and a `one` relationship to
    `moqui.basic.Enumeration` titled by the type; in the site's seed data file the `EnumerationType` and an `Enumeration`
    per value; on the form a `drop-down` of the type's enumerations (a `screen-extend`).
-3. Say the seed data loads with the next data load and the field with the restart.
+3. Say the field's column is added on the save, and the seed data loads with Load this file on the seed data file in the
+   Workspace (the entity view's own Add field loads it on Save).

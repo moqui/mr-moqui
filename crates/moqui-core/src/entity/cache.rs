@@ -996,6 +996,15 @@ pub fn clear_list_cache(facade: &EntityFacade, cache_name: &str) -> Result<bool,
     })
 }
 
+/// After the model was swapped (plans/design-dev-aide.md F5): the views of each member built again on next use, and
+/// every list and count cache cleared, as their rows were read with the old definitions.
+pub(crate) fn forget_model(facade: &EntityFacade) {
+    facade.with_slot(OneCaches::default, |caches| caches.views_by_member = None);
+    if let Err(err) = clear_all_list_caches(facade) {
+        tracing::warn!(error = %err, "Could not clear the entity list caches after the model changed");
+    }
+}
+
 /// Clear every entity list cache.
 pub fn clear_all_list_caches(facade: &EntityFacade) -> Result<(), Error> {
     facade.with_slot(OneCaches::default, |caches| {
