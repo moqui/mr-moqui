@@ -18,6 +18,9 @@
     <index name="PUBLIC_REG_HASH" unique="true">
       <index-field name="tokenHash"/>
     </index>
+    <index name="PUBLIC_REG_USER">
+      <index-field name="userId"/>
+    </index>
     <relationship type="one" related="moqui.security.UserAccount"/>
   </entity>
   <entity entity-name="DelegatedSession" package="moqui.security.public">
@@ -28,6 +31,7 @@
     <field name="clientId" type="id"/>
     <field name="siteId" type="id"/>
     <field name="tokenHash" type="text-medium"/>
+    <field name="issuedAt" type="date-time"/>
     <field name="expiresAt" type="date-time"/>
     <field name="revokedAt" type="date-time"/>
     <index name="PUBLIC_DELEGATE_HASH" unique="true">

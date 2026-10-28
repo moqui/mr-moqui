@@ -439,6 +439,10 @@ fn web_committed(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
 fn web_send_redirect(ctx: Ctx<'_>, location: String) -> rquickjs::Result<()> {
     host_guard(&ctx, || {
         check_header(&ctx, "Location", &location)?;
+        // Browsers drop tabs and other controls from a URL, so "/\t/host" would be read as "//host".
+        if location.chars().any(char::is_control) {
+            return Err(Exception::throw_message(&ctx, "not a valid redirect location"));
+        }
         crate::web::send_redirect(&location);
         Ok(())
     })
@@ -494,7 +498,10 @@ fn header_pairs(value: &Value) -> Vec<(String, String)> {
 const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 
 /// A bounded multipart body rebuilt from spooled uploads. Raw multipart requests are not retained after parsing.
-fn multipart_body(ctx: &Ctx<'_>, parts: &indexmap::IndexMap<String, Value>) -> rquickjs::Result<(String, bytes::Bytes)> {
+fn multipart_body(
+    ctx: &Ctx<'_>,
+    parts: &indexmap::IndexMap<String, Value>,
+) -> rquickjs::Result<(String, bytes::Bytes)> {
     const LIMIT: usize = 64 * 1024 * 1024;
     let boundary = crate::user::random_string(32).map_err(|error| Exception::throw_message(ctx, error.message()))?;
     let mut body = Vec::new();
