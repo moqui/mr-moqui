@@ -19,7 +19,19 @@
         documentListPageMaxIndex = Math.max(0,Math.ceil(documentListCount / documentListPageSize)-1)
         documentListPageRangeLow = documentList.length ? documentListPageIndex*documentListPageSize+1 : 0
         documentListPageRangeHigh = documentListPageIndex*documentListPageSize+documentList.length
-        queryNotices = result.notices || []
+        queryNotices = (result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice))
+        // Error groups hold totals, so the chart counts the failed spans: a request's SERVER span or a job's root span.
+        // The current, partial bucket stays (marked partial): the newest failures matter most.
+        errorsFrame = {fields:[]}
+        try {
+            const overTime = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_spans',from,thru,
+                filters:[{field:{name:'status_code',op:'eq',value:'ERROR'}},{bool:{any:[{field:{name:'kind',op:'eq',value:'SERVER'}},{field:{name:'moqui.job.root',op:'eq',value:true}}]}}],
+                aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:'start',interval:'auto',targetBars:60,min_doc_count:0,drop_partial:false}},
+                    {id:'service',type:'terms',role:'series',params:{field:'service.name',size:10,missing:'(unknown)'}}]}}).call()
+            errorsFrame = (overTime.frames || [])[0] || {fields:[]}
+            queryNotices.push(...(overTime.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
+        } catch (error) { ec.logger.error('Errors over time failed: '+String(error)); queryNotices.push(String(error)) }
+        errorsPanel = {title:'Failed requests and jobs over time',visualization:'timeSeries',queries:[{aggregations:[{id:'time',role:'x-axis'},{id:'service',role:'series'},{id:'count',role:'metric'}]}]}
     ]]></script></actions>
     <widgets>
         <form-single name="SearchOptions" transition=".">
@@ -31,6 +43,7 @@
             <field name="find"><default-field><submit text="Search"/></default-field></field>
         </form-single>
         <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <report-panel frame="errorsFrame" panel="errorsPanel"/>
 
         <form-list name="Errors" list="documentList" skip-form="true">
             <field name="message"><default-field title="Error"><link url="errorDetail" text="${messageText}" link-type="anchor"><parameter name="fingerprint"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>

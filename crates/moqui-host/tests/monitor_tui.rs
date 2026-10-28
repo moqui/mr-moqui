@@ -131,7 +131,15 @@ fn set_field(view: &mut AppView<HostLink>, id: &str, value: &str) {
 #[test]
 fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     moqui_host::logging::install();
-    let gate = common::start_with_data("monitor-tui", "<entity-facade-xml type=\"seed\"/>");
+    let gate = common::start_with_data(
+        "monitor-tui",
+        r#"<entity-facade-xml type="seed">
+      <moqui.security.UserAccount userId="MONITOR_ONLY" username="monitor.only" disabled="N"/>
+      <moqui.security.UserGroup userGroupId="MONITOR_ONLY" description="Monitor app only"/>
+      <moqui.security.UserGroupMember userGroupId="MONITOR_ONLY" userId="MONITOR_ONLY" fromDate="0"/>
+      <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_ONLY_APP" artifactGroupId="MONITOR_APP" userGroupId="MONITOR_ONLY" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    </entity-facade-xml>"#,
+    );
     let factory = gate.server.factory();
     let now = jiff::Timestamp::now().as_millisecond();
     let stamp = jiff::Timestamp::from_millisecond(now - 5000).unwrap().to_string();
@@ -140,6 +148,9 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     facade.index_entries("otel_logs",(0..3).map(|at|document(json!({"_id":format!("tui-log-{at}"),"timestamp":stamp,"severity_text":"ERROR","severity_number":17,"body":format!("tui-marker line {at}"),"trace_id":TRACE,"span_id":"1111111111111111","service.name":"monitor-tui","service.instance.id":"tui-instance","source.id":"tui-source","source.name":"TUI fixture","thread.name":"tui-worker","user.id":"EX_JOHN_DOE","exception.type":"TuiError","exception.stacktrace":"monitor_tui.rs:42"}))).collect()).unwrap();
     facade.index_entries("otel_errors",vec![document(json!({"_id":"tui-error","fingerprint":"tui-error","message":"TUI failure group","count":3,"first_seen":now-5000,"last_seen":now-5000,"stacktrace":"monitor_tui.rs:42","service.name":"monitor-tui","sample_trace_ids":[TRACE]}))]).unwrap();
     facade.index_entries("otel_metrics",vec![document(json!({"_id":"tui-metric","name":"moqui.artifact.duration","bucket_start":now-60000,"bucket_end":now,"granularity":"minute","count":3,"sum":0.03,"min":0.01,"max":0.01,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.name":"monitor.tui","service.name":"monitor-tui","service.instance.id":"tui-instance"}))]).unwrap();
+    // Request metrics for two versions, one with server errors, for the Services drill-down, the Metrics picker and Compare.
+    let bounds = json!([0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0]);
+    facade.index_entries("otel_metrics",[("1.0","200",4,"tui-instance"),("2.0","200",3,"tui-canary"),("2.0","500",2,"tui-canary")].into_iter().map(|(version,status,count,instance)|document(json!({"_id":format!("tui-http-{version}-{status}"),"name":"http.server.request.duration","aggregation":"histogram","unit":"s","bucket_start":now-1_200_000,"bucket_end":now-1_140_000,"granularity":"minute","count":count,"sum":0.02*count as f64,"min":0.02,"max":0.02,"bounds":bounds,"buckets":[0,0,count,0,0,0,0,0,0,0,0,0,0,0,0],"http.route":"/native-monitor","http.request.method":"GET","http.response.status_code":status.parse::<i64>().unwrap(),"service.name":"monitor-tui","service.instance.id":instance,"service.version":version}))).collect()).unwrap();
     {
         let context = factory.new_context();
         let _entered = context.enter();
@@ -173,19 +184,33 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         ("Monitor/dashboard", "/apps/monitor/dashboard?from=now-1h&thru=now"),
         ("Monitor/Services", "/apps/monitor/Services?from=now-1h&thru=now"),
         ("Monitor/Artifacts", "/apps/monitor/Artifacts?from=now-1h&thru=now"),
-        ("Monitor/Traces", "/apps/monitor/Traces?from=now-1h&thru=now"),
+        (
+            "Monitor/Traces",
+            "/apps/monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
+        ),
         (
             "Monitor/TraceDetail",
             "/apps/monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
         ),
         ("Monitor/Logs", "/apps/monitor/Logs?from=now-1h&thru=now"),
-        ("Monitor/Metrics", "/apps/monitor/Metrics?from=now-1h&thru=now"),
+        (
+            "Monitor/Metrics",
+            "/apps/monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
+        ),
         ("Monitor/Errors", "/apps/monitor/Errors?from=now-1h&thru=now"),
         (
             "Monitor/ErrorDetail",
             "/apps/monitor/ErrorDetail?fingerprint=tui-error&from=now-1h&thru=now",
         ),
         ("Monitor/Sources", "/apps/monitor/Sources"),
+        (
+            "Monitor/LogContext",
+            "/apps/monitor/LogContext?datasetId=otel_logs&documentType=otel_logs&documentId=tui-log-1&from=now-1h&thru=now",
+        ),
+        (
+            "Monitor/Split",
+            "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+        ),
         ("Dashboards/Home", "/apps/dashboards/Home"),
         (
             "Dashboards/Dashboard",
@@ -435,10 +460,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     );
     let contexts = row_urls(&logs, "ExploreDocuments", "LogContext");
     assert!(
-        !contexts.is_empty()
-            && contexts
-                .iter()
-                .all(|url| url.starts_with("/apps/dashboards/LogContext?")),
+        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/monitor/LogContext?")),
         "{contexts:?}"
     );
     logs.session_mut().navigate(&traces[0], true);
@@ -527,4 +549,209 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         "{message}"
     );
     assert!(sources.session().path().ends_with("/monitor/Sources"));
+
+    // The Metrics picker charts the picked metric's percentile split by the chosen attribute.
+    let metrics = open(
+        &link,
+        "/apps/monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
+    );
+    let chart = all_props(&metrics, "report-panel")
+        .into_iter()
+        .find(|props| {
+            props["panel"]["title"]
+                .as_str()
+                .is_some_and(|title| title.starts_with("http.server.request.duration"))
+        })
+        .expect("the metric chart");
+    assert_eq!(
+        chart["panel"]["title"], "http.server.request.duration · p95 by service.version",
+        "{chart}"
+    );
+    let names = field_names(&chart["frame"]);
+    assert!(
+        names.iter().any(|name| name == "latency.p95") && names.iter().any(|name| name == "group"),
+        "{chart}"
+    );
+    assert!(!names.iter().any(|name| name == "latency.p50"), "{chart}");
+    assert!(metrics
+        .session()
+        .index()
+        .fields
+        .values()
+        .any(|field| field.name == "groupBy"));
+
+    // The structured trace search narrows by service, name, status and duration.
+    let traces = open(
+        &link,
+        "/apps/monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
+    );
+    assert_eq!(traces.session().list_page("TraceList").len(), 1);
+    for narrowed in ["statusCode=OK", "minDuration=20", "serviceName=other-service"] {
+        let view = open(&link, &format!("/apps/monitor/Traces?from=now-1h&thru=now&{narrowed}"));
+        assert!(view.session().list_page("TraceList").is_empty(), "{narrowed}");
+    }
+
+    // Errors charts the failed request spans over time.
+    let errors = open(&link, "/apps/monitor/Errors?from=now-1h&thru=now");
+    let chart = all_props(&errors, "report-panel")
+        .into_iter()
+        .find(|props| props["panel"]["title"] == "Failed requests and jobs over time")
+        .expect("the errors chart");
+    assert_eq!(field_sum(&chart["frame"], "count"), 1.0, "{chart}");
+
+    // Services drills from a service to its endpoints and instances by data links; an endpoint leaves the artifact panels whole.
+    let services = open(
+        &link,
+        "/apps/monitor/Services?from=now-1h&thru=now&var-service=monitor-tui",
+    );
+    let dashboard = props(&services, "report-dashboard")["dashboard"].clone();
+    let panels = &dashboard["panels"];
+    for id in [
+        "summary",
+        "endpoints",
+        "instances",
+        "rate",
+        "errors",
+        "duration",
+        "artifacts",
+    ] {
+        assert!(
+            panels[id]["notices"]
+                .as_array()
+                .is_some_and(|notices| notices.iter().all(|notice| notice["level"] != "error")),
+            "{id}: {}",
+            panels[id]
+        );
+    }
+    let summary = &panels["summary"]["frames"][0];
+    assert_eq!(field_sum(summary, "requests"), 9.0, "{summary}");
+    assert_eq!(field_sum(summary, "errors"), 2.0, "{summary}");
+    let instances = &panels["instances"]["frames"][0];
+    assert_eq!(
+        field_values(instances, "instance"),
+        vec![json!("tui-canary"), json!("tui-instance")],
+        "{instances}"
+    );
+    assert!(
+        field_sum(&panels["duration"]["frames"][0], "latency.p95") > 0.0,
+        "{}",
+        panels["duration"]
+    );
+    let links = serde_json::to_string(&panels["endpoints"]).unwrap();
+    assert!(
+        links.contains("/apps/monitor/Services?var-service=${service}&var-endpoint=${endpoint}"),
+        "{links}"
+    );
+    let endpoint = open(
+        &link,
+        "/apps/monitor/Services?from=now-1h&thru=now&var-service=monitor-tui&var-endpoint=%2Fnative-monitor&var-instance=tui-canary",
+    );
+    let panels = props(&endpoint, "report-dashboard")["dashboard"]["panels"].clone();
+    assert_eq!(
+        field_sum(&panels["summary"]["frames"][0], "requests"),
+        5.0,
+        "{}",
+        panels["summary"]
+    );
+    let other = open(
+        &link,
+        "/apps/monitor/Services?from=now-1h&thru=now&var-endpoint=%2Fno-such-endpoint",
+    );
+    let panels = props(&other, "report-dashboard")["dashboard"]["panels"].clone();
+    // The server's own artifact metrics join the fixture's, so this is at least the fixture's hits.
+    assert!(
+        field_sum(&panels["artifacts"]["frames"][0], "hits") >= 3.0,
+        "{}",
+        panels["artifacts"]
+    );
+
+    // Compare draws rate, errors and duration for each version side by side.
+    let split = open(
+        &link,
+        "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+    );
+    let charts = all_props(&split, "report-panel");
+    let chart = |title: &str| {
+        charts
+            .iter()
+            .find(|props| props["panel"]["title"] == title)
+            .unwrap_or_else(|| panic!("no {title} chart: {charts:?}"))
+            .clone()
+    };
+    assert_eq!(field_sum(&chart("Requests · 1.0")["frame"], "requests"), 4.0);
+    assert_eq!(field_sum(&chart("Requests · 2.0")["frame"], "requests"), 5.0);
+    assert_eq!(field_sum(&chart("Server errors (5xx) · 2.0")["frame"], "errors"), 2.0);
+    assert_eq!(field_sum(&chart("Server errors (5xx) · 1.0")["frame"], "errors"), 0.0);
+    assert!(field_sum(&chart("Duration percentiles · 2.0")["frame"], "latency.p50") > 0.0);
+
+    // With only MONITOR_APP, Logs, its surrounding entries and Compare work through the Monitor mounts.
+    let monitor_only = HostLink::as_user(factory, "monitor.only");
+    let mut logs = open(
+        &monitor_only,
+        "/apps/monitor/Logs?from=now-1h&thru=now&queryString=body%3Atui-marker",
+    );
+    let contexts = row_urls(&logs, "ExploreDocuments", "LogContext");
+    assert!(
+        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/monitor/LogContext?")),
+        "{contexts:?}"
+    );
+    logs.session_mut().navigate(&contexts[0], true);
+    logs.run_requests();
+    assert!(
+        logs.session().path().ends_with("/monitor/LogContext") && !logs.session().message_is_error(),
+        "{}: {}",
+        logs.session().path(),
+        logs.session().message()
+    );
+    let text = logs.screen_text(180, 80);
+    assert!(text.contains("tui-marker line"), "{text}");
+    let split = open(
+        &monitor_only,
+        "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+    );
+    let errors = all_props(&split, "report-panel")
+        .into_iter()
+        .find(|props| props["panel"]["title"] == "Server errors (5xx) · 2.0")
+        .expect("the monitor-only version comparison");
+    assert_eq!(field_sum(&errors["frame"], "errors"), 2.0, "{errors}");
+    let mut denied = AppView::with_session(
+        Session::start("/apps/dashboards/LogContext?datasetId=otel_logs&documentType=otel_logs&documentId=tui-log-1"),
+        monitor_only.clone(),
+    );
+    denied.run_requests();
+    let text = denied.screen_text(180, 80);
+    assert!(
+        !text.contains("tui-marker line"),
+        "the Dashboards mount still needs DASHBOARDS_APP: {text}"
+    );
+}
+
+fn all_props(view: &AppView<HostLink>, name: &str) -> Vec<Json> {
+    view.session()
+        .index()
+        .components
+        .values()
+        .filter(|info| info.name == name)
+        .map(|info| info.props.clone())
+        .collect()
+}
+fn field_values(frame: &Json, name: &str) -> Vec<Json> {
+    frame["fields"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|field| field["name"] == name)
+        .and_then(|field| field["values"].as_array().cloned())
+        .unwrap_or_default()
+}
+fn field_names(frame: &Json) -> Vec<String> {
+    frame["fields"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|field| field["name"].as_str().map(str::to_owned))
+        .collect()
+}
+fn field_sum(frame: &Json, name: &str) -> f64 {
+    field_values(frame, name).iter().filter_map(Json::as_f64).sum()
 }

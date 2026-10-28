@@ -6,7 +6,207 @@
     "folder": "Monitor",
     "panels": {
       "summary": {
-        "title": "Services duration and count",
+        "title": "Services (a service narrows the dashboard to it)",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "requests",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              },
+              {
+                "id": "total",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              },
+              {
+                "id": "max",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "errors",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "http.response.status_code",
+                  "op": "range",
+                  "gte": 500
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(avg|max|latency\\.p[0-9]+)$"
+              },
+              "config": {
+                "unit": "s",
+                "decimals": 4
+              }
+            },
+            {
+              "match": {
+                "name": "errors"
+              },
+              "config": {
+                "noValue": "0",
+                "displayName": "Server errors (5xx)"
+              }
+            },
+            {
+              "match": {
+                "name": "service"
+              },
+              "config": {
+                "displayName": "Service",
+                "link": "/apps/monitor/Services?var-service=${service}"
+              }
+            }
+          ]
+        },
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "service"
+            ]
+          },
+          {
+            "type": "calculate",
+            "left": "total",
+            "right": "requests",
+            "operator": "/",
+            "name": "avg"
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2",
+              "total",
+              "latency.stddev",
+              "latency.bucket.0",
+              "latency.bucket.1",
+              "latency.bucket.2",
+              "latency.bucket.3",
+              "latency.bucket.4",
+              "latency.bucket.5",
+              "latency.bucket.6",
+              "latency.bucket.7",
+              "latency.bucket.8",
+              "latency.bucket.9",
+              "latency.bucket.10",
+              "latency.bucket.11",
+              "latency.bucket.12",
+              "latency.bucket.13",
+              "latency.bucket.14"
+            ],
+            "order": [
+              "service",
+              "requests",
+              "errors",
+              "avg",
+              "latency.p50",
+              "latency.p95",
+              "latency.p99",
+              "max"
+            ]
+          }
+        ]
+      },
+      "endpoints": {
+        "title": "Endpoints (an endpoint narrows the request panels to it)",
         "visualization": "table",
         "queries": [
           {
@@ -90,22 +290,108 @@
                 ]
               }
             ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "endpoint",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "http.route",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "errors",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "http.response.status_code",
+                  "op": "range",
+                  "gte": 500
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
           }
         ],
         "fieldConfig": {
           "overrides": [
             {
               "match": {
-                "regex": "^(total|min|max|avg|latency\\.p[0-9]+|stddev_estimated)$"
+                "regex": "^(avg|max|latency\\.p[0-9]+)$"
               },
               "config": {
                 "unit": "s",
                 "decimals": 4
               }
+            },
+            {
+              "match": {
+                "name": "errors"
+              },
+              "config": {
+                "noValue": "0",
+                "displayName": "Server errors (5xx)"
+              }
+            },
+            {
+              "match": {
+                "name": "service"
+              },
+              "config": {
+                "displayName": "Service",
+                "link": "/apps/monitor/Services?var-service=${service}"
+              }
+            },
+            {
+              "match": {
+                "name": "endpoint"
+              },
+              "config": {
+                "displayName": "Endpoint",
+                "link": "/apps/monitor/Services?var-service=${service}&var-endpoint=${endpoint}"
+              }
             }
           ]
         },
         "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "service",
+              "endpoint"
+            ]
+          },
           {
             "type": "calculate",
             "left": "total",
@@ -117,6 +403,9 @@
             "type": "organize",
             "hide": [
               "count",
+              "count.2",
+              "total",
+              "latency.stddev",
               "latency.bucket.0",
               "latency.bucket.1",
               "latency.bucket.2",
@@ -133,9 +422,633 @@
               "latency.bucket.13",
               "latency.bucket.14"
             ],
-            "rename": {
-              "latency.stddev": "stddev_estimated"
+            "order": [
+              "service",
+              "endpoint",
+              "requests",
+              "errors",
+              "avg",
+              "latency.p50",
+              "latency.p95",
+              "latency.p99",
+              "max"
+            ]
+          }
+        ]
+      },
+      "instances": {
+        "title": "Instances (an instance narrows the dashboard to it)",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "instance",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.instance.id",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "version",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.version",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "requests",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              },
+              {
+                "id": "total",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              },
+              {
+                "id": "max",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "instance",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.instance.id",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "version",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "service.version",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "errors",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "http.response.status_code",
+                  "op": "range",
+                  "gte": 500
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(avg|max|latency\\.p[0-9]+)$"
+              },
+              "config": {
+                "unit": "s",
+                "decimals": 4
+              }
+            },
+            {
+              "match": {
+                "name": "errors"
+              },
+              "config": {
+                "noValue": "0",
+                "displayName": "Server errors (5xx)"
+              }
+            },
+            {
+              "match": {
+                "name": "service"
+              },
+              "config": {
+                "displayName": "Service",
+                "link": "/apps/monitor/Services?var-service=${service}"
+              }
+            },
+            {
+              "match": {
+                "name": "instance"
+              },
+              "config": {
+                "displayName": "Instance",
+                "link": "/apps/monitor/Services?var-service=${service}&var-instance=${instance}"
+              }
+            },
+            {
+              "match": {
+                "name": "version"
+              },
+              "config": {
+                "displayName": "Version"
+              }
             }
+          ]
+        },
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "service",
+              "instance",
+              "version"
+            ]
+          },
+          {
+            "type": "calculate",
+            "left": "total",
+            "right": "requests",
+            "operator": "/",
+            "name": "avg"
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2",
+              "total",
+              "latency.stddev",
+              "latency.bucket.0",
+              "latency.bucket.1",
+              "latency.bucket.2",
+              "latency.bucket.3",
+              "latency.bucket.4",
+              "latency.bucket.5",
+              "latency.bucket.6",
+              "latency.bucket.7",
+              "latency.bucket.8",
+              "latency.bucket.9",
+              "latency.bucket.10",
+              "latency.bucket.11",
+              "latency.bucket.12",
+              "latency.bucket.13",
+              "latency.bucket.14"
+            ],
+            "order": [
+              "service",
+              "instance",
+              "version",
+              "requests",
+              "errors",
+              "avg",
+              "latency.p50",
+              "latency.p95",
+              "latency.p99",
+              "max"
+            ]
+          }
+        ]
+      },
+      "rate": {
+        "title": "Request rate",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "service.name",
+                  "size": 10,
+                  "missing": "(unknown)"
+                }
+              },
+              {
+                "id": "requests",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "errors": {
+        "title": "Server errors (5xx)",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "service",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "service.name",
+                  "size": 10,
+                  "missing": "(unknown)"
+                }
+              },
+              {
+                "id": "errors",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "http.response.status_code",
+                  "op": "range",
+                  "gte": 500
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "duration": {
+        "title": "Duration percentiles",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"http.server.request.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count",
+                  "latency.stddev",
+                  "latency.bucket.0",
+                  "latency.bucket.1",
+                  "latency.bucket.2",
+                  "latency.bucket.3",
+                  "latency.bucket.4",
+                  "latency.bucket.5",
+                  "latency.bucket.6",
+                  "latency.bucket.7",
+                  "latency.bucket.8",
+                  "latency.bucket.9",
+                  "latency.bucket.10",
+                  "latency.bucket.11",
+                  "latency.bucket.12",
+                  "latency.bucket.13",
+                  "latency.bucket.14"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "decimals": 3
+          }
+        }
+      },
+      "artifacts": {
+        "title": "Busiest artifacts (an artifact opens it in Artifacts)",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.artifact.duration\"",
+            "aggregations": [
+              {
+                "id": "artifact_type",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.artifact.type",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "name",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.artifact.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "hits",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              },
+              {
+                "id": "total",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              },
+              {
+                "id": "max",
+                "type": "max",
+                "role": "metric",
+                "params": {
+                  "field": "max"
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "ignoreVariables": [
+              "endpoint"
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(avg|max|latency\\.p[0-9]+)$"
+              },
+              "config": {
+                "unit": "s",
+                "decimals": 4
+              }
+            },
+            {
+              "match": {
+                "name": "name"
+              },
+              "config": {
+                "displayName": "Artifact",
+                "link": "/apps/monitor/Artifacts?var-artifactType=${artifact_type}&var-artifactName=${name}"
+              }
+            },
+            {
+              "match": {
+                "name": "artifact_type"
+              },
+              "config": {
+                "displayName": "Type"
+              }
+            }
+          ]
+        },
+        "transformations": [
+          {
+            "type": "calculate",
+            "left": "total",
+            "right": "hits",
+            "operator": "/",
+            "name": "avg"
+          },
+          {
+            "type": "sort",
+            "field": "hits",
+            "descending": true
+          },
+          {
+            "type": "limit",
+            "count": 50
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "total",
+              "latency.stddev",
+              "latency.bucket.0",
+              "latency.bucket.1",
+              "latency.bucket.2",
+              "latency.bucket.3",
+              "latency.bucket.4",
+              "latency.bucket.5",
+              "latency.bucket.6",
+              "latency.bucket.7",
+              "latency.bucket.8",
+              "latency.bucket.9",
+              "latency.bucket.10",
+              "latency.bucket.11",
+              "latency.bucket.12",
+              "latency.bucket.13",
+              "latency.bucket.14"
+            ],
+            "order": [
+              "artifact_type",
+              "name",
+              "hits",
+              "avg",
+              "latency.p50",
+              "latency.p95",
+              "latency.p99",
+              "max"
+            ]
           }
         ]
       },
@@ -174,6 +1087,9 @@
                   "count"
                 ]
               }
+            ],
+            "ignoreVariables": [
+              "endpoint"
             ]
           }
         ]
@@ -213,6 +1129,9 @@
                   "count"
                 ]
               }
+            ],
+            "ignoreVariables": [
+              "endpoint"
             ]
           }
         ]
@@ -225,6 +1144,15 @@
         "kind": "query",
         "datasetId": "otel_metrics",
         "field": "service.name",
+        "multi": false,
+        "includeAll": true
+      },
+      {
+        "name": "endpoint",
+        "label": "Endpoint",
+        "kind": "query",
+        "datasetId": "otel_metrics",
+        "field": "http.route",
         "multi": false,
         "includeAll": true
       },
