@@ -1816,6 +1816,19 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element name="exclude" minOccurs="0" maxOccurs="unbounded">
                     <xs:complexType><xs:attribute name="pattern" type="xs:string" use="required"/></xs:complexType>
                 </xs:element>
+                <xs:element name="task-app" minOccurs="0" maxOccurs="unbounded">
+                    <xs:annotation><xs:documentation>An app a task opens in (plans/design-dev-aide.md 14): its paths to a
+                        project, a task and a new task with {projectId} and {taskId}, and a base URL when it is another
+                        instance.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required"/>
+                        <xs:attribute name="title" type="xs:string"/>
+                        <xs:attribute name="project-path" type="xs:string"/>
+                        <xs:attribute name="task-path" type="xs:string"/>
+                        <xs:attribute name="new-task-path" type="xs:string"/>
+                        <xs:attribute name="base-url" type="xs:string"/>
+                    </xs:complexType>
+                </xs:element>
             </xs:sequence>
             <xs:attribute name="site-component" type="xs:string"><xs:annotation><xs:documentation>The components the
                 site owns, comma separated, the first the default target of an extension. A root with none of them is

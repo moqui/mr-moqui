@@ -102,3 +102,16 @@ feature("Repositories, Data and Settings's tokens render in both modes", {
         dataTui.output.includes("DevAideSecurityData.xml")
     },
 })
+
+feature("Tasks renders the source, my tasks and Quick create in both modes", {
+    expect() {
+        const tasks = dev().render("Tasks", null, null)
+        const tasksTui = dev().renderMode("tui").render("Tasks", null, null)
+        tasks.errorMessages.join("; ") == ""
+        tasks.status == 200
+        tasks.output.includes("TaskSourceForm")
+        tasks.output.includes("TaskList")
+        tasks.output.includes("TaskSourceAddForm")
+        tasksTui.errorMessages.join("; ") == ""
+    },
+})

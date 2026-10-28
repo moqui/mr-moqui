@@ -97,7 +97,7 @@ and the risks and open questions (20).
 | Screens | `dev/Screens` | qvue | The screen tree with its mounts; each opens in the screen view (§11) |
 | ECA Rules | `dev/Eca` | XML, tui | The active SECA, EECA, EmECA and gitECA rules (§10) |
 | Data | `dev/Data` | XML, tui | Data files by component and type; load, check and export (§12) |
-| Tasks | `dev/Tasks` | XML, tui | P8: my tasks from the task source, opened in the project app (§14); the first version keeps only the current task's trailer |
+| Tasks | `dev/Tasks` | XML, tui | My tasks from the task source, opened in the project app (§14) |
 | Settings | `dev/Settings` | XML | Roots, editor, git, task sources and apps |
 
 Every visual tool is a view of a file tab, and a file tab lives in either arrangement (D18). In the guided one,
@@ -1256,7 +1256,7 @@ the git-depth phase (P8), since a developer's tasks live in the team's tools alr
 | --- | --- |
 | `DevAideAudit` | A write: user, date, action (save, create, move, delete, ddl, sql, git command, try), root, path, hashes before and after, detail (JSON), agent run and approval |
 | `DevAideRoot` | A root added in Settings, or the settings of a discovered one: location, label, read only, publish branch and whether it is required (question 15) |
-| `DevAideTaskSource` | A task source: kind (`mantle`, `moqui-rest`), base URL, user name, access token (encrypted), project filter |
+| `DevAideTaskSource` | A user's `moqui-rest` task source: user, base URL, user name, access token (encrypted), project filter; `mantle` needs no row |
 | `DevAideTaskApp` | A task app added in Settings, as the conf's `task-app` |
 | `DevAideCredential` | Shared mode (D19): a deploy token for a root's remote, or a user's HTTPS token, encrypted, set by an admin |
 
@@ -1643,6 +1643,18 @@ design mode needs (P9).
   root by root through the same services as the Workspace's, a failure a message for its root while the others go on,
   and a pull's broken extensions summed; Get a component runs `./moq component-get [--dev]` (from the names of
   `addons.xml` and `myaddons.xml` not here yet, when the runtime has `moq`), and Clone a URL is `clone#Repository`.
+- **Tasks** (`dev/Tasks`, menu index 10, and the Workspace rail's Tasks). `mantle` reads this instance's
+  `WorkEffortAndParty` (the user's party's `WetTask` assignments not complete, closed or cancelled) when Mantle is
+  loaded; `moqui-rest` is a `DevAideTaskSource` row of the user's own (base URL, user name, access token encrypted,
+  project filter) read through Mantle's REST API, `GET /rest/s1/mantle/my/tasks` (`get#MyTasks`, new in mr-mantle), with
+  the token as `api_key`: the entity REST API does not serve `mantle.*` without a grant stock Mantle leaves off. The
+  source is the user's `DEV_AIDE_TASK_SOURCE`, else `mantle` when loaded; the app is the user's `DEV_AIDE_TASK_APP`, else
+  the first of the conf's `task-app` elements (IronStone Projects and MarbleERP in the component's conf) and the
+  `DevAideTaskApp` rows. A task has Open (in the app), Copy key, Use in commit, Set current and Branch
+  (`create#TaskBranch`: `KEY-first-words`, switched to, and made the root's current task); Quick create makes a task
+  on this instance through Mantle's `create#Task`, assigned to the user (a remote source's tasks are made in its own
+  app). A source that cannot be reached answers its error and no tasks. Projects linked to the repository are not put
+  first yet: a working tree knows no hosted repository id.
 
 ---
 

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- Tasks (plans/design-dev-aide.md 14): my open tasks from my task source (this instance's Mantle tasks, or another
+    Moqui instance such as the team's Projects server), each opening in the chosen app, with Set current (its trailer on
+    a root's commits) and Branch (a local branch named for it); Quick create on this instance; the source and the app
+    are picked here, a remote source added with its own access token. The Workspace's rail has the same list. A list, so
+    the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Tasks" default-menu-index="10">
+
+    <transition name="setCurrent"><service-call name="org.moqui.devaide.VcsServices.set#CurrentTask"/>
+        <actions><message type="success">${task ? 'Current task of ' + rootId + ': ' + task : 'No current task for ' + rootId}</message></actions>
+        <default-response url="."/></transition>
+    <transition name="branch"><service-call name="org.moqui.devaide.TaskServices.create#TaskBranch" out-map="made"/>
+        <actions><message type="success">On ${made.branch} in ${rootId}</message></actions>
+        <default-response url="."/></transition>
+    <transition name="createTask"><service-call name="org.moqui.devaide.TaskServices.create#Task" out-map="made"/>
+        <actions><message type="success">Made task ${made.taskId}</message></actions>
+        <default-response url="."/></transition>
+    <transition name="setSource"><service-call name="org.moqui.devaide.TaskServices.set#TaskSource"/>
+        <default-response url="."/></transition>
+    <transition name="storeSource"><service-call name="org.moqui.devaide.TaskServices.store#TaskSource"/>
+        <actions><message type="success">Task source saved</message></actions>
+        <default-response url="."/></transition>
+    <transition name="deleteSource"><service-call name="org.moqui.devaide.TaskServices.delete#TaskSource"/>
+        <default-response url="."/></transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.TaskServices.get#Tasks" out-map="found"/>
+        <set field="tasks" from="found.tasks || []"/>
+        <service-call name="org.moqui.devaide.TaskServices.get#TaskSources" out-map="choices"/>
+        <set field="sourceOptions" from="(choices.sources || []).map((source) => ({key: source.taskSourceId, text: source.label || source.baseUrl}))"/>
+        <set field="remoteSources" from="(choices.sources || []).filter((source) => source.kind == 'moqui-rest')"/>
+        <set field="appOptions" from="(found.apps || []).map((app) => ({key: app.name, text: app.title || app.name}))"/>
+        <set field="taskSourceId" from="choices.current"/>
+        <set field="taskAppName" from="found.apps &amp;&amp; found.apps.length ? found.apps[0].name : ''"/>
+        <service-call name="org.moqui.devaide.WorkspaceServices.get#Roots" out-map="rootInfo"/>
+        <set field="rootOptions" from="(rootInfo.roots || []).filter((root) => root.kind == 'git').map((root) => ({key: root.id, text: root.label}))"/>
+        <set field="defaultRoot" from="((rootInfo.roots || []).find((root) => root.kind == 'git' &amp;&amp; !root.upstream) || (rootInfo.roots || []).find((root) => root.kind == 'git') || {}).id"/>
+    </actions>
+    <widgets>
+        <form-single name="TaskSourceForm" transition="setSource">
+            <field name="taskSourceId"><default-field title="Tasks from"><drop-down allow-empty="true">
+                <list-options list="sourceOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+            <field name="taskAppName"><default-field title="Open in"><drop-down allow-empty="false">
+                <list-options list="appOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+            <field name="submitButton"><default-field title="Use"><submit/></default-field></field>
+        </form-single>
+        <label text="${found.error ? found.sourceLabel + ': ' + found.error : tasks.length + ' open tasks from ' + found.sourceLabel}" type="p"/>
+        <form-list name="TaskList" list="tasks" skip-form="true">
+            <field name="key"><default-field title="Task">
+                <link url="${url || ''}" url-type="plain" text="${key}" link-type="anchor" condition="url" target-window="_blank"/></default-field></field>
+            <field name="title"><default-field title="Title"><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display/></default-field></field>
+            <field name="projectName"><default-field title="Project">
+                <link url="${projectUrl || ''}" url-type="plain" text="${projectName || projectId || ''}" link-type="anchor" condition="projectUrl" target-window="_blank"/></default-field></field>
+            <field name="setCurrent"><default-field title="">
+                <link url="setCurrent" text="Set current" parameter-map="{rootId: defaultRoot, task: key}" link-type="hidden-form" condition="defaultRoot"/></default-field></field>
+            <field name="branch"><default-field title="">
+                <link url="branch" text="Branch" parameter-map="{rootId: defaultRoot, taskId: key, title: title}" link-type="hidden-form" condition="defaultRoot"
+                        confirmation="Make a branch for ${key} in ${defaultRoot} and switch to it?"/></default-field></field>
+        </form-list>
+
+        <section name="CreateSection" condition="found.source == 'mantle'"><widgets>
+            <container-box id="DevQuickCreateBox"><box-header title="Quick create"/><box-body>
+                <form-single name="QuickCreateForm" transition="createTask">
+                    <field name="title"><default-field title="Title"><text-line size="50"/></default-field></field>
+                    <field name="projectId"><default-field title="Project id"><text-line size="16"/></default-field></field>
+                    <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box id="DevTaskSourcesBox"><box-header title="Another instance's tasks"/><box-body>
+            <label type="p" text="Read your tasks from another Moqui instance, such as your team's Projects server, with your own access token there (its user name and a login key). The token is kept encrypted."/>
+            <form-list name="TaskSourceList" list="remoteSources" skip-form="true">
+                <field name="label"><default-field title="Label"><display/></default-field></field>
+                <field name="baseUrl"><default-field title="Base URL"><display/></default-field></field>
+                <field name="username"><default-field title="User name"><display/></default-field></field>
+                <field name="projectFilter"><default-field title="Projects"><display/></default-field></field>
+                <field name="remove"><default-field title="">
+                    <link url="deleteSource" text="Remove" parameter-map="{taskSourceId: taskSourceId}" link-type="hidden-form" confirmation="Remove this source?"/></default-field></field>
+            </form-list>
+            <form-single name="TaskSourceAddForm" transition="storeSource">
+                <field name="label"><default-field title="Label"><text-line size="20"/></default-field></field>
+                <field name="baseUrl"><default-field title="Base URL (https://…)"><text-line size="40"/></default-field></field>
+                <field name="username"><default-field title="Your user name there"><text-line size="20"/></default-field></field>
+                <field name="token"><default-field title="Access token"><password size="30"/></default-field></field>
+                <field name="projectFilter"><default-field title="Only these projects (ids, comma separated)"><text-line size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

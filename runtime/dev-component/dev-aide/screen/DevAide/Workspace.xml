@@ -74,6 +74,11 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- the task panel (14) -->
+    <transition name="tasks" read-only="true"><service-call name="org.moqui.devaide.TaskServices.get#Tasks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="taskBranch"><service-call name="org.moqui.devaide.TaskServices.create#TaskBranch" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- git depth (P8) -->
     <transition name="setCurrentTask"><service-call name="org.moqui.devaide.VcsServices.set#CurrentTask" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

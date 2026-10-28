@@ -36,6 +36,7 @@ mod screens;
 mod services;
 pub mod settings;
 mod site;
+mod tasks;
 pub mod tier;
 mod vcs;
 pub(crate) mod workspace;
@@ -56,5 +57,6 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     services::register(registry)?;
     vcs::register(registry)?;
     repo::register(registry)?;
-    repos::register(registry)
+    repos::register(registry)?;
+    tasks::register(registry)
 }

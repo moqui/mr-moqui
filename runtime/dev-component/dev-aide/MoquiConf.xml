@@ -27,5 +27,12 @@ along with this software (see the LICENSE.md file). If not, see
     </screen-facade>
     <dev-aide site-component="${dev_aide_site_component ?: ''}" shared="${dev_aide_shared ?: 'false'}"
             allow-upstream-edits="false" git-command="git" git-read-timeout="15" git-network-timeout="300" git-write-timeout="120"
-            max-edit-bytes="2097152"/>
+            max-edit-bytes="2097152">
+        <!-- the apps a task opens in (plans/design-dev-aide.md 14); Settings adds more as DevAideTaskApp rows -->
+        <task-app name="projects" title="IronStone Projects"
+                project-path="/qapps/Projects/Projects/ProjectDetail?workEffortId={projectId}"
+                task-path="/qapps/Projects/WorkItems/WorkItemDetail?workEffortId={taskId}"/>
+        <task-app name="marble" title="MarbleERP" project-path="/qapps/marble/Project/ProjectSummary?workEffortId={projectId}"
+                task-path="/qapps/marble/Task/TaskSummary?workEffortId={taskId}"/>
+    </dev-aide>
 </moqui-conf>

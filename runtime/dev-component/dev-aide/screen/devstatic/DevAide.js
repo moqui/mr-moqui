@@ -221,6 +221,8 @@
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
                 // shared mode (D19): the other users with files of this root open
                 editors: [],
+                // the task panel (14): the user's open tasks from their source
+                taskList: { tasks: [], loading: false, error: "", sourceLabel: "" },
                 // git depth (P8): Branches, Tags and Stashes under Advanced; a running network command's last line; the
                 // diff's hunks; the conflicted file open in the conflict view; the Commits tab's paging and path
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
@@ -895,6 +897,24 @@
                 this.treeKey++;
             },
             reloadTabs() { this.tabs.forEach((tab) => { if (!pure.isDirty(tab)) this.reloadTab(tab); }); this.treeKey++; },
+            // ---- the task panel (14) ----
+            loadTasks() {
+                this.taskList.loading = true;
+                return this.get("tasks", {}).then((answer) => {
+                    this.taskList = { tasks: answer.tasks || [], loading: false, error: answer.error || "", sourceLabel: answer.sourceLabel || "" };
+                }, (error) => { this.taskList.loading = false; this.taskList.error = pure.errorText(error); });
+            },
+            copyText(text) { if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(text).then(() => this.note("Copied " + text)); },
+            useTask(task, current) {
+                this.commitForm.task = task.key;
+                if (current) this.setCurrentTask(); else { this.tab = "changes"; this.note("The next commit gets " + task.key + "'s trailer"); }
+            },
+            taskBranch(task) {
+                this.post("taskBranch", { rootId: this.rootId, taskId: task.key, title: task.title }).then((answer) => {
+                    this.commitForm.task = task.key;
+                    this.note("On " + answer.branch); this.refreshStatus(); this.reloadTabs();
+                }, this.fail);
+            },
             // the current task's trailer kept for this root (14)
             setCurrentTask() {
                 this.post("setCurrentTask", { rootId: this.rootId, task: this.commitForm.task || "" }).then(() => {
@@ -1160,7 +1180,8 @@
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">
     <div class="m-dev-side column no-wrap" v-if="!guided">
       <div class="row no-wrap items-center q-px-xs">
-        <q-btn-toggle dense flat no-caps v-model="rail" :options="[{ label: 'Files', value: 'files' }, { label: 'Search', value: 'search' }]"></q-btn-toggle>
+        <q-btn-toggle dense flat no-caps v-model="rail" :options="[{ label: 'Files', value: 'files' }, { label: 'Search', value: 'search' }, { label: 'Tasks', value: 'tasks' }]"
+            @update:model-value="$event === 'tasks' && loadTasks()" id="DevRail"></q-btn-toggle>
         <q-space></q-space>
         <q-btn dense flat round size="sm" icon="sym_o_note_add" :disable="!canWrite" @click="newFile(null)"><q-tooltip>New file</q-tooltip></q-btn>
         <q-btn dense flat round size="sm" icon="sym_o_create_new_folder" :disable="!canWrite" @click="newFolder(null)"><q-tooltip>New folder</q-tooltip></q-btn>
@@ -1193,6 +1214,27 @@
             <q-item-section><q-item-label caption>{{hit.path}}:{{hit.line}}</q-item-label><q-item-label class="ellipsis m-dev-mono">{{hit.text}}</q-item-label></q-item-section>
           </q-item>
           <q-item v-if="search.truncated"><q-item-section class="text-caption">The first 500 lines only</q-item-section></q-item>
+        </q-list>
+      </div>
+      <div v-show="rail === 'tasks'" class="col column no-wrap q-pa-xs" id="DevTasks">
+        <div class="row items-center no-wrap text-caption"><span class="ellipsis">{{taskList.error ? taskList.sourceLabel + ': ' + taskList.error : 'My tasks · ' + (taskList.sourceLabel || '')}}</span>
+          <q-space></q-space><q-btn dense flat round size="xs" icon="refresh" @click="loadTasks"></q-btn>
+          <q-btn dense flat round size="xs" icon="sym_o_settings" href="/qapps/dev/Tasks" type="a"><q-tooltip>Task source and app</q-tooltip></q-btn></div>
+        <q-linear-progress v-if="taskList.loading" indeterminate></q-linear-progress>
+        <q-list dense class="col scroll">
+          <q-item v-for="task in taskList.tasks" :key="task.taskId" :data-task="task.taskId">
+            <q-item-section><q-item-label class="ellipsis">{{task.title}}</q-item-label>
+              <q-item-label caption>{{task.key}} · {{task.statusId}}{{task.projectName ? ' · ' + task.projectName : ''}}
+                <q-icon v-if="status && status.currentTask === task.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
+            <q-item-section side><q-btn dense flat round size="xs" icon="more_vert"><q-menu><q-list dense style="min-width: 10rem">
+              <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item clickable v-close-popup @click="copyText(task.key)"><q-item-section>Copy key</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task)"><q-item-section>Use in commit</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task, true)"><q-item-section>Set current</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit || !canWrite" @click="taskBranch(task)"><q-item-section>Branch</q-item-section></q-item>
+            </q-list></q-menu></q-btn></q-item-section>
+          </q-item>
+          <q-item v-if="!taskList.loading && !taskList.tasks.length && !taskList.error"><q-item-section class="text-caption m-muted">No open tasks.</q-item-section></q-item>
         </q-list>
       </div>
     </div>

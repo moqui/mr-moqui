@@ -1732,3 +1732,279 @@ fn the_git_depth_writes_on_scratch_repositories() {
         "{results}"
     );
 }
+
+/// Mantle's task entities as far as the task panel reads them, and its create#Task, for a runtime without Mantle.
+const TASK_ENTITIES: &str = r#"<entities>
+    <extend-entity entity-name="UserAccount" package="moqui.security"><field name="partyId" type="id"/></extend-entity>
+    <entity entity-name="WorkEffort" package="mantle.work.effort">
+        <field name="workEffortId" type="id" is-pk="true"/>
+        <field name="rootWorkEffortId" type="id"/>
+        <field name="workEffortTypeEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="priority" type="number-integer"/>
+        <field name="workEffortName" type="text-medium"/>
+    </entity>
+    <entity entity-name="WorkEffortParty" package="mantle.work.effort">
+        <field name="workEffortId" type="id" is-pk="true"/>
+        <field name="partyId" type="id" is-pk="true"/>
+        <field name="roleTypeId" type="id" is-pk="true"/>
+        <field name="fromDate" type="date-time" is-pk="true"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="statusId" type="id"/>
+    </entity>
+    <view-entity entity-name="WorkEffortAndParty" package="mantle.work.effort">
+        <member-entity entity-alias="WEFF" entity-name="mantle.work.effort.WorkEffort"/>
+        <member-entity entity-alias="WEP" entity-name="mantle.work.effort.WorkEffortParty" join-from-alias="WEFF" join-optional="true">
+            <key-map field-name="workEffortId"/></member-entity>
+        <alias-all entity-alias="WEFF"/>
+        <alias-all entity-alias="WEP"><exclude field="statusId"/></alias-all>
+        <alias name="partyStatusId" entity-alias="WEP" field="statusId"/>
+    </view-entity>
+</entities>
+"#;
+const TASK_SERVICES: &str = r#"<services>
+    <service verb="get" noun="MyTasks">
+        <in-parameters><parameter name="pageSize" type="Integer" default="200"/></in-parameters>
+        <out-parameters><parameter name="taskList" type="List"/></out-parameters>
+        <actions>
+            <entity-find entity-name="mantle.work.effort.WorkEffortAndParty" list="taskList" limit="pageSize">
+                <econdition field-name="partyId" from="ec.user.userAccount.partyId"/>
+                <econdition field-name="workEffortTypeEnumId" value="WetTask"/>
+                <econdition field-name="statusId" operator="not-in" value="WeComplete,WeClosed,WeCancelled"/>
+                <date-filter/>
+            </entity-find>
+        </actions>
+    </service>
+    <service verb="create" noun="Task">
+        <in-parameters>
+            <parameter name="workEffortName" required="true"/>
+            <parameter name="rootWorkEffortId"/>
+            <parameter name="assignToPartyId"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/></out-parameters>
+        <actions>
+            <service-call name="create#mantle.work.effort.WorkEffort" out-map="context"
+                    in-map="{workEffortName: workEffortName, rootWorkEffortId: rootWorkEffortId, workEffortTypeEnumId: 'WetTask', statusId: 'WeInPlanning'}"/>
+            <service-call name="create#mantle.work.effort.WorkEffortParty" in-map="{workEffortId: workEffortId, partyId: assignToPartyId,
+                    roleTypeId: 'Assignee', fromDate: ec.user.nowTimestamp}"/>
+        </actions>
+    </service>
+</services>
+"#;
+
+/// The task panel (plans/design-dev-aide.md P8, 14): this instance's tasks assigned to the user, open ones only, with
+/// their project's name and the link in the chosen app; Quick create; another instance's tasks over its entity REST
+/// API with the user's own token (here the same server); a source that cannot be reached answers its error; and a
+/// branch named for a task becomes the root's current task.
+#[test]
+fn tasks_from_mantle_and_rest() {
+    // Mantle's REST API for admins, as its seed data grants it
+    let api = r#"
+    <moqui.security.ArtifactGroup artifactGroupId="MANTLE_API" description="Mantle REST API"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MANTLE_API" artifactTypeEnumId="AT_REST_PATH" artifactName="/mantle" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MANTLE_API_ADMIN" artifactGroupId="MANTLE_API" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#;
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+        .replace("</entity-facade-xml>", api);
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/notes.txt", "notes\n"),
+        (
+            "component/fake-mantle/component.xml",
+            r#"<component name="fake-mantle"/>"#,
+        ),
+        ("component/fake-mantle/entity/WorkEffortEntities.xml", TASK_ENTITIES),
+        (
+            "component/fake-mantle/service/mantle/work/TaskServices.xml",
+            TASK_SERVICES,
+        ),
+        (
+            "component/fake-mantle/service/mantle.rest.xml",
+            r#"<resource name="mantle"><resource name="my"><resource name="tasks"><method type="get">
+                <service name="mantle.work.TaskServices.get#MyTasks"/></method></resource></resource></resource>"#,
+        ),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-tasks",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("component/my-site");
+    isolate_git(&gate.runtime);
+    repository(&site, &gate.runtime.join("site-remote.git"));
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut account = facade
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .eq("userId", Value::string("EX_JOHN_DOE"))
+            .one()
+            .unwrap()
+            .unwrap();
+        account.set("partyId", Value::string("JOHN"));
+        account.update(&facade).unwrap();
+        for (id, name, status, root) in [
+            ("PROJ", "The project", "WeInProgress", ""),
+            ("PROJ-1", "Add a due date", "WeInProgress", "PROJ"),
+            ("PROJ-2", "Done already", "WeComplete", "PROJ"),
+        ] {
+            let mut effort = facade.make_value("mantle.work.effort.WorkEffort").unwrap();
+            effort.set("workEffortId", Value::string(id));
+            effort.set("workEffortName", Value::string(name));
+            effort.set("statusId", Value::string(status));
+            effort.set(
+                "workEffortTypeEnumId",
+                Value::string(if root.is_empty() { "WetProject" } else { "WetTask" }),
+            );
+            if !root.is_empty() {
+                effort.set("rootWorkEffortId", Value::string(root));
+            }
+            effort.create(&facade).unwrap();
+            if !root.is_empty() {
+                let mut party = facade.make_value("mantle.work.effort.WorkEffortParty").unwrap();
+                party.set("workEffortId", Value::string(id));
+                party.set("partyId", Value::string("JOHN"));
+                party.set("roleTypeId", Value::string("Assignee"));
+                party.set("fromDate", Value::I64(1_700_000_000_000));
+                party.create(&facade).unwrap();
+            }
+        }
+    }
+    const TASKS: &str = "org.moqui.devaide.TaskServices.";
+
+    // this instance's tasks: the open one, with its project and its link in the first app (IronStone Projects)
+    let found = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
+    assert_eq!(text(&found, "source"), "mantle", "{found:?}");
+    let tasks = moqui_lib::json::to_json(&found["tasks"]);
+    assert_eq!(tasks.as_array().unwrap().len(), 1, "{tasks}");
+    assert_eq!(tasks[0]["taskId"], "PROJ-1");
+    assert_eq!(tasks[0]["projectName"], "The project");
+    assert_eq!(
+        tasks[0]["url"],
+        "/qapps/Projects/WorkItems/WorkItemDetail?workEffortId=PROJ-1"
+    );
+    // the second app chosen
+    call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}set#TaskSource"),
+        &[("taskAppName", "marble")],
+    )
+    .unwrap();
+    let found = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
+    assert_eq!(
+        moqui_lib::json::to_json(&found["tasks"])[0]["url"],
+        "/qapps/marble/Task/TaskSummary?workEffortId=PROJ-1"
+    );
+
+    // Quick create, assigned to the user
+    let made = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}create#Task"),
+        &[("title", "Quick one"), ("projectId", "PROJ")],
+    )
+    .unwrap();
+    assert!(!text(&made, "taskId").is_empty(), "{made:?}");
+    let found = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
+    assert_eq!(moqui_lib::json::to_json(&found["tasks"]).as_array().unwrap().len(), 2);
+
+    // another instance's tasks over REST with the user's own token: here the same server
+    let token = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::user::get_login_key(Some(1.0)).unwrap()
+    };
+    let base = format!("http://{}", gate.server.address());
+    let stored = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("label", "Team"),
+            ("baseUrl", &base),
+            ("username", "john.doe"),
+            ("token", &token),
+            ("projectFilter", "PROJ"),
+        ],
+    )
+    .unwrap();
+    let source = text(&stored, "taskSourceId");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}set#TaskSource"),
+        &[("taskSourceId", &source)],
+    )
+    .unwrap();
+    let remote = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
+    assert_eq!(text(&remote, "error"), "", "{remote:?}");
+    let remote_tasks = moqui_lib::json::to_json(&remote["tasks"]);
+    assert!(
+        remote_tasks
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["taskId"] == "PROJ-1"),
+        "{remote_tasks}"
+    );
+    assert!(remote_tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|task| task["taskId"] != "PROJ-2"));
+    let sources = call(&factory, "john.doe", &format!("{TASKS}get#TaskSources"), &[]).unwrap();
+    assert!(!moqui_lib::json::to_json(&sources["sources"])
+        .to_string()
+        .contains(&token));
+
+    // a source that cannot be reached: its error, no tasks
+    call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://127.0.0.1:9"),
+            ("username", "john.doe"),
+        ],
+    )
+    .unwrap();
+    let unreachable = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
+    assert!(!text(&unreachable, "error").is_empty(), "{unreachable:?}");
+
+    // a branch named for a task, which becomes the root's current task
+    let branched = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}create#TaskBranch"),
+        &[("rootId", "my-site"), ("taskId", "PROJ-1"), ("title", "Add a due date")],
+    )
+    .unwrap();
+    assert_eq!(text(&branched, "branch"), "PROJ-1-add-a-due-date");
+    assert_eq!(
+        git(&site, &["branch", "--show-current"]).trim(),
+        "PROJ-1-add-a-due-date"
+    );
+    let status = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}get#Status"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    assert_eq!(text(&status, "currentTask"), "PROJ-1");
+}

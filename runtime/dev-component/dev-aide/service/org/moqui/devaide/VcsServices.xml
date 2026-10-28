@@ -12,9 +12,10 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The git of a root (plans/design-dev-aide.md 4.2, 4.5, 4.6), through the developer's own git command, implemented in
-    the dev-aide crate (src/vcs.rs): reads, staging by file, commit with the task trailer and the user as author, fetch,
-    pull (fast-forward only) and push, switch and new branch, and Publish of the site component's changes. -->
+<!-- The git of a root (plans/design-dev-aide.md 4.2, 4.5 to 4.7), through the developer's own git command, implemented
+    in the dev-aide crate (src/vcs.rs, src/repo.rs, src/repos.rs): reads, staging by file and by hunk, commit with the task
+    trailer and the user as author, fetch, pull (fast-forward only) and push, Publish of the site component's changes;
+    branches, tags, stashes, revert and cherry-pick, conflicts, remotes, blame, clone; and the Repositories list. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="Status" type="rust" location="dev_aide::vcs::get_status" allow-remote="false" read-only="true">
         <description>Branch, upstream, ahead and behind, the changed files, branches, remotes, the author and committer identities and the current task.</description>

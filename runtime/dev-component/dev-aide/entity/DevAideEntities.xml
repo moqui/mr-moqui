@@ -60,4 +60,27 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="token" type="text-medium" encrypt="true"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount"/>
     </entity>
+    <entity entity-name="DevAideTaskSource" package="moqui.dev" use="configuration">
+        <description>A user's task source (plans/design-dev-aide.md 14): another Moqui instance, such as the team's Projects
+            server, read over its REST API with the user's own access token. This instance's Mantle tasks need no row.</description>
+        <field name="taskSourceId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="kind" type="text-short"><description>moqui-rest</description></field>
+        <field name="label" type="text-medium"/>
+        <field name="baseUrl" type="text-medium"/>
+        <field name="username" type="text-medium"/>
+        <field name="token" type="text-medium" encrypt="true"/>
+        <field name="projectFilter" type="text-medium"><description>Project ids, comma separated; empty for every project</description></field>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+    </entity>
+    <entity entity-name="DevAideTaskApp" package="moqui.dev" use="configuration">
+        <description>A task app added in Settings, as the conf's task-app: the paths that open a project, a task and a new task,
+            with {projectId} and {taskId}, and a base URL when it is another instance.</description>
+        <field name="taskAppName" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="projectPath" type="text-medium"/>
+        <field name="taskPath" type="text-medium"/>
+        <field name="newTaskPath" type="text-medium"/>
+        <field name="baseUrl" type="text-medium"/>
+    </entity>
 </entities>

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The task panel (plans/design-dev-aide.md 14), implemented in the dev-aide crate (src/tasks.rs): the user's open tasks
+    from a task source (this instance's Mantle tasks, or another Moqui instance over REST), the apps a task opens in, Quick
+    create and a branch named for a task. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Tasks" type="rust" location="dev_aide::tasks::get_tasks" allow-remote="false" read-only="true">
+        <description>The user's open tasks from their source, each with its link in the chosen app; an unreachable source answers its error.</description>
+        <out-parameters>
+            <parameter name="tasks" type="List"/>
+            <parameter name="source"/>
+            <parameter name="sourceLabel"/>
+            <parameter name="apps" type="List"/>
+            <parameter name="error"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="TaskSources" type="rust" location="dev_aide::tasks::get_task_sources" allow-remote="false" read-only="true">
+        <description>The sources the user may pick, without their tokens, the current one, and the apps.</description>
+        <out-parameters>
+            <parameter name="sources" type="List"/>
+            <parameter name="current"/>
+            <parameter name="apps" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="set" noun="TaskSource" type="rust" location="dev_aide::tasks::set_task_source" allow-remote="false">
+        <description>The user's source (mantle or one of their DevAideTaskSource rows) and the app a task opens in.</description>
+        <in-parameters>
+            <parameter name="taskSourceId"/>
+            <parameter name="taskAppName"/>
+        </in-parameters>
+    </service>
+    <service verb="store" noun="TaskSource" type="rust" location="dev_aide::tasks::store_task_source" allow-remote="false">
+        <description>The user's own moqui-rest source, new or changed; an empty token on a change keeps the stored one.</description>
+        <in-parameters>
+            <parameter name="taskSourceId"/>
+            <parameter name="label"/>
+            <parameter name="baseUrl" required="true"/>
+            <parameter name="username" required="true"/>
+            <parameter name="token"/>
+            <parameter name="projectFilter"/>
+        </in-parameters>
+        <out-parameters><parameter name="taskSourceId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="TaskSource" type="rust" location="dev_aide::tasks::delete_task_source" allow-remote="false">
+        <in-parameters><parameter name="taskSourceId" required="true"/></in-parameters>
+    </service>
+    <service verb="store" noun="TaskApp" type="rust" location="dev_aide::tasks::store_task_app" allow-remote="false">
+        <description>An app tasks open in, by name: its paths with {projectId} and {taskId}, and a base URL for another instance.</description>
+        <in-parameters>
+            <parameter name="taskAppName" required="true"/>
+            <parameter name="title"/>
+            <parameter name="projectPath"/>
+            <parameter name="taskPath"/>
+            <parameter name="newTaskPath"/>
+            <parameter name="baseUrl"/>
+        </in-parameters>
+    </service>
+    <service verb="create" noun="Task" type="rust" location="dev_aide::tasks::create_task" allow-remote="false">
+        <description>Quick create: a task with a title in a project, assigned to the user, on this instance.</description>
+        <in-parameters>
+            <parameter name="title" required="true"/>
+            <parameter name="projectId"/>
+        </in-parameters>
+        <out-parameters><parameter name="taskId"/></out-parameters>
+    </service>
+    <service verb="create" noun="TaskBranch" type="rust" location="dev_aide::tasks::create_task_branch" allow-remote="false">
+        <description>A local branch named for a task (its key and the title's first words), switched to; the task becomes the root's current one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="taskId" required="true"/>
+            <parameter name="title"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="branch"/>
+            <parameter name="output"/>
+        </out-parameters>
+    </service>
+</services>
