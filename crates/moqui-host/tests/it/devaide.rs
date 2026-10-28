@@ -1675,6 +1675,19 @@ fn the_git_depth_writes_on_scratch_repositories() {
         git(&site, &["rev-parse", "HEAD"]).trim()
     );
 
+    // the current task kept for the root, and a branch from a commit
+    vcs("set#CurrentTask", &[("task", "PROJ-7")]).unwrap();
+    assert_eq!(text(&vcs("get#Status", &[]).unwrap(), "currentTask"), "PROJ-7");
+    vcs(
+        "create#Branch",
+        &[("branch", "from-start"), ("switch", "false"), ("startPoint", "HEAD~1")],
+    )
+    .unwrap();
+    assert_eq!(
+        git(&site, &["rev-parse", "from-start"]).trim(),
+        git(&site, &["rev-parse", "HEAD~1"]).trim()
+    );
+
     // a clone into the component directory, which loads after a restart
     git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     let cloned = call(

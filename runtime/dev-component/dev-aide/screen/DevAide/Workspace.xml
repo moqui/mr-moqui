@@ -75,6 +75,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <!-- git depth (P8) -->
+    <transition name="setCurrentTask"><service-call name="org.moqui.devaide.VcsServices.set#CurrentTask" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="hunks" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Hunks" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="stageHunks"><service-call name="org.moqui.devaide.VcsServices.stage#Hunks" in-map="true" web-send-json-response="true"/>

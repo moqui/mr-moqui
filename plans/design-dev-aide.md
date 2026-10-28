@@ -1622,6 +1622,22 @@ design mode needs (P9).
   save pipeline (refused while markers remain) and `git add`, and `abort#Operation` (a stash applied has no abort: git
   kept the stash); remotes; `push --force-with-lease` for the full tier with the remote branch typed back; a clone into
   `runtime/component` or `runtime/dev-component`; blame, a commit's tree and a file at it.
+- **The Workspace** (`DevAideGit.js`, loaded on first use). Settings is a tab (remotes with Open on the host, Prune,
+  Set URL and Remove; the root's components; where Publish pushes; `.gitignore`), and the Advanced toggle (kept in the
+  browser, not the `DEV_AIDE_ARRANGEMENT` preference) adds Branches (each local branch's upstream state and last commit,
+  with Switch, Merge into the current, Compare, Rename and Delete with a second step to force; remote branches with
+  Compare and Merge), Tags and Stashes. A diff in Changes lists its hunks as chips over the merge view, each with Stage,
+  Unstage or Discard, rather than buttons on CodeMirror's own chunks, whose diff is not git's. A conflicted file opens
+  the conflict view: ours, the result (the file with git's markers, editable) and theirs side by side, the result alone
+  below 1024 px, Ours, Theirs and Both on each conflict, Mark resolved once no markers remain, and Abort; a banner says
+  an operation stopped at conflicts. A Pull that cannot fast-forward offers to merge the upstream with a merge commit,
+  since a merge refuses while anything is staged. The commit form keeps the task (Set current writes
+  `DEV_AIDE_CURRENT_TASK.<root>` through `set#CurrentTask`) and Amend starts from the last message; Commits pages by
+  100, takes a path (History, from the file's menu or the tree's), and a commit has Copy id, Browse files (its tree and
+  a file read only), Branch here (`create#Branch` takes a `startPoint`), Tag here, Cherry-pick and Revert. The file
+  status strip has a menu (Diff, History, Blame, Stage, Discard, Commit); Blame is a gutter of `m-code-editor` (its new
+  `blame` prop). A network command shows its last progress line with Cancel; Force push, in the branch menu under
+  Advanced, asks for the remote branch typed back.
 
 ---
 

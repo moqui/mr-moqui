@@ -44,7 +44,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(switch_branch), switch_branch)?;
     registry.service_function(moqui_core::service_location!(create_branch), create_branch)?;
     registry.service_function(moqui_core::service_location!(init_repository), init_repository)?;
-    registry.service_function(moqui_core::service_location!(publish_site), publish_site)
+    registry.service_function(moqui_core::service_location!(publish_site), publish_site)?;
+    registry.service_function(moqui_core::service_location!(set_current_task), set_current_task)
 }
 
 /// The preference with a root's current task (`DEV_AIDE_CURRENT_TASK.<rootId>`), whose trailer a commit gets.
@@ -821,11 +822,16 @@ fn create_branch(
     let name = text(parameters, "branch");
     valid_branch(&name)?;
     let switch = text(parameters, "switch") != "false";
-    let args: Vec<&str> = if switch {
+    let start = text(parameters, "startPoint");
+    let mut args: Vec<&str> = if switch {
         vec!["switch", "-c", &name]
     } else {
         vec!["branch", &name]
     };
+    if !start.is_empty() {
+        crate::repo::valid_rev(&start)?;
+        args.push(&start);
+    }
     let output = context
         .git()
         .run(&root.path, Mode::Write, &args, &[], None)?
@@ -837,6 +843,26 @@ fn create_branch(
         Value::string(format!("{}{}", output.stdout, output.stderr)),
     );
     Ok(out)
+}
+
+/// `set#CurrentTask`: the task whose trailer this root's commits get (plans/design-dev-aide.md 14), kept as the user's
+/// `DEV_AIDE_CURRENT_TASK.<rootId>` preference; empty clears it.
+fn set_current_task(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let root = context.root(&text(parameters, "rootId"))?;
+    let task = text(parameters, "task").trim().to_string();
+    if task.chars().any(char::is_control) || task.len() > 100 {
+        return Err(LibError::new("a task key is one short line"));
+    }
+    moqui_core::user::set_preference(
+        &format!("{CURRENT_TASK}.{}", root.id),
+        (!task.is_empty()).then_some(task.as_str()),
+    )?;
+    Ok(Parameters::new())
 }
 
 pub(crate) fn valid_branch(name: &str) -> Result<(), LibError> {

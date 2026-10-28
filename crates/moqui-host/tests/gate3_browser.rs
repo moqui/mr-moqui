@@ -4531,6 +4531,186 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     );
 }
 
+/// Git depth in the Workspace (plans/design-dev-aide.md P8): one hunk of a file's two staged from Changes; a Pull that
+/// cannot fast-forward offers a merge of the upstream, which stops at a conflict; the conflict view takes theirs, Mark
+/// resolved saves and stages it, and Commit makes the merge commit.
+#[cfg(feature = "devtools")]
+#[test]
+fn a_pull_conflict_is_resolved_in_chromium() {
+    let notes = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/notes.txt", notes),
+        ("component/my-site/hunks.txt", notes),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-git",
+        Some(security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let site = gate.runtime.join("component/my-site");
+    let remote = gate.runtime.join("site-remote.git");
+    let other = gate.runtime.join("other-clone");
+    git(&site, &["init", "-q", "-b", "main"]);
+    git(&site, &["add", "-A"]);
+    git(&site, &["commit", "-q", "-m", "Start"]);
+    git(
+        &gate.runtime,
+        &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()],
+    );
+    git(&site, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&site, &["push", "-q", "-u", "origin", "main"]);
+    // a teammate's change to line five, pushed; ours to the same line, committed here
+    git(
+        &gate.runtime,
+        &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()],
+    );
+    std::fs::write(other.join("notes.txt"), notes.replace("five\n", "FIVE (theirs)\n")).unwrap();
+    git(&other, &["commit", "-q", "-am", "Theirs"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    std::fs::write(site.join("notes.txt"), notes.replace("five\n", "FIVE (ours)\n")).unwrap();
+    git(&site, &["commit", "-q", "-am", "Ours"]);
+    // two changes to another file, for a hunk staged alone
+    std::fs::write(
+        site.join("hunks.txt"),
+        notes.replace("two\n", "TWO\n").replace("eleven\n", "ELEVEN\n"),
+    )
+    .unwrap();
+
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!("{base}/qapps/dev/Workspace?rootId=my-site"));
+    browser.wait_for(
+        "the git status",
+        "(document.getElementById('DevChangeCount') || {innerText: ''}).innerText.indexOf('1 changed') >= 0",
+        WAIT,
+    );
+    // Changes: the file's two hunks, the second staged alone
+    browser.click("Changes", &by_text(".m-dev-tabs .q-tab", "Changes 1"));
+    browser.click(
+        "hunks.txt",
+        "document.querySelector('#DevChanges [data-path=\"hunks.txt\"] a')",
+    );
+    browser.wait_for(
+        "the two hunks",
+        "document.querySelectorAll('#DevHunks [data-hunk]').length === 2",
+        WAIT,
+    );
+    browser.click(
+        "Stage the second",
+        &by_text("#DevHunks [data-hunk=\"1\"] button", "Stage"),
+    );
+    browser.wait_for(
+        "the file in both groups",
+        "document.querySelectorAll('#DevChanges [data-path=\"hunks.txt\"]').length === 2",
+        WAIT,
+    );
+    let staged = git(&site, &["diff", "--cached"]);
+    assert!(staged.contains("+ELEVEN") && !staged.contains("+TWO"), "{staged}");
+    // committed (git merges only with nothing staged), the other hunk left in the work tree
+    let summary = |browser: &mut Browser, text: &str| {
+        browser.eval(&format!(
+            "(() => {{ const input = document.querySelector('#DevChanges input.q-field__native'); input.value = {text:?}; \
+             input.dispatchEvent(new Event('input')); return true; }})()"
+        ));
+    };
+    summary(&mut browser, "Eleven");
+    browser.click("Commit", "document.getElementById('DevCommit')");
+    browser.wait_for(
+        "the hunk committed",
+        "document.querySelectorAll('#DevChanges [data-path=\"hunks.txt\"]').length === 1",
+        WAIT,
+    );
+    assert!(git(&site, &["show", "HEAD"]).contains("+ELEVEN"));
+
+    // Pull: it cannot fast-forward, so a merge is offered; it stops at the conflict
+    browser.click("Pull", &by_text(".m-dev-repo-bar button", "Pull"));
+    browser.wait_for(
+        "the merge offer",
+        &format!("!!{}", by_text(".q-dialog button", "Merge")),
+        WAIT,
+    );
+    let refused = browser.take_problems();
+    assert!(
+        refused.iter().all(|problem| format!("{problem:?}").contains("/pull")),
+        "{refused:#?}"
+    );
+    browser.click("Merge", &by_text(".q-dialog button", "Merge"));
+    browser.wait_for(
+        "the conflict view",
+        "!!document.querySelector('#DevConflict[data-path=\"notes.txt\"] .m-dev-conflict-chip') \
+         && !!document.querySelector('#DevConflictResult .m-code-editor[data-state=ready], #DevConflictResult[data-state=ready]')",
+        WAIT,
+    );
+    browser.wait_for(
+        "the operation banner",
+        "!!document.getElementById('DevOperationBanner')",
+        WAIT,
+    );
+    // the merge's notes and the status banner settle the layout first
+    browser.pump(Duration::from_millis(1500));
+    browser.click("Theirs", &by_text("#DevConflict [data-region=\"0\"] button", "Theirs"));
+    browser.wait_for(
+        "no conflict left",
+        "!document.querySelector('#DevConflict .m-dev-conflict-chip')",
+        WAIT,
+    );
+    browser.click("Mark resolved", "document.getElementById('DevMarkResolved')");
+    browser.wait_for(
+        "the conflict view closed",
+        "!document.getElementById('DevConflict')",
+        WAIT,
+    );
+    browser.wait_for(
+        "the operation still open",
+        "!!document.getElementById('DevOperationBanner')",
+        WAIT,
+    );
+    assert_eq!(
+        std::fs::read_to_string(site.join("notes.txt")).unwrap(),
+        notes.replace("five\n", "FIVE (theirs)\n")
+    );
+    // Commit makes the merge commit
+    summary(&mut browser, "Merge the upstream");
+    browser.click("Commit", "document.getElementById('DevCommit')");
+    browser.wait_for("the merge done", "!document.getElementById('DevOperationBanner')", WAIT);
+    assert_eq!(git(&site, &["log", "-1", "--format=%P"]).split_whitespace().count(), 2);
+    assert_clean(&mut browser, "the conflict resolved");
+}
+
 /// The entity modeler (plans/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its
 /// edits going to the site's extend-entity (D17); Add field by its kind shows the field at once (unsaved), and Save
 /// writes the site's entity file, relinks the model and adds the column with no restart; a Picklist writes its field,

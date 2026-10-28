@@ -220,7 +220,11 @@
                 review: null, editorView: null, viewsLoaded: {},
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
                 // shared mode (D19): the other users with files of this root open
-                editors: []
+                editors: [],
+                // git depth (P8): Branches, Tags and Stashes under Advanced; a running network command's last line; the
+                // diff's hunks; the conflicted file open in the conflict view; the Commits tab's paging and path
+                advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
+                logPage: 0, logMore: false, logPath: "", tree: null
             };
         },
         computed: {
@@ -254,6 +258,10 @@
                 this.offReload = client.registerListener("DevReload", (message) => this.onReload(message));
                 this.offPresence = client.registerListener("DevPresence", (message) => this.onPresence(message));
                 this.offSaved = client.registerListener("DevSaved", (message) => this.onSaved(message));
+                this.offProgress = client.registerListener("DevGitProgress", (message) => {
+                    const line = pure.messageJson(message);
+                    if (line && this.progress && line.operationId === this.progress.id) this.progress.line = line.line;
+                });
             }
             this.presenceTimer = setInterval(() => this.tellPresence(true), 60000);
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
@@ -277,6 +285,7 @@
             if (this.offReload) this.offReload();
             if (this.offPresence) this.offPresence();
             if (this.offSaved) this.offSaved();
+            if (this.offProgress) this.offProgress();
             clearInterval(this.presenceTimer);
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
@@ -288,6 +297,8 @@
         },
         watch: {
             tabs: { deep: true, handler() { this.remember(); this.tellPresence(false); } },
+            tab(name) { if (["branches", "tags", "stashes", "settings"].indexOf(name) >= 0) this.loadGit(); },
+            advanced(on) { store.set("advanced", on); if (!on && ["branches", "tags", "stashes"].indexOf(this.tab) >= 0) this.tab = "code"; },
             active() { this.remember(); },
             // a visual view reads the outline of the text as it changes, in Text or by its own operations
             "current.text"() { const tab = this.current; if (tab && tab.view !== "text") this.scheduleOutline(tab); }
@@ -842,8 +853,67 @@
                     .then(() => { this.refreshStatus(); this.treeKey++; this.tabs.forEach((tab) => this.reloadTab(tab)); }, this.fail));
             },
             showDiff(entry, staged) {
+                if (entry.conflicted || entry.letter === "U") { this.openConflict(entry.path); return; }
+                this.conflictPath = null;
                 this.get("diff", { rootId: this.rootId, path: entry.path, staged: !!staged }).then((answer) => {
                     this.diff = { path: entry.path, staged: !!staged, original: answer.original || "", modified: answer.modified || "" };
+                }, this.fail);
+                this.loadHunks(entry.path, !!staged);
+            },
+            loadHunks(path, staged) {
+                this.hunks = null;
+                if (!this.isGit) return;
+                this.get("hunks", { rootId: this.rootId, path, staged }).then((answer) => {
+                    this.hunks = { path, staged, list: answer.hunks || [], diffHash: answer.diffHash };
+                }, () => { this.hunks = null; });
+            },
+            hunkLabel(hunk) { return pure.hunkLabel ? pure.hunkLabel(hunk, this.hunks && this.hunks.staged) : ""; },
+            // one hunk staged, unstaged or discarded (4.5): git apply of its patch, checked against the diff read
+            hunkWrite(kind, index) {
+                const hunks = this.hunks;
+                if (!hunks) return;
+                const run = () => this.post(kind + "Hunks", { rootId: this.rootId, path: hunks.path, hunks: [index], diffHash: hunks.diffHash }).then(() => {
+                    this.refreshStatus();
+                    if (kind === "discard") this.tabs.filter((tab) => tab.path === hunks.path).forEach((tab) => this.reloadTab(tab));
+                    this.showDiff({ path: hunks.path }, hunks.staged);
+                }, (error) => { this.fail(error); this.showDiff({ path: hunks.path }, hunks.staged); });
+                if (kind !== "discard") { run(); return; }
+                this.$q.dialog({ title: "Discard this change?", message: this.hunkLabel(hunks.list[index]), cancel: true,
+                    ok: { label: "Discard", color: "negative" } }).onOk(run);
+            },
+            loadGit() {
+                if (this.gitLoaded) return Promise.resolve();
+                return moqui.loadScript("/devstatic/DevAideGit.js", null, () => !!devAide.gitRegistered).then(() => { this.gitLoaded = true; }, this.fail);
+            },
+            openConflict(path) { this.diff = null; this.hunks = null; this.loadGit().then(() => { this.conflictPath = path; }); },
+            afterConflict() {
+                this.tab = "changes";
+                this.refreshStatus().then(() => {
+                    const first = ((this.status && this.status.entries) || []).find((entry) => entry.conflicted);
+                    if (first) this.openConflict(first.path);
+                });
+                this.treeKey++;
+            },
+            reloadTabs() { this.tabs.forEach((tab) => { if (!pure.isDirty(tab)) this.reloadTab(tab); }); this.treeKey++; },
+            // the current task's trailer kept for this root (14)
+            setCurrentTask() {
+                this.post("setCurrentTask", { rootId: this.rootId, task: this.commitForm.task || "" }).then(() => {
+                    this.note(this.commitForm.task ? "Current task: " + this.commitForm.task : "No current task");
+                    this.refreshStatus();
+                }, this.fail);
+            },
+            // Amend starts from the last commit's message
+            amendChanged(on) {
+                if (!on || this.commitForm.summary) return;
+                this.get("log", { rootId: this.rootId, pageSize: 1 }).then((answer) => {
+                    const last = (answer.commits || [])[0];
+                    if (last) return this.get("commitInfo", { rootId: this.rootId, commitId: last.id });
+                    return null;
+                }).then((info) => {
+                    if (!info || this.commitForm.summary) return;
+                    const lines = String(info.message || "").split("\n");
+                    this.commitForm.summary = lines[0] || "";
+                    this.commitForm.body = lines.slice(1).join("\n").replace(/^\n+/, "").replace(/\n*(Task|Fixes): .*$/, "");
                 }, this.fail);
             },
             commit(andPush) {
@@ -856,17 +926,50 @@
                     if (andPush) this.network("push");
                 }, this.fail);
             },
-            network(what) {
+            // a network command (fetch, pull, push, a tag's push, a prune) with its progress and Cancel (4.2)
+            network(what, params) {
                 this.busy = what;
-                this.post(what, { rootId: this.rootId }).then((answer) => {
-                    this.busy = "";
+                const id = "git-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+                this.progress = { id, what, line: "" };
+                return this.post(what, Object.assign({ rootId: this.rootId, operationId: id }, params || {})).then((answer) => {
+                    this.busy = ""; this.progress = null;
                     this.note((what.charAt(0).toUpperCase() + what.slice(1)) + " done" + (answer.output ? ": " + answer.output.trim().split("\n").pop() : ""));
                     // an upstream change that removed what the site extends: the upgrade checklist
                     if (answer.extensionsAffected) this.$q.notify({ type: "warning", timeout: 0, closeBtn: "Close",
                         message: "Extensions affected: " + answer.extensionsAffected, actions: [{ label: "Customizations", color: "white",
                             handler: () => { window.location.href = "/qapps/dev/Artifacts/Customizations"; } }] });
                     this.refreshStatus(); this.treeKey++;
+                    return answer;
+                }, (error) => {
+                    this.progress = null;
+                    // a pull is fast-forward only: when the branch and its upstream both moved, offer to merge the upstream
+                    const text = pure.errorText(error);
+                    if (what === "pull" && /fast-forward|diverge/i.test(text) && this.status && this.status.upstream) {
+                        this.busy = "";
+                        this.$q.dialog({ title: "Your branch and " + this.status.upstream + " have both moved", message: "Merge " + this.status.upstream +
+                            " into " + (this.status.branch || "this branch") + " with a merge commit? Conflicts, if any, open in Changes.", cancel: true,
+                            ok: { label: "Merge" } }).onOk(() => this.mergeUpstream());
+                        return null;
+                    }
+                    this.fail(error); throw error;
+                });
+            },
+            mergeUpstream() {
+                const upstream = this.status && this.status.upstream;
+                if (!upstream) return;
+                this.post("mergeBranch", { rootId: this.rootId, branch: upstream, mergeCommit: true }).then((answer) => {
+                    if (answer.conflict) { this.note("The merge stopped at conflicts", "warning"); this.afterConflict(); return; }
+                    this.note("Merged " + upstream); this.refreshStatus(); this.reloadTabs();
                 }, this.fail);
+            },
+            cancelNetwork() { if (this.progress) this.post("cancelGit", { operationId: this.progress.id }).catch(() => {}); },
+            // a push that overwrites the remote branch, for the full tier, after the remote branch is typed back (question 8)
+            forcePush() {
+                const status = this.status || {};
+                const target = status.upstream || ("origin/" + (status.branch || ""));
+                this.$q.dialog({ title: "Force push", message: "This overwrites " + target + " with your branch, as long as it still has what you last fetched. Type " +
+                    target + " to confirm.", prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Force push", color: "negative" } })
+                    .onOk((typed) => this.network("push", { forceWithLease: true, confirmRef: typed }).catch(() => {}));
             },
             publish() {
                 this.$q.dialog({ title: "Publish the site's changes", message: "Commit the site component's " + this.siteChanges +
@@ -885,17 +988,74 @@
                     this.note("On " + name); this.refreshStatus(); this.treeKey++; this.tabs.forEach((tab) => this.reloadTab(tab));
                 }, this.fail);
             },
-            newBranch() {
-                this.ask("New branch from the current one", "").then((name) => {
-                    if (name) this.post("createBranch", { rootId: this.rootId, branch: name }).then(() => { this.note("On " + name); this.refreshStatus(); }, this.fail);
+            newBranch(from) {
+                return this.ask(from ? "New branch at " + String(from).slice(0, 9) : "New branch from the current one", "").then((name) => {
+                    if (!name) return null;
+                    const params = { rootId: this.rootId, branch: name };
+                    if (from) params.startPoint = from;
+                    return this.post("createBranch", params).then(() => { this.note("On " + name); this.refreshStatus(); this.reloadTabs(); }, this.fail);
                 });
             },
-            loadLog() {
-                this.get("log", { rootId: this.rootId, pageSize: 100 }).then((answer) => { this.log = answer.commits || []; }, this.fail);
+            // the Commits tab, a page at a time, for the branch or one path (History)
+            loadLog(more) {
+                const page = more ? this.logPage + 1 : 0;
+                const params = { rootId: this.rootId, pageSize: 100, pageIndex: page };
+                if (this.logPath) params.path = this.logPath;
+                return this.get("log", params).then((answer) => {
+                    const commits = answer.commits || [];
+                    this.log = more ? this.log.concat(commits) : commits;
+                    this.logPage = page; this.logMore = commits.length === 100;
+                }, this.fail);
             },
+            history(path) { this.logPath = path || ""; this.commitDetail = null; this.diff = null; this.tab = "commits"; this.loadLog(); },
+            replay(kind) {
+                const commit = this.commitDetail;
+                if (!commit) return;
+                const verb = kind === "revert" ? "Revert" : "Cherry-pick";
+                this.$q.dialog({ title: verb + " " + String(commit.id).slice(0, 9) + "?", message: (commit.message || "").split("\n")[0], cancel: true })
+                    .onOk(() => this.post(kind === "revert" ? "revertCommit" : "cherryPick", { rootId: this.rootId, commitId: commit.id }).then((answer) => {
+                        if (answer.conflict) { this.note(verb + " stopped at conflicts", "warning"); this.afterConflict(); return; }
+                        this.note(verb + " done"); this.refreshStatus(); this.loadLog(); this.reloadTabs();
+                    }, this.fail));
+            },
+            tagHere() {
+                const commit = this.commitDetail;
+                if (commit) this.ask("Tag " + String(commit.id).slice(0, 9), "").then((tag) => {
+                    if (tag) this.post("createTag", { rootId: this.rootId, tag, commitId: commit.id }).then(() => this.note("Tagged " + tag), this.fail);
+                });
+            },
+            copyId() { const commit = this.commitDetail; if (commit && root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(commit.id).then(() => this.note("Copied")); },
+            // Browse files at this commit: its tree a directory at a time, a file read only
+            browseTree(path) {
+                const commit = this.commitDetail;
+                if (!commit) return;
+                this.get("tree", { rootId: this.rootId, rev: commit.id, path: path || "" }).then((answer) => {
+                    this.tree = { path: path || "", entries: answer.entries || [], file: null };
+                }, this.fail);
+            },
+            browseFile(entry) {
+                const commit = this.commitDetail;
+                if (entry.dir) { this.browseTree(entry.path); return; }
+                this.get("fileAt", { rootId: this.rootId, rev: commit.id, path: entry.path }).then((answer) => {
+                    this.tree.file = { path: entry.path, text: answer.binary ? "(a binary file)" : answer.text || "" };
+                }, this.fail);
+            },
+            // Blame on the current tab: who last changed each run of its lines, in the editor's gutter
+            toggleBlame() {
+                const tab = this.current;
+                if (!tab) return;
+                if (tab.blame) { tab.blame = null; return; }
+                this.get("blame", { rootId: this.rootId, path: tab.path }).then((answer) => {
+                    tab.blame = answer.ranges || [];
+                    if (!tab.blame.length) this.note("Not committed yet: no blame", "info");
+                }, this.fail);
+            },
+            stageCurrent() { const tab = this.current; if (tab) this.stage([{ path: tab.path }]); },
+            discardCurrent() { const tab = this.current; if (tab) this.discard([{ path: tab.path }]); },
+            diffCurrent() { const tab = this.current; if (tab) { this.tab = "changes"; this.showDiff({ path: tab.path }, false); } },
             openCommit(commit) {
                 this.get("commitInfo", { rootId: this.rootId, commitId: commit.id }).then((answer) => {
-                    this.commitDetail = Object.assign({ id: commit.id }, answer); this.diff = null;
+                    this.commitDetail = Object.assign({ id: commit.id }, answer); this.diff = null; this.tree = null;
                 }, this.fail);
             },
             commitDiff(file) {
@@ -952,7 +1112,8 @@
             <q-item-section>{{branch.name}}</q-item-section><q-item-section side v-if="branch.upstream" class="text-caption">{{branch.upstream}}</q-item-section>
           </q-item>
           <q-separator></q-separator>
-          <q-item clickable v-close-popup @click="newBranch"><q-item-section>New branch…</q-item-section></q-item>
+          <q-item clickable v-close-popup @click="newBranch()"><q-item-section>New branch…</q-item-section></q-item>
+          <q-item v-if="advanced && tier === 'full' && status.upstream" clickable v-close-popup @click="forcePush"><q-item-section class="text-negative">Force push…</q-item-section></q-item>
         </q-list>
       </q-btn-dropdown>
       <span class="text-caption m-muted" v-if="status.upstream">↑{{status.ahead}} ↓{{status.behind}}</span>
@@ -972,9 +1133,29 @@
   <q-tabs v-if="!guided" dense align="left" no-caps v-model="tab" class="m-dev-tabs">
     <q-tab name="code" label="Code"></q-tab>
     <q-tab name="changes" :label="'Changes' + (changeCount ? ' ' + changeCount : '')" :disable="!isGit"></q-tab>
-    <q-tab name="commits" label="Commits" :disable="!isGit" @click="loadLog"></q-tab>
+    <q-tab name="commits" label="Commits" :disable="!isGit" @click="loadLog()"></q-tab>
+    <q-tab v-if="advanced" name="branches" label="Branches" :disable="!isGit" id="DevBranchesTab"></q-tab>
+    <q-tab v-if="advanced" name="tags" label="Tags" :disable="!isGit"></q-tab>
+    <q-tab v-if="advanced" name="stashes" label="Stashes" :disable="!isGit"></q-tab>
+    <q-tab name="settings" label="Settings" :disable="!isGit"></q-tab>
     <q-tab v-if="review" name="review" :label="'Review ' + review.files.length" id="DevReviewTab"></q-tab>
+    <q-space></q-space>
+    <q-toggle dense size="xs" v-model="advanced" label="Advanced" class="q-mr-sm text-caption" id="DevAdvanced"></q-toggle>
   </q-tabs>
+  <div v-if="progress" class="row items-center no-wrap q-px-sm q-gutter-x-sm text-caption" id="DevGitProgress">
+    <q-spinner size="1em"></q-spinner><span class="ellipsis">{{progress.what}}: {{progress.line || 'starting…'}}</span><q-space></q-space>
+    <q-btn dense flat no-caps size="sm" label="Cancel" @click="cancelNetwork"></q-btn>
+  </div>
+  <div v-if="status && status.operation" class="row items-center no-wrap q-px-sm text-caption bg-orange-2 text-black" id="DevOperationBanner">
+    A {{status.operation}} stopped at conflicts: resolve each file in Changes, then commit.
+    <q-space></q-space><q-btn dense flat no-caps size="sm" label="Open the conflicts" @click="afterConflict"></q-btn>
+  </div>
+  <template v-if="gitLoaded && isGit && status">
+    <m-dev-git-branches v-if="tab === 'branches'" :ws="this" :key="'b' + rootId"></m-dev-git-branches>
+    <m-dev-git-tags v-if="tab === 'tags'" :ws="this" :key="'t' + rootId"></m-dev-git-tags>
+    <m-dev-git-stashes v-if="tab === 'stashes'" :ws="this" :key="'s' + rootId"></m-dev-git-stashes>
+    <m-dev-git-settings v-if="tab === 'settings'" :ws="this" :key="'g' + rootId"></m-dev-git-settings>
+  </template>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">
     <div class="m-dev-side column no-wrap" v-if="!guided">
@@ -995,6 +1176,7 @@
             <q-item clickable v-close-popup :disable="!canWrite" @click="renamePath(menuTarget)"><q-item-section>Rename or move</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="deletePath(menuTarget)"><q-item-section>Delete</q-item-section></q-item>
             <q-item clickable v-close-popup @click="copyPath(menuTarget)"><q-item-section>Copy path</q-item-section></q-item>
+            <q-item v-if="isGit" clickable v-close-popup @click="history(menuTarget && menuTarget.path)"><q-item-section>History</q-item-section></q-item>
           </q-list>
         </q-menu>
       </div>
@@ -1033,6 +1215,14 @@
           <q-space></q-space>
           <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
               :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>
+          <q-btn v-if="isGit && !guided" dense flat round size="sm" icon="more_vert" id="DevFileMenu"><q-menu><q-list dense style="min-width: 10rem">
+            <q-item clickable v-close-popup @click="diffCurrent"><q-item-section>Diff</q-item-section></q-item>
+            <q-item clickable v-close-popup @click="history(current.path)"><q-item-section>History</q-item-section></q-item>
+            <q-item clickable v-close-popup @click="toggleBlame"><q-item-section>{{current.blame ? 'Hide blame' : 'Blame'}}</q-item-section></q-item>
+            <q-item clickable v-close-popup :disable="!canWrite" @click="stageCurrent"><q-item-section>Stage</q-item-section></q-item>
+            <q-item clickable v-close-popup :disable="!canWrite" @click="discardCurrent"><q-item-section>Discard</q-item-section></q-item>
+            <q-item clickable v-close-popup :disable="!canWrite" @click="tab = 'changes'"><q-item-section>Commit…</q-item-section></q-item>
+          </q-list></q-menu></q-btn>
           <q-btn dense flat no-caps size="sm" label="Save" icon="sym_o_save" :disable="!isDirtyAll(current) || (current.readOnly && !(current.companions || []).length)" :loading="current.saving" @click="save(current)" id="DevSave"></q-btn>
         </div>
         <q-banner v-if="current.changedOnDisk && !current.conflict" dense class="bg-orange-2 text-black" id="DevChangedOnDisk">Changed on disk
@@ -1062,7 +1252,7 @@
             <div v-if="current.outlineError" class="text-caption text-negative q-px-sm" id="DevOutlineError">The text does not parse, so the view shows it as it last parsed: {{current.outlineError}}</div>
           </div>
           <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
-              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :schema="current.schema" :lint="lintOf(current)" height="100%"
+              :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || null" :schema="current.schema" :lint="lintOf(current)" height="100%"
               :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
               :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
         </template>
@@ -1132,8 +1322,13 @@
       <q-separator class="q-my-sm"></q-separator>
       <q-input dense outlined v-model="commitForm.summary" label="Summary" id="DevCommitSummary"></q-input>
       <q-input dense outlined type="textarea" autogrow v-model="commitForm.body" label="Body" class="q-mt-xs"></q-input>
-      <q-input dense outlined v-model="commitForm.task" label="Task (trailer)" class="q-mt-xs"></q-input>
-      <div class="row q-gutter-x-sm"><q-checkbox dense size="xs" v-model="commitForm.amend" label="Amend"></q-checkbox>
+      <div class="row items-center no-wrap q-mt-xs">
+        <q-input dense outlined v-model="commitForm.task" label="Task (trailer)" class="col" id="DevCommitTask">
+          <template v-slot:prepend><q-icon name="sym_o_task_alt" size="xs"></q-icon></template></q-input>
+        <q-btn dense flat no-caps size="sm" :label="status.currentTask && status.currentTask === commitForm.task ? 'Current' : 'Set current'"
+            :disable="status.currentTask === (commitForm.task || null)" @click="setCurrentTask" id="DevSetCurrentTask"></q-btn>
+      </div>
+      <div class="row q-gutter-x-sm"><q-checkbox dense size="xs" v-model="commitForm.amend" label="Amend" @update:model-value="amendChanged"></q-checkbox>
         <q-checkbox dense size="xs" v-model="commitForm.signOff" label="Sign off"></q-checkbox>
         <q-checkbox dense size="xs" v-model="commitForm.skipHooks" label="Skip hooks"></q-checkbox></div>
       <div class="text-caption m-muted q-mt-xs">Author {{status.authorName}} &lt;{{status.authorEmail}}&gt;; committer {{status.committerName || '(git user.name is not set)'}}</div>
@@ -1142,25 +1337,55 @@
         <q-btn dense flat no-caps label="Commit and Push" :disable="!commitForm.summary || !groups.staged.length || !canWrite" @click="commit(true)"></q-btn>
       </div>
     </div>
-    <div class="col column no-wrap">
+    <m-dev-git-conflict v-if="conflictPath && gitLoaded" class="col" :ws="this" :path="conflictPath"></m-dev-git-conflict>
+    <div v-else class="col column no-wrap">
       <template v-if="diff"><div class="text-caption q-px-sm q-py-xs">{{diff.path}}{{diff.staged ? ' (staged)' : ''}}</div>
+        <div v-if="hunks && hunks.path === diff.path && hunks.list.length" class="row q-gutter-xs q-px-sm q-pb-xs" id="DevHunks">
+          <q-chip v-for="(hunk, index) in hunks.list" :key="index" dense square :data-hunk="index">{{hunkLabel(hunk)}}
+            <q-btn v-if="!hunks.staged" dense flat no-caps size="sm" label="Stage" :disable="!canWrite" @click="hunkWrite('stage', index)"></q-btn>
+            <q-btn v-if="hunks.staged" dense flat no-caps size="sm" label="Unstage" :disable="!canWrite" @click="hunkWrite('unstage', index)"></q-btn>
+            <q-btn v-if="!hunks.staged" dense flat no-caps size="sm" label="Discard" :disable="!canWrite" @click="hunkWrite('discard', index)"></q-btn>
+          </q-chip>
+        </div>
         <m-diff-view class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view></template>
       <div v-else class="col flex flex-center m-muted">Choose a file to see its change.</div>
     </div>
   </div>
   <div class="col row no-wrap m-dev-body" v-if="tab === 'commits'">
     <q-list dense class="m-dev-side scroll" id="DevCommits">
+      <q-item v-if="logPath" dense><q-item-section class="text-caption">History of {{logPath}}</q-item-section>
+        <q-item-section side><q-btn dense flat no-caps size="sm" label="All" @click="history('')"></q-btn></q-item-section></q-item>
       <q-item v-for="commit in log" :key="commit.id" clickable @click="openCommit(commit)" :active="commitDetail && commitDetail.id === commit.id">
         <q-item-section><q-item-label class="ellipsis">{{commit.subject}}</q-item-label>
           <q-item-label caption>{{commit.shortId}} · {{commit.authorName}} · {{commit.date.slice(0, 10)}}</q-item-label></q-item-section>
       </q-item>
+      <q-item v-if="logMore" clickable @click="loadLog(true)" id="DevLogMore"><q-item-section class="text-caption">More commits…</q-item-section></q-item>
     </q-list>
     <div class="col column no-wrap" v-if="commitDetail">
-      <pre class="q-ma-sm m-dev-mono" style="white-space: pre-wrap">{{commitDetail.message}}</pre>
-      <q-list dense><q-item v-for="file in commitDetail.files" :key="file.path" clickable @click="commitDiff(file)">
+      <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-pt-xs" id="DevCommitActions">
+        <span class="text-caption m-dev-mono">{{String(commitDetail.id).slice(0, 12)}}</span><q-space></q-space>
+        <q-btn dense flat no-caps size="sm" label="Copy id" @click="copyId"></q-btn>
+        <q-btn dense flat no-caps size="sm" label="Browse files" @click="browseTree('')"></q-btn>
+        <q-btn dense flat no-caps size="sm" label="Branch here" :disable="!canWrite" @click="newBranch(commitDetail.id)"></q-btn>
+        <q-btn v-if="advanced" dense flat no-caps size="sm" label="Tag here" :disable="tier !== 'full'" @click="tagHere"></q-btn>
+        <q-btn dense flat no-caps size="sm" label="Cherry-pick" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
+        <q-btn dense flat no-caps size="sm" label="Revert" :disable="tier !== 'full'" @click="replay('revert')"></q-btn>
+      </div>
+      <div v-if="tree" class="col row no-wrap" id="DevCommitTree">
+        <q-list dense class="m-dev-side scroll">
+          <q-item v-if="tree.path" clickable @click="browseTree(tree.path.split('/').slice(0, -1).join('/'))"><q-item-section>..</q-item-section></q-item>
+          <q-item v-for="entry in tree.entries" :key="entry.path" clickable @click="browseFile(entry)">
+            <q-item-section avatar style="min-width: 0"><q-icon :name="entry.dir ? 'sym_o_folder' : 'sym_o_description'" size="xs"></q-icon></q-item-section>
+            <q-item-section>{{entry.name}}</q-item-section></q-item>
+        </q-list>
+        <m-code-editor v-if="tree.file" class="col" :model-value="tree.file.text" :file-name="tree.file.path" read-only height="100%"></m-code-editor>
+        <div v-else class="col flex flex-center m-muted">Files at {{String(commitDetail.id).slice(0, 9)}}<q-btn dense flat no-caps label="Close" @click="tree = null"></q-btn></div>
+      </div>
+      <pre v-if="!tree" class="q-ma-sm m-dev-mono" style="white-space: pre-wrap">{{commitDetail.message}}</pre>
+      <q-list dense v-if="!tree"><q-item v-for="file in commitDetail.files" :key="file.path" clickable @click="commitDiff(file)">
         <q-item-section side class="m-file-status" :class="'m-file-status-' + file.status">{{file.status}}</q-item-section><q-item-section>{{file.path}}</q-item-section>
       </q-item></q-list>
-      <m-diff-view v-if="diff" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
+      <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
   <q-dialog v-model="artifactGoto.open">

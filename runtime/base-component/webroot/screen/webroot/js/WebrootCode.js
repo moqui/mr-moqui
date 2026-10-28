@@ -218,6 +218,34 @@
         return CM.EditorView.decorations.of(builder.finish());
     }
 
+    // A blame gutter: each run of lines one commit last changed gets the commit's short id and author at its first line,
+    // with its summary as the title. ranges are { from, to, commit, author, time, summary }, lines from 1.
+    function blameGutter(CM, ranges) {
+        if (!ranges || !ranges.length) return [];
+        const starts = new Map();
+        for (const range of ranges) starts.set(range.from, range);
+        class BlameMarker extends CM.GutterMarker {
+            constructor(range) { super(); this.range = range; }
+            eq(other) { return other.range === this.range; }
+            toDOM() {
+                const span = root.document.createElement("span");
+                const date = this.range.time ? new Date(this.range.time * 1000).toISOString().slice(0, 10) : "";
+                span.textContent = String(this.range.commit || "").slice(0, 7) + " " + (this.range.author || "").split(" ")[0] + " " + date;
+                span.title = this.range.summary || "";
+                span.setAttribute("data-commit", this.range.commit || "");
+                return span;
+            }
+        }
+        return CM.gutter({
+            class: "cm-m-blame",
+            lineMarker(view, line) {
+                const range = starts.get(view.state.doc.lineAt(line.from).number);
+                return range ? new BlameMarker(range) : null;
+            },
+            initialSpacer: () => new BlameMarker({ commit: "0000000", author: "Somebody", time: 0 })
+        });
+    }
+
     const isDark = (vm) => !!(vm.$q && vm.$q.dark && vm.$q.dark.isActive);
     const h = (...args) => root.Vue.h(...args);
 
@@ -228,6 +256,7 @@
         const style = root.document.createElement("style");
         style.textContent = ".m-code-editor{position:relative;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px;overflow:hidden}" +
             ".m-code-editor .cm-editor{height:100%}.m-code-editor .cm-editor.cm-focused{outline:none}" +
+            ".m-code-editor .cm-m-blame{font-size:11px;opacity:.75;padding:0 6px;white-space:nowrap}" +
             ".m-code-editor-fallback{width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}" +
             ".m-diff-view{border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px;overflow:auto}" +
             ".m-file-tree .m-file-status{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;margin-left:auto;padding-left:8px}" +
@@ -245,6 +274,8 @@
             lineNumbers: { type: Boolean, default: true }, wrap: Boolean, highlightLines: Array, schema: Object, lint: Function,
             name: String, form: String, minHeight: { type: String, default: "6rem" }, maxHeight: String, height: String,
             autofocus: Boolean, placeholder: String,
+            // who last changed each run of lines (git blame), shown in a gutter while it is set
+            blame: Array,
             // more extensions from the page (CM) => extension: a keymap, event handlers, completion sources
             extensions: Function,
             // a key of the buffer (a file tab): the editor's state, with its undo history, is kept under it when the editor
@@ -269,7 +300,8 @@
             schema() { this.reconfigure("language"); },
             readOnly() { this.reconfigure("readOnly"); },
             wrap() { this.reconfigure("wrap"); },
-            highlightLines() { this.reconfigure("highlight"); }
+            highlightLines() { this.reconfigure("highlight"); },
+            blame() { this.reconfigure("blame"); }
         },
         mounted() {
             addStyles();
@@ -294,7 +326,8 @@
                     theme: () => theme(CM, isDark(this)),
                     readOnly: () => [CM.EditorState.readOnly.of(!!this.readOnly), CM.EditorView.editable.of(!this.readOnly)],
                     wrap: () => (this.wrap ? CM.EditorView.lineWrapping : []),
-                    highlight: () => highlighted(CM, this.highlightLines, this.view ? this.view.state.doc : CM.Text.of(this.text.split("\n")))
+                    highlight: () => highlighted(CM, this.highlightLines, this.view ? this.view.state.doc : CM.Text.of(this.text.split("\n"))),
+                    blame: () => blameGutter(CM, this.blame)
                 };
             },
             build(CM) {
@@ -306,7 +339,7 @@
                     this.owner = kept.owner;
                     this.owner.vm = this;
                     this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
-                    ["language", "theme", "readOnly", "wrap", "highlight"].forEach((key) => this.reconfigure(key));
+                    ["language", "theme", "readOnly", "wrap", "highlight", "blame"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
                     this.ready = true;
                     this.$emit("ready", this.view);

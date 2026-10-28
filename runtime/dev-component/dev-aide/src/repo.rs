@@ -111,7 +111,7 @@ fn may_conflict(context: &Context, root: &Root, output: git::Output, what: &str)
 }
 
 /// A commit id or a ref name a read takes: hexadecimal, or a branch or tag name, with `~n` or `^` after it.
-fn valid_rev(rev: &str) -> Result<(), LibError> {
+pub(crate) fn valid_rev(rev: &str) -> Result<(), LibError> {
     let base = rev.trim_end_matches(|ch: char| ch == '^' || ch == '~' || ch.is_ascii_digit());
     let base = if base.is_empty() { rev } else { base };
     if base == "HEAD" || valid_branch(base).is_ok() {
