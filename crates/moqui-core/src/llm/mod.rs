@@ -30,6 +30,7 @@ pub mod approval;
 pub mod assist;
 pub mod chat;
 pub mod conf;
+pub(crate) mod conversation;
 pub mod embed;
 pub mod facts;
 pub mod gateway;

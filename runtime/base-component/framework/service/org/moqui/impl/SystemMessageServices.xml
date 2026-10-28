@@ -90,7 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="create#moqui.service.message.SystemMessage" in-map="context" out-map="context" transaction="force-new"/>
 
             <if condition="sendNow">
-                <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage"
+                <service-call name="org.moqui.impl.SystemMessageServices.send#QueuedSystemMessage"
                         in-map="{systemMessageId}" async="true"/>
             </if>
         </actions>
@@ -124,12 +124,30 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="systemMessageId" from="produceOut.systemMessageId"/>
 
             <if condition="sendNow">
-                <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage" async="true"
+                <service-call name="org.moqui.impl.SystemMessageServices.send#QueuedSystemMessage" async="true"
                         in-map="{systemMessageId}"/>
             </if>
         </actions>
     </service>
 
+
+    <service verb="send" noun="QueuedSystemMessage" authenticate="anonymous-all" transaction="ignore">
+        <description>Dispatch a queued message through its type's sendQueuedServiceName. Empty values on existing
+            types use send#ProducedSystemMessage. Custom queues control ordering before the native sender sets SmsgSending.</description>
+        <in-parameters><parameter name="systemMessageId" required="true"/></in-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.service.message.SystemMessage" value-field="queuedMessage"/>
+            <if condition="!queuedMessage"><return error="true" message="No system message ${systemMessageId}"/></if>
+            <entity-find-one entity-name="moqui.service.message.SystemMessageType" value-field="queuedType">
+                <field-map field-name="systemMessageTypeId" from="queuedMessage.get('systemMessageTypeId')"/>
+            </entity-find-one>
+            <set field="queuedServiceName" from="queuedType?.get('sendQueuedServiceName') || 'org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage'"/>
+            <if condition="queuedServiceName == 'org.moqui.impl.SystemMessageServices.send#QueuedSystemMessage'">
+                <return error="true" message="sendQueuedServiceName must name an implementation service"/>
+            </if>
+            <service-call name="${queuedServiceName}" in-map="{systemMessageId}"/>
+        </actions>
+    </service>
 
     <!-- TODO: this service called async by an anonymous-all scheduled job so needs anonymous-all here too, but should
         find a way to restrict it when not called through the scheduled service so no anonymous-all service exists to do
@@ -344,21 +362,15 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <!-- retryMinutes is a decimal host value, so it is read as a number for the millisecond arithmetic -->
             <set field="retryTimestamp" from="Math.trunc(Date.now() - toDecimal(retryMinutes).toNumber() * 60000)" type="Timestamp"/>
-            <script><![CDATA[
-                const ownedTypes = ec.entity.find('moqui.service.message.SystemMessageType')
-                    .condition('useScheduledSender', 'N').list().map(type => type.get('systemMessageTypeId'));
-                let messages = ec.entity.find('moqui.service.message.SystemMessage')
-                    .condition('statusId', 'SmsgProduced').condition('isOutgoing', 'Y')
-                    .condition(ec.entity.conditionFactory.makeCondition([
-                        ec.entity.conditionFactory.makeCondition('lastAttemptDate', 'less', retryTimestamp),
-                        ec.entity.conditionFactory.makeCondition('lastAttemptDate', null)
-                    ], 'or'));
-                if (ownedTypes.length) messages = messages.condition('systemMessageTypeId', 'not-in', ownedTypes);
-                smList = messages.orderBy('initDate').limit(200).list();
-            ]]></script>
+            <entity-find entity-name="moqui.service.message.SystemMessage" list="smList" limit="200">
+                <econdition field-name="statusId" value="SmsgProduced"/>
+                <econdition field-name="isOutgoing" value="Y"/>
+                <econdition field-name="lastAttemptDate" operator="less" from="retryTimestamp" or-null="true"/>
+                <order-by field-name="initDate"/>
+            </entity-find>
             <iterate list="smList" entry="sm">
                 <if condition="(sm.get('failCount') || 0) &lt; retryLimit">
-                    <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage"
+                    <service-call name="org.moqui.impl.SystemMessageServices.send#QueuedSystemMessage"
                             in-map="{systemMessageId:sm.get('systemMessageId')}" async="true"/>
                     <else>
                         <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"

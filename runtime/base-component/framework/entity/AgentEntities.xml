@@ -126,8 +126,12 @@ along with this software (see the LICENSE.md file). If not, see
             contextVersion the newest page version its tab reported (raised when the user navigates); the agent's
             ui.* events carry both, so a tab applies only its own and only for the page they were made for.</description>
         <field name="conversationId" type="id" is-pk="true"/>
-        <field name="managingComponent" type="text-short"><description>External component that owns this conversation. Empty for
-            conversations of the built-in run engine; that engine cannot start a run in an externally managed conversation.</description></field>
+        <field name="startServiceName" type="text-medium" default="'org.moqui.agent.AgentServices.start#AgentRun'"><description>Service for a message starting or steering a run in this conversation.
+            Called by ConversationServices.start#Run; implements the start#AgentRun parameters and results.</description></field>
+        <field name="cancelServiceName" type="text-medium" default="'org.moqui.agent.AgentServices.cancel#AgentRun'"><description>Service for ConversationServices.cancel#Run; implements cancel#AgentRun.</description></field>
+        <field name="inputServiceName" type="text-medium" default="'org.moqui.agent.AgentServices.submit#AgentInput'"><description>Service for ConversationServices.submit#Input; implements submit#AgentInput.</description></field>
+        <field name="eventsServiceName" type="text-medium" default="'org.moqui.agent.AgentServices.get#AgentRunEvents'"><description>Service for ConversationServices.get#Events; implements get#AgentRunEvents.
+            All conversation operation services also receive conversationId. Empty fields on existing rows use the native services.</description></field>
         <field name="userId" type="id"/>
         <field name="agentId" type="id"/>
         <field name="surfaceEnumId" type="id"/>

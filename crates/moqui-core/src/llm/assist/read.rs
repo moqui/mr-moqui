@@ -277,7 +277,7 @@ pub(super) fn conversations(caller: &Caller, params: &Params) -> Answer {
     let filter = params.text("filter").unwrap_or_else(|| "all".to_string());
     let mut find = quietly(|| facade.find(run::CONVERSATION))?
         .eq("userId", Value::string(&caller.user_id))
-        .condition(Condition::is_null("managingComponent"))
+        .condition(crate::llm::conversation::native_condition())
         .disable_authz();
     match filter.as_str() {
         "all" => {}
