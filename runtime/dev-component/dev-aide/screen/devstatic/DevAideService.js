@@ -429,6 +429,8 @@
                 this.ctx.post("tryService", { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real }).then((answer) => {
                     this.trying = false;
                     this.result = Object.assign({ parameters }, answer.result || {});
+                    // the last Try, which a rule's condition is tried against (10)
+                    try { root.localStorage.setItem("moqui.devAide.tryResult." + this.name, JSON.stringify({ parameters, out: this.result.out || {} })); } catch (err) { /* no storage */ }
                 }, (error) => { this.trying = false; this.ctx.fail(error); });
             },
             saveSpec() {
@@ -539,6 +541,8 @@
               <td class="text-caption">{{(row.fields || []).map(f => f.field + (f.before !== undefined ? ': ' + f.before + ' → ' : ': ') + f.after).join('; ')}}</td></tr></tbody></table></div>
         </div>
       </div>
+      <q-expansion-item v-if="result && (result.log || []).length" dense dense-toggle :label="'Log ' + result.log.length + (result.moreLog ? ' (and ' + result.moreLog + ' more)' : '')"
+          header-class="text-caption" id="DevTryLog"><pre class="m-dev-mono m-dev-generated q-pa-sm q-ma-none">{{result.log.join('\\n')}}</pre></q-expansion-item>
       <div v-if="specRun && !specRun.running" class="q-mt-sm" id="DevSpecRun">
         <div :class="specRun.passed ? 'text-positive' : 'text-negative'">{{specRun.passed ? 'The spec passed (run in sim)' : 'The spec failed'}}</div>
         <div v-if="specRun.setupFailure" class="text-caption text-negative">{{specRun.setupFailure}}</div>
@@ -581,7 +585,7 @@
     const ecaView = {
         name: "mDevEcaView",
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
-        data() { return { selected: null, schema: null }; },
+        data() { return { selected: null, schema: null, tryContext: "", conditionResult: null }; },
         computed: {
             rules() { return children(this.outline, RULES); },
             rule() { return this.selected ? pure.outlineAt(this.outline, this.selected) : this.rules[0] || null; },
@@ -624,6 +628,24 @@
                         : this.outline.name === "gitecas" ? "<giteca event=\"push\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
                 this.apply(ops.addRule(this.outline, kind));
             },
+            // the condition against a context: a SECA's service's last Try (its parameters and out), or any JSON object (a
+            // record of an EECA's entity)
+            defaultContext() {
+                const service = this.rule ? attrOf(this.rule, "service") : "";
+                let last = null;
+                try { last = JSON.parse(root.localStorage.getItem("moqui.devAide.tryResult." + service) || "null"); } catch (err) { last = null; }
+                return JSON.stringify(last ? Object.assign({}, last.parameters || {}, last.out || {}) : {}, null, 1);
+            },
+            tryCondition() {
+                const node = this.conditionNode;
+                const text = this.tab.text || "";
+                const condition = !node ? "" : node.name === "expression" ? node.text || "" : text.slice(node.from16, node.to16);
+                if (!this.tryContext) this.tryContext = this.defaultContext();
+                this.conditionResult = { running: true };
+                this.ctx.post("evalCondition", { condition, against: this.tryContext }).then((answer) => {
+                    this.conditionResult = { holds: answer.holds, result: answer.result || {} };
+                }, (error) => { this.conditionResult = null; this.ctx.fail(error); });
+            },
             removeRule() { if (this.rule) { const path = this.rule.path; this.selected = null; this.apply([{ op: "remove", at: path }]); } },
             moveRule(delta) {
                 const rule = this.rule;
@@ -657,6 +679,12 @@
     </div>
     <q-input dense outlined class="m-dev-mono q-mb-sm" label="Condition (an expression; empty is always)" :readonly="!canEdit"
         :model-value="conditionNode && conditionNode.name === 'expression' ? (conditionNode.text || '') : ''" debounce="800" @update:model-value="setCondition" for="DevEcaCondition"></q-input>
+    <q-expansion-item dense dense-toggle label="Try the condition" header-class="text-caption" class="q-mb-sm" @show="tryContext = tryContext || defaultContext()" id="DevTryCondition">
+      <q-input dense outlined type="textarea" autogrow v-model="tryContext" label="Against (JSON: the service's last Try, or a record)" class="m-dev-mono"></q-input>
+      <q-btn dense flat no-caps icon="sym_o_science" label="Try in sim" @click="tryCondition" id="DevTryConditionRun"></q-btn>
+      <span v-if="conditionResult && !conditionResult.running" :class="conditionResult.holds ? 'text-positive' : 'text-warning'" id="DevConditionResult">
+        {{conditionResult.holds ? 'It holds: the rule runs' : 'It does not hold: the rule does not run'}}{{conditionResult.result.failed ? ' (' + conditionResult.result.failed + ')' : ''}}</span>
+    </q-expansion-item>
     <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text"></m-dev-composer>
   </div>
 </div>`

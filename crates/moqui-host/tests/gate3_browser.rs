@@ -4988,6 +4988,22 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         "(document.getElementById('DevNearestAnchor') || {innerText: ''}).innerText.indexOf('nearest anchor is Notes') >= 0",
         WAIT,
     );
+    // the screen's actions in the composer: Actions before, in the site's screen-extend
+    browser.click(
+        "Actions before",
+        "[...document.querySelectorAll('#DevSelection button')].find(b => b.innerText.trim() === 'Actions before')",
+    );
+    browser.click(
+        "the Actions panel",
+        "[...document.querySelectorAll('#DevScreenPanel button')].find(b => b.innerText.trim() === 'Actions')",
+    );
+    browser.wait_for(
+        "the composer of the actions",
+        "!!document.querySelector('#DevScreenActions #DevComposer .m-dev-block-head') \
+         && document.getElementById('DevScreenActions').innerText.indexOf('before the screen') >= 0",
+        WAIT,
+    );
+
     // Add filter says why not when the list's find takes no search inputs
     click_in_frame(&mut browser, "the list cell again", "First widget");
     browser.wait_for("Add filter", "!!document.getElementById('DevAddFilter')", WAIT);
@@ -5268,6 +5284,30 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     browser.wait_for(
         "the ECA view",
         "(document.getElementById('DevEcaView') || {innerText: ''}).innerText.indexOf('seca mysite.Things.make#Thing') >= 0 && !!document.getElementById('DevComposer')",
+        WAIT,
+    );
+    // the rule's condition against the service's last Try (thingId T-1), in the sim
+    browser.click("the condition", "document.getElementById('DevEcaCondition')");
+    browser.type_text("thingId == 'T-1'");
+    browser.wait_for(
+        "the condition written",
+        "!!document.querySelector('#DevEcaView .m-dev-block-tree') && document.getElementById('DevEcaCondition').value === \"thingId == 'T-1'\"",
+        WAIT,
+    );
+    browser.pump(Duration::from_millis(1200));
+    browser.click(
+        "Try the condition",
+        "document.querySelector('#DevTryCondition .q-item')",
+    );
+    browser.wait_for(
+        "the try button",
+        "!!document.getElementById('DevTryConditionRun')",
+        WAIT,
+    );
+    browser.click("Try in sim", "document.getElementById('DevTryConditionRun')");
+    browser.wait_for(
+        "it holds",
+        "(document.getElementById('DevConditionResult') || {innerText: ''}).innerText.indexOf('It holds') >= 0",
         WAIT,
     );
     browser.navigate(&format!("{base}/qapps/dev/Eca?kind=seca&target=make%23Thing"));

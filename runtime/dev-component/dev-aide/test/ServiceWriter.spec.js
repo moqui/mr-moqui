@@ -88,3 +88,21 @@ feature("the ECA rules list the active SECA rules with their files", {
         rules[0].when == "post-service"
     },
 })
+
+feature("a rule's condition is tried against a context in the sim", {
+    expect() {
+        const holds = svc("eval#Condition", { condition: "amount > 3 && status == 'OPEN'", against: JSON.stringify({ amount: 5, status: "OPEN" }) })
+        const not = svc("eval#Condition", { condition: "amount > 3", against: JSON.stringify({ amount: 1 }) })
+        const element = svc("eval#Condition", { condition: "<compare field=\"amount\" operator=\"greater\" value=\"3\"/>", against: JSON.stringify({ amount: 4 }) })
+        holds.holds
+        !not.holds
+        element.holds
+    },
+})
+
+feature("a Try's log lines come back with it", {
+    expect() {
+        const result = svc("try#Snippet", { language: "javascript", body: "ec.logger.info('the snippet wrote this line')" }).result
+        result.log.some((line) => line.includes("the snippet wrote this line"))
+    },
+})

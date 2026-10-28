@@ -1564,7 +1564,8 @@ are independent of P4 and may run beside it.
   the view), the SECA rules with Add (into the site's `service/<Site>.secas.xml`, a companion buffer), what uses it and the
   last spec run's calls (the coverage column of `dev/Services`, from Run spec here, not `moqui test --coverage`).
 - **Try** runs in the sim as the user (`try#Service`), or for real behind a confirm, audited (`DAA_TRY`); the agent's
-  `try_service` keeps its own code over the same `run_in_sim`. The sim gives no log lines. A snippet (`try#Snippet`) runs
+  `try_service` keeps its own code over the same `run_in_sim`. A Try answers its log lines too (since built: the host's log
+  subscriber hands each line to `devtools::log_capture`, kept while a capture runs on its thread, at most 200). A snippet (`try#Snippet`) runs
   XML Actions or JavaScript in the sim, its `result` its last message. **Save as spec** appends a feature of `call`,
   `then` and `checkData` to `test/<Services file>.spec.js` of the service's component, or of the site's when the
   service is upstream; **Run spec** runs the file in process inside the sim (`testkit::run_spec`), so it writes nothing,
@@ -1574,11 +1575,14 @@ are independent of P4 and may run beside it.
   service names from the index), the palette by §9.2's groups with snippets, the names known before each block warning on
   an unknown one, a service-call's in-parameters added as `field-map`s, a script's popup editor, and Generated. Measured
   in Chromium: 300 blocks drawn in about 10 ms; the nested drag's moves and a chip edit are in the shared vectors
-  (`composer: ...` in `xml-edit-vectors.json`). Tiptap was not needed. It edits the actions of services and ECA rules;
-  screen and transition actions are edited in Text.
+  (`composer: ...` in `xml-edit-vectors.json`). Tiptap was not needed. It edits the actions of services and ECA rules, and
+  (since built) in the screen view's Actions panel a screen's actions, always-actions, pre-actions and each transition's,
+  or in extension mode each `actions-extend` of the site's `screen-extend`.
 - **ECA**: `dev/Eca` lists the active rules with filters; the ECA view of a rules file lists its rules with a rule's
   attributes from the digest, its condition as an expression, its actions in the composer, and Add, Remove and Move.
-  Not built: a rule's condition against a recorded context.
+  Since built: Try the condition (`eval#Condition`), a rule's condition against a context run in the sim, by default
+  its service's last Try (its parameters and out-parameters, which the service view keeps in the browser), or any JSON
+  object such as a record of an EECA's entity. Still to come: a gitECA rule against a push from the push log.
 
 ---
 

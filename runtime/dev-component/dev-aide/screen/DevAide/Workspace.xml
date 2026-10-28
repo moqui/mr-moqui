@@ -131,6 +131,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="generatedJs"><service-call name="org.moqui.devaide.ServiceWriterServices.get#GeneratedJs" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="evalCondition"><service-call name="org.moqui.devaide.ServiceWriterServices.eval#Condition" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="ecaRules" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>

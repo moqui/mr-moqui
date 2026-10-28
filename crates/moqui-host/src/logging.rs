@@ -559,6 +559,8 @@ impl Subscriber for LineSubscriber {
         }
         let plain = plain_line(&text);
         feed_taps(level, &plain);
+        // a run that keeps its own log lines (a Try in sim of the dev tools)
+        moqui_core::devtools::log_capture::note(&plain);
         write_file_line(level, &plain);
 
         // Queued from the start, so the boot lines ship once search attaches.

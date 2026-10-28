@@ -46,7 +46,73 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(save_try_spec), save_try_spec)?;
     registry.service_function(moqui_core::service_location!(run_spec), run_spec)?;
     registry.service_function(moqui_core::service_location!(get_generated_js), get_generated_js)?;
-    registry.service_function(moqui_core::service_location!(list_eca_rules), list_eca_rules)
+    registry.service_function(moqui_core::service_location!(list_eca_rules), list_eca_rules)?;
+    registry.service_function(moqui_core::service_location!(eval_condition), eval_condition)
+}
+
+/// The actions that try a rule's condition: the context set, then whether the condition holds as a message. An
+/// expression goes in `if`'s attribute; a condition element (`compare`, `and`, ...) in its `condition`.
+fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -> String {
+    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let mut out = String::from("<actions>");
+    for (key, value) in context {
+        if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            continue;
+        }
+        out.push_str(&format!(
+            "<set field=\"{key}\" from=\"{}\"/>",
+            escape(&value.to_string())
+        ));
+    }
+    let condition = condition.trim();
+    let (open, inner) = if condition.starts_with('<') {
+        ("<if>".to_string(), format!("<condition>{condition}</condition><then>"))
+    } else {
+        (format!("<if condition=\"{}\">", escape(condition)), String::new())
+    };
+    out.push_str(&open);
+    out.push_str(&inner);
+    out.push_str("<message>the condition holds</message>");
+    if !inner.is_empty() {
+        out.push_str("</then>");
+    }
+    out.push_str("<else><message>the condition does not hold</message></else></if></actions>");
+    out
+}
+
+/// `eval#Condition`: a rule's condition (an expression, or a condition element) against `against` (a JSON object: the
+/// service's last Try, a record), run in the sim (10's "later": a SECA's condition against its service's last Try, an
+/// EECA's against a record). Answers whether it holds, and its messages and log.
+fn eval_condition(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    if !moqui_core::llm::approval::preview::available(&context.facade) {
+        return Err(LibError::new(
+            "a condition is tried in the sim, which this server has not (it needs embedded Postgres)",
+        ));
+    }
+    let condition = text(parameters, "condition");
+    if condition.trim().is_empty() {
+        let mut out = Parameters::new();
+        out.insert("holds".into(), Value::Bool(true));
+        return Ok(out);
+    }
+    let actions = condition_actions(&condition, &object_in(parameters, "against"));
+    moqui_core::script::check_actions(&actions)?;
+    let answer = in_sim(&context, "Try a rule's condition", move || {
+        moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
+        Ok(BTreeMap::new())
+    });
+    let holds = answer["messages"]
+        .as_array()
+        .is_some_and(|messages| messages.iter().any(|text| text == "the condition holds"));
+    let mut out = Parameters::new();
+    out.insert("holds".into(), Value::Bool(holds));
+    out.insert("result".into(), json_value(&answer));
+    Ok(out)
 }
 
 /// The calls of each service in the last spec run here, by service name: the coverage column.
@@ -235,22 +301,23 @@ fn in_sim(
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let started = std::time::Instant::now();
     let ran = moqui_core::llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
-        let out = body();
+        let (out, log, more) = moqui_core::devtools::log_capture::with(body);
+        let log = (log, more);
         let (messages, errors) = messages();
         match out {
             Err(error) => Err(moqui_lib::error::Error::new(
                 format!("{error} {}", errors.join("; ")).trim().to_string(),
             )),
             Ok(_) if !errors.is_empty() => Err(moqui_lib::error::Error::new(errors.join("; "))),
-            Ok(out) => Ok((out_json(&out), messages, errors)),
+            Ok(out) => Ok((out_json(&out), messages, errors, log)),
         }
     });
     let millis = started.elapsed().as_millis();
     match ran {
         Ok(run) => {
-            let (out, messages, errors) = run.value;
+            let (out, messages, errors, (log, more_log)) = run.value;
             json!({"sim": true, "out": out, "messages": messages, "errors": errors, "rows": run.rows,
-                "moreRows": run.more, "millis": millis})
+                "moreRows": run.more, "log": log, "moreLog": more_log, "millis": millis})
         }
         Err(error) => json!({"sim": true, "failed": error.to_string(), "millis": millis}),
     }
@@ -679,6 +746,19 @@ fn list_eca_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_condition_is_tried_with_its_context_set() {
+        let context = serde_json::from_value(json!({"amount": 5, "status": "A<B"})).unwrap();
+        assert_eq!(
+            condition_actions("amount > 3", &context),
+            "<actions><set field=\"amount\" from=\"5\"/><set field=\"status\" from=\"&quot;A&lt;B&quot;\"/>\
+             <if condition=\"amount &gt; 3\"><message>the condition holds</message><else><message>the condition does not hold</message></else></if></actions>"
+                .replace("&gt;", ">")
+        );
+        assert!(condition_actions("<compare field=\"a\" value=\"1\"/>", &serde_json::Map::new())
+            .contains("<if><condition><compare field=\"a\" value=\"1\"/></condition><then><message>the condition holds</message></then><else>"));
+    }
 
     #[test]
     fn a_spec_is_named_by_its_services_file_or_entity() {

@@ -269,7 +269,7 @@
             return {
                 view: null, error: "", mode: "design", width: 0, dark: false, query: "", bufferId: newId(), frameSrc: "", version: 0,
                 base: null, ext: null, selection: null, hover: null, panel: "points", stamps: {}, adding: null, inserting: null,
-                schema: null, rendering: false, frameError: "", selectedBox: null, intent: null
+                schema: null, rendering: false, frameError: "", selectedBox: null, intent: null, actionsKey: "", composerReady: !!devAide.serviceViewRegistered
             };
         },
         computed: {
@@ -289,6 +289,27 @@
                 const widgets = ops.widgetsOf(outline);
                 return widgets ? widgets.children || [] : [];
             },
+            // the actions the composer may edit (9.2): the screen's actions, always-actions and pre-actions and each
+            // transition's, or in extension mode each actions-extend and each transition of the screen-extend
+            actionHolders() {
+                const outline = this.editOutline;
+                if (!outline) return [];
+                const out = [];
+                for (const node of outline.children || []) {
+                    if (["actions", "always-actions", "pre-actions"].indexOf(node.name) >= 0) out.push({ key: node.path.join("."), label: node.name, node });
+                    if (node.name === "actions-extend") out.push({ key: node.path.join("."), label: "actions " + (attrOf(node, "when") || "after"), node });
+                    if (node.name === "transition") {
+                        const actions = children(node, ["actions"])[0];
+                        if (actions) out.push({ key: actions.path.join("."), label: "transition " + attrOf(node, "name"), node: actions });
+                    }
+                }
+                return out;
+            },
+            selectedActions() {
+                const found = this.actionHolders.find((holder) => holder.key === this.actionsKey) || this.actionHolders[0];
+                return found ? found.node : null;
+            },
+            screenParameters() { return children(this.baseOutline, ["parameter"]).map((node) => attrOf(node, "name")).filter((name) => name); },
             frameStyle() { return this.width ? { width: this.width + "px" } : { width: "100%" }; },
             selectedPath() { return this.selection && this.selection.which === "edit" && this.selection.node ? this.selection.node.path : null; },
             // what the selection offers (11.2): the form intents, the inserts at an anchor or at the nearest one
@@ -515,6 +536,12 @@
                 const text = this.tabIsBase ? this.tab.text : (this.base ? this.base.text : "");
                 if (node) this.apply(ops.copyInto(this.editOutline, text, node));
             },
+            // the logic composer is the service writer's: its script loads on first use
+            loadComposer() {
+                if (this.composerReady) return;
+                moqui.loadScript("/devstatic/DevAideService.js", null, () => !!devAide.serviceViewRegistered)
+                    .then(() => { this.composerReady = true; }, (error) => this.ctx.fail(error));
+            },
             actionsExtendOps(when) { return ops.actionsExtend(this.editOutline, when); },
             // ---- the intents beyond a field: a filter, a section, a button, a row action ----
             startIntent(kind) {
@@ -627,7 +654,15 @@
   <div v-if="error" class="text-negative q-pa-sm">{{error}}</div>
   <div class="col row no-wrap m-dev-screen-body">
     <div class="m-dev-screen-side column no-wrap">
-      <q-btn-toggle dense no-caps flat spread v-model="panel" :options="[{ label: 'Extension points', value: 'points' }, { label: 'Outline', value: 'outline' }]"></q-btn-toggle>
+      <q-btn-toggle dense no-caps flat spread v-model="panel" @update:model-value="v => v === 'actions' && loadComposer()"
+          :options="[{ label: 'Extension points', value: 'points' }, { label: 'Outline', value: 'outline' }, { label: 'Actions', value: 'actions' }]" id="DevScreenPanel"></q-btn-toggle>
+      <div v-show="panel === 'actions'" class="col scroll q-pa-xs" id="DevScreenActions">
+        <q-select dense outlined options-dense emit-value map-options v-model="actionsKey" :options="actionHolders.map(a => ({ label: a.label, value: a.key }))"
+            label="Actions of" class="q-mb-xs"></q-select>
+        <div v-if="!actionHolders.length" class="text-caption m-muted">{{extensionMode ? 'Add Actions before or after on the right first.' : 'No actions yet.'}}</div>
+        <m-dev-composer v-if="composerReady && selectedActions" :ctx="ctx" :actions="selectedActions" :read-only="!canEdit" :in-parameters="screenParameters"
+            :apply="apply" :text="edit === tab ? tab.text : (edit ? edit.text : '')"></m-dev-composer>
+      </div>
       <div v-show="panel === 'points'" class="col scroll q-pa-xs" id="DevExtensionPoints">
         <div v-for="point in points" :key="point.path.join('.') + point.kind" class="m-dev-point" :class="{ unnamed: !point.named }" @click="selectPoint(point)">
           <span class="m-dev-mono">{{point.kind}}</span> <b>{{point.name}}</b>

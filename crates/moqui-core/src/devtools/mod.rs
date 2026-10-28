@@ -18,6 +18,7 @@
 
 pub mod check;
 pub mod eca;
+pub mod log_capture;
 pub mod index;
 pub mod refs;
 pub mod reload;
