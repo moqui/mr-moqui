@@ -44,6 +44,29 @@ impl HostDecimal {
         host_guard(&ctx, || Ok(moqui_lib::object::to_plain_string(&self.inner)))
     }
 
+    /// What `JSON.stringify` writes: always a JSON number, as Java's JSON writers write a `BigDecimal`. A value a
+    /// JavaScript number holds exactly is that number; any other is its plain digits, unrounded (`JSON.rawJSON`).
+    #[qjs(rename = "toJSON")]
+    fn to_json<'js>(&self, ctx: Ctx<'js>, _key: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || {
+            if let Value::F64(number) = moqui_lib::object::basic_convert(&self.inner, "Double").value {
+                let exact = number.is_finite()
+                    && decimal_of(&Value::String(number.to_string()))
+                        .is_some_and(|back| decimals_equal(&back, &self.inner).unwrap_or(false));
+                if exact {
+                    return number.into_js(&ctx);
+                }
+            }
+            let digits = moqui_lib::object::to_plain_string(&self.inner);
+            let json: rquickjs::Object<'js> = ctx.globals().get("JSON")?;
+            match json.get::<_, Option<rquickjs::Function<'js>>>("rawJSON")? {
+                Some(raw) => raw.call((digits,)),
+                // an engine without rawJSON: the digits as text rather than a rounded number
+                None => digits.into_js(&ctx),
+            }
+        })
+    }
+
     fn add<'js>(&self, ctx: Ctx<'js>, other: JsValue<'js>) -> rquickjs::Result<HostDecimal> {
         let other = operand(&ctx, &other)?;
         host_arith(&ctx, &self.inner, &other, Arith::Add)

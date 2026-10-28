@@ -1385,10 +1385,20 @@ fn deliver(url: &str, event: &str, delivery: &str, secret: Option<&str>, body: &
             .header("x-hub-signature-256", signed.clone())
             .header("x-moqui-signature-256", signed);
     }
-    call.text("application/json", body)
-        .send(sim)
-        .map(|response| response.status())
-        .map_err(|err| err.to_string())
+    let mut traced = crate::outbound::ClientCall::start("POST", url);
+    for (name, value) in traced.headers() {
+        call = call.header(name, value);
+    }
+    match call.text("application/json", body).send(sim) {
+        Ok(response) => {
+            traced.status(response.status());
+            Ok(response.status())
+        }
+        Err(err) => {
+            traced.error(err.message());
+            Err(err.to_string())
+        }
+    }
 }
 
 /// The outcome of an attempt on the webhook's row, in a transaction of its own: a failed delivery rolls its send back.

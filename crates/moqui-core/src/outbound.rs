@@ -122,48 +122,112 @@ pub fn clear_http_sender() {
 /// Returns an error when the URL is not http or https, no transport is built into this host, or
 /// the transport fails.
 pub fn send(mut request: Request) -> Result<Response, Error> {
-    let mut span = http_span(request.method, &request.url);
-    let context = span
-        .as_ref()
-        .and_then(crate::telemetry::Span::context)
-        .or_else(crate::telemetry::capture);
-    inject_context(&mut request.headers, context.as_ref());
-    let _trace = crate::telemetry::attach(context);
+    let mut call = ClientCall::start(request.method.as_str(), &request.url);
+    call.inject(&mut request.headers);
     let result = send_inner(request);
-    if let Some(mut span) = span.take() {
-        match &result {
-            Ok(response) => {
-                span.set_attribute(
-                    "http.response.status_code",
-                    moqui_lib::object::Value::I64(i64::from(response.status)),
-                );
-                if response.status >= 500 {
-                    span.set_error("outbound HTTP server error");
-                }
-            }
-            Err(error) => span.set_error(error.message()),
-        }
-        span.finish();
+    match &result {
+        Ok(response) => call.status(response.status),
+        Err(error) => call.error(error.message()),
     }
     result
 }
 
-fn http_span(method: Method, url: &str) -> Option<crate::telemetry::Span> {
-    crate::telemetry::current().map(|telemetry| {
-        let mut span = telemetry.start_span(&format!("HTTP {method}"), crate::telemetry::SpanKind::Client, None);
-        span.set_attribute("http.request.method", moqui_lib::object::Value::string(method.as_str()));
-        span.set_attribute("url.full", moqui_lib::object::Value::String(redacted(url)));
-        span
-    })
+/// The CLIENT span and W3C trace headers of one outbound call, for a caller that sends on a client of its own (one that
+/// refuses internal addresses, caps the body, or streams) rather than through [`send`] or [`open`]: start it just before
+/// sending, put [`ClientCall::headers`] on the request, then give it the status or the error. The span has the method
+/// and the [`redacted`] URL, never a header or a query, and finishes when the call is dropped; the call's context is
+/// the current one until then, so what is logged while sending joins its trace. With no telemetry the headers still
+/// carry the current trace, if any.
+pub struct ClientCall {
+    span: Option<crate::telemetry::Span>,
+    context: Option<crate::telemetry::TraceContext>,
+    _trace: crate::telemetry::ContextGuard,
 }
 
-fn inject_context(headers: &mut Vec<(String, String)>, context: Option<&crate::telemetry::TraceContext>) {
-    if let Some(context) = context {
+impl ClientCall {
+    /// Open the span of a call: `method` such as `POST`, `url` as it is sent (only its redacted form is kept).
+    pub fn start(method: &str, url: &str) -> Self {
+        Self::start_on(crate::telemetry::current(), method, url)
+    }
+
+    /// [`start`](Self::start) on a thread with no execution context: `telemetry` is the one the spawning thread had
+    /// ([`crate::telemetry::current`]), and its trace is attached here first.
+    pub fn start_on(telemetry: Option<std::sync::Arc<crate::telemetry::Telemetry>>, method: &str, url: &str) -> Self {
+        let span = telemetry.map(|telemetry| {
+            let method = method.to_ascii_uppercase();
+            let mut span = telemetry.start_span(&format!("HTTP {method}"), crate::telemetry::SpanKind::Client, None);
+            span.set_attribute("http.request.method", moqui_lib::object::Value::String(method));
+            span.set_attribute("url.full", moqui_lib::object::Value::String(redacted(url)));
+            span
+        });
+        let context = span
+            .as_ref()
+            .and_then(crate::telemetry::Span::context)
+            .or_else(crate::telemetry::capture);
+        let trace = crate::telemetry::attach(context.clone());
+        Self {
+            span,
+            context,
+            _trace: trace,
+        }
+    }
+
+    /// `traceparent`, and `tracestate` when there is one, to send with the request; empty with no trace.
+    pub fn headers(&self) -> Vec<(String, String)> {
+        let mut headers = Vec::new();
+        self.inject(&mut headers);
         headers
-            .retain(|(name, _)| !name.eq_ignore_ascii_case("traceparent") && !name.eq_ignore_ascii_case("tracestate"));
-        headers.push(("traceparent".into(), context.traceparent()));
-        if !context.tracestate.is_empty() {
-            headers.push(("tracestate".into(), context.tracestate.clone()));
+    }
+
+    /// Replace any trace headers in `headers` with this call's.
+    pub fn inject(&self, headers: &mut Vec<(String, String)>) {
+        if let Some(context) = &self.context {
+            headers.retain(|(name, _)| {
+                !name.eq_ignore_ascii_case("traceparent") && !name.eq_ignore_ascii_case("tracestate")
+            });
+            headers.push(("traceparent".into(), context.traceparent()));
+            if !context.tracestate.is_empty() {
+                headers.push(("tracestate".into(), context.tracestate.clone()));
+            }
+        }
+    }
+
+    /// The response's status; a 5xx marks the span an error.
+    pub fn status(&mut self, status: u16) {
+        if let Some(span) = &mut self.span {
+            span.set_attribute(
+                "http.response.status_code",
+                moqui_lib::object::Value::I64(i64::from(status)),
+            );
+            if status >= 500 {
+                span.set_error("outbound HTTP server error");
+            }
+        }
+    }
+
+    /// Why the call failed: a message with no secret in it, such as an [`Error::message`].
+    pub fn error(&mut self, message: &str) {
+        if let Some(span) = &mut self.span {
+            span.set_error(message);
+        }
+    }
+
+    /// A response body read after the call returns: the span finishes at its end or on a read error instead.
+    pub fn reader(mut self, reader: Box<dyn std::io::Read + Send>) -> Box<dyn std::io::Read + Send> {
+        match self.span.take() {
+            Some(span) => Box::new(TracedReader {
+                reader,
+                span: Some(span),
+            }),
+            None => reader,
+        }
+    }
+}
+
+impl Drop for ClientCall {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            span.finish();
         }
     }
 }
@@ -279,35 +343,16 @@ pub struct OpenResponse {
 /// Returns an error when the URL is not http or https, no transport is built into this host, or the transport fails
 /// before the response headers.
 pub fn open(mut request: OpenRequest) -> Result<OpenResponse, Error> {
-    let mut span = http_span(request.method, &request.url);
-    let context = span
-        .as_ref()
-        .and_then(crate::telemetry::Span::context)
-        .or_else(crate::telemetry::capture);
-    inject_context(&mut request.headers, context.as_ref());
-    let _trace = crate::telemetry::attach(context);
+    let mut call = ClientCall::start(request.method.as_str(), &request.url);
+    call.inject(&mut request.headers);
     match open_inner(request) {
         Ok(mut response) => {
-            if let Some(mut span) = span.take() {
-                span.set_attribute(
-                    "http.response.status_code",
-                    moqui_lib::object::Value::I64(i64::from(response.status)),
-                );
-                if response.status >= 500 {
-                    span.set_error("outbound HTTP server error");
-                }
-                response.reader = Box::new(TracedReader {
-                    reader: response.reader,
-                    span: Some(span),
-                });
-            }
+            call.status(response.status);
+            response.reader = call.reader(response.reader);
             Ok(response)
         }
         Err(error) => {
-            if let Some(mut span) = span.take() {
-                span.set_error(error.message());
-                span.finish();
-            }
+            call.error(error.message());
             Err(error)
         }
     }
@@ -513,5 +558,125 @@ mod http_tests {
         // the shared client tries it (and finds nothing listening on port 1)
         let tried = send_default(request(false)).unwrap_err();
         assert!(!tried.message().contains("internal address"), "{tried}");
+    }
+}
+
+/// A stub server that keeps what each request sent, and a traced request to run calls in, for the tests of callers that
+/// send on a client of their own ([`ClientCall`]).
+#[cfg(all(test, feature = "http", feature = "telemetry"))]
+pub(crate) mod trace_tests {
+    use std::io::{Read, Write};
+    use std::sync::{mpsc, Arc, Mutex};
+
+    use crate::context::ExecutionContextFactory;
+    use crate::entity::document::Document;
+    use crate::telemetry::{Exporter, SpanKind, TraceContext};
+
+    /// `http://127.0.0.1:<port>` of a server that answers every request `200 {}`, and the head of each request it got,
+    /// lowercased.
+    pub(crate) fn stub() -> (String, mpsc::Receiver<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut read = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                while !read.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(count) => read.extend_from_slice(&buffer[..count]),
+                    }
+                }
+                let _ = sender.send(String::from_utf8_lossy(&read).to_ascii_lowercase());
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        (address, receiver)
+    }
+
+    #[derive(Default)]
+    struct Memory(Mutex<Vec<Document>>);
+    impl Exporter for Memory {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, moqui_lib::error::Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+
+    /// Run `calls` in a sampled SERVER span; its context, and the spans exported.
+    pub(crate) fn traced(calls: impl FnOnce()) -> (TraceContext, Vec<Document>) {
+        let ctx =
+            ExecutionContextFactory::test_context_with_conf("<moqui-conf><telemetry sample-ratio=\"1\"/></moqui-conf>");
+        let telemetry = crate::telemetry::for_factory(ctx.factory());
+        let memory = Arc::new(Memory::default());
+        telemetry.set_exporter(memory.clone());
+        let context;
+        {
+            let _entered = ctx.enter();
+            let root = telemetry.start_span("GET", SpanKind::Server, None);
+            context = root.context().unwrap();
+            {
+                let _trace = crate::telemetry::attach(root.context());
+                calls();
+            }
+            root.finish();
+        }
+        telemetry.flush();
+        let spans = memory.0.lock().unwrap().clone();
+        telemetry.shutdown();
+        (context, spans)
+    }
+
+    /// The CLIENT span of the request whose head is `head`: a child of `root` whose id is the request's `traceparent`,
+    /// with the method, the redacted URL `url`, and the status 200.
+    pub(crate) fn assert_client_span(root: &TraceContext, spans: &[Document], head: &str, method: &str, url: &str) {
+        let parent = head
+            .lines()
+            .find_map(|line| line.strip_prefix("traceparent:"))
+            .and_then(|value| TraceContext::extract(value.trim(), ""))
+            .unwrap_or_else(|| panic!("no traceparent in {head}"));
+        assert_eq!(parent.trace_id, root.trace_id, "{head}");
+        let text = |span: &Document, key: &str| {
+            span.get(key)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        let span = spans
+            .iter()
+            .find(|span| text(span, "span_id") == parent.span_id)
+            .unwrap_or_else(|| panic!("no span {} in {spans:?}", parent.span_id));
+        assert_eq!(text(span, "kind"), "CLIENT", "{span:?}");
+        assert_eq!(text(span, "name"), format!("HTTP {method}"), "{span:?}");
+        assert_eq!(text(span, "parent_span_id"), root.span_id, "{span:?}");
+        assert_eq!(text(span, "http.request.method"), method, "{span:?}");
+        assert_eq!(text(span, "url.full"), url, "{span:?}");
+        assert_eq!(text(span, "http.response.status_code"), "200", "{span:?}");
+    }
+
+    /// A call on a client of its own, not [`super::send`], has its CLIENT span and sends its `traceparent`; the span
+    /// keeps no query.
+    #[test]
+    fn a_client_call_sends_its_trace_and_records_a_client_span() {
+        let (address, requests) = stub();
+        let url = format!("{address}/hook?secret=s3cr3t");
+        let (root, spans) = traced(|| {
+            let mut call = super::ClientCall::start("post", &url);
+            let client = moqui_lib::http::RestClient::new();
+            let mut request = client.post(&url).text("text/plain", "x");
+            for (name, value) in call.headers() {
+                request = request.header(name, value);
+            }
+            call.status(request.send(false).unwrap().status());
+        });
+        let head = requests.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_client_span(&root, &spans, &head, "POST", &format!("{address}/hook"));
+        assert!(!format!("{spans:?}").contains("s3cr3t"), "{spans:?}");
     }
 }

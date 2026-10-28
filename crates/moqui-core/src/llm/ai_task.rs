@@ -803,11 +803,16 @@ fn post_webhook(url: &str, payload: &Json) -> Result<(), String> {
         .deny_internal_addresses(true)
         .timeout(std::time::Duration::from_secs(15))
         .redirects(0, false);
-    let response = client
-        .post(url)
-        .json(payload)
-        .send(false)
-        .map_err(|error| error.to_string())?;
+    let mut traced = crate::outbound::ClientCall::start("POST", url);
+    let mut request = client.post(url).json(payload);
+    for (name, value) in traced.headers() {
+        request = request.header(name, value);
+    }
+    let response = request.send(false).map_err(|error| {
+        traced.error(error.message());
+        error.to_string()
+    })?;
+    traced.status(response.status());
     if response.status() >= 300 {
         return Err(format!("it answered {}", response.status()));
     }

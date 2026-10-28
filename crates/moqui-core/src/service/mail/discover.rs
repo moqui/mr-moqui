@@ -294,10 +294,14 @@ fn autoconfig(address: &str, local: &str, domain: &str) -> Option<Suggestion> {
         let url = url.clone();
         // the ISPDB is Thunderbird's; the domain's own URLs only to public addresses
         let deny_internal = !own_list && !url.starts_with("https://autoconfig.thunderbird.net/");
+        // the fetch's CLIENT span is a child of this thread's trace
+        let telemetry = crate::telemetry::current();
+        let parent = crate::telemetry::capture();
         let spawned = std::thread::Builder::new()
             .name("moqui-email-autoconfig".to_string())
             .spawn(move || {
-                let _ = thread_sender.send((index, fetch_text(&url, deny_internal, HTTP_BUDGET)));
+                let _trace = crate::telemetry::attach(parent);
+                let _ = thread_sender.send((index, fetch_text(&url, deny_internal, HTTP_BUDGET, telemetry)));
             });
         if spawned.is_err() {
             let _ = sender.send((index, None));
@@ -343,12 +347,26 @@ fn first_in_order(answers: &[Option<Option<String>>], local: &str, domain: &str,
     None
 }
 
+/// The telemetry of the thread that asked for a fetch, for its span.
+type Telemetry = Option<std::sync::Arc<crate::telemetry::Telemetry>>;
+
 #[cfg(feature = "http")]
-fn fetch_text(url: &str, deny_internal: bool, timeout: Duration) -> Option<String> {
+fn fetch_text(url: &str, deny_internal: bool, timeout: Duration, telemetry: Telemetry) -> Option<String> {
     let client = moqui_lib::http::RestClient::new()
         .deny_internal_addresses(deny_internal)
         .timeout(timeout);
-    match client.get(url).timeout(timeout).send(false) {
+    let mut traced = crate::outbound::ClientCall::start_on(telemetry, "GET", url);
+    let mut request = client.get(url).timeout(timeout);
+    for (name, value) in traced.headers() {
+        request = request.header(name, value);
+    }
+    let outcome = request.send(false);
+    match &outcome {
+        Ok(response) => traced.status(response.status()),
+        Err(err) => traced.error(err.message()),
+    }
+    drop(traced);
+    match outcome {
         Ok(response) if response.status() == 200 => Some(response.body().to_string()),
         Ok(response) => {
             tracing::debug!(
@@ -366,7 +384,7 @@ fn fetch_text(url: &str, deny_internal: bool, timeout: Duration) -> Option<Strin
 }
 
 #[cfg(not(feature = "http"))]
-fn fetch_text(_url: &str, _deny_internal: bool, _timeout: Duration) -> Option<String> {
+fn fetch_text(_url: &str, _deny_internal: bool, _timeout: Duration, _telemetry: Telemetry) -> Option<String> {
     None
 }
 
@@ -768,6 +786,29 @@ fn guess(domain: &str, address: &str) -> Suggestion {
 #[cfg(test)]
 mod tests {
     use super::{parse_config, srv_answers, srv_query, valid_domain};
+
+    /// An autoconfig fetch on a thread of its own is still a CLIENT span of the asking request's trace.
+    #[cfg(all(feature = "http", feature = "telemetry"))]
+    #[test]
+    fn an_autoconfig_fetch_on_its_own_thread_joins_the_trace() {
+        use crate::outbound::trace_tests::{assert_client_span, stub, traced};
+        let (address, requests) = stub();
+        let url = format!("{address}/mail/config-v1.1.xml");
+        let (root, spans) = traced(|| {
+            let telemetry = crate::telemetry::current();
+            let parent = crate::telemetry::capture();
+            let url = url.clone();
+            let body = std::thread::spawn(move || {
+                let _trace = crate::telemetry::attach(parent);
+                super::fetch_text(&url, false, std::time::Duration::from_secs(5), telemetry)
+            })
+            .join()
+            .unwrap();
+            assert_eq!(body.as_deref(), Some("{}"));
+        });
+        let head = requests.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_client_span(&root, &spans, &head, "GET", &url);
+    }
 
     #[test]
     fn domains_and_configs() {

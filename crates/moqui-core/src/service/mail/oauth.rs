@@ -431,14 +431,32 @@ fn http() -> &'static moqui_lib::http::RestClient {
     CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().timeout(HTTP_TIMEOUT))
 }
 
+/// Send `request` with the trace headers of a CLIENT span; the span has the method and the redacted URL only, never the
+/// form, a token, or a query.
+fn traced_send(
+    method: &str,
+    url: &str,
+    mut request: moqui_lib::http::Call<'_>,
+) -> Result<moqui_lib::http::RestResponse, String> {
+    let mut traced = crate::outbound::ClientCall::start(method, url);
+    for (name, value) in traced.headers() {
+        request = request.header(name, value);
+    }
+    let response = request.send(sim()).map_err(|err| {
+        traced.error(err.message());
+        err.to_string()
+    })?;
+    traced.status(response.status());
+    Ok(response)
+}
+
 fn post_form(url: &str, pairs: &[(String, String)]) -> Result<Answer, String> {
-    let response = http()
+    let request = http()
         .post(url)
         .header("Accept", "application/json")
         .text("application/x-www-form-urlencoded", form(pairs))
-        .timeout(HTTP_TIMEOUT)
-        .send(sim())
-        .map_err(|err| err.to_string())?;
+        .timeout(HTTP_TIMEOUT);
+    let response = traced_send("POST", url, request)?;
     Ok(Answer {
         status: response.status(),
         json: serde_json::from_slice(response.bytes()).unwrap_or(Json::Null),
@@ -446,13 +464,12 @@ fn post_form(url: &str, pairs: &[(String, String)]) -> Result<Answer, String> {
 }
 
 fn get_bearer(url: &str, token: &str) -> Result<Answer, String> {
-    let response = http()
+    let request = http()
         .get(url)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {token}"))
-        .timeout(HTTP_TIMEOUT)
-        .send(sim())
-        .map_err(|err| err.to_string())?;
+        .timeout(HTTP_TIMEOUT);
+    let response = traced_send("GET", url, request)?;
     Ok(Answer {
         status: response.status(),
         json: serde_json::from_slice(response.bytes()).unwrap_or(Json::Null),
@@ -2326,6 +2343,29 @@ pub(super) fn parse_xoauth2(base64: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::{challenge, issuer_matches, scope_granted, script_json, xoauth2};
+
+    /// A token request and a bearer request each send the request's trace and have a CLIENT span; neither the form, the
+    /// token nor a query is on the span.
+    #[cfg(all(feature = "http", feature = "telemetry"))]
+    #[test]
+    fn provider_calls_carry_the_trace_and_keep_secrets_off_the_span() {
+        use crate::outbound::trace_tests::{assert_client_span, stub, traced};
+        let (address, requests) = stub();
+        let token_url = format!("{address}/token?tenant=t1");
+        let user_url = format!("{address}/userinfo");
+        let (root, spans) = traced(|| {
+            let pairs = [("client_secret".to_string(), "form-s3cr3t".to_string())];
+            assert_eq!(super::post_form(&token_url, &pairs).unwrap().status, 200);
+            assert_eq!(super::get_bearer(&user_url, "bearer-s3cr3t").unwrap().status, 200);
+        });
+        let wait = std::time::Duration::from_secs(5);
+        let token_head = requests.recv_timeout(wait).unwrap();
+        let user_head = requests.recv_timeout(wait).unwrap();
+        assert_client_span(&root, &spans, &token_head, "POST", &format!("{address}/token"));
+        assert_client_span(&root, &spans, &user_head, "GET", &user_url);
+        let shown = format!("{spans:?}");
+        assert!(!shown.contains("s3cr3t") && !shown.contains("tenant"), "{shown}");
+    }
 
     #[test]
     fn pkce_s256_matches_rfc_7636() {

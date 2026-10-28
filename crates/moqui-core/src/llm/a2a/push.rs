@@ -950,7 +950,16 @@ fn deliver_one(
     if let (Some((scheme, Some(credentials))), _) = settings(config) {
         call = call.header("Authorization", format!("{scheme} {credentials}"));
     }
+    let mut traced = crate::outbound::ClientCall::start("POST", &url);
+    for (name, value) in traced.headers() {
+        call = call.header(name, value);
+    }
     let outcome = call.send(false);
+    match &outcome {
+        Ok(response) => traced.status(response.status()),
+        Err(error) => traced.error(error.message()),
+    }
+    drop(traced);
     let attempt = attempts + 1;
     let (status, error) = match &outcome {
         Ok(response) if (200..300).contains(&response.status()) => (Some(response.status()), None),
