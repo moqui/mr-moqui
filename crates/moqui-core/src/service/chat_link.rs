@@ -407,13 +407,12 @@ fn fetch(url: &str) -> Result<Page, String> {
             .redirects(3, true)
     });
     let mut traced = crate::outbound::ClientCall::start("GET", url);
-    let mut request = client
+    // A preview URL comes from a chat message and points at any public site, so it gets a span but no
+    // `traceparent`: trace ids stay inside the system and the services it is configured to call.
+    let request = client
         .get(url)
         .header("accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1")
         .header("user-agent", "Mozilla/5.0 (compatible; MoquiLinkPreview/1.0)");
-    for (name, value) in traced.headers() {
-        request = request.header(name, value);
-    }
     let response = request.send(false).map_err(|err| {
         traced.error(err.message());
         err.to_string()
