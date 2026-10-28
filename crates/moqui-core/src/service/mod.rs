@@ -24,6 +24,7 @@ mod chat_link;
 mod chat_tests;
 mod collab;
 mod content;
+mod external_agent;
 pub mod coverage;
 mod dav;
 pub(crate) mod define;

@@ -53,6 +53,7 @@ pub fn claim(facade: &EntityFacade, run_id: &str, owner: &str, lease: i64) -> Re
             let updated = facade
                 .find(RUN)?
                 .eq("runId", Value::string(run_id))
+                .condition(Condition::is_null("externalHarnessId"))
                 .condition(Condition::or(vec![
                     Condition::is_null("leaseOwner"),
                     Condition::equals("leaseOwner", Value::string(owner)),
@@ -71,6 +72,7 @@ pub fn claim(facade: &EntityFacade, run_id: &str, owner: &str, lease: i64) -> Re
             Ok(facade
                 .find(RUN)?
                 .eq("runId", Value::string(run_id))
+                .condition(Condition::is_null("externalHarnessId"))
                 .disable_authz()
                 .one()?
                 .and_then(|row| crate::text_of(&row, "leaseOwner"))
@@ -229,6 +231,7 @@ pub fn sweep(factory: &Arc<ExecutionContextFactory>) -> Result<usize, Error> {
     let candidates: Vec<RunRow> = quietly(|| -> Result<Vec<RunRow>, Error> {
         Ok(facade
             .find(RUN)?
+            .condition(Condition::is_null("externalHarnessId"))
             .condition(Condition::is_in(
                 "statusId",
                 vec![
