@@ -2646,8 +2646,9 @@
     // each in a cell of its own; a cell whose child wrote nothing is hidden by the style sheet. The cell of a section-iterate
     // is m-dashboard-each, which the style sheet takes out of the grid (display: contents), so each row's widget is a cell.
     const reportWidget = stmt((node) => {
-        const tag = node.name === "report-dashboard" ? "m-dashboard" : "m-report-panel";
-        const body = `sri.write("<${tag}" + $v.A({id:${nodeIdCode(node)}, "v-bind":JSON.stringify(${S.reportPropsExpr(node)})}) + "></${tag}>");\n`;
+        const tag = node.name === "report-panel" ? "m-report-panel" : "m-dashboard";
+        // A report-embed the viewer may not see has no props, and writes nothing.
+        const body = `{ const $reportProps = ${S.reportPropsExpr(node)};\nif ($reportProps) sri.write("<${tag}" + $v.A({id:${nodeIdCode(node)}, "v-bind":JSON.stringify($reportProps)}) + "></${tag}>");\n}\n`;
         return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
     });
 
@@ -2804,6 +2805,7 @@
         "context": widget("screenContext", false),
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
+        "report-embed": reportWidget,
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
         "chatter": widget("chatter", false),

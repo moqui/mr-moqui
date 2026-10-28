@@ -1462,6 +1462,8 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         }),
         "report-panel": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-panel",props:${S.reportPropsExpr(node)}});\n`)),
         "report-dashboard": stmt((node) => guarded(node, `$emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:${S.reportPropsExpr(node)}});\n`)),
+        // A report-embed is a report-dashboard of the definition, or nothing when the viewer may not see it.
+        "report-embed": stmt((node) => guarded(node, `{ const $reportProps = ${S.reportPropsExpr(node)};\nif ($reportProps) $emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:$reportProps});\n}\n`)),
         "dashboard": group("dashboard"),
         "section": stmt((node) =>
             `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}});\nsri.renderSection(${jsString(attr(node, "name") || "")});\n$closeRender();\n`),

@@ -1277,6 +1277,27 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="frames" type="xs:string" use="required"/>
         <xs:attribute name="condition" type="xs:string"/>
     </xs:complexType></xs:element>
+    <xs:element name="report-embed" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
+        Place a saved dashboard, or a library panel, on any screen, such as an app landing page or a record page. The
+        server renders it as the viewer (render#Dashboard), with the viewer's dataset permissions and row filters, so it
+        never widens access. It renders nothing for a visitor who is not signed in (such as on a public site), or when the
+        viewer may not read the definition; the rest of the screen still renders. In qvt it is an m-dashboard in a compact
+        embedded form with a link to open it in the Dashboards app, in tui a report-dashboard, and html/print/text/CSV/XML
+        render the same values as report-dashboard. A screen with one is not a server-static template.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="id" type="xs:string"/>
+        <xs:attribute name="definition-id" type="xs:string" use="required"><xs:annotation><xs:documentation>
+            The id of a dashboard or library panel definition. Expanded as a string.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="panel-id" type="xs:string"><xs:annotation><xs:documentation>
+            One panel of the dashboard to show alone. Expanded as a string.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="from" type="xs:string"><xs:annotation><xs:documentation>
+            The start of the time range, relative (now-7d, now/d) or absolute; defaults to now-7d. Expanded as a string.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="thru" type="xs:string"><xs:annotation><xs:documentation>
+            The exclusive end of the time range; defaults to now. Expanded as a string.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="variables" type="xs:string"><xs:annotation><xs:documentation>
+            An expression for a map of dashboard variable values by name, such as {customerId:partyId}.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="condition" type="xs:string"/>
+    </xs:complexType></xs:element>
 
     <!-- ================ Dashboards ================ -->
     <xs:element name="dashboard" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>

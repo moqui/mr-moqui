@@ -224,6 +224,200 @@
             const command = open ? "L" : "M"; open = true; return command + point;
         }).join(" ");
     };
+    // A calculation over a field's values, as the server's reduce does: sum, mean, min, max, count, first, last, delta, pNN.
+    report.reduce = (values, calculation) => {
+        const all = values || [], nums = all.filter(finite).map(Number);
+        if (calculation === "count") return all.filter((value) => value != null).length;
+        if (calculation === "last") { for (let at = all.length - 1; at >= 0; at--) if (all[at] != null) return all[at]; return null; }
+        if (calculation === "first") return all.find((value) => value != null) ?? null;
+        if (!nums.length) return null;
+        if (calculation === "sum") return nums.reduce((a, b) => a + b, 0);
+        if (calculation === "mean" || calculation === "avg") return nums.reduce((a, b) => a + b, 0) / nums.length;
+        if (calculation === "min") return Math.min(...nums);
+        if (calculation === "max") return Math.max(...nums);
+        if (calculation === "delta") return nums[nums.length - 1] - nums[0];
+        const p = /^p(\d+(?:\.\d+)?)$/.exec(calculation || "");
+        if (!p || Number(p[1]) > 100) return null;
+        const sorted = nums.slice().sort((a, b) => a - b), position = Number(p[1]) / 100 * (sorted.length - 1), low = Math.floor(position), high = Math.ceil(position);
+        return sorted[low] + (sorted[high] - sorted[low]) * (position - low);
+    };
+    report.calculationLabel = (name) => ({ sum: "Total", mean: "Mean", avg: "Mean", min: "Minimum", max: "Maximum", count: "Count", first: "First", last: "Last", delta: "Change" })[name] || String(name || "").toUpperCase();
+    // The footer of a table: one row per calculation, from the server's totals over all the rows (config.totals), else from the
+    // frame's values. A panel's legacy totals map, by field name, still works.
+    report.footerRows = (fields, panel) => {
+        const calculations = Array.isArray(panel && panel.footer && panel.footer.calculations) ? panel.footer.calculations.slice(0, 8) : [];
+        if (!calculations.length && panel && panel.totals && typeof panel.totals === "object") return [{ calculation: "sum", label: "Total", values: fields.map((field) => panel.totals[field.name] ?? null) }];
+        return calculations.map((calculation) => ({ calculation, label: report.calculationLabel(calculation), values: fields.map((field) => {
+            if (!report.numericField(field) || report.isMetadata(field)) return null;
+            const totals = field.config && field.config.totals || field.totals;
+            return totals && totals[calculation] !== undefined ? totals[calculation] : report.reduce(field.values, calculation);
+        }) }));
+    };
+    // The values of a sparkline cell: an array, or the JSON text of one (the server's timeSeriesToTable writes that).
+    report.sparklineValues = (value) => {
+        let values = value;
+        if (typeof value === "string" && /^\s*\[/.test(value)) { try { values = JSON.parse(value); } catch (_) { return null; } }
+        return Array.isArray(values) && values.length <= 10000 && values.every((item) => item == null || finite(item)) ? values : null;
+    };
+    report.sparklineCell = (field, value) => field.cellDisplay === "sparkline" || (!field.cellDisplay && field.name === "sparkline") ? report.sparklineValues(value) : null;
+    // Markdown punctuation and line breaks of a variable value, escaped, so a value is text and never markup or a link.
+    report.markdownText = (value) => String(value ?? "").replace(/[\r\n]+/g, " ").replace(/[\\`*_{}[\]()#+\-.!|<>~&"'$:=/@%]/g, (c) => "\\" + c);
+    // ${name} and $name in a text panel, from the dashboard's variables and __from / __thru (the absolute range), each value
+    // escaped as text. A name that is not a variable stays as written; a list is joined with commas.
+    report.substituteVariables = (text, values, range) => {
+        const all = Object.assign({}, values || {}, range && range.from ? { __from: range.from } : {}, range && range.thru ? { __thru: range.thru } : {});
+        const value = (name) => { const item = all[name]; return Array.isArray(item) ? item.join(", ") : item === "$__all" ? "All" : item; };
+        return String(text || "").replace(/\$\{([A-Za-z_][\w.-]*)\}|\$([A-Za-z_]\w*)/g, (match, braced, bare) => {
+            const name = braced || bare;
+            return Object.prototype.hasOwnProperty.call(all, name) ? report.markdownText(value(name)) : match;
+        });
+    };
+    // ---- visualization suggestions ----
+    report.visualizationLabels = { timeSeries: "Time series", area: "Area chart", bar: "Bar chart", stat: "Stat", gauge: "Gauge", barGauge: "Bar gauge", table: "Table",
+        pie: "Pie chart", donut: "Donut chart", heatmap: "Heatmap", stateTimeline: "State timeline", logs: "Logs", traceWaterfall: "Trace waterfall", text: "Text" };
+    // What a frame holds, for the suggestions: time fields, numbers, categories, histogram buckets and rows.
+    report.frameShape = (frame) => {
+        const fields = report.fields(frame).filter((field) => !report.isMetadata(field)), names = fields.map((field) => field.name);
+        return { time: fields.filter((field) => (field.type || field.kind) === "time").length,
+            numbers: fields.filter((field) => report.numericField(field) && !/\.bucket\.\d+$/.test(field.name)).length,
+            categories: fields.filter((field) => !["time", "number", "integer"].includes(field.type || field.kind)).length,
+            buckets: names.filter((name) => /\.bucket\.\d+$/.test(name)).length, rows: report.rows(frame).length,
+            logs: names.includes("body") && (names.includes("severity_text") || names.includes("severity_number")),
+            spans: names.includes("span_id") && names.includes("duration_nano") };
+    };
+    // The same from a panel's queries before any data: bucket aggregations give time or categories, metrics give numbers.
+    report.queryShape = (panel) => {
+        const shape = { time: 0, numbers: 0, categories: 0, buckets: 0, rows: null, logs: false, spans: false };
+        const visit = (query) => {
+            if (!query || typeof query !== "object") return;
+            for (const child of query.queries || []) visit(child);
+            if (query.mode === "documents") { if (query.datasetId === "otel_logs") shape.logs = true; else if (query.datasetId === "otel_spans") shape.spans = true; else shape.categories++; return; }
+            for (const aggregation of query.aggregations || []) {
+                const type = aggregation.type || "", role = aggregation.role || "metric";
+                if (type === "date_histogram") shape.time++;
+                else if (type === "histogram_merge") { shape.buckets += (aggregation.params && aggregation.params.bounds || []).length + 1; shape.numbers += 3; }
+                else if (type === "percentiles") shape.numbers += (aggregation.params && aggregation.params.percents || [50, 95, 99]).length;
+                else if (role !== "metric" || ["terms", "histogram", "range", "date_range", "filters"].includes(type)) shape.categories++;
+                else shape.numbers++;
+            }
+        };
+        for (const query of panel && panel.queries || []) visit(query);
+        if (!shape.time && !shape.categories && shape.numbers) shape.rows = 1;
+        return shape;
+    };
+    // Visualizations ranked for a shape, best first, each with why: after OSD Explore's rules and Grafana's suggestions.
+    report.suggestVisualizations = (shape) => {
+        const out = [], add = (visualization, score, reason) => { if (!out.some((item) => item.visualization === visualization)) out.push({ visualization, score, reason, label: report.visualizationLabels[visualization] }); };
+        if (shape.spans) add("traceWaterfall", 100, "Trace spans");
+        if (shape.logs) add("logs", 100, "Log lines");
+        if (shape.time && shape.buckets) { add("heatmap", 98, "Histogram buckets over time"); add("timeSeries", 80, "Time and numbers"); }
+        if (shape.time && shape.numbers) { add("timeSeries", 95, "Time and a number"); add("area", 75, "Time and a number"); add("bar", 65, "Time and a number"); add("stat", 55, "Latest value of each series"); }
+        if (shape.time && !shape.numbers && shape.categories) add("stateTimeline", 70, "States over time");
+        if (!shape.time && shape.categories && shape.numbers) {
+            add("bar", 95, "A category and a number");
+            if (shape.numbers === 1 && (shape.rows == null || shape.rows <= 12)) { add("pie", 75, "Parts of a whole"); add("donut", 70, "Parts of a whole"); }
+            add("barGauge", 60, "A category and a number");
+        }
+        if (!shape.time && !shape.categories && shape.numbers) {
+            const one = shape.numbers === 1 && (shape.rows == null || shape.rows <= 1);
+            add("stat", one ? 100 : 90, one ? "One number" : "A few numbers"); add("gauge", 80, "A number against its range"); add("barGauge", 70, "Numbers side by side");
+        }
+        add("table", shape.categories > 1 || (shape.rows || 0) > 50 ? 85 : 40, "Rows of values");
+        return out.sort((a, b) => b.score - a.score);
+    };
+    // ---- latency heatmap ----
+    // The histogram bucket fields of a frame (name.bucket.N, from histogram_merge), with the upper bound of each from the panel's
+    // query or panel.heatmap.bounds; the last bucket is the overflow above the last bound.
+    report.histogramBuckets = (frame, panel) => {
+        const fields = report.fields(frame), groups = new Map();
+        fields.forEach((field, at) => { const match = /^(.*)\.bucket\.(\d+)$/.exec(field.name); if (!match) return; if (!groups.has(match[1])) groups.set(match[1], []); groups.get(match[1]).push({ at, index: Number(match[2]) }); });
+        if (!groups.size) return null;
+        const wanted = panel && panel.heatmap && panel.heatmap.field, prefix = groups.has(wanted) ? wanted : groups.keys().next().value;
+        let bounds = panel && panel.heatmap && Array.isArray(panel.heatmap.bounds) ? panel.heatmap.bounds : null;
+        const visit = (query) => { for (const child of query && query.queries || []) visit(child); for (const aggregation of query && query.aggregations || []) if (!bounds && aggregation.type === "histogram_merge" && aggregation.id === prefix) bounds = aggregation.params && aggregation.params.bounds; };
+        for (const query of panel && panel.queries || []) visit(query);
+        return { prefix, bounds: (bounds || []).map(Number), buckets: groups.get(prefix).sort((a, b) => a.index - b.index) };
+    };
+    // Rows of a heatmap: one column per time (counts of rows at the same time added up), one row per bucket, highest first.
+    report.heatmap = (frame, panel) => {
+        const found = report.histogramBuckets(frame, panel);
+        if (!found) return null;
+        const fields = report.fields(frame), time = fields.findIndex((field) => (field.type || field.kind) === "time"), rows = report.rows(frame);
+        const columns = [], byTime = new Map();
+        rows.forEach((row, rowAt) => {
+            const key = time < 0 ? String(rowAt) : String(report.timeValue(row[time]));
+            let column = byTime.get(key);
+            if (!column) { column = { time: time < 0 ? rowAt + 1 : row[time], counts: found.buckets.map(() => 0) }; byTime.set(key, column); columns.push(column); }
+            found.buckets.forEach((bucket, at) => { if (finite(row[bucket.at])) column.counts[at] += Number(row[bucket.at]); });
+        });
+        if (time >= 0) columns.sort((a, b) => report.timeValue(a.time) - report.timeValue(b.time));
+        const unit = panel && panel.heatmap && panel.heatmap.unit, bound = (value) => report.format(value, { type: "number", unit, decimals: panel && panel.heatmap && panel.heatmap.decimals });
+        const labels = found.buckets.map((bucket) => bucket.index < found.bounds.length ? "≤ " + bound(found.bounds[bucket.index]) : found.bounds.length ? "> " + bound(found.bounds[found.bounds.length - 1]) : "Bucket " + (bucket.index + 1));
+        const max = columns.reduce((n, column) => Math.max(n, ...column.counts), 0);
+        return { prefix: found.prefix, columns, labels, max, timeField: time >= 0 ? fields[time] : null };
+    };
+    // ---- time ranges ----
+    report.quickRanges = [
+        ["now-5m", "now", "Last 5 minutes"], ["now-15m", "now", "Last 15 minutes"], ["now-30m", "now", "Last 30 minutes"], ["now-1h", "now", "Last 1 hour"],
+        ["now-3h", "now", "Last 3 hours"], ["now-6h", "now", "Last 6 hours"], ["now-12h", "now", "Last 12 hours"], ["now-24h", "now", "Last 24 hours"],
+        ["now-2d", "now", "Last 2 days"], ["now-7d", "now", "Last 7 days"], ["now-30d", "now", "Last 30 days"], ["now-90d", "now", "Last 90 days"],
+        ["now/d", "now/d", "Today"], ["now/d", "now", "Today so far"], ["now-1d/d", "now-1d/d", "Yesterday"], ["now/w", "now/w", "This week"],
+        ["now/w", "now", "This week so far"], ["now-1w/w", "now-1w/w", "Previous week"], ["now/M", "now/M", "This month"], ["now-1M/M", "now-1M/M", "Previous month"],
+        ["now/y", "now/y", "This year"], ["now-1y/y", "now-1y/y", "Previous year"],
+    ].map(([from, thru, label]) => ({ from, thru, label }));
+    report.rangeLabel = (range) => {
+        if (!range || !range.from) return "";
+        const quick = report.quickRanges.find((item) => item.from === range.from && item.thru === (range.thru || "now"));
+        if (quick) return quick.label;
+        const text = (value) => /^now/.test(String(value || "")) ? String(value) : report.format(value, { type: "time" });
+        return text(range.from) + " to " + text(range.thru || "now");
+    };
+    // An ISO time as a datetime-local value in the browser's zone, and back.
+    report.localInput = (value) => {
+        const date = new Date(report.timeValue(value));
+        if (!Number.isFinite(date.getTime())) return "";
+        const pad = (n) => String(n).padStart(2, "0");
+        return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
+    };
+    report.fromLocalInput = (value) => { const date = new Date(value); return value && Number.isFinite(date.getTime()) ? date.toISOString() : null; };
+    report.recentRanges = {
+        key: (viewer) => report.storageKey(viewer, "time-ranges"),
+        read(viewer) { const items = report.storage.read(this.key(viewer), []); return Array.isArray(items) ? items.filter((item) => item && typeof item.from === "string" && typeof item.thru === "string").slice(0, 5) : []; },
+        add(viewer, range) { const items = [{ from: range.from, thru: range.thru }, ...this.read(viewer).filter((item) => item.from !== range.from || item.thru !== range.thru)].slice(0, 5); report.storage.write(this.key(viewer), items); return items; },
+        clear(viewer) { report.storage.write(this.key(viewer), []); return []; }
+    };
+    // ---- panel links ----
+    // The first query of a panel that reads a dataset (a nested query list is searched in order).
+    report.firstQuery = (panel) => { const visit = (queries) => { for (const query of queries || []) { if (query && query.datasetId && !query.queries) return query; const found = query && visit(query.queries); if (found) return found; } return null; }; return visit(panel && panel.queries); };
+    // Explore on the panel's first query: its dataset, query string and filters, the dashboard's filters for that dataset, and
+    // the absolute range.
+    report.exploreUrl = (panel, options, href) => {
+        const query = report.firstQuery(panel);
+        if (!query) return "";
+        const url = new root.URL(report.appRoot(href) + "/dashboards/Explore", href || root.location.href);
+        url.searchParams.set("datasetId", query.datasetId);
+        if (query.queryString) url.searchParams.set("queryString", query.queryString);
+        const pills = [...(query.filters || []).map((item) => item && item.query ? Object.assign({ datasetId: query.datasetId }, item) : { datasetId: query.datasetId, query: item, label: "", negated: false, disabled: false, pinned: false }),
+            ...report.parsePills(options && options.filters).filter((pill) => !pill.datasetId || pill.datasetId === query.datasetId)].slice(0, 32);
+        url.searchParams.set("filtersJson", JSON.stringify(pills));
+        const range = options && options.range || {};
+        if (range.from) url.searchParams.set("from", range.from);
+        if (range.thru) url.searchParams.set("thru", range.thru);
+        return url.pathname + url.search;
+    };
+    // The current page with the absolute range, and a panel alone when panelId is given: a link that shows what the viewer sees.
+    report.shareUrl = (range, panelId, href) => {
+        const url = new root.URL(href || root.location.href);
+        if (range && range.from) url.searchParams.set("from", range.from);
+        if (range && range.thru) url.searchParams.set("thru", range.thru);
+        if (panelId) url.searchParams.set("panelId", panelId);
+        for (const key of ["cursor", "pageIndex", "kiosk"]) url.searchParams.delete(key);
+        return url.href;
+    };
+    // Leaving the page for another view, in one place so a test can watch it.
+    report.navigate = (href) => root.location.assign(href);
+    // Whether the text went to the clipboard; a browser that refuses, or does not answer within a second, leaves it to the viewer.
+    report.copyText = async (text) => { try { if (!root.navigator.clipboard) return false; return await Promise.race([root.navigator.clipboard.writeText(text).then(() => true), new Promise((resolve) => root.setTimeout(() => resolve(false), 1000))]); } catch (_) { return false; } };
     report.mergeLogHits = (previous, incoming, limit) => {
         const byId = new Map();
         for (const hit of [...previous, ...incoming]) byId.set(hit.documentId + ":" + hit.id, hit);
@@ -325,10 +519,19 @@
                 if(['sort','filter','runningTotal','movingAverage','delta','percentOfTotal','timeShift'].includes(step.type))put('Field','field');
                 if(step.type==='limit')put('Row limit','count','number');
                 if(step.type==='sort')put('Descending','descending','checkbox');
-                if(['reduce','groupBy'].includes(step.type))put('Calculation','calculation','select',['sum','mean','min','max','count','first','last','delta','p50','p95','p99']);
+                if(['reduce','groupBy'].includes(step.type)){if(!Array.isArray(step.calculations))put('Calculation','calculation','select',['sum','mean','min','max','count','first','last','delta','p50','p95','p99']);put('Calculations (comma separated)','calculations','list');}
+                if(step.type==='reduce')put('Reduce mode','mode','select',[{value:'',text:'One value per field'},{value:'rows',text:'A row per series'}]);
                 if(['join','joinByTime','partitionByValues','groupBy'].includes(step.type))put('Key fields (comma separated)','fields','list');
-                if(step.type==='filter'){put('Operator','operator','select',['eq','ne','gt','lt','exists']);controls.push(E.control('Value type',step.value===null?'null':typeof step.value,value=>this.change(at,'value',value==='number'?0:value==='boolean'?false:value==='null'?null:''),'select',['string','number','boolean','null'],disabled));if(step.value!==null)put('Value','value',typeof step.value==='number'?'number':typeof step.value==='boolean'?'checkbox':'text');}
-                if(step.type==='calculate'){put('Output field','name');put('Left field','left');put('Right field (or use constant)','right');put('Constant','value','number');put('Operator','operator','select',['+','-','*','/']);}
+                if(step.type==='filter'){const typed=value=>/^-?\d+(?:\.\d+)?$/.test(String(value).trim())?Number(value):value;
+                    if(Array.isArray(step.conditions)){put('Match','match','select',[{value:'all',text:'All conditions'},{value:'any',text:'Any condition'}]);controls.push(h('p',step.conditions.length+' conditions; edit them in the definition JSON.'));}
+                    else {put('Operator','operator','select',['eq','ne','gt','gte','lt','lte','range','regex','exists','missing']);
+                        if(step.operator==='range'){controls.push(E.control('Range from',step.from,value=>this.change(at,'from',value===''?undefined:typed(value)),null,null,disabled));controls.push(E.control('Range through',step.to,value=>this.change(at,'to',value===''?undefined:typed(value)),null,null,disabled));}
+                        else if(!['exists','missing'].includes(step.operator)){controls.push(E.control('Value type',step.value===null?'null':typeof step.value,value=>this.change(at,'value',value==='number'?0:value==='boolean'?false:value==='null'?null:''),'select',['string','number','boolean','null'],disabled));if(step.value!==null)put('Value','value',typeof step.value==='number'?'number':typeof step.value==='boolean'?'checkbox':'text');}}
+                    put('Exclude matching rows','exclude','checkbox');}
+                if(step.type==='calculate'){if(Array.isArray(step.calculations))controls.push(h('p',step.calculations.length+' calculations; edit them in the definition JSON.'));
+                    else {put('Calculation mode','mode','select',[{value:'binary',text:'Binary operation'},{value:'runningTotal',text:'Running total'},{value:'movingAverage',text:'Moving average'},{value:'delta',text:'Change from the previous row'},{value:'percentOfTotal',text:'Percent of total'}]);put('Output field','name');
+                        if(!step.mode || step.mode==='binary'){put('Left field','left');put('Right field (or use constant)','right');put('Constant','value','number');put('Operator','operator','select',['+','-','*','/']);}
+                        else {put('Field','field');if(step.mode==='movingAverage')put('Window','window','number');}}}
                 if(['runningTotal','movingAverage','delta','percentOfTotal'].includes(step.type))put('Output field','name');
                 if(step.type==='movingAverage')put('Window','window','number');if(step.type==='timeShift')put('Shift milliseconds','millis','number');
                 if(step.type==='pivot'){put('Row field','row');put('Column field','column');put('Value field','cell');put('Row totals','rowTotals','checkbox');put('Column totals','columnTotals','checkbox');}
@@ -348,7 +551,7 @@
         methods:{change(path,value){const copy=E.clone(this.value);E.set(copy,path,value);this.$emit('change',copy);}},
         render(){const h=root.Vue.h,disabled=this.disabled,config=this.value;
             const settings=(value,change,title)=>{const rows=[],put=(label,path,type,choices)=>rows.push(E.control(label,E.get(value,path),next=>{const copy=E.clone(value);E.set(copy,path,next);change(copy);},type,choices,disabled));
-                put('Display name','displayName');put('Field unit','unit');put('Decimal places','decimals','number');put('Field minimum','min','number');put('Field maximum','max','number');put('No-value text','noValue');put('Hidden','hidden','checkbox');put('Frozen column','frozen','checkbox');put('Data link URL (${value} or ${field})','link');put('Threshold mode','thresholdMode','select',['absolute','percent']);
+                put('Display name','displayName');put('Field unit','unit');put('Decimal places','decimals','number');put('Field minimum','min','number');put('Field maximum','max','number');put('No-value text','noValue');put('Hidden','hidden','checkbox');put('Frozen column','frozen','checkbox');put('Cell display','cellDisplay','select',[{value:'',text:'Automatic'},{value:'text',text:'Text'},{value:'sparkline',text:'Sparkline'}]);put('Data link URL (${value} or ${field})','link');put('Threshold mode','thresholdMode','select',['absolute','percent']);
                 const mappings=value.mappings || [];mappings.forEach((mapping,at)=>rows.push(h('fieldset',{class:'m-report-editor-group'},[h('legend','Value mapping '+(at+1)),E.control('Exact value',mapping.value,next=>{const copy=E.clone(value);copy.mappings[at].value=next;delete copy.mappings[at].from;delete copy.mappings[at].to;change(copy);},null,null,disabled),E.control('Range from',mapping.from,next=>{const copy=E.clone(value);copy.mappings[at].from=next;delete copy.mappings[at].value;change(copy);},'number',null,disabled),E.control('Range through',mapping.to,next=>{const copy=E.clone(value);copy.mappings[at].to=next;delete copy.mappings[at].value;change(copy);},'number',null,disabled),E.control('Display text',mapping.text,next=>{const copy=E.clone(value);copy.mappings[at].text=next;change(copy);},null,null,disabled),...E.listControls(mappings,at,next=>{const copy=E.clone(value);copy.mappings=next;change(copy);},disabled)])));
                 rows.push(E.button('Add value mapping',()=>change(Object.assign({},value,{mappings:[...E.clone(mappings),{value:'',text:''}]})),disabled));
                 const thresholds=value.thresholds || [];thresholds.forEach((threshold,at)=>rows.push(h('div',{class:'row q-gutter-sm'},[E.control('Threshold value',threshold.value,next=>{const copy=E.clone(value);copy.thresholds[at].value=next;change(copy);},'number',null,disabled),E.control('Threshold color',threshold.color,next=>{const copy=E.clone(value);copy.thresholds[at].color=next;change(copy);},'select',['positive','warning','negative','primary','secondary','info','accent'],disabled),...E.listControls(thresholds,at,next=>{const copy=E.clone(value);copy.thresholds=next;change(copy);},disabled)])));
@@ -408,7 +611,9 @@
     components["m-report-definition-editor"] = {
         inject: { mForm: { default: null } },
         props: { name: { type: String, default: "definitionJson" }, libraries: { type: Array, default: () => [] }, datasets: { type: Array, default: () => [] }, readOnly: Boolean, panelOnly: Boolean, queryOnly:Boolean },
-        data: () => ({ selected: "", optionSearch: "", libraryId: "", error: "",queryAt:0,transformScope:"panel" }),
+        // The panel chosen first is the one the URL names (panelId, from a panel's Edit menu item).
+        data: () => ({ selected: (() => { try { return new root.URL(root.location.href).searchParams.get("panelId") || ""; } catch (_) { return ""; } })(), optionSearch: "", libraryId: "", error: "",queryAt:0,transformScope:"panel",
+            previewFrame: null, previewError: "", previewing: false }),
         computed: {
             body() { try { const value = JSON.parse(this.mForm && this.mForm.fields[this.name] || "{}"); return !value || Array.isArray(value) || typeof value !== "object" ? null : this.queryOnly ? {panels:{panel:{queries:value.queries || [value],transformations:value.queries?value.transformations || []:[]}},queryEnvelope:value.queries?value:{}} : this.panelOnly ? { panels: { panel: value } } : value; } catch (_) { return null; } },
             panels() { return this.body && this.body.panels || {}; },
@@ -457,6 +662,16 @@
                 this.write(body);
             },
             updateBody(path,value){const body=this.body;if(!body)return;E.set(body,path,value);this.write(body);},
+            // Run the selected panel's queries (the report query REST service, as the viewer) for suggestions from the real frame.
+            async preview(){const panel=this.panels[this.selectedId];if(!panel || panel.panelRef)return;this.previewing=true;this.previewError='';
+                try {const response=await root.fetch('/rest/s1/moqui/reports/query',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json',Accept:'application/json','X-CSRF-Token':moqui.sessionToken || ''},
+                        body:JSON.stringify({query:{queries:panel.queries || [],transformations:panel.transformations || [],from:panel.time && panel.time.from || 'now-1h',thru:panel.time && panel.time.thru || 'now'}})});
+                    const result=await response.json().catch(()=>null);
+                    if(!response.ok || !result || result.errors || result.error)throw new Error(result && (result.errors || result.error) || 'Request failed ('+response.status+')');
+                    this.previewFrame=(result.frames || [])[0] || {fields:[]};
+                } catch(error){this.previewError='The data could not be checked: '+String(error && error.message || error);}
+                finally{this.previewing=false;}
+            },
             queries(action){const body=this.body,panel=body && body.panels[this.selectedId];if(!panel || panel.panelRef)return;const queries=panel.queries=panel.queries || [];
                 if(action==='add'||action==='duplicate'){queries.push(action==='duplicate' && queries[this.queryAt]?E.clone(queries[this.queryAt]):{datasetId:this.datasets[0] && this.datasets[0].id || 'otel_logs',mode:'documents',pageSize:100});this.queryAt=queries.length-1;}
                 if(action==='remove'){queries.splice(this.queryAt,1);this.queryAt=Math.max(0,this.queryAt-1);}
@@ -497,7 +712,13 @@
             options.push(h('div',{class:'row q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')})),this.readOnly),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             if(!this.queryOnly)input("Panel title", "title");
             if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text"]);
-            if(!this.queryOnly && panel.visualization==='text')options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly));
+            if(!this.queryOnly && !this.optionSearch && !panel.panelRef){const suggested=report.suggestVisualizations(this.previewFrame?report.frameShape(this.previewFrame):report.queryShape(panel)).slice(0,4);
+                options.push(h('div',{class:'m-report-suggestions row items-center q-gutter-xs',role:'group','aria-label':'Suggested visualizations'},[h('span',this.previewFrame?'Suggested from the data:':'Suggested from the query:'),
+                    ...suggested.map(item=>h('button',{type:'button',class:'q-btn q-pa-xs',disabled:this.readOnly,'aria-pressed':(panel.visualization || 'table')===item.visualization?'true':'false','data-visualization':item.visualization,onClick:()=>this.update('visualization',item.visualization)},item.label+' ('+item.reason+')')),
+                    E.button(this.previewing?'Checking the data…':'Check with the data',this.preview,this.previewing || !(panel.queries || []).length),this.previewError?h('span',{role:'alert',class:'text-negative'},this.previewError):null]));}
+            if(!this.queryOnly && panel.visualization==='text'){options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly));options.push(h('p',{class:'text-caption'},'Variables: ${name} or $name, and ${__from} and ${__thru} for the time range. Values show as text.'));}
+            if(!this.queryOnly && (panel.visualization || 'table')==='table')options.push(E.control('Table footer calculations (comma separated: sum, mean, min, max, count, last)',panel.footer && panel.footer.calculations || [],value=>this.update('footer',value.length?{calculations:value}:undefined),'list',null,this.readOnly));
+            if(!this.queryOnly && panel.visualization==='heatmap'){input('Heatmap histogram field','heatmap.field');input('Heatmap bucket bound unit','heatmap.unit');}
             input("Dataset", queryPrefix+"datasetId", "select", this.datasets.map((dataset) => ({ value: dataset.id, text: dataset.title || dataset.id })));
             input("Query string", queryPrefix+"queryString");
             input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents"]);
@@ -629,10 +850,28 @@
     };
     components["m-report-panel"] = {
         props: { frame: { type: Object, default: () => ({ fields: [] }) }, frames: Array, panel: { type: Object, default: () => ({}) },
-            title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]} },
+            title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
+            editable:Boolean, embedded:Boolean, single:Boolean },
         emits:["filter"],
-        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "" }),
+        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "" }),
         methods: {
+            // The Dashboards app view of this dashboard, for an embed whose page is another screen.
+            dashboardUrl(panelId){const url=new root.URL(report.appRoot()+'/dashboards/Dashboard',root.location.href);url.searchParams.set('definitionId',this.dashboardId);if(panelId)url.searchParams.set('panelId',panelId);if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);return url.href;},
+            viewPanel(){this.menu=false;if(this.embedded){report.navigate(this.dashboardUrl(this.panelId));return;}const url=new root.URL(root.location.href);url.searchParams.set('panelId',this.panelId);report.navigate(url.href);},
+            editPanel(){this.menu=false;report.navigate(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.panelId)));},
+            async sharePanel(){this.menu=false;this.shared=report.shareUrl(this.range,this.panelId,this.embedded?this.dashboardUrl():undefined);this.status=await report.copyText(this.shared)?'Link copied, with the time range made absolute.':'Copy this link to share the panel:';},
+            explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range});if(url)report.navigate(url);},
+            async changePanel(action){
+                this.menu=false;
+                if(action==='removePanel' && root.confirm && !root.confirm('Remove the panel '+(this.title || this.panel.title || this.panelId)+' from this dashboard? A new version is saved; an earlier version can be restored.'))return;
+                this.busy=true;this.actionError='';
+                try {
+                    const result=await moqui.request('/apps/dashboards/Dashboard/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.panelId,moquiSessionToken:moqui.sessionToken || ''}});
+                    if(!result.json || result.json.errors || result.json.error)throw new Error(result.json && (result.json.errors || result.json.error) || 'The dashboard was not changed');
+                    const url=new root.URL(root.location.href);if(action==='removePanel' && url.searchParams.get('panelId')===this.panelId)url.searchParams.delete('panelId');report.navigate(url.href);
+                } catch(error){this.actionError=String(error && (error.message || (error.json && (error.json.errors || error.json.error)) || error.statusText) || error);}
+                finally{this.busy=false;}
+            },
             async panelRequest(action, extra) {
                 this.busy = true; this.actionError = "";
                 try {
@@ -674,10 +913,18 @@
                 h("button", { type: "button", onClick: this.dashboardId ? () => this.exportPanel("csv") : this.csv, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as CSV" }, "CSV"),
                 this.dashboardId ? h("button", { type: "button", onClick: () => this.exportPanel("xlsx"), disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Export " + named + " as XLSX" }, "XLSX") : null,
                 h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": "Inspect " + named, "aria-pressed": this.inspector }, "Inspect"),
-                this.dashboardId && (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric")) ?
-                    h("a", { href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, "New alert rule") : null]);
+                this.dashboardId && this.panelId ? h("button", { type: "button", class: "q-btn q-pa-xs", "aria-haspopup": "menu", "aria-expanded": this.menu ? "true" : "false", "aria-label": "Panel menu for " + named, onClick: () => { this.menu = !this.menu; } }, "Menu") : null]);
+            const item = (text, click, show) => show === false ? null : h("button", { type: "button", role: "menuitem", class: "q-btn q-pa-xs", disabled: this.busy, onClick: click }, text);
+            const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric"));
+            const menu = this.menu ? h("div", { role: "menu", "aria-label": "Panel menu for " + named, class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
+                item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel), item("Share", this.sharePanel),
+                item("Explore", this.explorePanel, !!report.firstQuery(this.panel)), item("Inspect", () => { this.menu = false; this.inspect(); }),
+                item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable), item("Remove", () => this.changePanel("removePanel"), this.editable),
+                alerting ? h("a", { role: "menuitem", class: "q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, "New alert rule") : null]) : null;
+            const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": "Panel link", style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
+                E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
-            if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: this.panel.text || "" });
+            if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", this.variables, this.range) });
             else if (!rows.length) content = h("p", { role: "status", class: "text-grey" }, "No data in this time range.");
             else if (visual === "stat" || visual === "gauge" || visual === "barGauge") {
                 const series=report.chart(frame,this.panel).data.datasets,previousAt=this.panel.compareField?fields.findIndex(field=>field.name===this.panel.compareField):-1;
@@ -693,6 +940,19 @@
                 content = h(root.Vue.resolveComponent("m-chart"), { config: report.chart(frame, Object.assign({},this.panel,{syncGroup:this.syncGroup}),this.filter), height: this.height });
             } else if (visual === "traceWaterfall" || visual === "trace") {
                 content = h(components["m-trace-waterfall"], { spans: rows.map((row) => Object.fromEntries(fields.map((field, at) => [field.name, row[at]]))) });
+            } else if (visual === "heatmap" && report.heatmap(frame, this.panel)) {
+                const map = report.heatmap(frame, this.panel), columns = map.columns.slice(-500), timeText = (value) => map.timeField ? report.format(value, { type: "time" }) : String(value);
+                const shade = (count) => count > 0 && map.max > 0 ? 0.12 + 0.88 * Math.log1p(count) / Math.log1p(map.max) : 0;
+                const cells = [];
+                for (let bucket = map.labels.length - 1; bucket >= 0; bucket--) {
+                    cells.push(h("div", { key: "label:" + bucket, class: "m-report-heatmap-label", style: { paddingRight: "4px", whiteSpace: "nowrap", textAlign: "right" } }, map.labels[bucket]));
+                    columns.forEach((column, at) => { const count = column.counts[bucket];
+                        cells.push(h("div", { key: bucket + ":" + at, title: timeText(column.time) + " · " + map.labels[bucket] + ": " + report.format(count, { type: "number" }), "data-count": count,
+                            style: { minHeight: "14px", background: count > 0 ? "var(--q-primary)" : "transparent", opacity: count > 0 ? shade(count) : 1, outline: count > 0 ? "none" : "1px solid rgba(127,127,127,0.12)" } })); });
+                }
+                content = h("figure", { class: "m-report-heatmap q-ma-none", role: "img", "aria-label": "Heatmap of " + map.prefix + ": " + columns.length + " times, " + map.labels.length + " buckets, highest count " + report.format(map.max, { type: "number" }) }, [
+                    h("div", { style: { display: "grid", gridTemplateColumns: "max-content repeat(" + Math.max(1, columns.length) + ",minmax(1px,1fr))", gap: "1px", fontSize: "11px", height: this.height, alignContent: "stretch" } }, cells),
+                    h("figcaption", { class: "row justify-between text-caption" }, [h("span", columns.length ? timeText(columns[0].time) : ""), h("span", "Count per bucket: 0 to " + report.format(map.max, { type: "number" })), h("span", columns.length ? timeText(columns[columns.length - 1].time) : "")])]);
             } else if (visual === "heatmap") {
                 const values = rows.map((row) => row.filter(finite).map(Number));
                 const max = Math.max(1, ...values.flat());
@@ -711,21 +971,60 @@
                     const n = av == null ? (bv == null ? 0 : 1) : bv == null ? -1 : finite(av) && finite(bv) ? Number(av) - Number(bv) : String(av).localeCompare(String(bv));
                     return this.descending ? -n : n;
                 });
+                const footer = report.footerRows(fields, this.panel);
                 content = h("div", { class: "scroll" }, [h("table", { class: "q-table full-width" }, [
                     h("thead", [h("tr", visible.map(({ field, index }) => h("th", { style: { textAlign: "left" }, "aria-sort": this.sortField === index ? (this.descending ? "descending" : "ascending") : "none" }, [
                         h("button", { type: "button", onClick: () => { this.descending = this.sortField === index ? !this.descending : false; this.sortField = index; } }, field.displayName || field.name) ])))]),
                     h("tbody", sorted.map((row, at) => h("tr", { key: at }, visible.map(({ field, index }) => {
                         const value = row[index], text = report.cellText(value, field,row.sourceRow), record = Object.fromEntries(fields.map((item, i) => [item.name, row[i]]));
-                        const link = field.link ? report.dataLink(field.link, value, record) : "";
+                        const link = field.link ? report.dataLink(field.link, value, record) : "", spark = report.sparklineCell(field, value);
                         return h("td", { style: { color: report.thresholdColor(value, field), ...(field.frozen ? { position: "sticky", left: "0", background: "var(--m-panel-bg)" } : {}) } },
+                            spark ? h("svg", { viewBox: "0 0 100 24", height: "24", width: "120", role: "img", class: "m-report-sparkline", "aria-label": (field.displayName || field.name) + ": " + spark.filter(finite).length + " values, last " + report.format(report.reduce(spark, "last"), {}) },
+                                [h("path", { d: report.sparkline(spark), fill: "none", stroke: "var(--q-primary)", "stroke-width": "1.5" })]) :
                             link ? h("a", { href: report.appPath(link) }, text) : report.bucketPill(frame,this.panel,index,row.sourceRow,false) ? h('button',{type:'button',class:'m-report-cell-filter',title:'Filter for this value; Shift-click filters out',onClick:event=>this.filter(report.bucketPill(frame,this.panel,index,row.sourceRow,event.shiftKey))},text) : text.length > 240 ? h("details", [h("summary", text.slice(0, 200) + "…"), h("pre", { style: { whiteSpace: "pre-wrap" } }, text)]) : text);
                     })))),
-                    this.panel.totals ? h("tfoot", [h("tr", visible.map(({ field, index }) => h("td", report.format(this.panel.totals[field.name] ?? null, field))))]) : null ]) ]);
+                    footer.length ? h("tfoot", footer.map((total) => h("tr", { key: total.calculation, class: "m-report-footer" }, visible.map(({ field, index }, at) => {
+                        const value = total.values[index], label = at === 0 && value == null;
+                        return h(label ? "th" : "td", { scope: label ? "row" : undefined, style: { textAlign: "left", fontWeight: "bold" } }, label ? total.label : value == null ? "" : (at === 0 ? total.label + ": " : "") + report.format(value, field));
+                    })))) : null ]) ]);
             }
             const annotations = (this.panel.annotations || []).slice(0, 200);
             return h("section", { class: "m-report-panel q-pa-sm q-mb-sm", style: { border: "1px solid var(--q-secondary)", borderRadius: "4px" } },
-                [header, this.actionError ? h("p", { role: "alert", class: "text-negative" }, this.actionError) : null, content, annotations.length ? h("details", [h("summary", annotations.length + " annotations"), h("ul", annotations.map((annotation) => h("li", report.format(annotation.time, { type: "time" }) + " · " + annotation.text)))]) : null,
+                [header, menu, shared, this.actionError ? h("p", { role: "alert", class: "text-negative" }, this.actionError) : null, content, annotations.length ? h("details", [h("summary", annotations.length + " annotations"), h("ul", annotations.map((annotation) => h("li", report.format(annotation.time, { type: "time" }) + " · " + annotation.text)))]) : null,
                 this.inspector ? h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(this.inspection || { panel: this.panel, frame }, null, 2)) : null]);
+        }
+    };
+    // The dashboard time picker: quick ranges, the viewer's recent ranges (kept in this browser), an absolute from and through,
+    // and earlier, zoom out and later on the resolved range. It emits apply with {from, thru}; the dashboard puts them in the URL.
+    components['m-report-time-picker']={
+        props:{value:{type:Object,default:()=>({})},absolute:{type:Object,default:()=>({})},viewerId:String},emits:['apply'],
+        data(){return {open:false,recent:[],from:'',thru:'',error:''};},
+        mounted(){this.recent=report.recentRanges.read(this.viewerId);this.reset();},
+        methods:{
+            reset(){this.from=report.localInput(this.absolute.from);this.thru=report.localInput(this.absolute.thru);this.error='';},
+            apply(range){if(!range || !range.from)return;this.recent=report.recentRanges.add(this.viewerId,range);this.open=false;this.$emit('apply',{from:range.from,thru:range.thru || 'now'});},
+            applyAbsolute(){const from=report.fromLocalInput(this.from),thru=report.fromLocalInput(this.thru);
+                if(!from || !thru){this.error='Enter a from and a through time';return;}
+                if(Date.parse(thru)<=Date.parse(from)){this.error='The through time must be after the from time';return;}
+                this.error='';this.apply({from,thru});},
+            shift(key){const range=report.shiftRange(this.absolute,key);if(range)this.apply(range);},
+            key(event){if(event.key==='Escape' && this.open){event.preventDefault();event.stopPropagation();this.open=false;}}
+        },
+        render(){const h=root.Vue.h,label=report.rangeLabel(this.value && this.value.from?this.value:this.absolute) || 'Choose a time range';
+            const choice=(range,text)=>h('li',{key:range.from+'|'+range.thru},[h('button',{type:'button',class:'q-btn q-pa-xs','aria-current':range.from===this.value.from && (range.thru || 'now')===(this.value.thru || 'now')?'true':undefined,onClick:()=>this.apply(range)},text || report.rangeLabel(range))]);
+            return h('div',{class:'m-report-time-picker',onKeydown:this.key},[
+                h('div',{class:'row items-center q-gutter-xs'},[
+                    E.button('Earlier',()=>this.shift('ArrowLeft'),!this.absolute.from),
+                    h('button',{type:'button',class:'q-btn q-pa-xs','aria-expanded':this.open?'true':'false','aria-haspopup':'dialog','aria-label':'Time range: '+label,onClick:()=>{this.open=!this.open;if(this.open)this.reset();}},label),
+                    E.button('Later',()=>this.shift('ArrowRight'),!this.absolute.from),E.button('Zoom out',()=>this.shift('-'),!this.absolute.from)]),
+                this.open?h('div',{role:'dialog','aria-label':'Choose a time range',class:'m-report-time-ranges q-pa-sm',style:{border:'1px solid var(--q-secondary)',background:'var(--m-panel-bg,white)',display:'flex',flexWrap:'wrap',gap:'16px'}},[
+                    h('section',[h('h5',{class:'q-my-xs'},'Absolute range'),
+                        h('label',{class:'m-report-editor-control'},[h('span','From'),h('input',{type:'datetime-local',value:this.from,onInput:event=>{this.from=event.target.value;}})]),
+                        h('label',{class:'m-report-editor-control'},[h('span','Through'),h('input',{type:'datetime-local',value:this.thru,onInput:event=>{this.thru=event.target.value;}})]),
+                        E.button('Apply time range',this.applyAbsolute),this.error?h('p',{role:'alert',class:'text-negative'},this.error):null,
+                        h('h5',{class:'q-my-xs'},'Recent ranges'),this.recent.length?h('ul',{class:'q-pl-none',style:{listStyle:'none'}},this.recent.map(range=>choice(range))):h('p','No recent ranges yet.'),
+                        this.recent.length?E.button('Clear recent ranges',()=>{this.recent=report.recentRanges.clear(this.viewerId);}):null]),
+                    h('section',[h('h5',{class:'q-my-xs'},'Quick ranges'),h('ul',{class:'q-pl-none',style:{listStyle:'none',columns:'2'}},report.quickRanges.map(range=>choice(range,range.label)))])]):null]);
         }
     };
     components['m-dashboard-filters']={
@@ -736,10 +1035,12 @@
     };
     components["m-dashboard"] = {
         props: { dashboard: { type: Object, default: () => ({ panels: {} }) }, frames: { type: Object, default: () => ({}) } },
-        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null }; },
+        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null, shareStatus: "", shareLink: "" }; },
         mounted() {
             this.refreshSeconds = Number(this.dashboard.refreshSeconds) || 0;
             this.setRefresh();
+            // An embed is one part of another screen: it takes no page keys and leaves the page's URL alone.
+            if (this.dashboard.embedded) return;
             this.onKey = (event) => {
                 if (event.key === "Escape" && this.kiosk) { event.preventDefault(); this.kiosk = false; return; }
                 if (/INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable) return;
@@ -765,7 +1066,7 @@
             allPanels(){root.location.assign(report.allPanelsUrl());},
             applyFilters(pills){const url=new root.URL(root.location.href);url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
             addFilter(pill){root.location.assign(report.filterUrl(pill,{dashboardId:this.dashboard.definitionId,filters:this.dashboard.filters,range:this.dashboard.absoluteTime}));},
-            timeRange(range) {const url=new root.URL(root.location.href);url.searchParams.set('from',range.from);url.searchParams.set('thru',range.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
+            timeRange(range) {const url=new root.URL(root.location.href);url.searchParams.set('from',range.from);url.searchParams.set('thru',range.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');report.navigate(url.href);},
             setRefresh() {
                 root.clearInterval(this.timer);
                 if (this.refreshSeconds >= 5) this.timer = root.setInterval(() => {
@@ -778,11 +1079,17 @@
                 for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(name, item);
                 root.location.assign(url.href);
             },
-            share() {
-                const url = new root.URL(root.location.href), time = this.dashboard.absoluteTime || {};
+            async share() {
+                this.shareLink = report.shareUrl(this.dashboard.absoluteTime || {}, null);
+                this.shareStatus = await report.copyText(this.shareLink) ? "Link copied, with the time range made absolute." : "Copy this link to share the dashboard:";
+            },
+            openUrl() {
+                const url = new root.URL(report.appRoot() + "/dashboards/Dashboard", root.location.href), time = this.dashboard.absoluteTime || {};
+                url.searchParams.set("definitionId", this.dashboard.definitionId || "");
+                if (this.dashboard.panelId) url.searchParams.set("panelId", this.dashboard.panelId);
                 if (time.from) url.searchParams.set("from", time.from);
                 if (time.thru) url.searchParams.set("thru", time.thru);
-                if (root.navigator.clipboard) root.navigator.clipboard.writeText(url.href);
+                return url.pathname + url.search;
             }
         },
         render() {
@@ -790,7 +1097,8 @@
             const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
             const byId = Object.fromEntries(entries);
             const panel = (id, position) => byId[id] ? h("div", { key: id, style: position || {},onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
-                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
+                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
+                editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,360px),1fr))", gap: "12px" } }, items);
             const layout = (node, path) => {
                 if (!node) return auto(entries.map(([id]) => panel(id)));
@@ -816,7 +1124,13 @@
                     [...(variable.includeAll ? [h("option", { value: "$__all" }, "All")] : []), ...options.map((item) => h("option", { value: typeof item === "object" ? item.value : item }, typeof item === "object" ? item.text || item.value : item))]) :
                     h("input", { value: Array.isArray(value) ? value.join(",") : value, onChange: (event) => this.variable(variable, event.target.value) })]);
             });
-            const toolbar = this.kiosk ? null : h("div", { class: "row items-center q-gutter-sm q-py-sm" }, [...variables,
+            const picker = h(components["m-report-time-picker"], { value: this.dashboard.requestedTime || {}, absolute: this.dashboard.absoluteTime || {}, viewerId: this.dashboard.viewerId, onApply: this.timeRange });
+            const shared = this.shareStatus ? h("p", { role: "status", class: "q-my-xs" }, [this.shareStatus, " ", h("input", { type: "text", readonly: true, value: this.shareLink, "aria-label": "Dashboard link", style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }),
+                E.button("Close", () => { this.shareStatus = ""; })]) : null;
+            if (this.dashboard.embedded) return h("div", { class: "m-report-dashboard m-report-embed" }, [h("div", { class: "row items-center q-gutter-sm q-py-xs" }, [
+                h("strong", this.dashboard.title || this.dashboard.definitionId), h("span", { class: "text-caption" }, report.rangeLabel(this.dashboard.requestedTime || this.dashboard.absoluteTime)),
+                h("a", { href: this.openUrl() }, "Open in Dashboards")]), ...entries.flatMap(([id, item]) => (item.notices || []).filter((notice) => notice && notice.level === "error").map((notice) => h("p", { role: "status", class: "text-caption text-negative" }, (item.title || id) + ": " + (notice.message || "")))), layout(this.dashboard.layout, "root")]);
+            const toolbar = this.kiosk ? null : h("div", { class: "row items-center q-gutter-sm q-py-sm" }, [...variables, picker,
                 h("label", ["Refresh ", h("select", { value: this.refreshSeconds, onChange: (event) => { this.refreshSeconds = Number(event.target.value); this.setRefresh(); } },
                     [0, 5, 15, 30, 60, 300].map((seconds) => h("option", { value: seconds }, seconds ? seconds + "s" : "Off")))]),
                 h("button", { type: "button", class: "q-btn q-pa-xs", onClick: () => root.location.reload() }, "Refresh now"),
@@ -826,9 +1140,9 @@
             const single = !this.kiosk && this.dashboard.panelId ? h("p", { class: "row items-center q-gutter-sm" }, [h("span", "Showing panel " + ((byId[this.dashboard.panelId] || {}).title || this.dashboard.panelId) + "."),
                 h("button", { type: "button", class: "q-btn q-pa-xs", onClick: this.allPanels }, "All panels (Esc)")]) : null;
             return h("div", { class: "m-report-dashboard", style: this.kiosk ? { position: "fixed", inset: "0", zIndex: "10000", overflow: "auto", background: "var(--m-panel-bg,white)", padding: "12px" } : {} },
-                [toolbar, single, !this.kiosk && Object.keys(this.dashboard.datasetFields || {}).length ? h(components["m-dashboard-filters"],{dashboard:this.dashboard,onApply:this.applyFilters}):null, this.kiosk ? h("button", { type: "button", onClick: () => { this.kiosk = false; } }, "Exit kiosk (Esc)") : null, layout(this.dashboard.layout, "root")]);
+                [toolbar, shared, single, !this.kiosk && Object.keys(this.dashboard.datasetFields || {}).length ? h(components["m-dashboard-filters"],{dashboard:this.dashboard,onApply:this.applyFilters}):null, this.kiosk ? h("button", { type: "button", onClick: () => { this.kiosk = false; } }, "Exit kiosk (Esc)") : null, layout(this.dashboard.layout, "root")]);
         }
     };
-    if (moqui.qvt && moqui.qvt.registerLate) Object.entries(components).filter(([name]) => ["m-report-value-filter","m-dashboard-filters","m-report-transform-editor","m-report-field-editor","m-report-variable-editor","m-report-layout-editor","m-report-composition-editor","m-report-querybar", "m-report-playlist", "m-report-panel", "m-dashboard", "m-trace-waterfall", "m-log-tail", "m-report-definition-editor"].includes(name))
+    if (moqui.qvt && moqui.qvt.registerLate) Object.entries(components).filter(([name]) => ["m-report-value-filter","m-dashboard-filters","m-report-time-picker","m-report-transform-editor","m-report-field-editor","m-report-variable-editor","m-report-layout-editor","m-report-composition-editor","m-report-querybar", "m-report-playlist", "m-report-panel", "m-dashboard", "m-trace-waterfall", "m-log-tail", "m-report-definition-editor"].includes(name))
         .forEach(([name, component]) => moqui.qvt.registerLate(name, component));
 })(typeof window !== "undefined" ? window : globalThis);

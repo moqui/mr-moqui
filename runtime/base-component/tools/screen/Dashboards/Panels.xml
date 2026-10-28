@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Library panels" default-menu-index="4">
+    <parameter name="previewPanelId"/>
     <pre-actions><set field="definitionType" value="panel"/></pre-actions>
-    <widgets><include-screen location="component://tools/screen/Dashboards/Home.xml" share-scope="true"/></widgets>
+    <actions><script><![CDATA[
+        panelOptions = (ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'panel'}).call().definitions || [])
+            .map(definition=>({id:definition.id,title:definition.title || definition.id}))
+    ]]></script></actions>
+    <widgets>
+        <form-single name="PreviewPanel" transition=".">
+            <field name="previewPanelId"><default-field title="Preview a library panel"><drop-down allow-empty="true"><list-options list="panelOptions" key="${id}" text="${title}"/></drop-down></default-field></field>
+            <field name="preview"><default-field><submit text="Preview"/></default-field></field>
+        </form-single>
+        <!-- The same element any screen uses to show a saved panel or dashboard, as the viewer. -->
+        <report-embed id="LibraryPanelPreview" definition-id="${previewPanelId || ''}" from="now-24h" condition="previewPanelId"/>
+        <include-screen location="component://tools/screen/Dashboards/Home.xml" share-scope="true"/>
+    </widgets>
 </screen>

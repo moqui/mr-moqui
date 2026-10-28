@@ -305,3 +305,51 @@ feature('the dashboard time form keeps the variables and the single-panel view',
         kept.panelId=='summary'
     },
 })
+async function monitoringCopyOverview(options) {
+    const copied=await moqui.request('/apps/dashboards/Definition/copy',{method:'POST',params:{definitionId:'monitor-overview',copyId:options.id,copyTitle:'Browser panel menu copy',moquiSessionToken:moqui.sessionToken}});
+    if(!copied.ok)throw new Error('Copying the shipped overview failed ('+copied.status+')');
+    return true;
+}
+async function monitoringPanelMenu(options) {
+    const toggle=document.querySelector('button[aria-label="Panel menu for '+options.title+'"]');if(!toggle)throw new Error('Missing panel menu for '+options.title);
+    toggle.click();await Vue.nextTick();
+    const panel=toggle.closest('.m-report-panel'),items=()=>Array.from(panel.querySelectorAll('[role="menuitem"]'));
+    const item=items().find(node=>node.textContent===options.item);
+    if(!item){const names=items().map(node=>node.textContent);toggle.click();await Vue.nextTick();return {items:names};}
+    window.monitoringMenuClicked=true;const names=items().map(node=>node.textContent);item.click();await Vue.nextTick();
+    return {items:names,clicked:true};
+}
+async function monitoringDefinitionPanels(options) {
+    const found=await moqui.request('/apps/dashboards/Dashboard/inspectPanel',{params:{definitionId:options.id,panelId:options.panelId,from:'now-1h',thru:'now'}});
+    return found.ok && found.json && found.json.dashboard ? Object.keys(found.json.dashboard.panels) : [];
+}
+feature('the dashboard time picker, panel menu and an embed work against the server',{
+    expect(){
+        const page=monitoringPage()
+        page.goto('/qapps/dashboards/Dashboard?definitionId=monitor-overview&from=now-1d&thru=now').status==200
+        page.waitFor(()=>!!document.querySelector('button[aria-label="Time range: now-1d to now"]'))
+        page.evaluate(()=>{document.querySelector('button[aria-label^="Time range"]').click();return true})
+        page.waitFor(()=>!!document.querySelector('.m-report-time-ranges'))
+        page.evaluate(()=>{window.monitoringPicked=true;Array.from(document.querySelectorAll('.m-report-time-ranges button')).find(button=>button.textContent==='Last 1 hour').click();return true})
+        page.waitFor(()=>!window.monitoringPicked && new URL(location.href).searchParams.get('from')==='now-1h' && !!document.querySelector('button[aria-label="Time range: Last 1 hour"]'))
+        const shipped=page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'none'})
+        shipped.items.includes('Explore') && shipped.items.includes('Share') && !shipped.items.includes('Remove')
+        page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'Explore'}).clicked
+        page.waitFor(()=>!window.monitoringMenuClicked && location.pathname.endsWith('/dashboards/Explore') && !!new URL(location.href).searchParams.get('datasetId'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        const id='browser-menu-'+Date.now().toString(36)
+        page.evaluate(monitoringCopyOverview,{id})
+        page.goto('/qapps/dashboards/Dashboard?definitionId='+id+'&from=now-1h&thru=now').status==200
+        page.waitFor(()=>!!document.querySelector('button[aria-label="Panel menu for Job runs by outcome"]'))
+        page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'Duplicate'}).clicked
+        page.waitFor(()=>!window.monitoringMenuClicked && !!document.querySelector('button[aria-label="Panel menu for Job runs by outcome (copy)"]'))
+        page.evaluate(monitoringDefinitionPanels,{id,panelId:'jobs-copy'}).includes('jobs-copy')
+        page.evaluate(()=>{window.confirm=()=>true;return true})
+        page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome (copy)',item:'Remove'}).clicked
+        page.waitFor(()=>!window.monitoringMenuClicked && !!document.querySelector('button[aria-label="Panel menu for Job runs by outcome"]') && !document.querySelector('button[aria-label="Panel menu for Job runs by outcome (copy)"]'))
+        page.goto('/qapps/dashboards/Panels?previewPanelId=monitor-overview').status==200
+        page.waitFor(()=>!!document.querySelector('.m-report-embed') && Array.from(document.querySelectorAll('.m-report-embed a')).some(a=>a.textContent==='Open in Dashboards'))
+        page.evaluate(()=>!document.querySelector('.m-report-embed button[aria-label^="Time range"]') && document.querySelector('.m-report-embed').textContent.includes('Job runs by outcome'))
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+    },
+})

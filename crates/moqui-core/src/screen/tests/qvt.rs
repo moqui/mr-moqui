@@ -665,6 +665,33 @@ fn client_components_are_precompiled() {
     }
 }
 
+/// A report-embed renders as the viewer: a visitor who is not signed in (as on a public site) gets nothing in any mode,
+/// not an error, and the widgets around it still render.
+#[test]
+fn a_report_embed_shows_an_anonymous_visitor_nothing() {
+    let qvt = render_path("reports-embed", "", &[]);
+    assert!(
+        qvt.contains("Before the embed") && qvt.contains("After the embed"),
+        "{qvt}"
+    );
+    assert!(
+        !qvt.contains("<m-dashboard") && !qvt.contains("monitor-overview"),
+        "{qvt}"
+    );
+    assert_compiles(&["reports-embed".into()], &[qvt]);
+    for mode in ["html", "html-print", "text", "csv", "xml", "tui"] {
+        let out = render_mode("reports-embed", "", mode, &[]);
+        assert!(
+            !out.contains("report-dashboard") && !out.contains("monitor-overview"),
+            "{mode}: {out}"
+        );
+        // csv and xml modes write data only, not labels
+        if !matches!(mode, "csv" | "xml") {
+            assert!(out.contains("After the embed"), "{mode}: {out}");
+        }
+    }
+}
+
 #[test]
 fn report_widgets_share_frames_across_render_modes() {
     let qvt = render_path("reports", "", &[]);
