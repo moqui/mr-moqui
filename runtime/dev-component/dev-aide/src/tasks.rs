@@ -191,7 +191,9 @@ fn rest_get(row: &moqui_core::entity::EntityValue, path: &str) -> Result<Json, L
         ],
         body: None,
         timeout: Some(std::time::Duration::from_secs(20)),
-        deny_internal: false,
+        // the view tier, which runs no code of its own here, reaches no internal address through a source it stored;
+        // the extend tier can already (a site service), and a team's server is often on the local network
+        deny_internal: crate::tier::current().is_none_or(|tier| tier < crate::tier::Tier::Extend),
     };
     let response = moqui_core::outbound::send(request)?;
     if !(200..300).contains(&response.status) {
@@ -572,7 +574,7 @@ fn create_task_branch(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = crate::vcs::git_root(&context, parameters)?;
+    let root = crate::vcs::git_write_root(&context, parameters, "makes branches")?;
     let key = text(parameters, "taskId");
     let name = branch_name(&key, &text(parameters, "title"));
     crate::vcs::valid_branch(&name)?;

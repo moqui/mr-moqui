@@ -61,6 +61,23 @@ pub(crate) fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Res
     Ok(root)
 }
 
+/// The git repository a write goes to: for the extend tier, a site component's, as it writes only inside site components
+/// (plans/design-dev-aide.md 3.4); `what` names the write in the refusal.
+pub(crate) fn git_write_root<'a>(
+    context: &'a Context,
+    parameters: &Parameters,
+    what: &str,
+) -> Result<&'a Root, LibError> {
+    let root = git_root(context, parameters)?;
+    if context.tier == Tier::Extend && root.upstream {
+        return Err(LibError::new(format!(
+            "{} is upstream; the extend tier {what} only in site components",
+            root.label
+        )));
+    }
+    Ok(root)
+}
+
 /// The paths of a `paths` parameter (a list, or comma-separated text), each confined to the root.
 pub(crate) fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<String>, LibError> {
     let listed: Vec<String> = match parameters.get("paths") {
@@ -122,7 +139,7 @@ const TOKEN_ENV: &str = "MOQUI_DEV_AIDE_GIT_TOKEN";
 
 /// A shared server's token for `root` (D19, `DevAideCredential`): the user's own HTTPS token, else the root's deploy
 /// token; `None` when an admin set neither, and git's own helpers and SSH agent answer.
-fn stored_token(context: &Context, root: &Root) -> Option<(String, String)> {
+fn stored_token(context: &Context, root: &Root) -> Option<(String, String, String)> {
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let find = |user_id: Option<&str>| {
         let mut find = context
@@ -140,7 +157,7 @@ fn stored_token(context: &Context, root: &Root) -> Option<(String, String)> {
                 .map(moqui_lib::object::to_plain_string)
                 .unwrap_or_default()
         };
-        Some((field("username"), field("token"))).filter(|(_, token)| !token.is_empty())
+        Some((field("username"), field("token"), field("urlPrefix"))).filter(|(_, token, _)| !token.is_empty())
     };
     (!user.is_empty())
         .then(|| find(Some(&user)))
@@ -151,16 +168,43 @@ fn stored_token(context: &Context, root: &Root) -> Option<(String, String)> {
 /// The arguments before a network command and its environment: with a stored token, git's credential helpers are
 /// replaced by one that answers the token from the environment (`!` helpers run in git's own shell, on Windows too).
 fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'static str, String)>) {
-    stored_token(context, root).map_or_else(
-        || (Vec::new(), Vec::new()),
-        |(username, token)| token_helper(username, token),
-    )
+    match stored_token(context, root) {
+        Some((username, token, prefix)) if !prefix.is_empty() => token_helper(&prefix, username, token),
+        Some(_) => {
+            tracing::warn!(
+                "Dev AIDE git token for {} has no remote it is for: store it again to use it",
+                root.id
+            );
+            (Vec::new(), Vec::new())
+        }
+        None => (Vec::new(), Vec::new()),
+    }
 }
 
-/// The arguments and environment that answer git's credential request with `username` and `token`.
-fn token_helper(username: String, token: String) -> (Vec<String>, Vec<(&'static str, String)>) {
+/// The scheme, host and port of an HTTPS remote URL (`https://user@git.example.com:8443/a/b.git` is
+/// `https://git.example.com:8443`): what a stored token is for. `http` only for this machine.
+pub(crate) fn url_prefix(url: &str) -> Option<String> {
+    let (scheme, rest) = url.trim().split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    if host_port.is_empty() || host_port.contains(char::is_whitespace) {
+        return None;
+    }
+    let host = host_port
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']').map(|(host, _)| host))
+        .unwrap_or_else(|| host_port.split(':').next().unwrap_or(host_port));
+    let loopback = host == "localhost" || host == "::1" || host.starts_with("127.");
+    (scheme == "https" || (scheme == "http" && loopback))
+        .then(|| format!("{scheme}://{}", host_port.to_ascii_lowercase()))
+}
+
+/// The arguments and environment that answer git's credential request with `username` and `token`, for the remotes at
+/// `prefix` only: a remote moved to another host, or a redirect there, gets nothing.
+fn token_helper(prefix: &str, username: String, token: String) -> (Vec<String>, Vec<(&'static str, String)>) {
     let helper = format!(
-        "credential.helper=!f() {{ test \"$1\" = get && echo \"username=${TOKEN_USER_ENV}\" && echo \"password=${TOKEN_ENV}\"; }}; f"
+        "credential.{prefix}.helper=!f() {{ test \"$1\" = get && echo \"username=${TOKEN_USER_ENV}\" && echo \"password=${TOKEN_ENV}\"; }}; f"
     );
     let username = Some(username)
         .filter(|name| !name.is_empty())
@@ -198,11 +242,16 @@ pub(crate) fn progress(context: &Context, id: &str) -> crate::git::Progress {
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let operation = id.to_string();
     crate::git::Progress {
-        id: id.to_string(),
+        id: operation_key(&user, id),
         sink: Box::new(move |line: &str| {
             crate::notify::send_progress(&factory, &user, &operation, line);
         }),
     }
+}
+
+/// The key a running operation is cancelled by: the user's own, so no one else stops it.
+pub(crate) fn operation_key(user: &str, id: &str) -> String {
+    format!("{user}\u{1}{id}")
 }
 
 pub(crate) fn audit_git(context: &Context, root: &Root, command: &str, detail: serde_json::Value) {
@@ -445,7 +494,7 @@ fn stage_files(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
+    let root = git_write_root(&context, parameters, "stages")?;
     let paths = paths(&context, root, parameters)?;
     write_paths(&context, root, &["add", "-A"], &paths, "add")
 }
@@ -458,7 +507,7 @@ fn unstage_files(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
+    let root = git_write_root(&context, parameters, "unstages")?;
     let paths = paths(&context, root, parameters)?;
     let has_head = context
         .git()
@@ -584,13 +633,7 @@ fn commit_changes(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
-    if context.tier == Tier::Extend && root.upstream {
-        return Err(LibError::new(format!(
-            "{} is upstream; the extend tier commits only site components",
-            root.label
-        )));
-    }
+    let root = git_write_root(&context, parameters, "commits")?;
     let message = message_of(root, parameters)?;
     let (id, output) = commit(&context, root, &message, parameters)?;
     let mut out = Parameters::new();
@@ -622,7 +665,13 @@ pub(crate) fn network(
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = run_network_with(&context, root, &argv, Some(&text(parameters, "operationId")))?;
     let shown = format!("{}{}", output.stdout, output.stderr);
-    audit_git(&context, root, what, serde_json::json!({ "ok": output.success() }));
+    // its arguments name the remote, the branch and a force push; no token is ever among them
+    audit_git(
+        &context,
+        root,
+        what,
+        serde_json::json!({ "ok": output.success(), "args": args }),
+    );
     if !output.success() {
         return Err(LibError::new(format!(
             "git {what}: {} (the server's git uses its own credential helper and SSH agent; nothing prompts, so a \
@@ -818,7 +867,7 @@ fn create_branch(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
+    let root = git_write_root(&context, parameters, "makes branches")?;
     let name = text(parameters, "branch");
     valid_branch(&name)?;
     let switch = text(parameters, "switch") != "false";
@@ -1040,10 +1089,9 @@ fn publish_site(
 mod tests {
     use super::*;
 
-    /// The helper answers git's own `credential fill` with the token from its environment, which is not in its argv.
-    #[test]
-    fn a_stored_token_answers_the_credential_request() {
-        let (args, env) = token_helper(String::new(), "s3cret-token".into());
+    /// git's own `credential fill` with the helper for `prefix`, asked for `host`: what it answers.
+    fn fill(prefix: &str, host: &str) -> Option<String> {
+        let (args, env) = token_helper(prefix, String::new(), "s3cret-token".into());
         assert!(args.iter().all(|arg| !arg.contains("s3cret")), "{args:?}");
         let mut command = std::process::Command::new("git");
         command
@@ -1052,24 +1100,51 @@ mod tests {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_ASKPASS", "")
+            .env("SSH_ASKPASS", "")
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped());
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
         for (name, value) in &env {
             command.env(name, value);
         }
-        let Ok(mut child) = command.spawn() else {
-            return; // no git here
-        };
+        let mut child = command.spawn().ok()?; // no git here
         use std::io::Write as _;
         child
             .stdin
             .take()
             .unwrap()
-            .write_all(b"protocol=https\nhost=git.example.com\n\n")
+            .write_all(format!("protocol=https\nhost={host}\n\n").as_bytes())
             .unwrap();
-        let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+        Some(String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap())
+    }
+
+    /// The helper answers git's own `credential fill` with the token from its environment, which is not in its argv,
+    /// for the host it was stored for only.
+    #[test]
+    fn a_stored_token_answers_the_credential_request_of_its_host() {
+        let Some(out) = fill("https://git.example.com", "git.example.com") else {
+            return;
+        };
         assert!(out.contains("username=x-access-token\n"), "{out}");
         assert!(out.contains("password=s3cret-token\n"), "{out}");
+        let elsewhere = fill("https://git.example.com", "evil.example.net").unwrap();
+        assert!(!elsewhere.contains("s3cret-token"), "{elsewhere}");
+    }
+
+    #[test]
+    fn url_prefixes() {
+        assert_eq!(
+            url_prefix("https://user@Git.Example.com:8443/a/b.git").as_deref(),
+            Some("https://git.example.com:8443")
+        );
+        assert_eq!(
+            url_prefix("http://127.0.0.1:3000/x.git").as_deref(),
+            Some("http://127.0.0.1:3000")
+        );
+        assert_eq!(url_prefix("http://git.example.com/x.git"), None);
+        assert_eq!(url_prefix("git@github.com:a/b.git"), None);
+        assert_eq!(url_prefix("ssh://git@host/a.git"), None);
     }
 
     #[test]

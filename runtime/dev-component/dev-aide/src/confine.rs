@@ -34,6 +34,9 @@ pub struct Resolved {
     pub path: PathBuf,
     /// The path relative to the root, with `/` separators.
     pub relative: String,
+    /// The path relative to the root where it really leads, a symlink on the way followed: what a lock by place (the
+    /// upstream lock) is checked on.
+    pub real: String,
 }
 
 /// Resolve `relative` (with `/` or `\` separators) in `root`, a canonical directory.
@@ -97,9 +100,20 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
             }
         }
     }
+    let real = canonical.strip_prefix(root).map_or_else(
+        |_| parts.join("/"),
+        |after| {
+            after
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        },
+    );
     Ok(Resolved {
         path: canonical,
         relative: parts.join("/"),
+        real,
     })
 }
 
@@ -220,6 +234,19 @@ mod tests {
         // into the runtime's database, through a symlink inside the root
         std::os::unix::fs::symlink(runtime.join("db"), root.join("db-link")).unwrap();
         assert!(resolve(&root, &runtime, "db-link/x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_inside_the_root_resolves_to_where_it_leads() {
+        let (_scratch, root, runtime) = scratch("symlink-inside");
+        std::fs::create_dir_all(root.join("component/upstream/entity")).unwrap();
+        std::fs::create_dir_all(root.join("component/my-site")).unwrap();
+        std::os::unix::fs::symlink(root.join("component/upstream"), root.join("component/my-site/up")).unwrap();
+        let found = resolve(&root, &runtime, "component/my-site/up/entity/X.xml").unwrap();
+        assert_eq!(found.relative, "component/my-site/up/entity/X.xml");
+        assert_eq!(found.real, "component/upstream/entity/X.xml");
+        assert_eq!(resolve(&root, &runtime, "service/A.xml").unwrap().real, "service/A.xml");
     }
 
     #[test]

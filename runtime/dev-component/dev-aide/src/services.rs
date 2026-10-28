@@ -53,7 +53,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 /// The actions that try a rule's condition: the context set, then whether the condition holds as a message. An
 /// expression goes in `if`'s attribute; a condition element (`compare`, `and`, ...) in its `condition`.
 fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in context {
         if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
@@ -243,6 +243,12 @@ fn get_service_view(
         "sim": moqui_core::llm::approval::preview::available(&context.facade),
         "tier": context.tier.name(),
         "site": context.settings.default_site(),
+        // where Add puts a SECA rule: the site's own rules file (D17), a companion buffer made on its first save
+        "secasFile": context
+            .settings
+            .default_site()
+            .and_then(|name| site::site_path(&context, &format!("service/{}.secas.xml", site::class_of(name))))
+            .map(|file| file.json()),
     });
     let mut out = Parameters::new();
     out.insert("view".into(), json_value(&view));
@@ -379,7 +385,7 @@ fn try_service(
 /// The actions of a snippet: XML Actions as they are (an `<actions>` element or its content), or JavaScript as a
 /// `script` action; each given parameter set first.
 fn snippet_actions(language: &str, body: &str, given: &serde_json::Map<String, Json>) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in given {
         if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
@@ -450,7 +456,7 @@ pub(crate) fn spec_feature(
     out: &serde_json::Map<String, Json>,
     rows: &[Json],
 ) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut text = format!(
         "\nfeature({}, {{\n    when() {{\n",
         js(&json!(format!("{service} as it ran in a Try")))
@@ -499,7 +505,6 @@ pub(crate) fn spec_feature(
 /// The spec file of a service: `test/<Services file>.spec.js` (`ExampleServices` of
 /// `moqui.example.ExampleServices.create#Example`), or for an entity-auto service the entity's name.
 fn spec_name(service: &str) -> String {
-    let path = service.split('#').next().unwrap_or(service);
     let (prefix, verb_noun) = service
         .split_once('#')
         .map_or(("", service), |(prefix, noun)| (prefix, noun));
@@ -512,7 +517,6 @@ fn spec_name(service: &str) -> String {
     } else {
         verb_noun.rsplit('.').next().unwrap_or(verb_noun)
     };
-    let _ = path;
     base.chars()
         .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
         .collect()

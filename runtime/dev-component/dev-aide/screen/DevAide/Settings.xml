@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     flags and publish branches (question 15), roots of other directories, git init of a plain root, and network git on a
     shared dev server (an admin's). The services check the tier; the page shows what the user may change. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Settings" default-menu-index="9">
+        default-menu-title="Settings" default-menu-index="11">
 
     <transition name="setSiteComponents"><service-call name="org.moqui.devaide.WorkspaceServices.set#Setting"
             in-map="{settingName: 'siteComponents', settingValue: siteComponents}"/>
@@ -115,11 +115,12 @@ along with this software (see the LICENSE.md file). If not, see
 
         <section name="TokensSection" condition="info.shared &amp;&amp; admin &amp;&amp; full"><widgets>
             <container-box id="DevAideTokensBox"><box-header title="Git tokens"/><box-body>
-                <label type="p" text="With a token stored, fetch, pull and push on that root use it in place of the server's own credentials: a user's own token when they have one, else the root's deploy token. Tokens are kept encrypted and never shown again."/>
+                <label type="p" text="With a token stored, fetch, pull and push on that root use it in place of the server's own credentials: a user's own token when they have one, else the root's deploy token. Tokens are kept encrypted and never shown again, and git gives each only to the host it was stored for."/>
                 <form-list name="CredentialList" list="credentials" skip-form="true">
                     <field name="rootLabel"><default-field title="Root"><display/></default-field></field>
                     <field name="userId"><default-field title="User"><display text="${userId || 'Deploy token (everyone)'}"/></default-field></field>
                     <field name="username"><default-field title="User name"><display/></default-field></field>
+                    <field name="urlPrefix"><default-field title="For"><display text="${urlPrefix || 'no remote: store it again'}"/></default-field></field>
                     <field name="remove"><default-field title="">
                         <link url="deleteCredential" text="Remove" parameter-map="{credentialId: credentialId}" link-type="hidden-form" confirmation="Remove this token?"/>
                     </default-field></field>
@@ -129,6 +130,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="userId"><default-field title="For user (empty: the root's deploy token)"><text-line size="20"/></default-field></field>
                     <field name="username"><default-field title="User name on the remote"><text-line size="20"/></default-field></field>
                     <field name="token"><default-field title="Token"><password size="30"/></default-field></field>
+                    <field name="remoteUrl"><default-field title="Remote URL (empty: the root's origin)"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Save token"><submit/></default-field></field>
                 </form-single>
             </box-body></container-box>
