@@ -14,7 +14,7 @@
 
 //! `GET /assist/sandbox`: the frame document of a Vue SFC canvas (plans/LLM-A2A-Assist.md 4.10; docs/Assist.md "Vue SFC
 //! canvases"). The drawer loads it in `<iframe sandbox="allow-scripts">`, so it has an opaque origin, and it is sent with
-//! a policy of its own (`moqui_core::llm::ui::vue_sfc::frame_document`), not the screens' (which forbid framing): the
+//! a policy of its own (`moqui_llm::ui::vue_sfc::frame_document`), not the screens' (which forbid framing): the
 //! `sandbox` directive, no network, form, frame or worker, scripts only Vue, Quasar and the frame runtime. The document
 //! holds no data and needs no session; the policy names this site's origin, written out from the request (its `Host`,
 //! and HTTPS on a TLS connection or from a trusted proxy), because `'self'` does not match an opaque origin.
@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Query, Request, State};
 use axum::response::Response;
-use moqui_core::llm::ui::vue_sfc;
+use moqui_llm::ui::vue_sfc;
 
 use crate::http::{forwarded_https, plain, HttpState, TlsConnection};
 

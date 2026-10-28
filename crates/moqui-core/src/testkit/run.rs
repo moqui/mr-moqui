@@ -798,7 +798,7 @@ fn load(spec: &SpecFile, host: Option<&Arc<dyn SpecHost>>) -> Result<Plan, Box<F
 
 /// The prelude and the host calls it uses, in this thread's outermost engine, with the server helpers. The agent specs
 /// ([`super::agents`]) take its helpers too.
-pub(crate) fn install_prelude() -> Result<(), Error> {
+pub fn install_prelude() -> Result<(), Error> {
     install_prelude_for(None)
 }
 

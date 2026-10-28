@@ -17,7 +17,7 @@
 #[macro_use]
 pub(crate) mod rust_services;
 mod backup;
-pub(crate) mod call;
+pub mod call;
 mod chat;
 mod chat_link;
 #[cfg(test)]

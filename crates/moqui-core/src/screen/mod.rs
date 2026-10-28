@@ -35,7 +35,7 @@ mod render;
 pub(crate) mod saved_finds;
 mod schema;
 mod screen_test;
-pub(crate) mod shell;
+pub mod shell;
 pub(crate) mod sri;
 pub mod stamp;
 pub mod static_ast;

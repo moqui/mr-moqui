@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     proposal never writes: the user saves the value, or approves it as an "Update with AI" run's approval card. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="run" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::run_ai_task" transaction="ignore">
+    <service verb="run" noun="AiTask" type="rust" location="moqui_llm::ai_task::run_ai_task" transaction="ignore">
         <description>Run a task of the registry by its type, with its input map; out its output (fitting the task's
             schema) and the model that answered, or with async true the taskId of the job.</description>
         <in-parameters>
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="run" noun="Summarize" type="rust" location="moqui_core::llm::ai_task::run_summarize" transaction="ignore">
+    <service verb="run" noun="Summarize" type="rust" location="moqui_llm::ai_task::run_summarize" transaction="ignore">
         <description>The summary of a text, in at most maxWords words (120), with an optional focus.</description>
         <in-parameters>
             <parameter name="text" required="true" allow-html="any"/>
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="run" noun="Classify" type="rust" location="moqui_core::llm::ai_task::run_classify" transaction="ignore">
+    <service verb="run" noun="Classify" type="rust" location="moqui_llm::ai_task::run_classify" transaction="ignore">
         <description>The label of a text among labelList (2 to 50), or with multiple true the labels that fit.</description>
         <in-parameters>
             <parameter name="text" required="true" allow-html="any"/>
@@ -74,7 +74,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="run" noun="Extract" type="rust" location="moqui_core::llm::ai_task::run_extract" transaction="ignore">
+    <service verb="run" noun="Extract" type="rust" location="moqui_llm::ai_task::run_extract" transaction="ignore">
         <description>Named values from a text: fieldMap names each value with a description (each a string, empty when
             the text does not give it), or schema is the JSON schema of the values object.</description>
         <in-parameters>
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="run" noun="Translate" type="rust" location="moqui_core::llm::ai_task::run_translate" transaction="ignore">
+    <service verb="run" noun="Translate" type="rust" location="moqui_llm::ai_task::run_translate" transaction="ignore">
         <description>A text in targetLanguage (a language name or code).</description>
         <in-parameters>
             <parameter name="text" required="true" allow-html="any"/>
@@ -108,7 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="run" noun="Generate" type="rust" location="moqui_core::llm::ai_task::run_generate" transaction="ignore">
+    <service verb="run" noun="Generate" type="rust" location="moqui_llm::ai_task::run_generate" transaction="ignore">
         <description>A text written from instructions, from an optional text to work from.</description>
         <in-parameters>
             <parameter name="instructions" required="true" allow-html="any"/>
@@ -124,7 +124,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="get" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::get_ai_task" transaction="ignore">
+    <service verb="get" noun="AiTask" type="rust" location="moqui_llm::ai_task::get_ai_task" transaction="ignore">
         <description>An async task of the current user: its type, its state (working, completed, failed), and its output
             or error. Another user's task is not found.</description>
         <in-parameters><parameter name="taskId" required="true"/></in-parameters>
@@ -136,14 +136,14 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="list" noun="AiTaskTypes" type="rust" location="moqui_core::llm::ai_task::list_ai_task_types"
+    <service verb="list" noun="AiTaskTypes" type="rust" location="moqui_llm::ai_task::list_ai_task_types"
             transaction="ignore">
         <description>The task registry: each type with its description, its feature and the service that prepares a
             component's type.</description>
         <out-parameters><parameter name="taskTypeList" type="List"/></out-parameters>
     </service>
 
-    <service verb="execute" noun="AiTask" type="rust" location="moqui_core::llm::ai_task::execute_ai_task"
+    <service verb="execute" noun="AiTask" type="rust" location="moqui_llm::ai_task::execute_ai_task"
             allow-remote="false" transaction="ignore">
         <description>Internal: the job of an async task (run on a service worker as its user), which ends its record and
             tells the user.</description>
@@ -170,7 +170,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="propose" noun="AiFieldValue" type="rust" location="moqui_core::llm::ai_task::propose_ai_field_value"
+    <service verb="propose" noun="AiFieldValue" type="rust" location="moqui_llm::ai_task::propose_ai_field_value"
             transaction="ignore">
         <description>"Update with AI" for one field of one record (entityName, the key as pk or a one-field recordId,
             fieldName; not a key or a secret field), which the current user must be able to read: the model proposes a

@@ -8,10 +8,10 @@ and the client's retry runs it once. The MCP client can never approve. The desig
 [plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.16, D10, 4.3, 4.6, 4.8, 9 "Approvals"). As of Oct 22, 2026
 (13.11 built; the client, [Calling remote MCP servers](#calling-remote-mcp-servers), 13.12).
 
-The code: `crates/moqui-core/src/llm/mcp/` (`mod.rs` the codes, conf and identity, `server.rs` the transport, its checks,
+The code: `crates/moqui-llm/src/mcp/` (`mod.rs` the codes, conf and identity, `server.rs` the transport, its checks,
 `server/discover` and the public documents, `tools.rs` `tools/list` and `tools/call` over the tool registry and the run
 model, `state.rs` the `requestState`) and the host adapter `crates/moqui-host/src/llm/mcp.rs`. Tests:
-`crates/moqui-core/src/llm/mcp/tests.rs` (the state, the header checks, discover, the tool list, reads, a write through
+`crates/moqui-llm/src/mcp/tests.rs` (the state, the header checks, discover, the tool list, reads, a write through
 its approval on the in-memory database) and `crates/moqui-host/tests/it/mcp.rs` (over HTTP on embedded Postgres, the
 owner deciding in a browser session, and the official SDK's smoke script, below). The shapes were checked against the
 published 2026-07-28 specification (transport, MRTR, discovery, tools, caching, elicitation and the schema reference)
@@ -198,8 +198,8 @@ MCP_CONFORMANCE=/tmp/conformance/node_modules/.bin/conformance LANG=en_US.UTF-8 
 The other direction: an agent here calls the tools of remote MCP servers as tools `mcp__<server>__<tool>`. A server is
 an `AgentMcpServer` row and each tool an agent may call an `AgentMcpServerTool` row (System > LLM > Remote > MCP
 Servers, where List Tools Now shows what the server lists, with Allow for each; `org.moqui.agent.RemoteAgentServices`).
-The code is `crates/moqui-core/src/llm/mcp/client.rs` (the client), `crates/moqui-core/src/llm/tools/mcp_client.rs`
-(the tools) and `crates/moqui-core/src/llm/remote.rs` (addresses, credentials, SSRF limits, shared with the A2A client).
+The code is `crates/moqui-llm/src/mcp/client.rs` (the client), `crates/moqui-llm/src/tools/mcp_client.rs`
+(the tools) and `crates/moqui-llm/src/remote.rs` (addresses, credentials, SSRF limits, shared with the A2A client).
 
 - **Which tools**: only those a row allows, of servers whose `allowedAgents` names the agent (`*` for all), and only
   when the server lists them. They are in the lazy catalog (`find_tools`, `describe_tools`, `run_tool`); the agent's
@@ -243,7 +243,7 @@ The code is `crates/moqui-core/src/llm/mcp/client.rs` (the client), `crates/moqu
   that server.
 - **Conf**: `<mcp client-enabled="true" call-timeout="60" tools-ttl-ms="300000" max-result-bytes="1000000"/>`.
 
-Tested in `crates/moqui-core/src/llm/tools/remote_tests.rs` against fixture servers on loopback (a 2026-07-28 server, a
+Tested in `crates/moqui-llm/src/tools/remote_tests.rs` against fixture servers on loopback (a 2026-07-28 server, a
 legacy one with sessions and event streams, the fence and sim refusals, the SSRF limits) and in
 `crates/moqui-host/tests/it/agent_remote.rs` against this server's own MCP server on a second server over loopback
 (a READ tool, and a write through both servers' approvals).

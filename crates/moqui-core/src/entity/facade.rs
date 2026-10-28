@@ -624,7 +624,7 @@ impl EntityFacade {
 
     /// `body` with the definition of `name`, from the file model or else built at runtime ([`super::derived`]), the
     /// dialect of its group, and the file model.
-    pub(crate) fn with_entity<T>(
+    pub fn with_entity<T>(
         &self,
         name: &str,
         body: impl FnOnce(&EntityDefinition, &Dialect, &EntityModel) -> Result<T, Error>,

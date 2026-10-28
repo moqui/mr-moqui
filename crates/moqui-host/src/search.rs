@@ -137,8 +137,8 @@ fn embedder_of(
         )));
     }
     #[cfg(feature = "llm")]
-    if let Some(with) = moqui_core::llm::embed::EmbedWith::parse(name) {
-        let embedder = moqui_core::llm::embed::LlmEmbedder::for_factory(factory, with, Some(semantic.dimensions));
+    if let Some(with) = moqui_llm::embed::EmbedWith::parse(name) {
+        let embedder = moqui_llm::embed::LlmEmbedder::for_factory(factory, with, Some(semantic.dimensions));
         if embedder.is_none() {
             tracing::error!(
                 "search-facade semantic embedder {name}: the llm-facade is off, so no embedder is installed"

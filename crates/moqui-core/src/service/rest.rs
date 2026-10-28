@@ -842,8 +842,7 @@ pub(crate) struct Schemas<'a> {
 
 impl<'a> Schemas<'a> {
     /// Schemas that read the entities of `facade` (none reads no enumeration ids).
-    #[cfg(feature = "llm")]
-    pub(crate) fn new(facade: Option<&'a EntityFacade>) -> Self {
+    pub fn new(facade: Option<&'a EntityFacade>) -> Self {
         Self {
             facade,
             enums: facade.map(crate::entity::FieldEnums::new),
@@ -1109,8 +1108,7 @@ fn parameter_enums(param: &ParamDef, schemas: &mut Schemas<'_>) -> Option<Vec<Va
 /// schema of the REST API): each field but `lastUpdatedStamp` with its type and format; the primary key required for an
 /// update, a store and a delete (a delete takes only the key), and for a create when the key has more than one field
 /// (a single one is sequenced when it is left out). `None` when the entity is not defined.
-#[cfg(feature = "llm")]
-pub(crate) fn entity_auto_schema(facade: &EntityFacade, verb: &str, entity: &str) -> Option<Value> {
+pub fn entity_auto_schema(facade: &EntityFacade, verb: &str, entity: &str) -> Option<Value> {
     facade
         .with_entity(entity, |definition, _, _| {
             let pk = definition.pk_field_names();

@@ -18,7 +18,7 @@
 //! the record again through a service tool its policy approves (a background agent), the feed records that write with
 //! the run's agent as its origin, and the trigger does not fire again; a write the run's tool service makes on another
 //! service worker (`ec.service.async`) keeps the origin too. The chat members, the breaker, batching and the AI
-//! tasks are checked on the in-memory database (`crates/moqui-core/src/llm/members_tests.rs`).
+//! tasks are checked on the in-memory database (`crates/moqui-llm/src/members_tests.rs`).
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "llm"))]
 
@@ -26,9 +26,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Step};
-use moqui_core::llm::run::state::RunState;
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_llm::provider::fake::{self, Step};
+use moqui_llm::run::state::RunState;
 use serde_json::json;
 
 use crate::common::{basic, exchange, http_request, start_with_files};
@@ -206,7 +206,7 @@ fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
     let run = rows(&factory, "moqui.agent.AgentRun", "triggerId", "LOOPWATCH").remove(0);
     let run_id = to_plain_string(run.get("runId").unwrap());
     assert_eq!(
-        moqui_core::llm::run::wait_for(&factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(&factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     let touched = rows(&factory, "moqui.basic.Enumeration", "enumId", "AGT_LOOP_1").remove(0);
@@ -227,7 +227,7 @@ fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
         )
         .is_empty()
     });
-    assert!(moqui_core::llm::run::observe::settle(&factory, WAIT));
+    assert!(moqui_llm::run::observe::settle(&factory, WAIT));
     std::thread::sleep(Duration::from_millis(500));
     let events = rows(&factory, "moqui.agent.AgentTriggerEvent", "triggerId", "LOOPWATCH");
     assert_eq!(events.len(), 1, "only the person's change is an event");
@@ -272,7 +272,7 @@ fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
         rows(&factory, "moqui.agent.AgentRun", "triggerId", "LOOPWATCH").len() == 2
     });
     for run in rows(&factory, "moqui.agent.AgentRun", "triggerId", "LOOPWATCH") {
-        moqui_core::llm::run::wait_for(&factory, &to_plain_string(run.get("runId").unwrap()), WAIT).unwrap();
+        moqui_llm::run::wait_for(&factory, &to_plain_string(run.get("runId").unwrap()), WAIT).unwrap();
     }
     wait_until("the async write", || {
         to_plain_string(
@@ -290,7 +290,7 @@ fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
         )
         .is_empty()
     });
-    assert!(moqui_core::llm::run::observe::settle(&factory, WAIT));
+    assert!(moqui_llm::run::observe::settle(&factory, WAIT));
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(
         rows(&factory, "moqui.agent.AgentTriggerEvent", "triggerId", "LOOPWATCH").len(),
@@ -332,7 +332,7 @@ fn a_run_limit_holds_under_concurrent_firings(factory: &Arc<ExecutionContextFact
                 let context = factory.new_context();
                 let _entered = context.enter();
                 barrier.wait();
-                moqui_core::llm::trigger::fire(&factory, "LIMITONE", "manual").unwrap()
+                moqui_llm::trigger::fire(&factory, "LIMITONE", "manual").unwrap()
             })
         })
         .collect();
@@ -340,13 +340,13 @@ fn a_run_limit_holds_under_concurrent_firings(factory: &Arc<ExecutionContextFact
     let started: Vec<&String> = fired
         .iter()
         .filter_map(|fired| match fired {
-            moqui_core::llm::trigger::Fired::Started { run_id, .. } => Some(run_id),
-            moqui_core::llm::trigger::Fired::Skipped(_) => None,
+            moqui_llm::trigger::Fired::Started { run_id, .. } => Some(run_id),
+            moqui_llm::trigger::Fired::Skipped(_) => None,
         })
         .collect();
     assert_eq!(started.len(), 1, "{fired:?}");
     assert_eq!(rows(factory, "moqui.agent.AgentRun", "triggerId", "LIMITONE").len(), 1);
-    moqui_core::llm::run::wait_for(factory, started[0], WAIT).unwrap();
+    moqui_llm::run::wait_for(factory, started[0], WAIT).unwrap();
 }
 
 /// System › LLM › Inbox lists the viewer's own agent inbox and never another user's (D12).
@@ -354,8 +354,8 @@ fn the_inbox_screen_shows_only_the_viewers_own(gate: &crate::common::Gate, facto
     in_context(factory, || {
         let mine = ["EX_JOHN_DOE".to_string()];
         let theirs = ["AGM_OTHER".to_string()];
-        moqui_core::llm::trigger::inbox(factory, &mine, "Inbox note for John", json!({"kind": "result"}));
-        moqui_core::llm::trigger::inbox(
+        moqui_llm::trigger::inbox(factory, &mine, "Inbox note for John", json!({"kind": "result"}));
+        moqui_llm::trigger::inbox(
             factory,
             &theirs,
             "Inbox note for another user",

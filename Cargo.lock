@@ -1383,6 +1383,7 @@ version = "0.1.0"
 dependencies = [
  "moqui-core",
  "moqui-lib",
+ "moqui-llm",
  "regex",
  "serde",
  "serde_json",
@@ -4162,7 +4163,6 @@ dependencies = [
  "rcgen",
  "regex",
  "rquickjs",
- "rust_decimal",
  "rust_xlsxwriter",
  "rustls",
  "serde",
@@ -4214,6 +4214,7 @@ dependencies = [
  "moqui-core",
  "moqui-db",
  "moqui-lib",
+ "moqui-llm",
  "moqui-tui",
  "mysql",
  "p256",
@@ -4259,6 +4260,28 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha1 0.11.0",
+ "sha2 0.10.9",
+ "tracing",
+]
+
+[[package]]
+name = "moqui-llm"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "getrandom 0.3.4",
+ "hmac 0.12.1",
+ "indexmap",
+ "inventory",
+ "jiff",
+ "moqui-core",
+ "moqui-db",
+ "moqui-lib",
+ "rquickjs",
+ "rust_decimal",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tracing",
 ]

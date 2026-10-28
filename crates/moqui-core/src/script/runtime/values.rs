@@ -23,7 +23,7 @@ use super::*;
 
 /// The fields of a map or an entity value, an entity value's localized fields in the user's locale and a view's
 /// `pq-expression` aliases, as Java's `getMap`.
-pub(crate) fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
+pub fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
     match value {
         Value::Map(entries) => Some(entries.clone()),
         Value::Object(object) => {
@@ -118,7 +118,7 @@ pub fn script_list_values(value: &Value) -> Option<Vec<EntityValue>> {
 }
 
 /// The items of a list, an entity list, or the values of a map.
-pub(crate) fn value_items(value: &Value) -> Option<Vec<Value>> {
+pub fn value_items(value: &Value) -> Option<Vec<Value>> {
     match value {
         Value::List(items) => Some(items.clone()),
         Value::Map(entries) => Some(entries.values().cloned().collect()),

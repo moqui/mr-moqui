@@ -2936,8 +2936,8 @@ fn the_form_list_board_and_calendar_move_cards_and_events_in_chromium() {
 mod assist {
     use std::time::Duration;
 
-    use moqui_core::llm::provider::fake::{self, Reply, Step};
     use moqui_lib::object::{to_plain_string, Value};
+    use moqui_llm::provider::fake::{self, Reply, Step};
     use serde_json::json;
 
     use super::common::cdp::Browser;
@@ -5770,7 +5770,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
 /// the rest saved; the approval resolves with what the user did, which the run reads.
 #[test]
 fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
-    use moqui_core::llm::provider::fake::{self, Reply, Step};
+    use moqui_llm::provider::fake::{self, Reply, Step};
     let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n\n    <service verb=\"get\" noun=\"Other\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"other\"/></actions>\n    </service>\n</services>\n";
     let files = [
         ("component/my-site/component.xml", r#"<component name="my-site"/>"#),

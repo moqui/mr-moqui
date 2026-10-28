@@ -69,12 +69,13 @@ fn roots() -> Roots {
     }
 }
 
-#[cfg(test)]
+// the repository, for this crate's tests and those of the crates on it (test-support)
+#[cfg(any(test, feature = "test-support"))]
 fn fallback_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 fn fallback_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }

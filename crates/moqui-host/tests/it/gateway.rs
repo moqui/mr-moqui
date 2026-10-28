@@ -1278,14 +1278,14 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
         .and_then(|search| search.embedder())
         .expect("the search facade's embedder");
     assert_eq!(embedder.model(), "llm:gw-embed/upstream-embed");
-    let skills = moqui_core::llm::skills::SkillIndex {
+    let skills = moqui_llm::skills::SkillIndex {
         skills: [
             "---\nname: reset-user-credential\ntitle: Resetting a credential\ndescription: Use when someone needs a new password for their login.\nkind: procedure\n---\nSteps.\n",
             "---\nname: ship-sales-order\ntitle: Shipping a sales order\ndescription: Use when an order is ready to go out as a parcel.\nkind: procedure\n---\nSteps.\n",
             "---\nname: schedule-service-job\ntitle: Scheduling a service job\ndescription: Use when something must run nightly on a cron.\nkind: procedure\n---\nSteps.\n",
         ]
         .iter()
-        .map(|text| moqui_core::llm::skills::parse_skill(text).unwrap())
+        .map(|text| moqui_llm::skills::parse_skill(text).unwrap())
         .collect(),
         aliases: std::collections::BTreeMap::new(),
     };
@@ -1293,7 +1293,7 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
     let found = {
         let context = factory.new_context();
         let _entered = context.enter();
-        moqui_core::llm::skills::retrieval::rank_for(&factory, &skills, "I forgot my passphrase", None)
+        moqui_llm::skills::retrieval::rank_for(&factory, &skills, "I forgot my passphrase", None)
     };
     assert_eq!(found[0].name, "reset-user-credential", "{found:?}");
     assert!(
@@ -1306,11 +1306,11 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
         "the embeddings calls are logged with source embed"
     );
     // without the search facade's embedder, the embed feature's binding is the semantic branch
-    let bound = moqui_core::llm::embed::bound_embedder(&factory).expect("embed is bound");
+    let bound = moqui_llm::embed::bound_embedder(&factory).expect("embed is bound");
     let found = {
         let context = factory.new_context();
         let _entered = context.enter();
-        moqui_core::llm::skills::retrieval::rank_hybrid(
+        moqui_llm::skills::retrieval::rank_hybrid(
             &skills,
             "a parcel to deliver",
             None,
@@ -1339,9 +1339,9 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
     assert!(bound.retries_each(&moqui_lib::error::Error::new("x")));
 
     // a server that does not answer costs one short wait, then its breaker skips it: skills rank by words, at once
-    let hung = moqui_core::llm::embed::LlmEmbedder::for_factory(
+    let hung = moqui_llm::embed::LlmEmbedder::for_factory(
         &factory,
-        moqui_core::llm::embed::EmbedWith::Model("gw-embed-hang".to_string()),
+        moqui_llm::embed::EmbedWith::Model("gw-embed-hang".to_string()),
         None,
     )
     .unwrap();
@@ -1349,8 +1349,7 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
         let context = factory.new_context();
         let _entered = context.enter();
         let started = Instant::now();
-        let found =
-            moqui_core::llm::skills::retrieval::rank_hybrid(&skills, query, None, Some(&hung as &dyn Embedder), None);
+        let found = moqui_llm::skills::retrieval::rank_hybrid(&skills, query, None, Some(&hung as &dyn Embedder), None);
         (found, started.elapsed())
     };
     let (found, first) = rank("ship a sales order");

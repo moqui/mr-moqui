@@ -26,6 +26,10 @@
     allow(dead_code, unused_imports)
 )]
 
+// The agent runtime. Naming it keeps its moqui_core::llm_hooks entry in the binary.
+#[cfg(feature = "llm")]
+use moqui_llm as _;
+
 pub mod chromium;
 pub mod db;
 mod detach;
@@ -504,15 +508,17 @@ where
         }
         [command, rest @ ..] if command == "lsp" => {
             #[cfg(all(feature = "devtools", feature = "tui"))]
-            lsp::dispatch_lsp(rest)?;
+            {
+                lsp::dispatch_lsp(rest)?;
+                Ok(None)
+            }
             #[cfg(not(all(feature = "devtools", feature = "tui")))]
             {
                 let _ = rest;
-                return Err(moqui_lib::error::Error::new(
+                Err(moqui_lib::error::Error::new(
                     "moqui lsp is not built into this host: it is in the Dev and Debug packages (the devtools feature)",
-                ));
+                ))
             }
-            Ok(None)
         }
         [command, rest @ ..] if command == "test" => {
             test_cmd::dispatch_test(rest)?;
@@ -1432,7 +1438,7 @@ fn boot_server_factory(
     // sends, which reads the member list, and while that list says no peers nothing is queued until the next tick.
     #[cfg(feature = "llm")]
     if let Some(facade) = factory.entity() {
-        moqui_core::llm::skills::sync::ensure_synced(&factory, &facade);
+        moqui_llm::skills::sync::ensure_synced(&factory, &facade);
     }
     moqui_core::cluster::start(&factory).map_err(moqui_lib::error::Error::from)?;
     if let Some(instance) = moqui_core::cluster::instance_id(&factory) {
@@ -1445,7 +1451,7 @@ fn boot_server_factory(
     moqui_core::service::start_mail_idle(&factory);
     // the agent run engine: the lease keeper and the recovery sweep, after the cluster so leases name its instance
     #[cfg(feature = "llm")]
-    moqui_core::llm::start(&factory);
+    moqui_llm::start(&factory);
     tracing::info!(
         "Cluster notify {}",
         if notify_listener.is_some() {

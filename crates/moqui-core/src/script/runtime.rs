@@ -56,8 +56,6 @@ mod files_host;
 #[cfg(test)]
 mod framework_gaps_tests;
 mod helpers;
-#[cfg(feature = "llm")]
-mod llm;
 #[cfg(test)]
 mod metadata_tests;
 mod native_tools;
@@ -77,6 +75,7 @@ pub(crate) use compiled::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
 use conditions::*;
 use convert::*;
+pub use convert::{host_to_js, js_to_host};
 use decimal::*;
 pub use ec_extra::expand_localized;
 use entities::*;
@@ -91,9 +90,8 @@ use search::*;
 use services::*;
 use upload::*;
 pub use values::script_list_values;
-pub(crate) use values::{
-    context_combined, pop_context_frame, put_context_all, value_entity_name, value_field, value_items, value_map,
-};
+pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
+pub use values::{value_items, value_map};
 pub(crate) use web_host::invoke as invoke_web_handler;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
@@ -1576,7 +1574,8 @@ fn template_source(template: &str) -> String {
     source
 }
 
-fn host_guard<'js, T>(ctx: &Ctx<'js>, body: impl FnOnce() -> rquickjs::Result<T>) -> rquickjs::Result<T> {
+/// Run a host callback's `body`, turning a panic into a JS exception.
+pub fn host_guard<'js, T>(ctx: &Ctx<'js>, body: impl FnOnce() -> rquickjs::Result<T>) -> rquickjs::Result<T> {
     match std::panic::catch_unwind(AssertUnwindSafe(body)) {
         Ok(result) => result,
         Err(payload) => Err(Exception::throw_message(ctx, &panic_message(payload))),
@@ -1598,7 +1597,8 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
     "host callback panicked".to_string()
 }
 
-fn throw_lib(ctx: &Ctx<'_>, err: &moqui_lib::error::Error) -> JsError {
+/// Throw `err` as a JS exception, with its diagnostic, kind and retry delay.
+pub fn throw_lib(ctx: &Ctx<'_>, err: &moqui_lib::error::Error) -> JsError {
     throw_diagnostic(
         ctx,
         err.message(),
@@ -1722,8 +1722,10 @@ fn install_ec(ctx: &Ctx<'_>) -> Result<(), Error> {
     ec.set("web", web).map_err(js_error)?;
     ec.set("cache", cache_object(ctx)?).map_err(js_error)?;
     ec.set("search", search_object(ctx)?).map_err(js_error)?;
-    #[cfg(feature = "llm")]
-    ec.set("llm", llm::llm_object(ctx)?).map_err(js_error)?;
+    // the agent runtime's object, when the binary links it (crate::llm_hooks)
+    if let Some(hooks) = crate::llm_hooks::get() {
+        ec.set("llm", (hooks.script_object)(ctx)?).map_err(js_error)?;
+    }
     ec.set("transaction", transaction_object(ctx)?).map_err(js_error)?;
     ec_extra::install_ec_extras(ctx, &ec)?;
     let make_notification = Function::new(ctx.clone(), notification::make_notification_message).map_err(js_error)?;
@@ -1895,7 +1897,8 @@ fn service_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     Ok(service)
 }
 
-fn facade_of(ctx: &Ctx<'_>) -> rquickjs::Result<EntityFacade> {
+/// The entity facade of the entered context; throws when there is none.
+pub fn facade_of(ctx: &Ctx<'_>) -> rquickjs::Result<EntityFacade> {
     let installed = with_ec(ctx, |ec| ec.factory().entity())?;
     match installed {
         Some(facade) => Ok(facade),
@@ -1903,11 +1906,13 @@ fn facade_of(ctx: &Ctx<'_>) -> rquickjs::Result<EntityFacade> {
     }
 }
 
-fn with_ec<T>(ctx: &Ctx<'_>, body: impl FnOnce(&ExecutionContext) -> T) -> rquickjs::Result<T> {
+/// `body` on the entered execution context; throws when none is entered.
+pub fn with_ec<T>(ctx: &Ctx<'_>, body: impl FnOnce(&ExecutionContext) -> T) -> rquickjs::Result<T> {
     ExecutionContext::with_current(body).ok_or_else(|| Exception::throw_message(ctx, "no execution context is entered"))
 }
 
-pub(super) fn js_error(err: impl ToString) -> Error {
+/// A framework error from a JS engine error.
+pub fn js_error(err: impl ToString) -> Error {
     Error::new(err.to_string())
 }
 
@@ -1977,7 +1982,7 @@ fn temporal_at_path(expression: &str) -> Option<Value> {
 
 /// Run a script once, not kept, named `file_name` in stack traces, and return its value as a host value. The test
 /// harness runs a spec file with it, so an error names the spec file and line.
-pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
+pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }

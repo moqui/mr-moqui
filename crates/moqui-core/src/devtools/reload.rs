@@ -559,8 +559,7 @@ fn reload_skills(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload
     if changed.is_empty() {
         return;
     }
-    #[cfg(feature = "llm")]
-    {
+    if let Some(hooks) = crate::llm_hooks::get() {
         let Some(facade) = factory.entity() else {
             fail_all(
                 files,
@@ -570,7 +569,7 @@ fn reload_skills(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload
             );
             return;
         };
-        match crate::llm::skills::sync::sync(factory, &facade) {
+        match (hooks.sync_skills)(factory, &facade) {
             Ok(sync) => {
                 for &at in &changed {
                     let file = &mut files[at];
@@ -586,10 +585,7 @@ fn reload_skills(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload
             }
             Err(err) => fail_all(files, &changed, "reload.skill", &err.to_string()),
         }
-    }
-    #[cfg(not(feature = "llm"))]
-    {
-        let _ = factory;
+    } else {
         for at in changed {
             files[at].summary = "skills are not built into this host".into();
         }

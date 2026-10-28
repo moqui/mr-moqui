@@ -1,0 +1,37 @@
+# The agent runtime and the model providers (plans/LLM-A2A-Assist.md), on top of moqui-core: provider calls over the
+# blocking HTTP client, rust_decimal for costs. Its own crate so an edit here does not rebuild the framework, and it
+# builds beside moqui-host (plans/Rust-Practices-Review.md). Core reaches it only through moqui_core::llm_hooks, which
+# this crate fills with an inventory entry; moqui-host links it under its llm feature.
+
+[package]
+name = "moqui-llm"
+description = "Agents, the Assist drawer, A2A, MCP and the model providers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true, features = ["http"] }
+moqui-db = { workspace = true }
+moqui-lib = { workspace = true, features = ["http"] }
+base64 = { workspace = true }
+bytes = { workspace = true }
+getrandom = { workspace = true }
+hmac = { workspace = true }
+indexmap = { workspace = true }
+inventory = { workspace = true }
+jiff = { workspace = true }
+rquickjs = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open; telemetry for the gen_ai spans test.
+moqui-core = { workspace = true, features = ["http", "test-support", "telemetry"] }
+
+[lints]
+workspace = true

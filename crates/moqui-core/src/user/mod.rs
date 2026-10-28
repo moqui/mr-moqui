@@ -23,7 +23,7 @@ mod password;
 mod period;
 mod policy;
 mod preference;
-pub(crate) mod session;
+pub mod session;
 mod visit;
 
 pub(crate) use authz::current_user_groups;
@@ -36,10 +36,9 @@ pub use factor::{
 pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
 pub(crate) use filter::apply_view_filters;
 pub use filter::{apply_entity_filters, find_filters_for_user};
-pub(crate) use login::app_password_key;
+pub use login::app_password_key;
 pub(crate) use login::login_user_local;
-#[cfg(any(feature = "llm", feature = "git", test))]
-pub(crate) use login::stamp_value;
+pub use login::stamp_value;
 pub use login::{
     apply_header_keys, change_password, get_login_key, header_login_session, internal_login_user, login_anonymous,
     login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key, logout,
@@ -54,8 +53,7 @@ pub use preference::{
     current_user_external, get_preference, get_preference_for, get_preferences, has_permission, is_external_user,
     is_in_group, set_preference, user_group_ids, user_has_permission, EXTERNAL_USER, EXTERNAL_WITHHELD,
 };
-#[cfg(feature = "llm")]
-pub(crate) use session::derived_cookie_key;
+pub use session::derived_cookie_key;
 pub(crate) use session::Memory;
 pub use session::{
     bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_visit,

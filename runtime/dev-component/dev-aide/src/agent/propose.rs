@@ -25,14 +25,14 @@ use std::collections::BTreeMap;
 
 use moqui_core::devtools::index::{self, extract};
 use moqui_core::devtools::{Problem, Severity};
-use moqui_core::llm::approval::{
+use moqui_lib::node::MNode;
+use moqui_llm::approval::{
     self, ApprovalRequest, ChangeRow, HandoffTarget, PreviewMode, Requested, Resumed, TargetKind,
 };
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
-use moqui_lib::node::MNode;
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
@@ -176,7 +176,7 @@ impl AgentTool for ProposeEditTool {
     }
 
     fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
-        if ctx.run.is_some() && moqui_core::llm::skills::loaded(ctx, SKILL).is_none() {
+        if ctx.run.is_some() && moqui_llm::skills::loaded(ctx, SKILL).is_none() {
             return ToolError::new(
                 "skill_required",
                 format!("propose_edit needs the {SKILL} skill. Call skill with name \"{SKILL}\", then propose again."),
@@ -646,7 +646,7 @@ fn new_titles(old: &str, new: &str) -> Vec<String> {
     added
 }
 
-moqui_core::submit_tool!(ProposeEditTool);
+moqui_llm::submit_tool!(ProposeEditTool);
 
 #[cfg(test)]
 mod tests {

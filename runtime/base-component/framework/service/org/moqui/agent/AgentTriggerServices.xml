@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     to the AgentInbox notification topic. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="store" noun="AgentTrigger" type="rust" location="moqui_core::llm::trigger::store_agent_trigger"
+    <service verb="store" noun="AgentTrigger" type="rust" location="moqui_llm::trigger::store_agent_trigger"
             transaction="ignore">
         <description>Create or change a trigger (AgentAdmin) and keep what fires it: the cron job, paused while the trigger
             is paused or its breaker is open, and the link of its DataDocument to the AgentTriggers feed. The breaker and
@@ -46,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="triggerId"/></out-parameters>
     </service>
 
-    <service verb="fire" noun="AgentTrigger" type="rust" location="moqui_core::llm::trigger::fire_agent_trigger"
+    <service verb="fire" noun="AgentTrigger" type="rust" location="moqui_llm::trigger::fire_agent_trigger"
             authenticate="anonymous-all" allow-remote="false" transaction="ignore">
         <description>Fire a trigger now (its cron job, a closed batch window, or an admin's Fire now): a run of its agent
             with its waiting events (a document trigger with none does not run), unless it is paused, its breaker is open
@@ -63,13 +63,13 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="reset" noun="AgentTriggerBreaker" type="rust" location="moqui_core::llm::trigger::reset_trigger_breaker"
+    <service verb="reset" noun="AgentTriggerBreaker" type="rust" location="moqui_llm::trigger::reset_trigger_breaker"
             transaction="ignore">
         <description>Close a trigger's breaker (AgentAdmin): its failure count starts again and its cron job runs again.</description>
         <in-parameters><parameter name="triggerId" required="true"/></in-parameters>
     </service>
 
-    <service verb="receive" noun="TriggerDocuments" type="rust" location="moqui_core::llm::trigger::receive_trigger_documents"
+    <service verb="receive" noun="TriggerDocuments" type="rust" location="moqui_llm::trigger::receive_trigger_documents"
             authenticate="anonymous-all" allow-remote="false">
         <description>The receive service of the AgentTriggers data feed: each document becomes an event of the triggers on
             its type, unless the trigger's own agent made the change (_originAgentId, the loop guard). A trigger with no
@@ -83,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
 
-    <service verb="delete" noun="TriggerDocument" type="rust" location="moqui_core::llm::trigger::delete_trigger_document"
+    <service verb="delete" noun="TriggerDocument" type="rust" location="moqui_llm::trigger::delete_trigger_document"
             authenticate="anonymous-all" allow-remote="false">
         <description>The delete service of the AgentTriggers data feed: a record of a trigger's document type is gone, an
             event {_type, _id, _deleted}.</description>

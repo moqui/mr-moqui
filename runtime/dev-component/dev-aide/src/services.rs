@@ -89,7 +89,7 @@ fn eval_condition(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a condition is tried in the sim, which this server has not (it needs embedded Postgres)",
         ));
@@ -240,7 +240,7 @@ fn get_service_view(
         "secas": secas,
         "usedByCount": used_by,
         "calls": calls,
-        "sim": moqui_core::llm::approval::preview::available(&context.facade),
+        "sim": moqui_llm::approval::preview::available(&context.facade),
         "tier": context.tier.name(),
         "site": context.settings.default_site(),
         // where Add puts a SECA rule: the site's own rules file (D17), a companion buffer made on its first save
@@ -306,7 +306,7 @@ fn in_sim(
 ) -> Json {
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let started = std::time::Instant::now();
-    let ran = moqui_core::llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
+    let ran = moqui_llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
         let (out, log, more) = moqui_core::devtools::log_capture::with(body);
         let log = (log, more);
         let (messages, errors) = messages();
@@ -369,7 +369,7 @@ fn try_service(
         out.insert("result".into(), json_value(&answer));
         return Ok(out);
     }
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "this server has no sim (it needs embedded Postgres): run it for real",
         ));
@@ -422,7 +422,7 @@ fn try_snippet(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a snippet runs in the sim, which this server has not (it needs embedded Postgres)",
         ));
@@ -615,7 +615,7 @@ fn run_spec(
         .and_then(|name| name.strip_suffix(".spec.js"))
         .ok_or_else(|| LibError::new("a spec file is named <Name>.spec.js"))?
         .to_string();
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a spec runs in the sim here, which this server has not (it needs embedded Postgres)",
         ));
@@ -627,11 +627,8 @@ fn run_spec(
     };
     let filter = Some(text(parameters, "feature")).filter(|text| !text.is_empty());
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-    let ran = moqui_core::llm::approval::preview::run_in_sim(
-        &context.factory,
-        &username,
-        &format!("Run spec {name}"),
-        || {
+    let ran =
+        moqui_llm::approval::preview::run_in_sim(&context.factory, &username, &format!("Run spec {name}"), || {
             moqui_core::service::coverage::enable();
             let result = moqui_core::testkit::run_spec(
                 &spec,
@@ -643,8 +640,7 @@ fn run_spec(
             );
             let calls = moqui_core::service::coverage::finish();
             Ok((result, calls))
-        },
-    );
+        });
     let (result, calls) = ran?.value;
     {
         let mut kept = coverage().lock().unwrap_or_else(std::sync::PoisonError::into_inner);

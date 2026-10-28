@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     in builds with the llm feature. It is not a REST or JSON-RPC service: programs use A2A, MCP or the gateway. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="call" noun="Drawer" type="rust" location="moqui_core::llm::assist::call_drawer"
+    <service verb="call" noun="Drawer" type="rust" location="moqui_llm::assist::call_drawer"
             transaction="ignore" allow-remote="false">
         <description>Answer one drawer call for the current user with the request's parameters (a query, a form whose
             object values are JSON text, or a JSON body) and send the response: 200 with the call's JSON, or the error's

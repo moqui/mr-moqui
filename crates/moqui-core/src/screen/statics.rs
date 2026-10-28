@@ -239,7 +239,7 @@ fn identity(def: &ScreenDef) -> u64 {
 /// The compiler's text, read once for the factory.
 struct CompilerText(Mutex<Option<Arc<str>>>);
 
-pub(crate) fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
+pub fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
     let kept = factory.extension(|_| CompilerText(Mutex::new(None)));
     if let Some(text) = kept.0.lock().unwrap_or_else(|err| err.into_inner()).as_ref() {
         return Ok(Arc::clone(text));

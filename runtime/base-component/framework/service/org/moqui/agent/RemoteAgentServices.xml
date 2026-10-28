@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     secret and never returned. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="store" noun="AgentRemoteA2a" type="rust" location="moqui_core::llm::remote::store_remote_agent">
+    <service verb="store" noun="AgentRemoteA2a" type="rust" location="moqui_llm::remote::store_remote_agent">
         <description>Create or change a remote A2A agent, the tool a2a__remoteId. The card URL is checked as a delegation
             checks it: https, no user info, no internal address unless allowPrivateNetwork. allowedAgents is a comma list
             of the local agents that may delegate to it (* for all, empty for none). The credential is set only when
@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="remoteId"/></out-parameters>
     </service>
-    <service verb="test" noun="AgentRemoteA2a" type="rust" location="moqui_core::llm::remote::test_remote_agent"
+    <service verb="test" noun="AgentRemoteA2a" type="rust" location="moqui_llm::remote::test_remote_agent"
             transaction="ignore">
         <description>Read the remote agent's card now, as a delegation would, and keep it on its row.</description>
         <in-parameters><parameter name="remoteId" required="true"/></in-parameters>
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="store" noun="AgentMcpServer" type="rust" location="moqui_core::llm::remote::store_mcp_server">
+    <service verb="store" noun="AgentMcpServer" type="rust" location="moqui_llm::remote::store_mcp_server">
         <description>Create or change a remote MCP server, as store#AgentRemoteA2a stores a remote agent. With
             perUserAuth each user calls with their own token (AgentMcpUserToken) instead of the server's credential.
             Its tools are offered only as AgentMcpServerTool rows allow them.</description>
@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="mcpServerId"/></out-parameters>
     </service>
-    <service verb="store" noun="AgentMcpServerTool" type="rust" location="moqui_core::llm::remote::store_mcp_server_tool">
+    <service verb="store" noun="AgentMcpServerTool" type="rust" location="moqui_llm::remote::store_mcp_server_tool">
         <description>Allow a tool of a remote MCP server (the tool mcp__server__tool), or change or disable it. No
             classification is EXTERNAL (an approval for each call); AgclRead runs it at once under the read fence with
             only its server let through. The description replaces the server's own.</description>
@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="toolName"/>
         </out-parameters>
     </service>
-    <service verb="test" noun="AgentMcpServer" type="rust" location="moqui_core::llm::remote::test_mcp_server"
+    <service verb="test" noun="AgentMcpServer" type="rust" location="moqui_llm::remote::test_mcp_server"
             transaction="ignore">
         <description>Discover the MCP server and list its tools now (as an agent's catalog does, the kept list
             forgotten), each with whether a row allows it.</description>

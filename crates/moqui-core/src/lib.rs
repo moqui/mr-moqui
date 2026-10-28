@@ -25,8 +25,7 @@ pub mod driver;
 pub mod edi;
 pub mod entity;
 pub mod l10n;
-#[cfg(feature = "llm")]
-pub mod llm;
+pub mod llm_hooks;
 pub mod monitor;
 pub mod native;
 pub mod notify;
@@ -43,8 +42,10 @@ pub mod service;
 pub mod sftp;
 pub mod sso;
 pub mod telemetry;
-#[cfg(test)]
-mod testing;
+// the in-memory entity facade of the tests, here and in moqui-llm's (the test-support feature)
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod testing;
 pub mod testkit;
 pub mod transaction;
 pub mod typegen;

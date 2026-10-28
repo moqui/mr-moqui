@@ -28,8 +28,8 @@ pub mod vcs;
 use std::path::{Path, PathBuf};
 
 use moqui_core::context::ExecutionContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::ToolOutcome;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::ToolOutcome;
 use serde_json::Value as Json;
 
 use crate::roots::{self, Root};

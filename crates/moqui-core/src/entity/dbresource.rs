@@ -402,8 +402,9 @@ impl EntityFacade {
     }
 
     /// Skip the table check, for the in-memory test database, which has every table and no `information_schema`.
-    #[cfg(test)]
-    pub(crate) fn assume_db_tables(&self) {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn assume_db_tables(&self) {
         self.inner.db_ready.store(true, Ordering::Release);
     }
 

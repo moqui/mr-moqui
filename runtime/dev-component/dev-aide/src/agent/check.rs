@@ -18,10 +18,10 @@
 //! fix them the same way.
 
 use moqui_core::devtools::{check, recent_reports, Problem, Severity};
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
 use super::{arg, context, file};
@@ -137,7 +137,7 @@ pub(crate) fn upstream_problem(
         skill: Some(UPSTREAM_SKILL.to_string()),
     })
 }
-moqui_core::submit_tool!(CheckTool);
+moqui_llm::submit_tool!(CheckTool);
 
 #[cfg(test)]
 mod tests {

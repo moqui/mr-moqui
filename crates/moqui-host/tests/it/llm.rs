@@ -21,9 +21,9 @@
 
 use std::collections::BTreeSet;
 
-use moqui_core::llm::run::state::{RunState, TRANSITIONS};
-use moqui_core::llm::usage::{CallRecord, CallSource, Usage};
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_llm::run::state::{RunState, TRANSITIONS};
+use moqui_llm::usage::{CallRecord, CallSource, Usage};
 
 use crate::common::{basic, exchange, http_request, start_with_data};
 
@@ -203,7 +203,7 @@ fn the_llm_tables_the_registry_the_usage_and_the_screens_on_postgres() {
         assert!(!errors.is_empty());
 
         // the registry: the database model over the conf, and a feature bound to it
-        let llm = moqui_core::llm::facade(&factory);
+        let llm = moqui_llm::facade(&factory);
         let target = llm.resolve_feature(&facade, "classify").unwrap();
         assert_eq!(
             (target.model.id.as_str(), target.model.name.as_str()),
@@ -598,8 +598,8 @@ fn stream_ids(body: &str) -> Vec<i64> {
 
 #[test]
 fn runs_stream_their_events_to_their_owner_and_one_conversation_has_one_active_run() {
-    use moqui_core::llm::provider::fake::{self, Step};
-    use moqui_core::llm::run::{self, StartRequest};
+    use moqui_llm::provider::fake::{self, Step};
+    use moqui_llm::run::{self, StartRequest};
     use std::time::Duration;
 
     let gate = start_with_data("llm-runs", RUN_DATA);

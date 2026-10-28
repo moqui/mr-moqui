@@ -355,8 +355,9 @@ pub enum InteractiveRequest {
 }
 
 /// Run `body` as if a render of `origin` were running on this thread: what the approval tests decide through.
-#[cfg(test)]
-pub(crate) fn with_request_frame<T>(
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn with_request_frame<T>(
     origin: RenderOrigin,
     header_authenticated: bool,
     session_token_checked: bool,

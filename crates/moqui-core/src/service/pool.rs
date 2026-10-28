@@ -389,7 +389,7 @@ impl ServicePools {
     }
 
     /// Called from the scheduler after the state lock is released. Idle pools ignore it.
-    pub(crate) fn add_tick_hook(&self, hook: impl Fn() + Send + Sync + 'static) {
+    pub fn add_tick_hook(&self, hook: impl Fn() + Send + Sync + 'static) {
         let Some(shared) = &self.shared else {
             return;
         };

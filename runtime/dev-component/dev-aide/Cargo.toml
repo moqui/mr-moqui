@@ -12,7 +12,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-moqui-core = { workspace = true, features = ["llm"] }
+moqui-core = { workspace = true }
+moqui-llm = { workspace = true }
 moqui-lib = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }

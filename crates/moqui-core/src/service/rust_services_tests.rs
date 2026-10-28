@@ -143,61 +143,6 @@ fn registry_keys_are_the_function_paths() {
         ]);
         expected.sort_unstable();
     }
-    if cfg!(feature = "llm") {
-        expected.extend([
-            "moqui_core::llm::assist::audit::cancel_run_admin",
-            "moqui_core::llm::assist::audit::get_audit_view",
-            "moqui_core::llm::assist::call_drawer",
-            "moqui_core::llm::services::abandon_agent_handoff",
-            "moqui_core::llm::services::cancel_agent_run",
-            "moqui_core::llm::services::check_quota",
-            "moqui_core::llm::services::clean_call_content",
-            "moqui_core::llm::services::decide_agent_approval",
-            "moqui_core::llm::services::get_agent_approval",
-            "moqui_core::llm::services::get_agent_run_events",
-            "moqui_core::llm::services::get_call_content",
-            "moqui_core::llm::services::get_dashboard_totals",
-            "moqui_core::llm::services::get_effective_config",
-            "moqui_core::llm::services::get_prompt_preview",
-            "moqui_core::llm::services::preview_agent_approval",
-            "moqui_core::llm::services::probe_model",
-            "moqui_core::llm::services::rollup_usage",
-            "moqui_core::llm::services::set_model_capability",
-            "moqui_core::llm::services::start_agent_run",
-            "moqui_core::llm::services::store_tool_exposure",
-            "moqui_core::llm::services::submit_agent_input",
-            "moqui_core::llm::services::test_endpoint",
-            "moqui_core::llm::ai_task::execute_ai_task",
-            "moqui_core::llm::ai_task::get_ai_task",
-            "moqui_core::llm::ai_task::list_ai_task_types",
-            "moqui_core::llm::ai_task::propose_ai_field_value",
-            "moqui_core::llm::ai_task::run_ai_task",
-            "moqui_core::llm::ai_task::run_classify",
-            "moqui_core::llm::ai_task::run_extract",
-            "moqui_core::llm::ai_task::run_generate",
-            "moqui_core::llm::ai_task::run_summarize",
-            "moqui_core::llm::ai_task::run_translate",
-            "moqui_core::llm::chat::decide_chat_card",
-            "moqui_core::llm::chat::handle_chat_message",
-            "moqui_core::llm::gateway::store_api_client",
-            "moqui_core::llm::remote::store_mcp_server",
-            "moqui_core::llm::remote::store_mcp_server_tool",
-            "moqui_core::llm::remote::store_remote_agent",
-            "moqui_core::llm::remote::test_mcp_server",
-            "moqui_core::llm::remote::test_remote_agent",
-            "moqui_core::llm::trigger::delete_trigger_document",
-            "moqui_core::llm::trigger::fire_agent_trigger",
-            "moqui_core::llm::trigger::receive_trigger_documents",
-            "moqui_core::llm::trigger::reset_trigger_breaker",
-            "moqui_core::llm::trigger::store_agent_trigger",
-            "moqui_core::llm::skills::services::get_agent_skill",
-            "moqui_core::llm::skills::services::get_skill_retrieval",
-            "moqui_core::llm::skills::services::review_agent_lesson",
-            "moqui_core::llm::skills::services::store_agent_skill",
-            "moqui_core::llm::skills::services::sync_agent_skills",
-        ]);
-        expected.sort_unstable();
-    }
     // A feature this build leaves out registers nothing; its locations resolve through missing_feature.
     expected.retain(|location| super::missing_feature(location).is_none());
     assert_eq!(keys, expected);

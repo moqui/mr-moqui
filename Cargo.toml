@@ -15,6 +15,7 @@ members = [
     "crates/moqui-lib",
     "crates/moqui-db",
     "crates/moqui-core",
+    "crates/moqui-llm",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -53,6 +54,8 @@ moqui-lib = { path = "crates/moqui-lib" }
 moqui-db = { path = "crates/moqui-db" }
 # default-features off so moqui-browser can leave out mail, http, and cluster-tls; moqui-host names them.
 moqui-core = { path = "crates/moqui-core", default-features = false }
+# The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.
+moqui-llm = { path = "crates/moqui-llm" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Packaging.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # Component crates kept in runtime/base-component, linked by crates/moqui.

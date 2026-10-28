@@ -21,11 +21,11 @@
 use std::sync::Arc;
 
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
-use moqui_core::llm::approval::{self, ApprovalStatus, TargetKind};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
 use moqui_core::screen::overlay::Overlay;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
+use moqui_llm::approval::{self, ApprovalStatus, TargetKind};
 use serde_json::{json, Value as Json};
 
 use crate::agent::propose::{prepare, ChangeSet};

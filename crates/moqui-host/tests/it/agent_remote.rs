@@ -28,9 +28,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Step};
-use moqui_core::llm::run::{self, RunState, StartRequest};
 use moqui_lib::object::Value;
+use moqui_llm::provider::fake::{self, Step};
+use moqui_llm::run::{self, RunState, StartRequest};
 use serde_json::{json, Value as Json};
 
 use crate::common::{
@@ -446,7 +446,7 @@ fn a_local_run_delegates_and_calls_mcp_tools_of_a_second_server_over_loopback() 
     decide(local_address, "ann.client", paused.pause_ref.as_deref().unwrap());
     let (state, paused) = wait(&local_factory, &run_id);
     assert_eq!(state, RunState::AuthRequired);
-    assert_eq!(paused.pause_kind, Some(moqui_core::llm::tools::PauseKind::Auth));
+    assert_eq!(paused.pause_kind, Some(moqui_llm::tools::PauseKind::Auth));
     let asked = events(&local_factory, &run_id, "question.asked");
     let link = asked.last().unwrap()["link"].as_str().unwrap().to_string();
     assert!(
@@ -499,11 +499,11 @@ fn a_local_run_delegates_and_calls_mcp_tools_of_a_second_server_over_loopback() 
         row.set("cardUrl", Value::string(format!("{base}/.well-known/agent-card.json")));
         row.set("allowedAgents", Value::string("*"));
         row.create(&facade).unwrap();
-        let catalog = moqui_core::llm::tools::catalog::Catalog::default().with_remotes(
+        let catalog = moqui_llm::tools::catalog::Catalog::default().with_remotes(
             &facade,
             "assist",
             "RC_ANN",
-            &moqui_core::llm::tools::ToolPolicy::default(),
+            &moqui_llm::tools::ToolPolicy::default(),
         );
         assert!(catalog.get("a2a__blocked").is_none());
         assert!(catalog.get("a2a__assist").is_some() && catalog.get("mcp__remote__find_enums").is_some());

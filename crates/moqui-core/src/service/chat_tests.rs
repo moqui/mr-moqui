@@ -2797,30 +2797,7 @@ fn an_external_user_reaches_no_record_room_public_room_presence_or_agent() {
     assert!(!crate::user::user_has_permission("xtout", "AgentUse").unwrap());
     assert!(crate::user::user_has_permission("xtpeer", "AgentUse").unwrap());
     assert!(crate::user::user_has_permission("xtout", "EXTERNAL_USER").unwrap());
-    // and a model call made for them, by any app's code, is refused; an internal user's goes through
-    let llm = crate::llm::LlmFacade::new(
-        crate::llm::conf::LlmConf::from_conf_text(
-            r#"<llm-facade><endpoint id="external-fake" protocol="fake"/>
-                <model id="external-model" endpoint="external-fake" name="fake-1"/>
-                <bind feature="summarize" model="external-model" reasoning="none"/></llm-facade>"#,
-        )
-        .unwrap(),
-    );
-    crate::llm::provider::fake::clear("external-fake");
-    let ask = crate::llm::CompleteRequest {
-        feature: Some("summarize".to_string()),
-        prompt: Some("the record's text".to_string()),
-        ..crate::llm::CompleteRequest::default()
-    };
-    login("xtout");
-    let refused_call = llm.complete(&facade, &ask).unwrap_err();
-    assert!(
-        refused_call.to_string().contains("not available to this user"),
-        "{refused_call}"
-    );
-    assert!(crate::llm::provider::fake::requests("external-fake").is_empty());
-    login("xtpeer");
-    llm.complete(&facade, &ask).unwrap();
+    // a model call made for them is refused: moqui-llm's members_tests, a_model_call_for_an_external_user_is_refused
 
     let tape = Tape::start(&["xtin", "xtpeer", "xtout"]);
     login("xtin");

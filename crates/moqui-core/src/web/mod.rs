@@ -67,7 +67,7 @@ thread_local! {
 }
 
 /// Mark the work on this thread as having tried credentials that were not valid.
-pub(crate) fn note_auth_failure() {
+pub fn note_auth_failure() {
     AUTH_FAILED.with(|flag| flag.set(true));
 }
 
@@ -310,7 +310,7 @@ pub(crate) fn parameter(name: &str) -> Option<Value> {
     WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.parameters.get(name).cloned()))
 }
 
-pub(crate) fn parameters() -> BTreeMap<String, Value> {
+pub fn parameters() -> BTreeMap<String, Value> {
     WEB.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -530,7 +530,7 @@ pub(crate) fn host_name(with_port: bool) -> String {
     }
 }
 
-pub(crate) fn multipart_parameters() -> BTreeMap<String, Value> {
+pub fn multipart_parameters() -> BTreeMap<String, Value> {
     WEB.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -1329,7 +1329,7 @@ pub(crate) fn send_reset_content(location: &str) {
 }
 
 /// A response with its own headers and bytes, such as a static file. One already sent is left alone.
-pub(crate) fn send_bytes_with_headers(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) {
+pub fn send_bytes_with_headers(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) {
     WEB.with(|slot| {
         let mut web = slot.borrow_mut();
         let Some(web) = web.as_mut() else {
@@ -1761,7 +1761,7 @@ fn hex_pair(high: u8, low: u8) -> Option<u8> {
 }
 
 /// `Authorization: Basic` user and password. The split is the first colon.
-pub(crate) fn basic_credentials(header: &str) -> Option<(String, String)> {
+pub fn basic_credentials(header: &str) -> Option<(String, String)> {
     let rest = header.trim();
     let rest = rest
         .strip_prefix("Basic ")

@@ -258,7 +258,7 @@ fn send_inner(request: Request) -> Result<Response, Error> {
 /// [`send`] on the built-in transport, past any installed sender: for a test sender that answers some addresses and
 /// passes the others on.
 #[cfg(feature = "http")]
-pub(crate) fn send_default(request: Request) -> Result<Response, Error> {
+pub fn send_default(request: Request) -> Result<Response, Error> {
     let method = match request.method {
         Method::Get => moqui_lib::http::Method::Get,
         Method::Post => moqui_lib::http::Method::Post,
@@ -304,7 +304,7 @@ pub(crate) fn send_default(request: Request) -> Result<Response, Error> {
 }
 
 #[cfg(not(feature = "http"))]
-pub(crate) fn send_default(request: Request) -> Result<Response, Error> {
+pub fn send_default(request: Request) -> Result<Response, Error> {
     Err(Error::new(format!(
         "HTTP {} {} is not built into this host",
         request.method,

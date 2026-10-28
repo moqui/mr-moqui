@@ -24,10 +24,12 @@ use moqui_lib::object::Value;
 use crate::entity::EntityFacade;
 
 /// A Rust service body. The service name stays on the definition; the pointer is the `location`.
-pub(crate) type RustServiceFn =
-    fn(&BTreeMap<String, Value>, &EntityFacade) -> Result<BTreeMap<String, Value>, LibError>;
+pub type RustServiceFn = fn(&BTreeMap<String, Value>, &EntityFacade) -> Result<BTreeMap<String, Value>, LibError>;
 
 /// Register `$function` under `module_path!() + "::" + its name`. A second insert of that path is an error.
+/// Exported for moqui-llm's services (crate::llm_hooks).
+#[doc(hidden)]
+#[macro_export]
 macro_rules! rust_service {
     ($map:expr, $function:ident) => {{
         let location: &'static str = concat!(module_path!(), "::", stringify!($function));
@@ -39,10 +41,6 @@ macro_rules! rust_service {
         }
     }};
 }
-
-// for the services of moqui_core::llm, outside this module
-#[cfg(feature = "llm")]
-pub(crate) use rust_service;
 
 static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new();
 
@@ -73,7 +71,6 @@ const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
     // the app's contacts hook, with or without mail built in
     ("moqui_core::service::mail::filter_contact_addresses", "", true),
     ("moqui_core::service::mail::", "imap", cfg!(feature = "imap")),
-    ("moqui_core::llm::", "llm", cfg!(feature = "llm")),
 ];
 
 /// The feature `location` belongs to when this build leaves that feature out.
@@ -82,6 +79,7 @@ pub(crate) fn missing_feature(location: &str) -> Option<&'static str> {
         .iter()
         .find(|(prefix, _, _)| location.starts_with(prefix))
         .and_then(|(_, feature, built)| (!built).then_some(*feature))
+        .or_else(|| (location.starts_with("moqui_llm::") && !crate::llm_hooks::linked()).then_some("llm"))
 }
 
 /// The function registered at `location`, once every module has registered.
@@ -119,10 +117,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::git::register(&mut map),
         #[cfg(feature = "git")]
         super::git_hosting::register(&mut map),
-        #[cfg(feature = "llm")]
-        crate::llm::services::register(&mut map),
-        #[cfg(feature = "llm")]
-        crate::llm::assist::register(&mut map),
+        crate::llm_hooks::get().map_or(Ok(()), |hooks| (hooks.register_services)(&mut map)),
     ] {
         if let Err(error) = result {
             errors.push(error);

@@ -19,12 +19,12 @@
 use std::collections::BTreeMap;
 
 use moqui_core::context::ExecutionContext;
-use moqui_core::llm::approval::{self, ApprovalRequest, PreviewMode, Requested, Resumed, TargetKind};
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use moqui_lib::object::Value;
+use moqui_llm::approval::{self, ApprovalRequest, PreviewMode, Requested, Resumed, TargetKind};
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
 use super::{arg, context};
@@ -139,7 +139,7 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
             Requested::Refused(why) => ToolOutcome::Failed(why),
         });
     }
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(ToolError::new(
             "no_sim",
             "This server has no sim (it needs embedded Postgres); run it with real=true, which the user approves.",
@@ -147,7 +147,7 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
     }
     let started = std::time::Instant::now();
     let label = format!("Try in sim of {service}");
-    let ran = moqui_core::llm::approval::preview::run_in_sim(&context.factory, &ctx.user.username, &label, || {
+    let ran = moqui_llm::approval::preview::run_in_sim(&context.factory, &ctx.user.username, &label, || {
         let out = moqui_core::service::sync(&service, &parameters);
         let (messages, errors) = messages();
         // a call that failed answers its own error, not that the sim was rolled back
@@ -196,4 +196,4 @@ fn real(ctx: &mut TurnContext<'_>, approval_id: &str, service: &str, parameters:
     super::json(&json!({"service": service, "sim": false, "result": result}))
 }
 
-moqui_core::submit_tool!(TryServiceTool);
+moqui_llm::submit_tool!(TryServiceTool);

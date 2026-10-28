@@ -18,8 +18,8 @@
 
 use std::path::{Path, PathBuf};
 
-use moqui_core::llm::skills::{retrieval, sync, SkillIndex};
 use moqui_lib::error::Error;
+use moqui_llm::skills::{retrieval, sync, SkillIndex};
 
 use super::TestArgs;
 

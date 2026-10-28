@@ -122,9 +122,8 @@ pub fn for_token(factory: &std::sync::Arc<crate::context::ExecutionContextFactor
         return None;
     }
     // a screen-xml canvas of the user's conversation
-    #[cfg(feature = "llm")]
-    if let Some(artifact_id) = token.strip_prefix("canvas:") {
-        return crate::llm::ui::screen_xml::canvas_overlay(factory, artifact_id);
+    if let (Some(artifact_id), Some(hooks)) = (token.strip_prefix("canvas:"), crate::llm_hooks::get()) {
+        return (hooks.canvas_overlay)(factory, artifact_id);
     }
     PROVIDER.get().and_then(|provider| provider(factory, token))
 }

@@ -531,7 +531,7 @@ pub fn looks_like_app_password(password: &str) -> bool {
 }
 
 /// The form an app password is compared in: no dashes or spaces, lower case.
-pub(crate) fn app_password_key(password: &str) -> String {
+pub fn app_password_key(password: &str) -> String {
     password
         .chars()
         .filter(|ch| *ch != '-' && !ch.is_whitespace())
@@ -796,7 +796,8 @@ pub fn now_value() -> Value {
     stamp_value(now_millis())
 }
 
-pub(crate) fn stamp_value(millis: i64) -> Value {
+/// A `java.sql.Timestamp` value of epoch `millis`.
+pub fn stamp_value(millis: i64) -> Value {
     basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
 }
 

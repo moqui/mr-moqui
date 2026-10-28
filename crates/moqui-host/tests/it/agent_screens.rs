@@ -34,15 +34,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Step};
-use moqui_core::llm::screen::{
+use moqui_lib::object::{to_plain_string, Value};
+use moqui_llm::provider::fake::{self, Step};
+use moqui_llm::screen::{
     self, ApprovalGrant, BrowserForm, BrowserState, OpenSpec, ScreenCommand, ScreenError, ScreenSessions,
 };
-use moqui_lib::object::{to_plain_string, Value};
 use serde_json::json;
 
-use moqui_core::llm::run::state::RunState;
-use moqui_core::testkit::agents::{answer_approval, ApprovalApplied, ScriptedApproval};
+use moqui_llm::run::state::RunState;
+use moqui_llm::testkit::agents::{answer_approval, ApprovalApplied, ScriptedApproval};
 
 use crate::common::{basic, exchange, http_request, merge_cookies, session_token, sign_in, start_with_conf_files};
 
@@ -531,20 +531,20 @@ fn a_run_uses_the_screen_tool(factory: &Arc<ExecutionContextFactory>) {
     let before = description(factory);
     let context = factory.new_context();
     let _entered = context.enter();
-    let started = moqui_core::llm::run::start_run(
+    let started = moqui_llm::run::start_run(
         factory,
-        &moqui_core::llm::run::StartRequest {
+        &moqui_llm::run::StartRequest {
             user_id: OWNER.to_string(),
             text: "Change the description".to_string(),
-            surface: moqui_core::llm::prompt::Surface::Drawer,
-            ..moqui_core::llm::run::StartRequest::default()
+            surface: moqui_llm::prompt::Surface::Drawer,
+            ..moqui_llm::run::StartRequest::default()
         },
     )
     .unwrap();
-    let state = moqui_core::llm::run::wait_for(factory, &started.run_id, Duration::from_secs(60)).unwrap();
+    let state = moqui_llm::run::wait_for(factory, &started.run_id, Duration::from_secs(60)).unwrap();
     assert_eq!(
         state,
-        moqui_core::llm::run::state::RunState::InputRequired,
+        moqui_llm::run::state::RunState::InputRequired,
         "the save waits for its approval"
     );
     assert_eq!(description(factory), before, "the run's save was held");
@@ -560,8 +560,8 @@ fn a_run_uses_the_screen_tool(factory: &Arc<ExecutionContextFactory>) {
         },
     );
     assert_eq!(rejected, ApprovalApplied::Applied);
-    let state = moqui_core::llm::run::wait_for(factory, &started.run_id, Duration::from_secs(60)).unwrap();
-    assert_eq!(state, moqui_core::llm::run::state::RunState::Completed);
+    let state = moqui_llm::run::wait_for(factory, &started.run_id, Duration::from_secs(60)).unwrap();
+    assert_eq!(state, moqui_llm::run::state::RunState::Completed);
     assert_eq!(description(factory), before, "a rejected save runs nothing");
 
     let _authz = context.disable_authz();
@@ -603,7 +603,7 @@ fn a_run_uses_the_screen_tool(factory: &Arc<ExecutionContextFactory>) {
     assert_eq!(snapshot["handoff"]["form"], "EditEnumType", "{snapshot}");
     assert_eq!(to_plain_string(approval.get("statusId").unwrap()), "AgaRejected");
 
-    let events = moqui_core::llm::run::events::stored_after(&facade, &started.run_id, 0, 1000).unwrap();
+    let events = moqui_llm::run::events::stored_after(&facade, &started.run_id, 0, 1000).unwrap();
     let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
     assert!(types.contains(&"ui.fill"), "{types:?}");
     let fill = events.iter().find(|event| event.event_type == "ui.fill").unwrap();
@@ -651,17 +651,17 @@ fn run_saving(factory: &Arc<ExecutionContextFactory>, user_id: &str, description
     fake::script(ENDPOINT, vec![save_step(description), fake::Reply::text("Done.")]);
     let context = factory.new_context();
     let _entered = context.enter();
-    let started = moqui_core::llm::run::start_run(
+    let started = moqui_llm::run::start_run(
         factory,
-        &moqui_core::llm::run::StartRequest {
+        &moqui_llm::run::StartRequest {
             user_id: user_id.to_string(),
             text: "Change the description".to_string(),
-            surface: moqui_core::llm::prompt::Surface::Drawer,
-            ..moqui_core::llm::run::StartRequest::default()
+            surface: moqui_llm::prompt::Surface::Drawer,
+            ..moqui_llm::run::StartRequest::default()
         },
     )
     .unwrap();
-    let state = moqui_core::llm::run::wait_for(factory, &started.run_id, WAIT).unwrap();
+    let state = moqui_llm::run::wait_for(factory, &started.run_id, WAIT).unwrap();
     (started.run_id, state)
 }
 
@@ -752,7 +752,7 @@ fn a_decision_over_http_saves_the_held_write(factory: &Arc<ExecutionContextFacto
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("AgaApproved"), "{text}");
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert_eq!(description(factory), "Approved over HTTP", "the approved write ran");
@@ -790,7 +790,7 @@ fn a_conflict_saves_nothing(factory: &Arc<ExecutionContextFactory>) {
         ApprovalApplied::Applied
     );
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert_eq!(description(factory), "Changed meanwhile", "a conflict saves nothing");
@@ -826,7 +826,7 @@ fn an_edit_in_screen_is_the_users_own_save(factory: &Arc<ExecutionContextFactory
         let _entered = context.enter();
         let _authz = context.disable_authz();
         let facade = factory.entity().unwrap();
-        let events = moqui_core::llm::run::events::stored_after(&facade, &run_id, 0, 1000).unwrap();
+        let events = moqui_llm::run::events::stored_after(&facade, &run_id, 0, 1000).unwrap();
         let fill = events
             .iter()
             .find(|event| event.event_type == "ui.fill" && event.payload["handoffId"] == handoff_id.as_str())
@@ -876,7 +876,7 @@ fn an_edit_in_screen_is_the_users_own_save(factory: &Arc<ExecutionContextFactory
     );
     assert!(status < 400, "{status} {text}");
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert_eq!(description(factory), "Saved by the user");
@@ -925,9 +925,9 @@ fn an_edit_in_screen_left_is_abandoned(factory: &Arc<ExecutionContextFactory>, a
         );
         run.update(&facade).unwrap();
     }
-    assert!(moqui_core::llm::run::lease::expire_pauses(factory).unwrap() >= 1);
+    assert!(moqui_llm::run::lease::expire_pauses(factory).unwrap() >= 1);
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert_eq!(description(factory), "Before");
@@ -957,12 +957,12 @@ fn a_held_write_previews_in_the_sim(factory: &Arc<ExecutionContextFactory>) {
     assert_eq!(state, RunState::InputRequired);
     let (_, approval_id) = pause_of(factory, &run_id);
     let facade = factory.entity().unwrap();
-    if !moqui_core::llm::approval::preview::available(&facade) {
+    if !moqui_llm::approval::preview::available(&facade) {
         eprintln!("the sim overlay is not available here, so the preview is not checked");
-        let _ = moqui_core::llm::run::cancel_run(factory, &run_id, Some(OWNER));
+        let _ = moqui_llm::run::cancel_run(factory, &run_id, Some(OWNER));
         return;
     }
-    let preview = moqui_core::llm::approval::preview::preview_approval(factory, &approval_id, OWNER).unwrap();
+    let preview = moqui_llm::approval::preview::preview_approval(factory, &approval_id, OWNER).unwrap();
     assert_eq!(preview["ok"], true, "{preview}");
     let row = preview["rows"]
         .as_array()
@@ -988,10 +988,10 @@ fn a_held_write_previews_in_the_sim(factory: &Arc<ExecutionContextFactory>) {
         "the preview wrote nothing to production"
     );
     assert_eq!(
-        moqui_core::llm::approval::preview::preview_approval(factory, &approval_id, "EX_JANE"),
-        Err(moqui_core::llm::approval::DecideError::NotFound)
+        moqui_llm::approval::preview::preview_approval(factory, &approval_id, "EX_JANE"),
+        Err(moqui_llm::approval::DecideError::NotFound)
     );
-    let _ = moqui_core::llm::run::cancel_run(factory, &run_id, Some(OWNER));
+    let _ = moqui_llm::run::cancel_run(factory, &run_id, Some(OWNER));
 }
 
 /// A DESTRUCTIVE service tool (`run_tool` of an exposed entity-auto delete) is previewed in the sim before its card is
@@ -1017,26 +1017,26 @@ fn a_destructive_service_previews_before_its_card(factory: &Arc<ExecutionContext
     let run_id = {
         let context = factory.new_context();
         let _entered = context.enter();
-        moqui_core::llm::run::start_run(
+        moqui_llm::run::start_run(
             factory,
-            &moqui_core::llm::run::StartRequest {
+            &moqui_llm::run::StartRequest {
                 user_id: OWNER.to_string(),
                 text: "Remove the enumeration type AGT_DELETE".to_string(),
-                surface: moqui_core::llm::prompt::Surface::Drawer,
-                ..moqui_core::llm::run::StartRequest::default()
+                surface: moqui_llm::prompt::Surface::Drawer,
+                ..moqui_llm::run::StartRequest::default()
             },
         )
         .unwrap()
         .run_id
     };
-    let state = moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap();
+    let state = moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap();
     assert_eq!(state, RunState::InputRequired, "{}", screen_result(factory, &run_id));
     let (_, approval_id) = pause_of(factory, &run_id);
     let approval = row_of(factory, "moqui.agent.AgentApproval", "approvalId", &approval_id).unwrap();
     assert_eq!(field(&approval, "classificationEnumId"), "AgclDestructive");
     assert_eq!(field(&approval, "targetName"), "delete#moqui.basic.EnumerationType");
     let facade = factory.entity().unwrap();
-    if moqui_core::llm::approval::preview::available(&facade) {
+    if moqui_llm::approval::preview::available(&facade) {
         let preview: serde_json::Value = serde_json::from_str(&field(&approval, "previewJson")).unwrap();
         assert_eq!(preview["ok"], true, "{preview}");
         let row = preview["rows"]
@@ -1071,7 +1071,7 @@ fn a_destructive_service_previews_before_its_card(factory: &Arc<ExecutionContext
     );
     assert!(matches!(rejected, ApprovalApplied::Applied), "{rejected:?}");
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert!(row_of(factory, "moqui.basic.EnumerationType", "enumTypeId", "AGT_DELETE").is_some());
@@ -1117,7 +1117,7 @@ fn a_header_login_session_never_decides(factory: &Arc<ExecutionContextFactory>, 
     );
     assert!(status == 200 && text.contains("AgaRejected"), "{status} {text}");
     assert_eq!(
-        moqui_core::llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
+        moqui_llm::run::wait_for(factory, &run_id, WAIT).unwrap(),
         RunState::Completed
     );
     assert_eq!(description(factory), "Before");
@@ -1152,7 +1152,7 @@ fn service_approval(factory: &Arc<ExecutionContextFactory>, id: &str, service: &
 /// neither for real: the effect is refused and the preview says it cannot be simulated.
 fn a_preview_reaches_nothing_outside_the_sim(factory: &Arc<ExecutionContextFactory>) {
     let facade = factory.entity().unwrap();
-    if !moqui_core::llm::approval::preview::available(&facade) {
+    if !moqui_llm::approval::preview::available(&facade) {
         eprintln!("the sim overlay is not available here, so the preview's fence is not checked");
         return;
     }
@@ -1166,7 +1166,7 @@ fn a_preview_reaches_nothing_outside_the_sim(factory: &Arc<ExecutionContextFacto
         "agentscreens.AgentScreensServices.sweep#Files",
         json!({"location": "runtime://tmp/agent-screens-keep.txt"}),
     );
-    let swept = moqui_core::llm::approval::preview::preview_approval(factory, "AGS_PREVIEW_SWEEP", OWNER).unwrap();
+    let swept = moqui_llm::approval::preview::preview_approval(factory, "AGS_PREVIEW_SWEEP", OWNER).unwrap();
     assert_eq!(swept["ok"], false, "{swept}");
     let error = swept["error"].as_str().unwrap_or_default();
     assert!(
@@ -1186,7 +1186,7 @@ fn a_preview_reaches_nothing_outside_the_sim(factory: &Arc<ExecutionContextFacto
         "agentscreens.AgentScreensServices.announce#Things",
         json!({}),
     );
-    let announced = moqui_core::llm::approval::preview::preview_approval(factory, "AGS_PREVIEW_NOTE", OWNER).unwrap();
+    let announced = moqui_llm::approval::preview::preview_approval(factory, "AGS_PREVIEW_NOTE", OWNER).unwrap();
     assert_eq!(announced["ok"], false, "{announced}");
     assert!(
         announced["error"]

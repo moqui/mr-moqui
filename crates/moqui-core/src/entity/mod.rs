@@ -58,8 +58,9 @@ pub use moqui_db::sql::{CompareOp, Condition};
 pub use relink::RelinkReport;
 pub(crate) use schema::{document as schema_document, FieldEnums};
 pub use search_form::SearchFormResult;
+pub(crate) use sequence::sequenced_id_primary;
+pub use sequence::uuid_v4;
 pub use sequence::{fill_bank, stagger_step, take_id, SequenceBank};
-pub(crate) use sequence::{sequenced_id_primary, uuid_v4};
 pub use value::{field_map, string_map, EntityList, EntityValue, FieldMap, IntoFieldName, RustOnlyEntityHits};
 
 /// Forget what the entity layer keeps on this thread once a unit of work is over. With `sim`, ends every sim

@@ -60,21 +60,21 @@ type Tables = BTreeMap<String, Vec<Row>>;
 
 /// Options for an in-memory facade.
 #[derive(Default)]
-pub(crate) struct Options {
+pub struct Options {
     /// Entity ECAs run when true.
-    pub(crate) entity_eca: bool,
+    pub entity_eca: bool,
     /// Data feeds run when true.
-    pub(crate) data_feed: bool,
+    pub data_feed: bool,
     /// Every statement is appended here when set.
-    pub(crate) tape: Option<Arc<Mutex<Vec<String>>>>,
+    pub tape: Option<Arc<Mutex<Vec<String>>>>,
 }
 
-pub(crate) fn open() -> EntityFacade {
+pub fn open() -> EntityFacade {
     open_at(&framework_dir())
 }
 
 /// Seeds the framework's `StatusFlowTransition` rows, which the status check of an entity-auto update reads.
-pub(crate) fn seed_status_flows(facade: &EntityFacade) {
+pub fn seed_status_flows(facade: &EntityFacade) {
     let entities = framework_dir().join("entity");
     for file in ["BasicEntities.xml", "ServiceEntities.xml"] {
         let text = std::fs::read_to_string(entities.join(file)).expect("read framework entities");
@@ -97,7 +97,7 @@ pub(crate) fn seed_status_flows(facade: &EntityFacade) {
 }
 
 /// A facade whose statements are recorded on `tape`.
-pub(crate) fn open_with_tape(tape: Arc<Mutex<Vec<String>>>) -> EntityFacade {
+pub fn open_with_tape(tape: Arc<Mutex<Vec<String>>>) -> EntityFacade {
     open_with(
         &framework_dir(),
         Options {
@@ -108,11 +108,11 @@ pub(crate) fn open_with_tape(tape: Arc<Mutex<Vec<String>>>) -> EntityFacade {
 }
 
 /// The same database over the entity files under `framework_dir`.
-pub(crate) fn open_at(framework_dir: &std::path::Path) -> EntityFacade {
+pub fn open_at(framework_dir: &std::path::Path) -> EntityFacade {
     open_with(framework_dir, Options::default())
 }
 
-pub(crate) fn open_with(framework_dir: &std::path::Path, options: Options) -> EntityFacade {
+pub fn open_with(framework_dir: &std::path::Path, options: Options) -> EntityFacade {
     let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
         tape: options.tape,
@@ -143,7 +143,7 @@ pub(crate) fn open_with(framework_dir: &std::path::Path, options: Options) -> En
 }
 
 /// [`open`] with `conf` in place of the framework's `MoquiDefaultConf.xml`.
-pub(crate) fn open_with_conf(conf: &moqui_lib::node::MNode) -> EntityFacade {
+pub fn open_with_conf(conf: &moqui_lib::node::MNode) -> EntityFacade {
     let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
         tape: None,
@@ -175,12 +175,12 @@ pub(crate) fn open_with_conf(conf: &moqui_lib::node::MNode) -> EntityFacade {
 }
 
 /// The `transactional` group and the `logging` group, each on its own database and transaction manager.
-pub(crate) fn open_two_groups() -> EntityFacade {
+pub fn open_two_groups() -> EntityFacade {
     open_groups("logging")
 }
 
 /// The `transactional` group and `second`, each on its own database and transaction manager.
-pub(crate) fn open_groups(second: &str) -> EntityFacade {
+pub fn open_groups(second: &str) -> EntityFacade {
     let manager = || {
         let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
             store: Arc::new(Mutex::new(BTreeMap::new())),
@@ -214,12 +214,12 @@ pub(crate) fn open_groups(second: &str) -> EntityFacade {
     facade
 }
 
-pub(crate) fn framework_dir() -> PathBuf {
+pub fn framework_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
 }
 
 /// A log subscriber that keeps each event's fields as one line, for a test that checks what was logged.
-pub(crate) struct LogSubscriber(pub(crate) Arc<Mutex<Vec<String>>>);
+pub struct LogSubscriber(pub Arc<Mutex<Vec<String>>>);
 
 impl tracing::Subscriber for LogSubscriber {
     fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
