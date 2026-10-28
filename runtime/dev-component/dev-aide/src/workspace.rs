@@ -51,6 +51,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(check_file), check_file)?;
     registry.service_function(moqui_core::service_location!(set_upstream_edits), set_upstream_edits)?;
     registry.service_function(moqui_core::service_location!(set_setting), set_setting)?;
+    registry.service_function(moqui_core::service_location!(get_credentials), get_credentials)?;
+    registry.service_function(moqui_core::service_location!(set_presence), set_presence)?;
+    registry.service_function(moqui_core::service_location!(store_credential), store_credential)?;
+    registry.service_function(moqui_core::service_location!(delete_credential), delete_credential)?;
     registry.service_function(moqui_core::service_location!(store_root), store_root)?;
     registry.service_function(moqui_core::service_location!(delete_root), delete_root)?;
     registry.service_function(
@@ -102,6 +106,7 @@ impl Context {
             command: self.settings.git_command.clone(),
             read_timeout: self.settings.git_read_timeout,
             network_timeout: self.settings.git_network_timeout,
+            write_timeout: self.settings.git_write_timeout,
         }
     }
 
@@ -581,6 +586,43 @@ pub(crate) fn save_text(
     out.insert("conflict".into(), Value::Bool(false));
     out.insert("hash".into(), Value::string(&hash));
     after_write(context, root, resolved, Some(content), &mut out);
+    if context.settings.shared {
+        let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+        let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+        crate::notify::announce_save(&context.facade, &user, &username, &root.id, &resolved.relative);
+    }
+    Ok(out)
+}
+
+/// `set#Presence`: the files of a root this user has open (none when the page closes), on a shared dev server told to
+/// the other users (D19); the answer is the root's other editors.
+fn set_presence(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let _authz = ec.disable_authz();
+    let root = context.root(&text(parameters, "rootId"))?.id.clone();
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let mut out = Parameters::new();
+    if !context.settings.shared || user.is_empty() {
+        out.insert("editors".into(), Value::List(Vec::new().into()));
+        return Ok(out);
+    }
+    let paths: Vec<String> = match parameters.get("paths") {
+        Some(Value::List(items)) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+        _ => text(parameters, "paths")
+            .split(',')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .collect(),
+    };
+    let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    crate::notify::set_presence(&context.facade, &user, &username, &root, paths);
+    let editors = crate::notify::editors(&root, &user);
+    out.insert("editors".into(), json_value(&editors["editors"]));
     Ok(out)
 }
 
@@ -948,6 +990,115 @@ fn set_setting(
         value.trim(),
         moqui_core::user::current_username().ok().flatten().unwrap_or_default()
     );
+    Ok(Parameters::new())
+}
+
+const CREDENTIAL: &str = "moqui.dev.DevAideCredential";
+
+fn require_admin(what: &str) -> Result<(), LibError> {
+    if moqui_core::user::is_in_group("ADMIN").unwrap_or(false) {
+        Ok(())
+    } else {
+        Err(LibError::new(format!("{what} is set by an admin")))
+    }
+}
+
+/// `get#Credentials`: the shared server's stored tokens (D19), without the tokens: each one's root, user and user name.
+fn get_credentials(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    _parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Full)?;
+    require_admin("A git token")?;
+    let _authz = ec.disable_authz();
+    let rows = context.facade.find(CREDENTIAL)?.order_by("rootId", false).list()?;
+    let field = |row: &moqui_core::entity::EntityValue, name: &str| {
+        row.get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    let credentials: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            let root = field(row, "rootId");
+            serde_json::json!({
+                "credentialId": field(row, "credentialId"),
+                "rootId": root,
+                "rootLabel": roots::find(&context.roots, &root).map_or_else(|| root.clone(), |root| root.label.clone()),
+                "userId": field(row, "userId"),
+                "username": field(row, "username"),
+            })
+        })
+        .collect();
+    let mut out = Parameters::new();
+    out.insert("credentials".into(), json_value(&credentials));
+    Ok(out)
+}
+
+/// `store#Credential`: a root's deploy token (no `userId`) or a user's HTTPS token for it, kept encrypted; one per root
+/// and user, replaced when stored again. An admin's.
+fn store_credential(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Full)?;
+    require_admin("A git token")?;
+    let _authz = ec.disable_authz();
+    let root = context.root(&text(parameters, "rootId"))?.id.clone();
+    let user_id = text(parameters, "userId");
+    let token = text(parameters, "token");
+    if token.trim().is_empty() {
+        return Err(LibError::new("a token is required"));
+    }
+    let mut find = context.facade.find(CREDENTIAL)?.eq("rootId", Value::string(&root));
+    find = if user_id.is_empty() {
+        find.eq("userId", Value::Null)
+    } else {
+        find.eq("userId", Value::string(&user_id))
+    };
+    for old in find.list()?.iter() {
+        old.delete(&context.facade)?;
+    }
+    let mut row = context.facade.make_value(CREDENTIAL)?;
+    row.set_sequenced_id_primary(&context.facade)?;
+    row.set("rootId", Value::string(&root));
+    if !user_id.is_empty() {
+        row.set("userId", Value::string(&user_id));
+    }
+    row.set("username", Value::string(text(parameters, "username").trim()));
+    row.set("token", Value::string(token.trim()));
+    row.create(&context.facade)?;
+    tracing::info!(
+        "Dev AIDE git token for {root}{} stored by {}",
+        if user_id.is_empty() {
+            String::new()
+        } else {
+            format!(" and user {user_id}")
+        },
+        moqui_core::user::current_username().ok().flatten().unwrap_or_default()
+    );
+    Ok(Parameters::new())
+}
+
+/// `delete#Credential`: a stored token, by its id. An admin's.
+fn delete_credential(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Full)?;
+    require_admin("A git token")?;
+    let _authz = ec.disable_authz();
+    let found = context
+        .facade
+        .find(CREDENTIAL)?
+        .eq("credentialId", Value::string(text(parameters, "credentialId")))
+        .one()?;
+    if let Some(row) = found {
+        row.delete(&context.facade)?;
+    }
     Ok(Parameters::new())
 }
 

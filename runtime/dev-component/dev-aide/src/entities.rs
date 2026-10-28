@@ -32,8 +32,9 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
 
-use crate::artifacts::shown;
+use crate::artifacts::{shown, workspace_url};
 use crate::audit::{self, Write};
+use crate::roots;
 use crate::site;
 use crate::tier::Tier;
 use crate::workspace::{json_value, text, Context};
@@ -50,7 +51,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
         moqui_core::service_location!(load_changed_records),
         load_changed_records,
     )?;
-    registry.service_function(moqui_core::service_location!(get_view_sql), get_view_sql)
+    registry.service_function(moqui_core::service_location!(get_view_sql), get_view_sql)?;
+    registry.service_function(moqui_core::service_location!(list_data_files), list_data_files)
 }
 
 /// The most records Export writes into a file.
@@ -301,6 +303,95 @@ fn list_entities(
     let mut out = Parameters::new();
     out.insert("entities".into(), json_value(&entities));
     Ok(out)
+}
+
+/// The `type` attribute of a data file's `entity-facade-xml` root, read from the file's head; `None` when the file is
+/// not a data file.
+fn data_type_of(head: &str) -> Option<String> {
+    let start = head.find("<entity-facade-xml")?;
+    let tag = &head[start..];
+    let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+    let kind = tag.find("type=").map_or(String::new(), |at| {
+        let rest = &tag[at + 5..];
+        let quote = rest.chars().next().unwrap_or('"');
+        rest[1..].split(quote).next().unwrap_or("").to_string()
+    });
+    Some(kind)
+}
+
+/// `list#DataFiles`: the data files of the loaded components' `data` directories (12), by component, with their type
+/// (seed, demo, install …), size and the Workspace link; `type` and `component` narrow, `filter` matches the path. A
+/// file that cannot be read is left out with a warning.
+fn list_data_files(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    use std::io::Read as _;
+    let context = Context::of(ec, Tier::View)?;
+    let filter = text(parameters, "filter").to_lowercase();
+    let only_type = text(parameters, "type");
+    let only_component = text(parameters, "component");
+    let mut files = Vec::new();
+    for component in context.factory.components() {
+        if !only_component.is_empty() && component.name != only_component {
+            continue;
+        }
+        let mut paths = Vec::new();
+        collect_xml(&component.location.join("data"), &mut paths);
+        for path in paths {
+            let mut head = vec![0u8; 4096];
+            let read = std::fs::File::open(&path).and_then(|mut file| file.read(&mut head));
+            let Ok(read) = read else {
+                tracing::warn!("Data files: cannot read {}", path.display());
+                continue;
+            };
+            let head = String::from_utf8_lossy(&head[..read]);
+            let Some(kind) = data_type_of(&head) else {
+                continue;
+            };
+            if !only_type.is_empty() && kind != only_type {
+                continue;
+            }
+            let mut out = json!({
+                "component": component.name,
+                "type": kind,
+                "fileName": path.file_name().map(|name| name.to_string_lossy().into_owned()),
+                "size": std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0),
+            });
+            if let Some((root, relative)) = roots::locate(&context.roots, &path) {
+                if !filter.is_empty() && !relative.to_lowercase().contains(&filter) {
+                    continue;
+                }
+                out["rootId"] = json!(root.id);
+                out["relativePath"] = json!(relative);
+                out["site"] = json!(root.is_site_path(&relative));
+                out["url"] = json!(workspace_url(&root.id, &relative, 1));
+            } else if !filter.is_empty() {
+                continue;
+            }
+            files.push(out);
+        }
+    }
+    let mut out = Parameters::new();
+    out.insert("files".into(), json_value(&files));
+    Ok(out)
+}
+
+/// The XML files under `dir`, sorted, recursively.
+fn collect_xml(dir: &Path, into: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            collect_xml(&path, into);
+        } else if path.extension().is_some_and(|ext| ext == "xml") {
+            into.push(path);
+        }
+    }
 }
 
 /// The entity's full name from `artifactId` (`entity:moqui.example.Example`) or `entityName`.

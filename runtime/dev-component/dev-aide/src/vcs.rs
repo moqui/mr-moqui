@@ -52,7 +52,7 @@ pub const CURRENT_TASK: &str = "DEV_AIDE_CURRENT_TASK";
 /// The publish branch an admin set for a user (question 15), a name or a pattern with `{user}`.
 pub const PUBLISH_BRANCH: &str = "DEV_AIDE_PUBLISH_BRANCH";
 
-fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Root, LibError> {
+pub(crate) fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Root, LibError> {
     let root = context.root(&text(parameters, "rootId"))?;
     if root.kind != RootKind::Git {
         return Err(LibError::new(format!("{} is not a git repository", root.label)));
@@ -61,7 +61,7 @@ fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Roo
 }
 
 /// The paths of a `paths` parameter (a list, or comma-separated text), each confined to the root.
-fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<String>, LibError> {
+pub(crate) fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<String>, LibError> {
     let listed: Vec<String> = match parameters.get("paths") {
         Some(Value::List(items)) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
         Some(other) => moqui_lib::object::to_plain_string(other)
@@ -81,7 +81,7 @@ fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<
 }
 
 /// The author of a commit: the logged-in user's name and email (D19: a shared server names who made each commit).
-fn author_env(context: &Context) -> Vec<(&'static str, String)> {
+pub(crate) fn author_env(context: &Context) -> Vec<(&'static str, String)> {
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let row = context
         .facade
@@ -106,7 +106,7 @@ fn author_env(context: &Context) -> Vec<(&'static str, String)> {
     env
 }
 
-fn network_allowed(context: &Context) -> Result<(), LibError> {
+pub(crate) fn network_allowed(context: &Context) -> Result<(), LibError> {
     if context.settings.shared && !context.settings.network_git {
         return Err(LibError::new(
             "Network git commands are off on this shared dev server until an admin enables them in Dev AIDE Settings",
@@ -115,7 +115,96 @@ fn network_allowed(context: &Context) -> Result<(), LibError> {
     Ok(())
 }
 
-fn audit_git(context: &Context, root: &Root, command: &str, detail: serde_json::Value) {
+/// The environment variables a stored token reaches git's credential helper by, never its argv.
+const TOKEN_USER_ENV: &str = "MOQUI_DEV_AIDE_GIT_USERNAME";
+const TOKEN_ENV: &str = "MOQUI_DEV_AIDE_GIT_TOKEN";
+
+/// A shared server's token for `root` (D19, `DevAideCredential`): the user's own HTTPS token, else the root's deploy
+/// token; `None` when an admin set neither, and git's own helpers and SSH agent answer.
+fn stored_token(context: &Context, root: &Root) -> Option<(String, String)> {
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let find = |user_id: Option<&str>| {
+        let mut find = context
+            .facade
+            .find("moqui.dev.DevAideCredential")
+            .ok()?
+            .eq("rootId", Value::string(&root.id));
+        find = match user_id {
+            Some(user_id) => find.eq("userId", Value::string(user_id)),
+            None => find.eq("userId", Value::Null),
+        };
+        let row = find.list().ok()?.into_values().into_iter().next()?;
+        let field = |name: &str| {
+            row.get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        Some((field("username"), field("token"))).filter(|(_, token)| !token.is_empty())
+    };
+    (!user.is_empty())
+        .then(|| find(Some(&user)))
+        .flatten()
+        .or_else(|| find(None))
+}
+
+/// The arguments before a network command and its environment: with a stored token, git's credential helpers are
+/// replaced by one that answers the token from the environment (`!` helpers run in git's own shell, on Windows too).
+fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'static str, String)>) {
+    stored_token(context, root).map_or_else(
+        || (Vec::new(), Vec::new()),
+        |(username, token)| token_helper(username, token),
+    )
+}
+
+/// The arguments and environment that answer git's credential request with `username` and `token`.
+fn token_helper(username: String, token: String) -> (Vec<String>, Vec<(&'static str, String)>) {
+    let helper = format!(
+        "credential.helper=!f() {{ test \"$1\" = get && echo \"username=${TOKEN_USER_ENV}\" && echo \"password=${TOKEN_ENV}\"; }}; f"
+    );
+    let username = Some(username)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "x-access-token".into());
+    (
+        vec!["-c".into(), "credential.helper=".into(), "-c".into(), helper],
+        vec![(TOKEN_USER_ENV, username), (TOKEN_ENV, token)],
+    )
+}
+
+/// Run a network command with the stored token when there is one, its progress sent to the user as `DevGitProgress`
+/// notifications when the page named an operation (`operationId`), and Cancel by that id.
+pub(crate) fn run_network_with(
+    context: &Context,
+    root: &Root,
+    args: &[&str],
+    operation: Option<&str>,
+) -> Result<crate::git::Output, LibError> {
+    let (mut argv, env) = credential_args(context, root);
+    let progress = operation.filter(|id| !id.is_empty()).map(|id| progress(context, id));
+    let mut args: Vec<&str> = args.to_vec();
+    if progress.is_some() && matches!(args.first(), Some(&("fetch" | "pull" | "push" | "clone"))) {
+        args.insert(1, "--progress");
+    }
+    argv.extend(args.iter().map(|arg| (*arg).to_string()));
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    context
+        .git()
+        .run_with(&root.path, Mode::Network, &argv, &env, None, progress)
+}
+
+/// The progress of operation `id`, each line to the current user.
+pub(crate) fn progress(context: &Context, id: &str) -> crate::git::Progress {
+    let factory = std::sync::Arc::clone(&context.factory);
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let operation = id.to_string();
+    crate::git::Progress {
+        id: id.to_string(),
+        sink: Box::new(move |line: &str| {
+            crate::notify::send_progress(&factory, &user, &operation, line);
+        }),
+    }
+}
+
+pub(crate) fn audit_git(context: &Context, root: &Root, command: &str, detail: serde_json::Value) {
     audit::record(
         &context.facade,
         &Write {
@@ -206,11 +295,17 @@ fn get_status(
     out.insert("committerName".into(), Value::string(config("user.name")));
     out.insert("committerEmail".into(), Value::string(config("user.email")));
     out.insert("currentTask".into(), task.map_or(Value::Null, Value::string));
+    let conflicted = status.entries.iter().any(|entry| entry.conflicted);
+    out.insert(
+        "operation".into(),
+        crate::repo::operation(&context, root, conflicted).map_or(Value::Null, Value::string),
+    );
+    out.insert("writeQueued".into(), Value::Bool(git::write_queued(&root.path)));
     Ok(out)
 }
 
 /// The text of `spec` (`HEAD:path`, `:path` for the index), empty when it is not there.
-fn show(context: &Context, root: &Root, spec: &str) -> String {
+pub(crate) fn show(context: &Context, root: &Root, spec: &str) -> String {
     context.git().read(&root.path, &["show", spec]).unwrap_or_default()
 }
 
@@ -318,7 +413,7 @@ fn get_commit(
 }
 
 /// Run a write command over paths and answer git's output.
-fn write_paths(
+pub(crate) fn write_paths(
     context: &Context,
     root: &Root,
     args: &[&str],
@@ -504,9 +599,14 @@ fn commit_changes(
 }
 
 /// The git arguments of a network command, from the context and the root.
-type Argv = dyn Fn(&Context, &Root) -> Result<Vec<String>, LibError>;
+pub(crate) type Argv = dyn Fn(&Context, &Root) -> Result<Vec<String>, LibError>;
 
-fn network(ec: &ExecutionContext, parameters: &Parameters, build: &Argv, what: &str) -> Result<Parameters, LibError> {
+pub(crate) fn network(
+    ec: &ExecutionContext,
+    parameters: &Parameters,
+    build: &Argv,
+    what: &str,
+) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
     let root = git_root(&context, parameters)?;
@@ -519,7 +619,7 @@ fn network(ec: &ExecutionContext, parameters: &Parameters, build: &Argv, what: &
     }
     let args = build(&context, root)?;
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = context.git().run(&root.path, Mode::Network, &argv, &[], None)?;
+    let output = run_network_with(&context, root, &argv, Some(&text(parameters, "operationId")))?;
     let shown = format!("{}{}", output.stdout, output.stderr);
     audit_git(&context, root, what, serde_json::json!({ "ok": output.success() }));
     if !output.success() {
@@ -611,7 +711,7 @@ fn pull_remote(
 }
 
 /// The current branch, which a push needs.
-fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
+pub(crate) fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
     let branch = context
         .git()
         .read(&root.path, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -624,7 +724,7 @@ fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
 }
 
 /// The remote a push goes to: the branch's, else origin, else the only one.
-fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<String, LibError> {
+pub(crate) fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<String, LibError> {
     let configured = context
         .git()
         .read(&root.path, &["config", "--get", &format!("branch.{branch}.remote")])
@@ -642,15 +742,24 @@ fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<Stri
 }
 
 /// `push#Remote`: the current branch to its upstream, set on the first push.
+///
+/// With `forceWithLease` (the full tier's, question 8) it overwrites the remote branch, but only while the remote has
+/// what this repository last fetched of it, and only when `confirmRef` names the remote branch (`origin/main`), typed
+/// back on the page's confirm.
 fn push_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
+    let force = flag(parameters, "forceWithLease");
+    let confirm = text(parameters, "confirmRef");
+    if force && Context::of(ec, Tier::Full).is_err() {
+        return Err(LibError::new("A force push needs the full tier of Dev AIDE"));
+    }
     network(
         ec,
         parameters,
-        &|context, root| {
+        &move |context, root| {
             if root.publish_branch_required {
                 return Err(LibError::new(format!(
                     "{} publishes to its publish branch: use Publish",
@@ -659,6 +768,15 @@ fn push_remote(
             }
             let branch = current_branch(context, root)?;
             let remote = push_remote_name(context, root, &branch)?;
+            if force {
+                let target = format!("{remote}/{branch}");
+                if confirm != target {
+                    return Err(LibError::new(format!(
+                        "A force push overwrites {target}: type {target} to confirm"
+                    )));
+                }
+                return Ok(vec!["push".into(), "--force-with-lease".into(), remote, branch]);
+            }
             Ok(vec!["push".into(), "-u".into(), remote, branch])
         },
         "push",
@@ -721,7 +839,7 @@ fn create_branch(
     Ok(out)
 }
 
-fn valid_branch(name: &str) -> Result<(), LibError> {
+pub(crate) fn valid_branch(name: &str) -> Result<(), LibError> {
     let valid = !name.is_empty()
         && !name.starts_with('-')
         && !name.contains("..")
@@ -852,7 +970,7 @@ fn publish_site(
     } else {
         vec!["push", "-u", &remote, &refspec]
     };
-    let output = git.run(&root.path, Mode::Network, &push_args, &[], None)?;
+    let output = run_network_with(&context, root, &push_args, Some(&text(&parameters, "operationId")))?;
     audit_git(
         &context,
         root,
@@ -895,6 +1013,38 @@ fn publish_site(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The helper answers git's own `credential fill` with the token from its environment, which is not in its argv.
+    #[test]
+    fn a_stored_token_answers_the_credential_request() {
+        let (args, env) = token_helper(String::new(), "s3cret-token".into());
+        assert!(args.iter().all(|arg| !arg.contains("s3cret")), "{args:?}");
+        let mut command = std::process::Command::new("git");
+        command
+            .args(&args)
+            .args(["credential", "fill"])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
+        for (name, value) in &env {
+            command.env(name, value);
+        }
+        let Ok(mut child) = command.spawn() else {
+            return; // no git here
+        };
+        use std::io::Write as _;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"protocol=https\nhost=git.example.com\n\n")
+            .unwrap();
+        let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+        assert!(out.contains("username=x-access-token\n"), "{out}");
+        assert!(out.contains("password=s3cret-token\n"), "{out}");
+    }
 
     #[test]
     fn branch_names() {

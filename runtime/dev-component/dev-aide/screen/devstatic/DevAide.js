@@ -27,6 +27,14 @@
         const found = tabs.find((have) => have.path === tab.path);
         return found ? { tabs, active: found.path } : { tabs: tabs.concat([tab]), active: tab.path };
     };
+    /** A notification's JSON payload, whether it came as the message or inside it. */
+    pure.messageJson = (message) => {
+        let body = message && (message.message !== undefined ? message.message : message);
+        if (typeof body === "string") { try { body = JSON.parse(body); } catch (err) { return null; } }
+        return body && typeof body === "object" ? body : null;
+    };
+    /** The user names of the other editors with `path` open. */
+    pure.editorsOf = (editors, path) => (editors || []).filter((editor) => (editor.paths || []).indexOf(path) >= 0).map((editor) => editor.username);
     pure.closeTab = (tabs, path, active) => {
         const index = tabs.findIndex((tab) => tab.path === path);
         if (index < 0) return { tabs, active };
@@ -210,7 +218,9 @@
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [] },
                 // an agent's change set under review (?review=<approvalId>): its files with their texts on disk and as proposed
                 review: null, editorView: null, viewsLoaded: {},
-                narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null
+                narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
+                // shared mode (D19): the other users with files of this root open
+                editors: []
             };
         },
         computed: {
@@ -240,7 +250,12 @@
         },
         mounted() {
             const client = this.$root && this.$root.notificationClient;
-            if (client && client.registerListener) this.offReload = client.registerListener("DevReload", (message) => this.onReload(message));
+            if (client && client.registerListener) {
+                this.offReload = client.registerListener("DevReload", (message) => this.onReload(message));
+                this.offPresence = client.registerListener("DevPresence", (message) => this.onPresence(message));
+                this.offSaved = client.registerListener("DevSaved", (message) => this.onSaved(message));
+            }
+            this.presenceTimer = setInterval(() => this.tellPresence(true), 60000);
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
             this.loadRoots();
@@ -260,6 +275,10 @@
         },
         beforeUnmount() {
             if (this.offReload) this.offReload();
+            if (this.offPresence) this.offPresence();
+            if (this.offSaved) this.offSaved();
+            clearInterval(this.presenceTimer);
+            if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
             const assist = moqui.assist;
             if (assist) {
@@ -268,7 +287,7 @@
             }
         },
         watch: {
-            tabs: { deep: true, handler() { this.remember(); } },
+            tabs: { deep: true, handler() { this.remember(); this.tellPresence(false); } },
             active() { this.remember(); },
             // a visual view reads the outline of the text as it changes, in Text or by its own operations
             "current.text"() { const tab = this.current; if (tab && tab.view !== "text") this.scheduleOutline(tab); }
@@ -586,6 +605,27 @@
                 tab.text = disk.text || ""; tab.saved = tab.text; tab.base = disk.hash; tab.changedOnDisk = false;
             },
             compareDisk(tab) { tab.conflict = { diskText: (tab.disk && tab.disk.text) || "", diskHash: tab.disk && tab.disk.hash }; },
+            // ---- shared mode (D19): who else has which files open, and their saves ----
+            tellPresence(always) {
+                if (!this.shared || !this.rootId) return;
+                const paths = this.tabs.map((tab) => tab.path);
+                const key = this.rootId + "|" + paths.join("|");
+                if (!always && key === this.presenceKey) return;
+                this.presenceKey = key;
+                this.post("presence", { rootId: this.rootId, paths }).then((answer) => { this.editors = answer.editors || []; }, () => {});
+            },
+            onPresence(message) {
+                const answer = pure.messageJson(message);
+                if (!answer || answer.rootId !== this.rootId) return;
+                const me = this.$root && this.$root.userId;
+                this.editors = (answer.editors || []).filter((editor) => editor.userId !== me);
+            },
+            onSaved(message) {
+                const saved = pure.messageJson(message);
+                if (!saved || saved.rootId !== this.rootId || !this.tabs.some((tab) => tab.path === saved.path)) return;
+                this.note(saved.path.split("/").pop() + " was saved by " + (saved.username || "another user"), "info");
+            },
+            editorsOf(path) { return pure.editorsOf(this.editors, path); },
             onReload(message) {
                 let report = message && (message.message !== undefined ? message.message : message);
                 if (typeof report === "string") { try { report = JSON.parse(report); } catch (err) { return; } }
@@ -979,6 +1019,7 @@
         <div v-for="item in tabs" :key="item.path" class="m-dev-editor-tab row no-wrap items-center" :class="{ active: item.path === active }"
             @click="active = item.path" :title="item.path" :data-path="item.path">
           <span class="ellipsis">{{item.path.split('/').pop()}}</span><span v-if="isDirtyAll(item)" class="m-dev-dirty">●</span>
+          <q-icon v-if="editorsOf(item.path).length" name="sym_o_group" size="xs" class="q-ml-xs text-amber-8"><q-tooltip>being edited by {{editorsOf(item.path).join(', ')}}</q-tooltip></q-icon>
           <q-btn dense flat round size="xs" icon="close" @click.stop="closeTab(item.path)"></q-btn>
         </div>
       </div>
@@ -988,6 +1029,7 @@
           <span v-if="current.status" class="m-file-status q-ml-sm" :class="'m-file-status-' + current.status">{{current.status}}</span>
           <span v-else-if="!isGit" class="q-ml-sm m-muted">Not versioned</span>
           <q-chip v-if="current.readOnly" dense square icon="sym_o_lock" class="q-ml-sm" id="DevReadOnly">{{current.readOnlyReason || 'read only'}}</q-chip>
+          <q-chip v-if="editorsOf(current.path).length" dense square icon="sym_o_group" class="q-ml-sm" color="amber-3" text-color="black" id="DevEditedBy">being edited by {{editorsOf(current.path).join(', ')}}</q-chip>
           <q-space></q-space>
           <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
               :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>

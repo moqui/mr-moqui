@@ -460,8 +460,57 @@ fn the_workspace_saves_checks_commits_and_publishes() {
         &[("rootId", "my-site")],
     )
     .unwrap_err();
-    moqui_lib::env::set_property("dev_aide_shared", "false");
     assert!(shared.contains("off on this shared dev server"), "{shared}");
+
+    // shared mode: who has which files open, told to the others; an admin's stored tokens, never answered back
+    call(
+        &factory,
+        "ext.user",
+        &format!("{WS}set#Presence"),
+        &[("rootId", "my-site"), ("paths", "service/mysite/Things.xml")],
+    )
+    .unwrap();
+    let present = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}set#Presence"),
+        &[("rootId", "my-site"), ("paths", "")],
+    )
+    .unwrap();
+    let editors = moqui_lib::json::to_json(&present["editors"]);
+    assert_eq!(editors[0]["username"], "ext.user", "{editors}");
+    assert_eq!(editors[0]["paths"][0], "service/mysite/Things.xml");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}store#Credential"),
+        &[("rootId", "my-site"), ("username", "deploy"), ("token", "s3cret")],
+    )
+    .unwrap();
+    let stored = call(&factory, "john.doe", &format!("{WS}get#Credentials"), &[]).unwrap();
+    let stored = moqui_lib::json::to_json(&stored["credentials"]);
+    assert_eq!(stored[0]["username"], "deploy", "{stored}");
+    assert!(!stored.to_string().contains("s3cret"), "{stored}");
+    let refused = call(&factory, "ext.user", &format!("{WS}get#Credentials"), &[]).unwrap_err();
+    assert!(refused.contains("Dev AIDE") || refused.contains("admin"), "{refused}");
+    moqui_lib::env::set_property("dev_aide_shared", "false");
+
+    // the data files by component and type
+    let data = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.EntityServices.list#DataFiles",
+        &[("component", "dev-aide"), ("type", "seed")],
+    )
+    .unwrap();
+    let data = moqui_lib::json::to_json(&data["files"]);
+    assert!(
+        data.as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["fileName"] == "DevAideAgentData.xml"),
+        "{data}"
+    );
 }
 
 const UPSTREAM_SCREEN: &str = r#"<screen>
@@ -1360,4 +1409,292 @@ fn an_entity_save_relinks_and_adds_its_column() {
         .one()
         .unwrap();
     assert!(low.is_some());
+}
+
+const NOTES: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
+
+/// Git depth (plans/design-dev-aide.md P8) on a scratch repository with git isolated from the desktop: hunks staged,
+/// unstaged and discarded one at a time; a branch made, renamed and deleted; a merge that stops at a conflict, aborted,
+/// then resolved; a tag pushed; a stash popped; a revert and a cherry-pick; a commit's tree, a file at it and blame;
+/// remotes; a force push refused until it is confirmed and for the extend tier; and a clone into the component directory.
+#[test]
+fn the_git_depth_writes_on_scratch_repositories() {
+    let users = r#"
+    <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
+    <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
+</entity-facade-xml>"#;
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+        .replace("</entity-facade-xml>", users);
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/notes.txt", NOTES),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-git",
+        Some(&security),
+        &[
+            ("instance_purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+            ("dev_aide_shared", "false"),
+        ],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("component/my-site");
+    let remote = gate.runtime.join("site-remote.git");
+    isolate_git(&gate.runtime);
+    repository(&site, &remote);
+    let vcs = |name: &str, parameters: &[(&str, &str)]| {
+        let mut all = vec![("rootId", "my-site")];
+        all.extend_from_slice(parameters);
+        call(&factory, "john.doe", &format!("{VCS}{name}"), &all)
+    };
+    let notes = site.join("notes.txt");
+
+    // two hunks: the second staged alone, then unstaged, staged again, and the first discarded
+    std::fs::write(&notes, NOTES.replace("two\n", "TWO\n").replace("eleven\n", "ELEVEN\n")).unwrap();
+    let hunks = vcs("get#Hunks", &[("path", "notes.txt")]).unwrap();
+    let listed = moqui_lib::json::to_json(&hunks["hunks"]);
+    assert_eq!(listed.as_array().unwrap().len(), 2, "{listed}");
+    vcs(
+        "stage#Hunks",
+        &[
+            ("path", "notes.txt"),
+            ("hunks", "1"),
+            ("diffHash", &text(&hunks, "diffHash")),
+        ],
+    )
+    .unwrap();
+    let staged = git(&site, &["diff", "--cached"]);
+    assert!(staged.contains("+ELEVEN") && !staged.contains("+TWO"), "{staged}");
+    let stale = vcs(
+        "stage#Hunks",
+        &[
+            ("path", "notes.txt"),
+            ("hunks", "0"),
+            ("diffHash", &text(&hunks, "diffHash")),
+        ],
+    )
+    .unwrap_err();
+    assert!(stale.contains("changed since"), "{stale}");
+    vcs("unstage#Hunks", &[("path", "notes.txt"), ("hunks", "0")]).unwrap();
+    assert_eq!(git(&site, &["diff", "--cached"]), "");
+    vcs("stage#Hunks", &[("path", "notes.txt"), ("hunks", "1")]).unwrap();
+    vcs("discard#Hunks", &[("path", "notes.txt"), ("hunks", "0")]).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        NOTES.replace("eleven\n", "ELEVEN\n")
+    );
+    vcs("commit#Changes", &[("summary", "Eleven")]).unwrap();
+
+    // a branch made, renamed and deleted; the branches list it with its upstream state
+    vcs("create#Branch", &[("branch", "feature/x"), ("switch", "false")]).unwrap();
+    vcs("rename#Branch", &[("branch", "feature/x"), ("newName", "feature/y")]).unwrap();
+    let branches = vcs("get#Branches", &[]).unwrap();
+    let local = moqui_lib::json::to_json(&branches["local"]);
+    assert!(
+        local
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|branch| branch["name"] == "feature/y"),
+        "{local}"
+    );
+    let main = local
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|branch| branch["name"] == "main")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (main["current"].clone(), main["ahead"].clone()),
+        (serde_json::json!(true), serde_json::json!(1)),
+        "{main}"
+    );
+    assert!(moqui_lib::json::to_json(&branches["remote"])
+        .to_string()
+        .contains("origin/main"));
+    vcs("delete#Branch", &[("branch", "feature/y")]).unwrap();
+
+    // a merge that stops at a conflict: the operation, its sides; aborted, then merged again and resolved
+    git(&site, &["switch", "-q", "-c", "other"]);
+    std::fs::write(
+        &notes,
+        NOTES
+            .replace("eleven\n", "ELEVEN\n")
+            .replace("five\n", "FIVE (other)\n"),
+    )
+    .unwrap();
+    git(&site, &["commit", "-q", "-am", "Five on other"]);
+    git(&site, &["switch", "-q", "main"]);
+    std::fs::write(
+        &notes,
+        NOTES.replace("eleven\n", "ELEVEN\n").replace("five\n", "FIVE (main)\n"),
+    )
+    .unwrap();
+    git(&site, &["commit", "-q", "-am", "Five on main"]);
+    let ff = vcs("merge#Branch", &[("branch", "other")]).unwrap_err();
+    assert!(ff.contains("merge"), "{ff}");
+    let merged = vcs("merge#Branch", &[("branch", "other"), ("mergeCommit", "true")]).unwrap();
+    assert_eq!(text(&merged, "conflict"), "true", "{merged:?}");
+    assert_eq!(text(&vcs("get#Status", &[]).unwrap(), "operation"), "merge");
+    vcs("abort#Operation", &[]).unwrap();
+    assert_eq!(text(&vcs("get#Status", &[]).unwrap(), "operation"), "");
+    vcs("merge#Branch", &[("branch", "other"), ("mergeCommit", "true")]).unwrap();
+    let sides = vcs("get#ConflictSides", &[("path", "notes.txt")]).unwrap();
+    assert!(text(&sides, "ours").contains("FIVE (main)") && text(&sides, "theirs").contains("FIVE (other)"));
+    assert!(text(&sides, "result").contains("<<<<<<< "));
+    let marked = vcs(
+        "resolve#Conflict",
+        &[
+            ("path", "notes.txt"),
+            ("text", &text(&sides, "result")),
+            ("baseHash", &text(&sides, "hash")),
+        ],
+    )
+    .unwrap_err();
+    assert!(marked.contains("conflict markers"), "{marked}");
+    let resolved_text = NOTES.replace("eleven\n", "ELEVEN\n").replace("five\n", "FIVE (both)\n");
+    vcs(
+        "resolve#Conflict",
+        &[
+            ("path", "notes.txt"),
+            ("text", &resolved_text),
+            ("baseHash", &text(&sides, "hash")),
+        ],
+    )
+    .unwrap();
+    vcs("commit#Changes", &[("summary", "Merge other")]).unwrap();
+    assert_eq!(text(&vcs("get#Status", &[]).unwrap(), "operation"), "");
+    assert_eq!(git(&site, &["log", "-1", "--format=%P"]).split_whitespace().count(), 2);
+
+    // a tag pushed to the remote, then deleted here
+    vcs("create#Tag", &[("tag", "v1"), ("message", "First release")]).unwrap();
+    let tags = moqui_lib::json::to_json(&vcs("get#Tags", &[]).unwrap()["tags"]);
+    assert_eq!(
+        (tags[0]["name"].clone(), tags[0]["annotated"].clone()),
+        (serde_json::json!("v1"), serde_json::json!(true)),
+        "{tags}"
+    );
+    vcs("push#Tag", &[("tag", "v1")]).unwrap();
+    assert!(git(&remote, &["tag"]).contains("v1"));
+    vcs("delete#Tag", &[("tag", "v1")]).unwrap();
+
+    // a stash made and popped
+    std::fs::write(&notes, resolved_text.replace("one\n", "ONE\n")).unwrap();
+    vcs("create#Stash", &[("message", "Work in progress")]).unwrap();
+    assert_eq!(std::fs::read_to_string(&notes).unwrap(), resolved_text);
+    let stashes = moqui_lib::json::to_json(&vcs("get#Stashes", &[]).unwrap()["stashes"]);
+    assert!(
+        stashes[0]["message"].as_str().unwrap().contains("Work in progress"),
+        "{stashes}"
+    );
+    let popped = vcs("pop#Stash", &[("index", "0")]).unwrap();
+    assert_eq!(text(&popped, "conflict"), "false");
+    assert!(std::fs::read_to_string(&notes).unwrap().starts_with("ONE\n"));
+    vcs("discard#Files", &[("paths", "notes.txt")]).unwrap();
+
+    // a cherry-pick of another branch's commit, and its revert
+    git(&site, &["switch", "-q", "-c", "pick"]);
+    std::fs::write(site.join("picked.txt"), "picked\n").unwrap();
+    git(&site, &["add", "picked.txt"]);
+    git(&site, &["commit", "-q", "-m", "Picked"]);
+    let picked = git(&site, &["rev-parse", "HEAD"]).trim().to_string();
+    git(&site, &["switch", "-q", "main"]);
+    vcs("cherryPick#Commit", &[("commitId", &picked)]).unwrap();
+    assert!(site.join("picked.txt").exists());
+    let head = git(&site, &["rev-parse", "HEAD"]).trim().to_string();
+    vcs("revert#Commit", &[("commitId", &head)]).unwrap();
+    assert!(!site.join("picked.txt").exists());
+
+    // a commit's tree, a file at it, blame and a path's history
+    let tree = moqui_lib::json::to_json(&vcs("get#Tree", &[("rev", &head)]).unwrap()["entries"]);
+    assert!(
+        tree.as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "picked.txt"),
+        "{tree}"
+    );
+    let at = vcs("get#FileAt", &[("rev", &head), ("path", "picked.txt")]).unwrap();
+    assert_eq!(text(&at, "text"), "picked\n");
+    let blame = moqui_lib::json::to_json(&vcs("get#Blame", &[("path", "notes.txt")]).unwrap()["ranges"]);
+    assert!(
+        blame
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|range| range["summary"] == "Five on main" || range["summary"] == "Merge other"),
+        "{blame}"
+    );
+    let history = moqui_lib::json::to_json(&vcs("get#Log", &[("path", "picked.txt")]).unwrap()["commits"]);
+    assert_eq!(history.as_array().unwrap().len(), 2, "{history}");
+    let compare = vcs("compare#Refs", &[("base", "origin/main"), ("head", "main")]).unwrap();
+    assert!(moqui_lib::json::to_json(&compare["files"])
+        .to_string()
+        .contains("notes.txt"));
+
+    // remotes
+    vcs("add#Remote", &[("name", "mirror"), ("url", remote.to_str().unwrap())]).unwrap();
+    vcs("set#RemoteUrl", &[("name", "mirror"), ("url", "/tmp/elsewhere.git")]).unwrap();
+    assert!(git(&site, &["remote", "-v"]).contains("/tmp/elsewhere.git"));
+    vcs("remove#Remote", &[("name", "mirror")]).unwrap();
+    assert!(vcs("add#Remote", &[("name", "bad"), ("url", "--upload-pack=x")]).is_err());
+
+    // a force push: refused without its confirm and for the extend tier, then with the lease
+    vcs("push#Remote", &[]).unwrap();
+    git(&site, &["reset", "-q", "--hard", "HEAD~1"]);
+    let unconfirmed = vcs("push#Remote", &[("forceWithLease", "true")]).unwrap_err();
+    assert!(unconfirmed.contains("type origin/main"), "{unconfirmed}");
+    let extend = call(
+        &factory,
+        "ext.user",
+        &format!("{VCS}push#Remote"),
+        &[
+            ("rootId", "my-site"),
+            ("forceWithLease", "true"),
+            ("confirmRef", "origin/main"),
+        ],
+    )
+    .unwrap_err();
+    assert!(extend.contains("full tier"), "{extend}");
+    vcs(
+        "push#Remote",
+        &[("forceWithLease", "true"), ("confirmRef", "origin/main")],
+    )
+    .unwrap();
+    assert_eq!(
+        git(&remote, &["rev-parse", "main"]).trim(),
+        git(&site, &["rev-parse", "HEAD"]).trim()
+    );
+
+    // a clone into the component directory, which loads after a restart
+    git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let cloned = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}clone#Repository"),
+        &[("url", remote.to_str().unwrap()), ("name", "cloned-site")],
+    )
+    .unwrap();
+    assert_eq!(text(&cloned, "restart"), "true");
+    assert!(
+        gate.runtime.join("component/cloned-site/notes.txt").exists(),
+        "{cloned:?} {}",
+        gate.runtime.display()
+    );
+    assert!(call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}clone#Repository"),
+        &[("url", remote.to_str().unwrap()), ("name", "../escape")],
+    )
+    .is_err());
 }

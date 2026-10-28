@@ -105,3 +105,13 @@ test("an outline is walked and read by path", () => {
     assert.equal(pure.workspaceBase("/qapps/dev/Entities/Edit"), "/qapps/dev/Workspace");
     assert.equal(pure.workspaceBase("/qapps/dev/Workspace"), "/qapps/dev/Workspace");
 });
+
+test("a shared server's editors of a file, and a notification's payload", () => {
+    const editors = [{ userId: "U1", username: "jane", paths: ["a.xml", "b.xml"] }, { userId: "U2", username: "raj", paths: ["b.xml"] }];
+    assert.deepEqual(pure.editorsOf(editors, "b.xml"), ["jane", "raj"]);
+    assert.deepEqual(pure.editorsOf(editors, "c.xml"), []);
+    assert.deepEqual(pure.editorsOf(null, "a.xml"), []);
+    assert.deepEqual(pure.messageJson({ message: '{"rootId":"r"}' }), { rootId: "r" });
+    assert.deepEqual(pure.messageJson({ rootId: "r" }), { rootId: "r" });
+    assert.equal(pure.messageJson({ message: "not json" }), null);
+});

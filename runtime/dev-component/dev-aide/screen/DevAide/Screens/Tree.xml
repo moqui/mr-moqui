@@ -106,6 +106,18 @@ along with this software (see the LICENSE.md file). If not, see
                         <option key="Dialog"/><option key="Report"/><option key="Editor"/><option key="Panel"/></drop-down></default-field></field>
                     <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                 </form-single>
+                <!-- the archetypes as the gallery shows them, each a small live render (stamped, so it may be framed here) -->
+                <render-mode><text type="qvt"><![CDATA[<q-expansion-item dense icon="dashboard" label="Preview the archetypes" id="DevArchetypePreview">
+                    <div class="row q-gutter-sm q-pa-sm">
+                        <div v-for="archetype in ['Landing','List','Detail','Record360','Task','Board','Calendar','Split','Settings','Wizard','Dialog','Report','Editor','Panel']" :key="archetype" class="m-dev-archetype">
+                            <div class="text-caption">{{ archetype === 'Record360' ? '360' : archetype }}</div>
+                            <div style="width:195px;height:300px;overflow:hidden;border:1px solid rgba(128,128,128,.4);border-radius:4px">
+                                <iframe loading="lazy" :src="'/qapps/gallery/' + archetype + '?moquiAide=source'" :title="archetype"
+                                        style="width:390px;height:600px;border:0;transform:scale(.5);transform-origin:0 0;pointer-events:none" tabindex="-1"></iframe>
+                            </div>
+                        </div>
+                    </div>
+                </q-expansion-item>]]></text><text type="tui"><![CDATA[{"t": "text", "id": "DevArchetypePreview", "text": "Archetypes: the gallery (/apps/gallery) shows each one."}]]></text></render-mode>
             </widgets>
         </section>
     </widgets>

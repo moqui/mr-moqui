@@ -26,6 +26,6 @@ along with this software (see the LICENSE.md file). If not, see
         </screen>
     </screen-facade>
     <dev-aide site-component="${dev_aide_site_component ?: ''}" shared="${dev_aide_shared ?: 'false'}"
-            allow-upstream-edits="false" git-command="git" git-read-timeout="15" git-network-timeout="300"
+            allow-upstream-edits="false" git-command="git" git-read-timeout="15" git-network-timeout="300" git-write-timeout="120"
             max-edit-bytes="2097152"/>
 </moqui-conf>

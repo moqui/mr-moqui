@@ -37,6 +37,8 @@ pub struct Settings {
     pub git_command: String,
     pub git_read_timeout: Duration,
     pub git_network_timeout: Duration,
+    /// A write may run hooks (pre-commit), so it has longer than a read.
+    pub git_write_timeout: Duration,
     /// Text over this opens read only.
     pub max_edit_bytes: u64,
     /// Roots the conf adds: (location, label).
@@ -68,6 +70,7 @@ impl Settings {
                 .unwrap_or_else(|| "git".into()),
             git_read_timeout: seconds("git-read-timeout", 15),
             git_network_timeout: seconds("git-network-timeout", 300),
+            git_write_timeout: seconds("git-write-timeout", 120),
             max_edit_bytes: attr("max-edit-bytes").parse().unwrap_or(2_097_152),
             roots: Vec::new(),
             excludes: Vec::new(),
