@@ -166,7 +166,17 @@ pub fn hold(
     let state = state.cloned().unwrap_or_else(|| canvas.data["state"].clone());
     let (method, raw_path, body) = match canvas.dialect.as_str() {
         "openui" => openui_request(factory, canvas, statement, &state)?,
-        "vue-sfc" => super::vue_sfc::action_request(&canvas.program, statement, &state)?.ok_or_else(|| {
+        // a .qvue screen's actions are its SFC's, as a Vue SFC canvas's
+        "vue-sfc" | "qvue-screen" => super::vue_sfc::action_request(
+            &if canvas.dialect == "qvue-screen" {
+                super::qvue_screen::sfc_of(&canvas.program)
+            } else {
+                canvas.program.clone()
+            },
+            statement,
+            &state,
+        )?
+        .ok_or_else(|| {
             let known: Vec<&str> = canvas.data["mutations"]
                 .as_array()
                 .into_iter()

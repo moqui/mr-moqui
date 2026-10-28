@@ -135,6 +135,8 @@ pub mod caps {
     pub const DEV: &str = "dev.aide";
     /// The `screen-xml` canvas dialect (plans/design-dev-aide.md 13.5), on the drawer of a dev-aide user.
     pub const UI_SCREEN_XML: &str = "ui.write:screen-xml";
+    /// The `qvue-screen` canvas dialect (plans/design-dev-aide.md 13.5), beside `screen-xml`.
+    pub const UI_QVUE_SCREEN: &str = "ui.write:qvue-screen";
 }
 
 /// The capabilities in effect for a run: the surface's, lowered by what the client says it can do. A client may lower

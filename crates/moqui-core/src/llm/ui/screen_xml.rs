@@ -40,10 +40,16 @@ pub struct Header {
 /// The header of a program: `<!-- screen-xml at="component://..." path="/qapps/..." -->` before its root element.
 #[must_use]
 pub fn header(program: &str) -> Option<Header> {
+    header_named(program, "screen-xml")
+}
+
+/// The header of a program whose first comment starts with `keyword` (`screen-xml`, `qvue-screen`).
+#[must_use]
+pub fn header_named(program: &str, keyword: &str) -> Option<Header> {
     let start = program.find("<!--")?;
     let end = program[start..].find("-->")? + start;
     let comment = &program[start + 4..end];
-    if !comment.trim_start().starts_with("screen-xml") {
+    if !comment.trim_start().starts_with(keyword) {
         return None;
     }
     let attribute = |name: &str| -> String {
@@ -172,7 +178,7 @@ pub fn canvas_overlay(
     let canvas = crate::llm::run::quietly(|| super::Canvas::of_id(&facade, artifact_id))
         .ok()
         .flatten()?;
-    if canvas.dialect != "screen-xml" {
+    if canvas.dialect != "screen-xml" && canvas.dialect != "qvue-screen" {
         return None;
     }
     let owner = crate::llm::run::quietly(|| {
@@ -191,8 +197,15 @@ pub fn canvas_overlay(
     if owner != user_id {
         return None;
     }
-    let header = header(&canvas.program)?;
     let mut overlay = crate::screen::overlay::Overlay::new();
+    if canvas.dialect == "qvue-screen" {
+        // the XML screen at its location and the SFC beside it as its .qvue
+        let (header, xml, sfc) = super::qvue_screen::parts(&canvas.program)?;
+        overlay.insert_location(factory, &header.location, &xml);
+        overlay.insert_location(factory, &super::qvue_screen::qvue_location(&header.location), &sfc);
+        return Some(overlay);
+    }
+    let header = header(&canvas.program)?;
     overlay.insert_location(factory, &header.location, &canvas.program);
     Some(overlay)
 }

@@ -104,7 +104,10 @@ pub(super) fn bootstrap(caller: &Caller) -> Answer {
     let dev = crate::devtools::dev_aide_user(&caller.factory, &caller.user_id);
     let mut drawer_caps = crate::llm::tools::ClientCaps::for_surface(crate::llm::prompt::Surface::Drawer);
     if dev {
-        drawer_caps = drawer_caps.with([crate::llm::tools::caps::UI_SCREEN_XML]);
+        drawer_caps = drawer_caps.with([
+            crate::llm::tools::caps::UI_SCREEN_XML,
+            crate::llm::tools::caps::UI_QVUE_SCREEN,
+        ]);
     }
     let drawer_dialects = crate::llm::ui::offered(&drawer_caps, dev);
     let dialects_of = |agent: &crate::llm::run::AgentDef| -> Json {

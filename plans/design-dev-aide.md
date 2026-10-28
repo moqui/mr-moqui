@@ -1158,7 +1158,7 @@ relative paths, subscreens and extensions resolve as they will after the save. N
   and not followed. The fragment so holds only what the macros write, as any screen render does. Canvas actions are
   the card's: Accept all (a new screen file at its path and mount, or the change set of the existing file), Review, and
   Open in the builder (the proposal becomes the builder's buffer, unsaved).
-- **`qvue-screen`** is later (P9): the program is an XML screen block and the SFC blocks of `vue-sfc` (`<template>`,
+- **`qvue-screen`** (P9; as built, §18): the program is an XML screen block and the SFC blocks of `vue-sfc` (`<template>`,
   `<script>`, `<style>`). The SFC previews in the existing sandbox frame (docs/Assist.md "Vue SFC canvases"), its
   `$bridge` reads answered by the program's own read-only transitions under the read fence and its submits held as
   approvals. Accept writes the `.xml` (with `render-modes="qvue"` and the `render-mode text` naming the `.qvue`) and
@@ -1685,6 +1685,17 @@ design mode needs (P9).
   removed with its line, and a snippet inserted before, after or last inside it (Layout, Quasar and Moqui widgets); an
   outline lists the elements; the `.tui.json` beside it is shown, or the note that there is none. The XML half opens in
   its own screen view; the view does not yet open the two files as one tab.
+- **`$bridge` and `qvue-screen`.** In a saved `.qvue` screen `$bridge` is a global of the qapps app (`moqui.bridge`):
+  `get(path, query, list)` reads a transition that answers JSON (a name alone is the current screen's), `submit(name,
+  values)` posts to the screen's transition, the same calls as the sandbox's. The `qvue-screen` dialect
+  (`llm::ui::qvue_screen`, development only, offered with `screen-xml` to a dev-aide user and in the dev agent's
+  `canvasDialects`) takes one program: the header, the XML screen, then the SFC blocks of a `vue-sfc` program. The XML is
+  checked as the editor checks it and must render its `.qvue`; the SFC is checked as a `vue-sfc` program is, and runs in
+  the Vue SFC sandbox (the canvas, `m-assist-qvue-screen`, hands it the SFC), not in the page: it is code the agent
+  wrote. Its reads go to the read proxy, which answers the screen's own page and transitions (and the reads it declared)
+  inside the canvas's overlay of both files, under the read fence; its submits are its `<actions>`, held as approvals,
+  each named as the transition it posts to in the saved screen. Accept is not on the canvas: the agent proposes both
+  files with `propose_edit`, as the skill's Canvas section says.
 
 ---
 

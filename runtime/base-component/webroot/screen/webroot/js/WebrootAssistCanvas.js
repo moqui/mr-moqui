@@ -1396,5 +1396,43 @@
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-screen-xml", screenXml);
         if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("screen-xml", { label: "Moqui screen (dev)", component: "m-assist-screen-xml", streaming: false });
     }
+    // ---- qvue-screen (plans/design-dev-aide.md 13.5): on a dev instance, a .qvue screen as it would be saved, its XML and
+    // its SFC in one program after the header <!-- qvue-screen at="component://.../X.xml" path="/qapps/..." -->. The SFC
+    // runs in the Vue SFC sandbox, as any agent-written component does; its reads are answered by the screen's own
+    // transitions with the program standing at its location, under the server's read fence; its submits are its actions.
+    {
+        canvas.qvueScreenParts = (program) => {
+            const text = String(program || "");
+            const found = /<!--\s*qvue-screen([^>]*)-->/.exec(text);
+            const start = text.indexOf("<screen"), close = text.indexOf("</screen>", start);
+            if (!found || start < 0 || close < 0) return null;
+            const attr = (name) => { const m = new RegExp(name + '="([^"]*)"').exec(found[1]); return m ? m[1] : ""; };
+            return { location: attr("at"), path: attr("path"), xml: text.slice(start, close + 9), sfc: text.slice(close + 9).replace(/^\s+/, "") };
+        };
+        const qvueScreen = {
+            name: "mAssistQvueScreen",
+            inheritAttrs: false,
+            props: { program: String, streaming: Boolean, artifactId: String, version: Number, initialState: Object, readOnly: Boolean },
+            emits: ["problems", "state", "action", "navigate"],
+            computed: { parts() { return canvas.qvueScreenParts(this.program) || { location: "", path: "", xml: "", sfc: "" }; } },
+            render() {
+                const R = (name) => root.Vue.resolveComponent(name);
+                return h("div", { class: "m-assist-qvue-screen" }, [
+                    h("div", { class: "text-caption m-muted q-mb-xs", "data-assist-qvue-location": this.parts.location },
+                        "Preview of " + (this.parts.location || "a screen") + " and its .qvue · not saved"),
+                    h(R("m-assist-vue-sfc"), Object.assign({}, this.$attrs, {
+                        program: this.parts.sfc, streaming: this.streaming, artifactId: this.artifactId, version: this.version,
+                        initialState: this.initialState, readOnly: this.readOnly,
+                        onProblems: (value) => this.$emit("problems", value), onState: (value) => this.$emit("state", value),
+                        onAction: (value) => this.$emit("action", value), onNavigate: (value) => this.$emit("navigate", value)
+                    }))
+                ]);
+            }
+        };
+        canvas.qvueScreenComponent = qvueScreen;
+        const qvt = moqui.qvt;
+        if (qvt && qvt.registerLate) qvt.registerLate("m-assist-qvue-screen", qvueScreen);
+        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("qvue-screen", { label: "Moqui .qvue screen (dev)", component: "m-assist-qvue-screen", streaming: false });
+    }
     if (moqui.assist) moqui.assist.canvas = canvas;
 })(globalThis);

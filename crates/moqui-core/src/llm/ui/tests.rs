@@ -22,7 +22,10 @@ use crate::llm::tools::{caps, ClientCaps};
 #[test]
 fn the_dialects_register_and_vue_sfc_only_for_an_agent_that_names_it() {
     let names: Vec<&str> = dialects().iter().map(|dialect| dialect.name()).collect();
-    assert_eq!(names, ["openui", "screen-xml", "vue-sfc"]);
+    assert_eq!(names, ["openui", "qvue-screen", "screen-xml", "vue-sfc"]);
+    // qvue-screen is development only too, beside screen-xml
+    assert!(dialect("qvue-screen").unwrap().dev_only());
+    assert_eq!(dialect("qvue-screen").unwrap().skill(), "qvue-screens");
     // screen-xml is development only: offered with the dev flag and its capability, to a dev-aide user
     assert!(dialect("screen-xml").unwrap().dev_only());
     assert_eq!(dialect("screen-xml").unwrap().skill(), "screen-xml");

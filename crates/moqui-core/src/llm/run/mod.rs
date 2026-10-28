@@ -469,7 +469,10 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
         if crate::devtools::dev_aide_user(factory, &request.user_id) && dev_agent() {
             caps = caps.with([crate::llm::tools::caps::DEV]);
             if caps.has(crate::llm::tools::caps::UI_OPENUI) {
-                caps = caps.with([crate::llm::tools::caps::UI_SCREEN_XML]);
+                caps = caps.with([
+                    crate::llm::tools::caps::UI_SCREEN_XML,
+                    crate::llm::tools::caps::UI_QVUE_SCREEN,
+                ]);
             }
         }
         // the canvas dialects the agent does not write are off whatever the surface offers (Vue SFC is off by default)

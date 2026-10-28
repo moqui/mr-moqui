@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     so it exists only where the component loads (a dev instance). -->
 <entity-facade-xml type="seed">
     <moqui.agent.AgentDefinition agentId="dev" agentName="Dev Assist" featureId="assist" reasoningLevel="medium"
-            surfaces="drawer,chat,tui" startPath="/apps/dev" canvasDialects="openui,screen-xml"
+            surfaces="drawer,chat,tui" startPath="/apps/dev" canvasDialects="openui,screen-xml,qvue-screen"
             instructionsLocation="component://dev-aide/prompt/dev.md"
             description="Changes and extends Moqui components on this dev instance: finds artifacts, reads and checks files, proposes change sets you accept or review, tries services in the sim."/>
     <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="10" toolPattern="artifact" classificationEnumId="AgclRead" approvalModeEnumId="AgamAsk"/>

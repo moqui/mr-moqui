@@ -291,7 +291,7 @@ fn shown_text(canvas: &Canvas, prepared: &ui::Prepared, patched: bool) -> String
             ""
         }
     );
-    if !prepared.mutations.is_empty() && canvas.dialect == "vue-sfc" {
+    if !prepared.mutations.is_empty() && (canvas.dialect == "vue-sfc" || canvas.dialect == "qvue-screen") {
         text.push_str(&format!(
             "\nActions {} run when the user submits them and confirms; to run one without that, call write_ui with run (it waits for approval).",
             prepared.mutations.join(", ")
@@ -328,7 +328,7 @@ fn propose_run(
     let held = match ui::write::hold(factory, ctx.agent, run_id.as_deref(), canvas, statement, None) {
         Ok(held) => held,
         Err(why) => {
-            let rule = if canvas.dialect == "vue-sfc" {
+            let rule = if canvas.dialect == "vue-sfc" || canvas.dialect == "qvue-screen" {
                 ui::vue_sfc::ACTIONS
             } else {
                 openui::MUTATION_SHAPE

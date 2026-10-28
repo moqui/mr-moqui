@@ -410,7 +410,7 @@ pub(super) fn canvas_adjust(caller: &Caller, params: &Params) -> Answer {
 pub(super) fn canvas_problems(caller: &Caller, params: &Params) -> Answer {
     let canvas = canvas_of(caller, params)?;
     current_version(&canvas, params)?;
-    let is_vue = canvas.dialect == "vue-sfc";
+    let is_vue = canvas.dialect == "vue-sfc" || canvas.dialect == "qvue-screen";
     let reported: Vec<openui::Problem> = params
         .json("problems")
         .and_then(|value| value.as_array().cloned())
@@ -421,7 +421,7 @@ pub(super) fn canvas_problems(caller: &Caller, params: &Params) -> Answer {
             let source = item["source"].as_str().unwrap_or("parser");
             let code = item["code"].as_str().unwrap_or_default();
             let message = item["message"].as_str().unwrap_or_default();
-            if canvas.dialect == "vue-sfc" {
+            if is_vue {
                 vue_sfc::reported(source, code, message, item["block"].as_str())
             } else {
                 openui::reported(
@@ -534,10 +534,12 @@ pub(super) fn canvas_problems(caller: &Caller, params: &Params) -> Answer {
 /// JSON), `list`, `query` (JSON of flat values), and the canvas (`artifactId`) whose agent the read goes from.
 pub(super) fn read(caller: &Caller, params: &Params) -> Answer {
     let path = params.required("path")?;
+    // a .qvue screen canvas reads with its program standing at its location (F14), so its own transitions answer
+    let mut overlay = None;
     let agent = match params.text("artifactId") {
         Some(_) => {
             let canvas = canvas_of(caller, params)?;
-            if canvas.dialect == "vue-sfc" {
+            if canvas.dialect == "vue-sfc" || canvas.dialect == "qvue-screen" {
                 // a Vue SFC canvas reads only the paths its program declared (its <reads> block), and not at all while
                 // the user lets it reach other sites, since an image of another site could carry a read's data out
                 if super::read::canvas_external(&caller.user_id) {
@@ -552,10 +554,15 @@ pub(super) fn read(caller: &Caller, params: &Params) -> Answer {
                     .filter_map(Json::as_str)
                     .map(str::to_string)
                     .collect();
-                if !vue_sfc::read_declared(&declared, &path) {
+                let own =
+                    canvas.dialect == "qvue-screen" && crate::llm::ui::qvue_screen::own_read(&canvas.program, &path);
+                if !own && !vue_sfc::read_declared(&declared, &path) {
                     return Err(DrawerError::refused(format!(
                         "{path} is not a read this canvas declared; add it to the <reads> block"
                     )));
+                }
+                if canvas.dialect == "qvue-screen" {
+                    overlay = crate::llm::ui::screen_xml::canvas_overlay(&caller.factory, &canvas.artifact_id);
                 }
             }
             agent_of(caller, &canvas)?
@@ -570,7 +577,13 @@ pub(super) fn read(caller: &Caller, params: &Params) -> Answer {
         }
     };
     let request = proxy::request_of(&path, params.text("list"), params.json("query").as_ref());
-    proxy::read(&caller.factory, &caller.user_id, &agent, &request).map_err(|error| match error.status {
+    let answer = match overlay {
+        Some(overlay) => crate::screen::overlay::with(overlay, || {
+            proxy::read(&caller.factory, &caller.user_id, &agent, &request)
+        }),
+        None => proxy::read(&caller.factory, &caller.user_id, &agent, &request),
+    };
+    answer.map_err(|error| match error.status {
         400 => DrawerError::invalid(error.message),
         403 => DrawerError::refused(error.message),
         404 => DrawerError::not_found("screen", &path),
