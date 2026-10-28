@@ -623,6 +623,9 @@ fn begin_run(
                 .one()?
                 .filter(|row| text_of(row, "userId").as_deref() == Some(request.user_id.as_str()))
                 .ok_or_else(|| Error::new(format!("there is no agent conversation {conversation_id}")))?;
+            if text_of(&row, "managedBy").is_some_and(|owner| !owner.is_empty()) {
+                return Err(Error::new("conversation is managed externally"));
+            }
             if let Some(active) = text_of(&row, "activeRunId") {
                 let state = load_run(facade, &active)?.map(|run| run.state);
                 match state {
@@ -799,6 +802,7 @@ fn take_active_in_tx(facade: &EntityFacade, conversation_id: &str, run_id: &str)
     let updated = facade
         .find(CONVERSATION)?
         .eq("conversationId", Value::string(conversation_id))
+        .condition(Condition::is_null("managedBy"))
         .condition(Condition::or(vec![
             Condition::is_null("activeRunId"),
             Condition::equals("activeRunId", Value::string(run_id)),
@@ -813,6 +817,7 @@ fn take_active_in_tx(facade: &EntityFacade, conversation_id: &str, run_id: &str)
     Ok(facade
         .find(CONVERSATION)?
         .eq("conversationId", Value::string(conversation_id))
+        .condition(Condition::is_null("managedBy"))
         .disable_authz()
         .one()?
         .and_then(|row| text_of(&row, "activeRunId"))

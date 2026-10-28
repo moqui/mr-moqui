@@ -22,6 +22,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="messageText" required="true"/>
             <parameter name="systemMessageRemoteId"/>
             <parameter name="remoteMessageId"/>
+            <parameter name="docType"/>
+            <parameter name="docVersion"/>
         </in-parameters>
         <out-parameters>
             <parameter name="systemMessageIdList" type="List"><parameter name="systemMessageId"/></parameter>
@@ -342,12 +344,18 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <!-- retryMinutes is a decimal host value, so it is read as a number for the millisecond arithmetic -->
             <set field="retryTimestamp" from="Math.trunc(Date.now() - toDecimal(retryMinutes).toNumber() * 60000)" type="Timestamp"/>
-            <entity-find entity-name="moqui.service.message.SystemMessage" list="smList" limit="200">
-                <econdition field-name="statusId" value="SmsgProduced"/>
-                <econdition field-name="isOutgoing" value="Y"/>
-                <econdition field-name="lastAttemptDate" operator="less" from="retryTimestamp" or-null="true"/>
-                <order-by field-name="initDate"/><!-- get oldest first -->
-            </entity-find>
+            <script><![CDATA[
+                const ownedTypes = ec.entity.find('moqui.service.message.SystemMessageType')
+                    .condition('sendScheduled', 'N').list().map(type => type.get('systemMessageTypeId'));
+                let messages = ec.entity.find('moqui.service.message.SystemMessage')
+                    .condition('statusId', 'SmsgProduced').condition('isOutgoing', 'Y')
+                    .condition(ec.entity.conditionFactory.makeCondition([
+                        ec.entity.conditionFactory.makeCondition('lastAttemptDate', 'less', retryTimestamp),
+                        ec.entity.conditionFactory.makeCondition('lastAttemptDate', null)
+                    ], 'or'));
+                if (ownedTypes.length) messages = messages.condition('systemMessageTypeId', 'not-in', ownedTypes);
+                smList = messages.orderBy('initDate').limit(200).list();
+            ]]></script>
             <iterate list="smList" entry="sm">
                 <if condition="(sm.get('failCount') || 0) &lt; retryLimit">
                     <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage"

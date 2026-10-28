@@ -43,6 +43,153 @@ fn setup() -> (EntityFacade, ExecutionContext) {
     (facade, context)
 }
 
+#[test]
+fn component_owned_message_queues_do_not_fill_the_scheduled_batch() {
+    let (facade, context) = setup();
+    crate::testing::seed_status_flows(&facade);
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["impl/SystemMessageServices.xml"]);
+    seed(
+        &facade,
+        "moqui.service.message.SystemMessageType",
+        &[("systemMessageTypeId", "OwnedQueue"), ("sendScheduled", "N")],
+    );
+    seed(
+        &facade,
+        "moqui.service.message.SystemMessageType",
+        &[("systemMessageTypeId", "StandardQueue")],
+    );
+    for index in 0..201 {
+        seed(
+            &facade,
+            "moqui.service.message.SystemMessage",
+            &[
+                ("systemMessageId", &format!("owned-{index:03}")),
+                ("systemMessageTypeId", "OwnedQueue"),
+                ("statusId", "SmsgProduced"),
+                ("isOutgoing", "Y"),
+                ("initDate", "2000-01-01 00:00:00"),
+            ],
+        );
+    }
+    seed(
+        &facade,
+        "moqui.service.message.SystemMessage",
+        &[
+            ("systemMessageId", "standard"),
+            ("systemMessageTypeId", "StandardQueue"),
+            ("statusId", "SmsgProduced"),
+            ("isOutgoing", "Y"),
+            ("initDate", "2001-01-01 00:00:00"),
+        ],
+    );
+    // Exhaust the eligible batch synchronously: selecting a row marks it Error instead of dispatching transport.
+    super::sync(
+        "org.moqui.impl.SystemMessageServices.send#AllProducedSystemMessages",
+        &BTreeMap::from([("retryLimit".into(), Value::I32(0))]),
+    )
+    .unwrap();
+    assert!(errors(&context).is_empty(), "{}", errors(&context));
+    assert_eq!(
+        field(
+            &facade,
+            "moqui.service.message.SystemMessage",
+            ("systemMessageId", "standard"),
+            "statusId"
+        ),
+        "SmsgError"
+    );
+    assert_eq!(
+        field(
+            &facade,
+            "moqui.service.message.SystemMessage",
+            ("systemMessageId", "owned-000"),
+            "statusId"
+        ),
+        "SmsgProduced"
+    );
+}
+
+#[test]
+fn incoming_message_metadata_is_present_on_the_first_insert() {
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["impl/SystemMessageServices.xml"]);
+    seed(
+        &facade,
+        "moqui.service.message.SystemMessageType",
+        &[("systemMessageTypeId", "MetadataProbe")],
+    );
+    let out = super::sync(
+        "org.moqui.impl.SystemMessageServices.receive#IncomingSystemMessage",
+        &params(&[
+            ("systemMessageTypeId", "MetadataProbe"),
+            ("messageText", "{}"),
+            ("docType", "snapshot"),
+            ("docVersion", "2"),
+        ]),
+    )
+    .unwrap();
+    assert!(errors(&context).is_empty(), "{}", errors(&context));
+    let Some(Value::List(ids)) = out.get("systemMessageIdList") else {
+        panic!("{out:?}")
+    };
+    let id = to_plain_string(&ids[0]);
+    assert!(!id.is_empty(), "{out:?}");
+    assert_eq!(
+        field(
+            &facade,
+            "moqui.service.message.SystemMessage",
+            ("systemMessageId", &id),
+            "docType"
+        ),
+        "snapshot"
+    );
+    assert_eq!(
+        field(
+            &facade,
+            "moqui.service.message.SystemMessage",
+            ("systemMessageId", &id),
+            "docVersion"
+        ),
+        "2"
+    );
+}
+
+#[test]
+fn a_configured_service_file_outside_component_roots_is_found_by_name() {
+    let directory = std::env::temp_dir().join(format!(
+        "moqui-configured-service-{}/service/external",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("Configured.xml");
+    std::fs::write(
+        &file,
+        r#"<services><service verb="read" noun="Configured" authenticate="false">
+        <out-parameters><parameter name="result"/></out-parameters>
+        <actions><set field="result" value="configured"/></actions>
+    </service></services>"#,
+    )
+    .unwrap();
+    let context = ExecutionContextFactory::test_context_in(
+        &format!(
+            "<moqui-conf><service-facade><service-file location=\"{}\"/></service-facade></moqui-conf>",
+            file.display()
+        ),
+        ServicePools::idle(),
+        crate::context::framework_dir(),
+    );
+    context.factory().set_entity(crate::testing::open());
+    let _entered = context.enter();
+    let result = super::sync("external.Configured.read#Configured", &BTreeMap::new()).unwrap();
+    assert_eq!(text(&result, "result"), "configured");
+    assert!(errors(&context).is_empty(), "{}", errors(&context));
+    let _ = std::fs::remove_dir_all(directory.parent().unwrap().parent().unwrap());
+}
+
 fn install(files: &[&str]) {
     let dir = crate::context::framework_dir().join("service/org/moqui");
     let paths: Vec<_> = files.iter().map(|file| dir.join(file)).collect();

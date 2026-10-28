@@ -288,6 +288,8 @@ along with this software (see the LICENSE.md file). If not, see
             acknowledgement of a message. Should implement the org.moqui.impl.SystemMessageServices.produce#AckSystemMessage.
             Once the message is produced should call the org.moqui.impl.SystemMessageServices.queue#SystemMessage service.</description></field>
         <field name="produceAckOnConsumed" type="text-indicator"/>
+        <field name="sendScheduled" type="text-indicator"><description>N when the component sends this type through its
+            own queue. The standard scheduled sender excludes these messages before applying its batch limit.</description></field>
         <field name="sendServiceName" type="text-medium"><description>The service to call to send queued messages.
             Should implement the org.moqui.impl.SystemMessageServices.send#SystemMessage interface (just a
             systemMessageId in-parameter and remoteMessageId out-parameter). Used by the send#ProducedSystemMessage service,

@@ -665,6 +665,12 @@ fn service_file_of(name: &str) -> Option<PathBuf> {
         .iter()
         .map(|root| root.join(&relative))
         .find(|candidate| candidate.is_file())
+        .or_else(|| {
+            configured_paths()
+                .ok()?
+                .into_iter()
+                .find(|path| path.is_file() && service_prefix(path) == file)
+        })
 }
 
 /// The `service` directories of the framework and then each component, in Java's search order: the classpath first,

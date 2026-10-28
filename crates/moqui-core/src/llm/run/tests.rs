@@ -168,6 +168,30 @@ fn roles(request: &Json) -> Vec<String> {
 }
 
 #[test]
+fn an_external_conversation_cannot_be_claimed_by_the_builtin_engine() {
+    let bed = bed("external-owner");
+    let _entered = bed.ctx.enter();
+    row(
+        &bed.facade,
+        CONVERSATION,
+        &[
+            ("conversationId", "external-thread"),
+            ("userId", USER),
+            ("managedBy", "external-adapter"),
+            ("statusId", "AgcActive"),
+        ],
+    );
+    let request = StartRequest {
+        conversation_id: Some("external-thread".into()),
+        ..request("hello")
+    };
+    let error = start_run(&bed.factory, &request).unwrap_err();
+    assert!(error.to_string().contains("managed externally"), "{error}");
+    assert!(!take_active(&bed.facade, "external-thread", "run-1").unwrap());
+    assert_eq!(bed.facade.find(RUN).unwrap().count().unwrap(), 0);
+}
+
+#[test]
 fn a_run_streams_its_answer_as_numbered_events_and_completes() {
     let bed = bed("stream");
     let _entered = bed.ctx.enter();
