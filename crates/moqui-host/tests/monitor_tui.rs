@@ -304,6 +304,23 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     let xlsx = dashboard.session_mut().take_downloads();
     assert_eq!(xlsx.len(), 1, "{}", dashboard.session().message());
     assert!(xlsx[0].bytes.starts_with(b"PK"));
+    // d k: kiosk mode draws the dashboard alone, without the app chrome; Esc brings the chrome back.
+    let chrome = dashboard.screen_text(180, 80);
+    let title = chrome.lines().next().unwrap_or("").to_string();
+    assert!(title.contains("Dashboard"), "{chrome}");
+    press(&mut dashboard, Key::Char('d'));
+    press(&mut dashboard, Key::Char('k'));
+    let kiosk = dashboard.screen_text(180, 80);
+    assert!(kiosk.contains("(kiosk; Esc or d k leaves)"), "{kiosk}");
+    assert!(
+        kiosk.contains("TUI severity total") && !kiosk.contains(&title),
+        "{kiosk}"
+    );
+    // Tab moves the focus, but the hidden screen cannot keep the keys from the kiosk.
+    press(&mut dashboard, Key::Tab);
+    press(&mut dashboard, Key::Escape);
+    assert!(dashboard.screen_text(180, 80).contains(&title));
+    assert_eq!(dashboard.session().focus_id(), id);
     press(&mut dashboard, Key::Char('v'));
     assert_eq!(
         dashboard.session().parameters().get("panelId").map(String::as_str),

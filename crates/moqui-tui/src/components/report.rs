@@ -8,6 +8,8 @@ use crate::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod visual;
+
 pub struct ReportPanel;
 pub struct ReportDashboard;
 pub struct TraceWaterfall;
@@ -26,23 +28,95 @@ fn integer(value: &Value) -> Option<u64> {
         .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
 }
 
+/// The value mappings of a field that match a value: by value, then by range.
+fn mappings_for<'a>(value: &'a Value, field: &'a Value) -> impl Iterator<Item = &'a Value> {
+    field["mappings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |mapping| {
+            let exact = mapping
+                .get("value")
+                .is_some_and(|mapped| mapped == value || text_of(Some(mapped)) == text_of(Some(value)));
+            let range = number(value)
+                .zip(number(&mapping["from"]))
+                .zip(number(&mapping["to"]))
+                .is_some_and(|((value, from), to)| value >= from && value <= to);
+            exact || range
+        })
+}
+
+/// The ISO 4217 code of a currency unit: `USD` or `currency:USD`, as the browser's `report.format` takes it.
+fn currency_code(unit: &str) -> Option<&str> {
+    let code = unit.strip_prefix("currency:").unwrap_or(unit);
+    (code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_uppercase())).then_some(code)
+}
+
+/// A currency amount as the browser's `toLocaleString(undefined, {style: "currency"})` shows it in English: the
+/// symbol, grouped thousands, at most `decimals` (default 2) places and at least the currency's minor units.
+fn currency_text(value: f64, code: &str, decimals: Option<u64>) -> String {
+    let (symbol, minor) = match code {
+        "USD" => ("$", 2),
+        "EUR" => ("€", 2),
+        "GBP" => ("£", 2),
+        "JPY" => ("¥", 0),
+        "CNY" => ("CN¥", 2),
+        "INR" => ("₹", 2),
+        "CAD" => ("CA$", 2),
+        "AUD" => ("A$", 2),
+        "NZD" => ("NZ$", 2),
+        "HKD" => ("HK$", 2),
+        "MXN" => ("MX$", 2),
+        "BRL" => ("R$", 2),
+        "KRW" => ("₩", 0),
+        "ILS" => ("₪", 2),
+        "VND" => ("₫", 0),
+        "PHP" => ("₱", 2),
+        "TWD" => ("NT$", 2),
+        _ => ("", 2),
+    };
+    let most = decimals.unwrap_or(2).min(12) as usize;
+    let least = minor.min(most);
+    let mut text = format!("{:.most$}", value.abs());
+    if let Some(point) = text.find('.') {
+        let keep = text.trim_end_matches('0').len().max(point + 1 + least);
+        text.truncate(keep);
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    let (whole, fraction) = text
+        .split_once('.')
+        .map_or((text.as_str(), ""), |(whole, fraction)| (whole, fraction));
+    let mut grouped = String::new();
+    for (at, digit) in whole.chars().enumerate() {
+        if at > 0 && (whole.len() - at) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    if !fraction.is_empty() {
+        grouped.push('.');
+        grouped.push_str(fraction);
+    }
+    let sign = if value < 0.0 && grouped.bytes().any(|byte| byte.is_ascii_digit() && byte != b'0') {
+        "-"
+    } else {
+        ""
+    };
+    if symbol.is_empty() {
+        format!("{sign}{code} {grouped}")
+    } else {
+        format!("{sign}{symbol}{grouped}")
+    }
+}
+
 fn formatted(value: &Value, field: &Value) -> String {
     if value.is_null() {
         return field["noValue"].as_str().unwrap_or("—").into();
     }
-    for mapping in field["mappings"].as_array().into_iter().flatten() {
-        let exact = mapping
-            .get("value")
-            .is_some_and(|mapped| mapped == value || text_of(Some(mapped)) == text_of(Some(value)));
-        let range = number(value)
-            .zip(number(&mapping["from"]))
-            .zip(number(&mapping["to"]))
-            .is_some_and(|((value, from), to)| value >= from && value <= to);
-        if exact || range {
-            if let Some(text) = mapping["text"].as_str() {
-                return text.into();
-            }
-        }
+    if let Some(text) = mappings_for(value, field).find_map(|mapping| mapping["text"].as_str()) {
+        return text.into();
     }
     if field["type"] == "time" {
         return value
@@ -58,6 +132,9 @@ fn formatted(value: &Value, field: &Value) -> String {
         return text_of(Some(value));
     }
     if let Some(mut value) = number(value) {
+        if let Some(code) = field["unit"].as_str().and_then(currency_code) {
+            return currency_text(value, code, field["decimals"].as_u64());
+        }
         let suffix = match field["unit"].as_str().unwrap_or("") {
             "ns" | "duration" => {
                 value /= 1_000_000.0;
@@ -187,6 +264,9 @@ struct TrendSeries {
 struct Trends {
     series: Vec<TrendSeries>,
     limited: bool,
+    /// The x of each point, in order, and the field they come from (none: the row number).
+    coordinates: Vec<Value>,
+    x: Option<Value>,
 }
 
 /// Split before drawing: absent coordinates remain null and duplicate observations
@@ -338,6 +418,8 @@ fn trend_series(frame: &Value, panel: &Value) -> Trends {
     let mut result = Trends {
         series: Vec::new(),
         limited,
+        x: x.map(|index| fields[index].clone()),
+        coordinates,
     };
     for (label, points) in groups.values() {
         let tracks = points.iter().map(Vec::len).max().unwrap_or(0);
@@ -352,10 +434,21 @@ fn trend_series(frame: &Value, panel: &Value) -> Trends {
                     .iter()
                     .map(|row| row.map_or(Value::Null, |row| at(metric, row)))
                     .collect();
-                let field: Value = ["name", "type", "unit", "decimals", "noValue", "mappings"]
-                    .into_iter()
-                    .filter_map(|key| fields[metric].get(key).map(|value| (key.to_string(), value.clone())))
-                    .collect();
+                let field: Value = [
+                    "name",
+                    "type",
+                    "unit",
+                    "decimals",
+                    "noValue",
+                    "mappings",
+                    "min",
+                    "max",
+                    "thresholds",
+                    "thresholdMode",
+                ]
+                .into_iter()
+                .filter_map(|key| fields[metric].get(key).map(|value| (key.to_string(), value.clone())))
+                .collect();
                 let name = fields[metric]["name"].as_str().unwrap_or("");
                 let mut label = if label.is_empty() {
                     name.into()
@@ -471,6 +564,12 @@ fn is_metadata(field: &Value) -> bool {
 }
 
 fn panel_lines(frame: &Value, panel: &Value, width: u16) -> Vec<Line> {
+    panel_view(frame, panel, width, true)
+}
+
+/// A panel's lines. A chart replaces the table unless `table` (a single panel, or a dashboard panel in table mode,
+/// whose cells take the arrows, links and filters); a chart that does not fit or has nothing to draw is the table.
+fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line> {
     let mut lines = Vec::new();
     let title = panel["title"].as_str().unwrap_or("Report");
     lines.push(vec![Span::new(title, Role::Text).bold()]);
@@ -505,6 +604,12 @@ fn panel_lines(frame: &Value, panel: &Value, width: u16) -> Vec<Line> {
         )]);
     }
     let visual = panel["visualization"].as_str().unwrap_or("table");
+    if let Some(chart) = visual::chart(frame, panel, visual, usize::from(width)) {
+        lines.extend(chart);
+        if !table || matches!(visual, "gauge" | "barGauge") {
+            return lines;
+        }
+    }
     if matches!(
         visual,
         "stat" | "gauge" | "barGauge" | "timeSeries" | "timeseries" | "line" | "area"
@@ -922,6 +1027,20 @@ fn dashboard_url(dashboard: &Value, action: &str, panel_id: Option<&str>, mode: 
             .join("&")
     )
 }
+/// Kiosk mode: the dashboard alone on the terminal, as `kiosk=true` opens it or `d k` turns it on.
+fn kiosk(data: &Value, state: &ComponentState) -> bool {
+    state.local["kiosk"]
+        .as_bool()
+        .unwrap_or(data["dashboard"]["kiosk"] == true)
+}
+
+/// The dashboard's refresh interval in seconds; under 5 it does not refresh on its own, as in the browser.
+fn refresh_seconds(data: &Value) -> Option<u64> {
+    number(&data["dashboard"]["refreshSeconds"])
+        .filter(|seconds| *seconds >= 5.0)
+        .map(|seconds| (seconds.min(86_400.0)) as u64)
+}
+
 fn span_stamp(span: &Value) -> u64 {
     integer(&span["start_nano"]).unwrap_or_else(|| {
         integer(&span["start"])
@@ -952,7 +1071,16 @@ impl Component for ReportDashboard {
         let mut lines = Vec::new();
         let (_, controls) = layout_view(data, state);
         let focus = state.local["layoutFocus"].as_u64().unwrap_or(0) as usize;
-        if let Some(panel) = data["dashboard"]["panelId"].as_str().filter(|panel| !panel.is_empty()) {
+        let kiosk = kiosk(data, state);
+        if kiosk {
+            lines.push(vec![Span::new(
+                format!(
+                    "{}  (kiosk; Esc or d k leaves)",
+                    data["dashboard"]["title"].as_str().unwrap_or("Dashboard")
+                ),
+                Role::Muted,
+            )]);
+        } else if let Some(panel) = data["dashboard"]["panelId"].as_str().filter(|panel| !panel.is_empty()) {
             lines.push(vec![Span::new(
                 format!("Showing panel {panel}; Esc shows all panels"),
                 Role::Muted,
@@ -978,7 +1106,7 @@ impl Component for ReportDashboard {
             )]);
         }
         for (at, (id, panel)) in entries.iter().enumerate() {
-            if at == state.at {
+            if at == state.at && !kiosk {
                 lines.push(vec![Span::new(
                     "▶ Selected panel; i inspects, c/x exports CSV/XLSX",
                     Role::Muted,
@@ -995,7 +1123,12 @@ impl Component for ReportDashboard {
             if at == state.at && state.closed.contains("__table_mode") {
                 lines.push(selection_line(&frame, panel, &table));
             }
-            lines.extend(panel_lines(&frame, panel, width));
+            lines.extend(panel_view(
+                &frame,
+                panel,
+                width,
+                at == state.at && state.closed.contains("__table_mode"),
+            ));
             if at == state.at && state.closed.contains("__report_inspector") {
                 lines.push(vec![Span::new("Inspector: authorized query requests and per-step input/output snapshots (native view capped at 1,200 lines; server sampling/truncation flags included)",Role::Muted)]);
                 let inspected = &state.local["inspection"]["dashboard"]["panels"][id];
@@ -1009,8 +1142,27 @@ impl Component for ReportDashboard {
         lines
     }
     fn key(&self, props: &Value, state: &mut ComponentState, press: &KeyPress, _wide: bool) -> Option<Vec<Act>> {
+        let data = state.data.as_ref().unwrap_or(props).clone();
+        // Esc leaves kiosk mode first, then the inspector, then the single-panel view; `d k` and Alt+K toggle it.
+        if press.alt && !press.ctrl && press.key == Key::Char('k') {
+            state.local["kiosk"] = Value::Bool(!kiosk(&data, state));
+            return Some(Vec::new());
+        }
         if press.is_plain() {
-            let data = state.data.as_ref().unwrap_or(props).clone();
+            if press.key == Key::Escape && kiosk(&data, state) {
+                state.closed.remove("__d_prefix");
+                state.local["kiosk"] = Value::Bool(false);
+                return Some(Vec::new());
+            }
+            if state.closed.remove("__d_prefix") {
+                if press.key == Key::Char('k') {
+                    state.local["kiosk"] = Value::Bool(!kiosk(&data, state));
+                    return Some(Vec::new());
+                }
+            } else if press.key == Key::Char('d') && !state.closed.contains("__time_prefix") {
+                state.closed.insert("__d_prefix".into());
+                return Some(Vec::new());
+            }
             let entries = dashboard_entries(&data, state);
             let dashboard = &data["dashboard"];
             if state.closed.contains("__table_mode") {
@@ -1183,6 +1335,22 @@ impl Component for ReportDashboard {
             }]
         })
     }
+    fn kiosk(&self, props: &Value, state: &ComponentState) -> bool {
+        kiosk(state.data.as_ref().unwrap_or(props), state)
+    }
+    fn poll_millis(&self, props: &Value, state: &ComponentState) -> Option<u64> {
+        refresh_seconds(state.data.as_ref().unwrap_or(props)).map(|seconds| seconds * 1000)
+    }
+    fn tick(&self, props: &Value, state: &mut ComponentState) -> Vec<Act> {
+        if state.loading {
+            return Vec::new();
+        }
+        vec![if source_of(props, state).is_some() {
+            Act::Reload
+        } else {
+            Act::ReloadScreen
+        }]
+    }
     fn receive(&self, _props: &Value, state: &mut ComponentState, value: Value) {
         if state.local["inspectionRequest"] == true {
             state.local["inspection"] = value;
@@ -1201,12 +1369,13 @@ impl Component for ReportDashboard {
             ("←/→", "Choose dashboard tab"),
             ("i", "Inspect selected panel"),
             ("v/Enter", "View panel"),
-            ("Esc", "Close inspector; all panels"),
+            ("Esc", "Leave kiosk; close inspector; all panels"),
+            ("d k", "Kiosk mode (also Alt+K)"),
             ("e", "Edit definition"),
             ("c/x", "Export CSV/XLSX"),
             ("t-", "Zoom out"),
             ("t←/t→", "Shift time range"),
-            ("r", "Refresh dashboard"),
+            ("r", "Refresh dashboard (also every refresh interval)"),
         ]
     }
 }
@@ -1291,12 +1460,16 @@ impl Component for ReportPlaylist {
     fn receive(&self, props: &Value, state: &mut ComponentState, value: Value) {
         ReportDashboard.receive(props, state, value);
     }
+    fn kiosk(&self, props: &Value, state: &ComponentState) -> bool {
+        ReportDashboard.kiosk(props, state)
+    }
     fn help(&self) -> &'static [(&'static str, &'static str)] {
         &[
             ("n/b", "Next/previous dashboard"),
             ("p", "Pause/resume playlist"),
             ("g", "Table controls"),
             ("i", "Inspect panel"),
+            ("d k", "Kiosk mode; Esc leaves"),
         ]
     }
 }
@@ -1996,6 +2169,104 @@ mod gap_tests {
             ),
             None
         );
+    }
+    #[test]
+    fn kiosk_mode_toggles_with_d_k_and_esc_leaves_it_before_the_single_panel_view() {
+        let props = json!({"dashboard":{"definitionId":"d","title":"Shipping board","panelId":"p","refreshSeconds":30,"panels":{"p":{"title":"Orders"}}},"frames":{}});
+        let mut state = ComponentState::default();
+        let text = |state: &ComponentState| {
+            ReportDashboard
+                .lines(&props, state, 100, false)
+                .iter()
+                .map(super::super::line_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(!ReportDashboard.kiosk(&props, &state));
+        assert_eq!(
+            ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Char('d')), false),
+            Some(Vec::new())
+        );
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Char('k')), false);
+        assert!(ReportDashboard.kiosk(&props, &state));
+        let shown = text(&state);
+        assert!(shown.contains("Shipping board  (kiosk; Esc or d k leaves)"), "{shown}");
+        assert!(
+            !shown.contains("Showing panel") && !shown.contains("Selected panel"),
+            "{shown}"
+        );
+        // Esc leaves kiosk first, then the single-panel view.
+        assert_eq!(
+            ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Escape), false),
+            Some(Vec::new())
+        );
+        assert!(!ReportDashboard.kiosk(&props, &state));
+        assert!(matches!(
+            ReportDashboard
+                .key(&props, &mut state, &KeyPress::plain(Key::Escape), false)
+                .as_deref(),
+            Some([Act::Follow(_)])
+        ));
+        // Alt+K as in the browser; a kiosk=true dashboard opens in kiosk mode.
+        let alt = KeyPress {
+            alt: true,
+            ..KeyPress::plain(Key::Char('k'))
+        };
+        ReportDashboard.key(&props, &mut state, &alt, false);
+        assert!(ReportDashboard.kiosk(&props, &state));
+        let mut opened = props.clone();
+        opened["dashboard"]["kiosk"] = json!(true);
+        assert!(ReportDashboard.kiosk(&opened, &ComponentState::default()));
+        // The dashboard's refresh interval reloads it: the screen, for inline frames.
+        assert_eq!(ReportDashboard.poll_millis(&props, &state), Some(30_000));
+        assert_eq!(ReportDashboard.tick(&props, &mut state), vec![Act::ReloadScreen]);
+        let mut slow = props.clone();
+        slow["dashboard"]["refreshSeconds"] = json!(2);
+        assert_eq!(ReportDashboard.poll_millis(&slow, &state), None);
+    }
+    #[test]
+    fn currency_units_format_as_the_browser_does() {
+        let field = |unit: &str| json!({"type":"number","unit":unit});
+        assert_eq!(formatted(&json!(1234567.5), &field("USD")), "$1,234,567.50");
+        assert_eq!(formatted(&json!(-12), &field("currency:EUR")), "-€12.00");
+        assert_eq!(formatted(&json!(1234.4), &field("JPY")), "¥1,234.4");
+        assert_eq!(formatted(&json!(1234), &field("JPY")), "¥1,234");
+        assert_eq!(formatted(&json!(5), &field("XYZ")), "XYZ 5.00");
+        assert_eq!(
+            formatted(&json!(9.999), &json!({"type":"number","unit":"GBP","decimals":0})),
+            "£10"
+        );
+        assert_eq!(formatted(&json!(5), &field("usd")), "5", "not a currency code");
+    }
+    #[test]
+    fn dashboard_charts_replace_the_table_except_in_table_mode() {
+        let props = json!({"dashboard":{"definitionId":"d","panels":{"p":{"title":"By status","visualization":"bar"}}},
+            "frames":{"p":[{"fields":[{"name":"status","type":"string","values":["Approved","Held"]},{"name":"orders","type":"number","values":[4,2]}]}]}});
+        let mut state = ComponentState::default();
+        let text = |state: &ComponentState| {
+            ReportDashboard
+                .lines(&props, state, 80, false)
+                .iter()
+                .map(super::super::line_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let chart = text(&state);
+        assert!(
+            chart.contains("Approved │████") && !chart.contains("status  "),
+            "{chart}"
+        );
+        ReportDashboard.key(&props, &mut state, &KeyPress::plain(Key::Char('g')), false);
+        let table = text(&state);
+        assert!(table.contains("Approved │") && table.contains("orders"), "{table}");
+        // Too narrow for the chart: the table.
+        let narrow = ReportDashboard
+            .lines(&props, &ComponentState::default(), 24, false)
+            .iter()
+            .map(super::super::line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!narrow.contains('│') && narrow.contains("orders"), "{narrow}");
     }
     #[test]
     fn playlist_rotation_is_bounded_pauses_and_preserves_request_authority() {

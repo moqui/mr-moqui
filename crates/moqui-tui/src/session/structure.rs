@@ -168,6 +168,32 @@ impl Session {
         self.components.get(id)
     }
 
+    /// The component in kiosk mode, the focused one first: it alone draws, over the whole terminal, and takes the keys.
+    pub fn kiosk_component(&self) -> Option<String> {
+        let kiosk = |id: &str| {
+            self.index
+                .components
+                .get(id)
+                .zip(self.components.get(id))
+                .is_some_and(|(info, state)| {
+                    crate::components::find(&info.name).is_some_and(|component| component.kiosk(&info.props, state))
+                })
+        };
+        if kiosk(self.focus_id()) {
+            return Some(self.focus_id().to_string());
+        }
+        self.index.components.keys().find(|id| kiosk(id)).cloned()
+    }
+
+    /// The kiosk component's id and its lines at `width`.
+    pub fn kiosk_lines(&self, width: u16) -> Option<(String, Vec<crate::components::Line>)> {
+        let id = self.kiosk_component()?;
+        let info = self.index.components.get(&id)?;
+        let state = self.components.get(&id)?;
+        let lines = crate::components::find(&info.name)?.lines(&info.props, state, width, width >= 180);
+        Some((id, lines))
+    }
+
     /// A display's text from its value url, when one came.
     pub fn shown_text(&self, field: &str) -> Option<&str> {
         self.shown_text.get(field).map(String::as_str)
