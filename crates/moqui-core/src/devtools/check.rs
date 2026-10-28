@@ -97,6 +97,12 @@ pub const RULES: &[(&str, &str, &str)] = &[
         "Extending",
         "The base screen has no element of this name to extend.",
     ),
+    ("extension.entity", "Extending", "No entity has this name to extend."),
+    (
+        "extension.rule",
+        "Extending",
+        "No service or entity has this name for the rule to run on.",
+    ),
 ];
 
 fn problem(path: &str, line: u32, column: u32, severity: Severity, rule: &str, detail: &str) -> Problem {
@@ -390,101 +396,34 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
     }
 }
 
-/// The extension anchors of every component (plans/design-dev-aide.md 5.6): each `screen-extend` file has a base
-/// screen at its path, and each form, section and `widgets-extend` it names by `name` is in that base screen. An
-/// `extend-entity` naming an entity that is gone is a [`check_file`] reference problem of its entity file.
+/// The extensions of every component (plans/design-dev-aide.md 5.6), from the artifact index read into memory: each
+/// `screen-extend` file has a base screen at its path and each form, section, container or transition it names there,
+/// each `extend-entity` an entity, and each ECA rule the service or entity it runs on.
 #[must_use]
 pub fn check_extensions(factory: &Arc<ExecutionContextFactory>) -> Vec<Problem> {
-    let mut problems = Vec::new();
-    for component in factory.components() {
-        let dir = component.location.join("screen-extend");
-        let mut files = Vec::new();
-        collect_xml(&dir, &mut files);
-        for file in files {
-            let Ok(relative) = file.strip_prefix(&dir) else {
-                continue;
-            };
-            let display = file.display().to_string();
-            let Some(base) = extended_screen(factory, relative) else {
-                problems.push(problem(
-                    &display,
-                    0,
-                    0,
-                    Severity::Error,
-                    "extension.base",
-                    &format!("no screen at {}", relative.display()),
-                ));
-                continue;
-            };
-            let (Ok(extend), Ok(base_root)) = (MNode::parse_file(&file), MNode::parse_file(&base)) else {
-                continue;
-            };
-            let mut names = std::collections::BTreeSet::new();
-            let mut stack = vec![base_root];
-            while let Some(node) = stack.pop() {
-                stack.extend(node.child_iter());
-                names.extend(node.attribute("name"));
-                names.extend(node.attribute("id"));
-            }
-            for node in extend.child_iter() {
-                let element = node.name();
-                if !matches!(
-                    element.as_str(),
-                    "widgets-extend" | "form-single" | "form-list" | "section" | "section-iterate"
-                ) {
-                    continue;
-                }
-                let Some(name) = node.attribute("name").filter(|name| refs::is_literal(name)) else {
-                    continue;
-                };
-                if !names.contains(&name) {
-                    problems.push(problem(
-                        &display,
-                        node.line(),
-                        node.column(),
-                        Severity::Error,
-                        "extension.anchor",
-                        &format!("<{element} name=\"{name}\"> extends {}", base.display()),
-                    ));
-                }
-            }
-        }
-    }
-    problems
+    let index = super::index::MemoryIndex::build(factory);
+    extension_problems(&index.extensions(&[]))
 }
 
-/// The base screen file a `screen-extend` file at `relative` (under a `screen-extend` directory) extends: by its full
-/// `component://` path (`example/screen/Gallery/X.xml`), else by its path under any component's `screen` directory.
-fn extended_screen(factory: &ExecutionContextFactory, relative: &Path) -> Option<std::path::PathBuf> {
-    let text = relative.to_string_lossy().replace('\\', "/");
-    if let Some(found) = factory
-        .resource()
-        .get(&format!("component://{text}"))
-        .ok()
-        .and_then(|resource| resource.file_path().map(Path::to_path_buf))
-        .filter(|path| path.is_file())
-    {
-        return Some(found);
-    }
-    factory
-        .components()
+/// The problems of the extensions whose targets are gone.
+#[must_use]
+pub fn extension_problems(extensions: &[super::index::Extension]) -> Vec<Problem> {
+    extensions
         .iter()
-        .map(|component| component.location.join("screen").join(relative))
-        .find(|path| path.is_file())
-}
-
-fn collect_xml(dir: &Path, into: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_xml(&path, into);
-        } else if path.extension().is_some_and(|ext| ext == "xml") {
-            into.push(path);
-        }
-    }
+        .filter(|extension| !extension.resolved)
+        .map(|extension| {
+            let (rule, detail) = match (extension.ref_type.as_str(), extension.kind.as_str()) {
+                ("anchor", _) => (
+                    "extension.anchor",
+                    format!("\"{}\" extends {}", extension.target, extension.scope),
+                ),
+                (_, "screen-extend") => ("extension.base", format!("no screen at {}", extension.target)),
+                (_, "extend-entity") => ("extension.entity", format!("extend-entity {}", extension.target)),
+                (_, kind) => ("extension.rule", format!("{kind} on {}", extension.target)),
+            };
+            problem(&extension.path, extension.line, 0, Severity::Error, rule, &detail)
+        })
+        .collect()
 }
 
 /// Line and column of a parse error message that names them (`line 3, column 7`, or `:3:7`), else 0.

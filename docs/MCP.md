@@ -90,6 +90,11 @@ Every result has `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`.
 
 - the read tools `data`, `screen` (when the host has screen sessions), `search` and `skill`, as the registry has them
   for the `mcp` surface, whose one capability is `approval.link` (no `screen.follow`, no `write_ui`, no `ask`);
+- on a dev instance with the dev-aide loaded, for a caller with a Dev AIDE permission (`DEV_AIDE_VIEW`,
+  `DEV_AIDE_EXTEND` or `DEV_AIDE`), the dev tools a component registers for MCP (`ToolSpec.mcp`, the `dev.aide`
+  capability): `artifact` (find, describe, refs and at over the artifact index), `source` (a file's lines or an
+  artifact's element, its outline and git status) and `check` (the checks of a file or of proposed text, each problem
+  with its rule and skill section; plans/design-dev-aide.md 13.6);
 - each exposed service the MCP agent's policy and role group and the caller's own permissions let run, by its tool name
   made safe for MCP (characters outside `[A-Za-z0-9_.-]` become `_`); its schema is the exposure's override or the
   service's parameters; a write says it waits for approval. Past `max-direct-tools` services, `find_tools`,

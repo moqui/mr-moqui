@@ -13,7 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Dev AIDE, the assisted IDE (plans/design-dev-aide.md 1): Home (the site's changes, Publish, the reload log), the
-    Workspace (the IDE: repositories and directories, files in the editor, changes and commits) and Settings. Mounted under
+    Workspace (the IDE: repositories and directories, files in the editor, changes and commits), Artifacts (search, the
+    references, the site's customizations) and Settings. Mounted under
     apps as dev by the component's MoquiConf.xml; only on a dev instance, for ADMIN, DEV_AIDE_USERS and DEV_AIDE_EXTENDERS
     (the DEV_AIDE_APP artifact group). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -21,12 +22,18 @@ along with this software (see the LICENSE.md file). If not, see
     <subscreens default-item="Home">
         <subscreens-item name="Home" menu-title="Home" menu-index="1" location="component://dev-aide/screen/DevAide/Home.xml"/>
         <subscreens-item name="Workspace" menu-title="Workspace" menu-index="2" location="component://dev-aide/screen/DevAide/Workspace.xml"/>
+        <subscreens-item name="Artifacts" menu-title="Artifacts" menu-index="3" location="component://dev-aide/screen/DevAide/Artifacts.xml"/>
         <subscreens-item name="Settings" menu-title="Settings" menu-index="9" location="component://dev-aide/screen/DevAide/Settings.xml"/>
     </subscreens>
     <shell-providers>
         <palette-action label="Dev AIDE Workspace" icon="sym_o_code" screen="dev/Workspace" sequence="70"/>
         <palette-action label="Dev AIDE Home: publish site changes" icon="sym_o_publish" screen="dev/Home" sequence="71"/>
         <palette-action label="Dev AIDE Settings" icon="sym_o_settings" screen="dev/Settings" sequence="72"/>
+        <palette-action label="Go to artifact" icon="sym_o_travel_explore" screen="dev/Artifacts/Search" sequence="73"/>
+        <palette-action label="Dev AIDE Customizations: what the site extends" icon="sym_o_extension" screen="dev/Artifacts/Customizations" sequence="74"/>
+        <!-- the artifact index: entities, services, screens and rules by name, each opening in the Workspace at its line -->
+        <palette-source group="DevArtifacts" label="Artifacts" icon="sym_o_data_object" sequence="60"
+                service="org.moqui.devaide.ArtifactServices.search#Palette"/>
     </shell-providers>
     <widgets>
         <subscreens-panel id="dev-aide-app" type="popup"/>

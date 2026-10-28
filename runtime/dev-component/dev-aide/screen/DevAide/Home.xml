@@ -34,6 +34,9 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="roots" from="overview.roots"/>
         <set field="reloads" from="overview.reloads"/>
         <set field="siteRoots" from="(overview.roots || []).filter(root => root.siteChanges > 0)"/>
+        <set field="custom" from="null"/>
+        <if condition="(overview.siteComponents || []).length">
+            <service-call name="org.moqui.devaide.ArtifactServices.get#Customizations" out-map="custom" ignore-error="true"/></if>
     </actions>
     <widgets>
         <container id="DevAideRestart"><section name="RestartSection" condition="overview.restartNeeded"><widgets>
@@ -54,6 +57,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="dependsOn"><default-field title="Extends (components, comma separated)"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                 </form-single>
+            </box-body></container-box>
+        </widgets></section></container>
+
+        <container id="DevAideCustomizations"><section name="CustomizationsSection" condition="custom"><widgets>
+            <container-box><box-header title="Site extensions: ${(custom.extensionCount || 0)}, ${(custom.brokenCount || 0)} broken"/><box-body>
+                <label type="p" text="An upgrade of an upstream component removed what ${custom.brokenCount} of them extend." condition="custom.brokenCount"/>
+                <link url="../Artifacts/Customizations" text="Customizations" link-type="anchor"/>
             </box-body></container-box>
         </widgets></section></container>
 

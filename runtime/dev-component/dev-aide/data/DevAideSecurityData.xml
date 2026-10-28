@@ -30,6 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="component://dev-aide/screen/DevAide.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
         <!-- the services, which check the tier themselves, called from elsewhere than the screens (agents, specs) -->
         <artifacts artifactName="org\.moqui\.devaide\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <!-- the framework's development tools (the artifact index, the schema digest, XML operations), which check the
+            dev instance and the permission themselves -->
+        <artifacts artifactName="org\.moqui\.impl\.DevToolsServices\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <authz artifactAuthzId="DEV_AIDE_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="DEV_AIDE_APP_USERS" userGroupId="DEV_AIDE_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="DEV_AIDE_APP_EXTENDERS" userGroupId="DEV_AIDE_EXTENDERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>

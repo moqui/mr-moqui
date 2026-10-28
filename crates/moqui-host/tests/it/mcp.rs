@@ -744,3 +744,103 @@ fn screen_writes(factory: &Arc<ExecutionContextFactory>, ann: &Caller, address: 
     assert_eq!(resolved["resultType"], "complete", "{resolved}");
     assert!(text(&resolved).contains("saved this write themselves"), "{resolved}");
 }
+
+/// The dev tools over MCP (plans/design-dev-aide.md 13.6, P3): on a dev instance with the dev-aide loaded, a caller with a
+/// Dev AIDE permission lists `artifact`, `source` and `check` beside the server's own read tools and calls each; a caller
+/// without one does not see them.
+#[cfg(feature = "devtools")]
+#[test]
+fn the_dev_tools_over_mcp() {
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"<moqui.security.UserGroupMember userGroupId="DEV_AIDE_USERS" userId="MCP_ANN" fromDate="1265184000000"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    // the dev-aide's seed records inside the test's own data file
+    let records = security
+        .split_once("<entity-facade-xml type=\"seed\">")
+        .map_or("", |(_, rest)| rest)
+        .replace("</entity-facade-xml>", "");
+    let data = DATA.replace("</entity-facade-xml>", &format!("{records}</entity-facade-xml>"));
+    let gate = crate::common::start_with_conf_files_and_links(
+        "mcp-dev",
+        Some(&data),
+        CONF,
+        &[("instance_purpose", "dev")],
+        &FILES,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let address = gate.server.address();
+    let ann = Caller {
+        address,
+        key: login_key(&factory, "ann.mcp"),
+    };
+    let bob = Caller {
+        address,
+        key: login_key(&factory, "bob.mcp"),
+    };
+    let names = |caller: &Caller| -> Vec<String> {
+        let (status, listed) = caller.rpc("tools/list", json!({"_meta": meta(json!({}))}));
+        assert_eq!(status, 200, "{listed}");
+        listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+            .collect()
+    };
+    let listed = names(&ann);
+    for tool in ["artifact", "source", "check"] {
+        assert!(listed.contains(&tool.to_string()), "{tool} in {listed:?}");
+    }
+    assert!(
+        !names(&bob).contains(&"artifact".to_string()),
+        "no Dev AIDE permission, no dev tools"
+    );
+
+    let found = ann.call(
+        "artifact",
+        json!({"action": "find", "text": "EnumerationType", "kinds": "entity"}),
+        json!({}),
+    );
+    let found: Json = serde_json::from_str(&text(&found)).unwrap_or_else(|_| panic!("{found}"));
+    assert_eq!(
+        found["artifacts"][0]["id"], "entity:moqui.basic.EnumerationType",
+        "{found}"
+    );
+    let file = found["artifacts"][0]["file"].as_str().unwrap().to_string();
+    assert!(file.starts_with("component://"), "{found}");
+    let described = ann.call(
+        "artifact",
+        json!({"action": "describe", "id": "entity:moqui.basic.EnumerationType"}),
+        json!({}),
+    );
+    assert!(text(&described).contains("\"parts\""), "{described}");
+    let source = ann.call(
+        "source",
+        json!({"artifact": "entity:moqui.basic.EnumerationType"}),
+        json!({}),
+    );
+    let source: Json = serde_json::from_str(&text(&source)).unwrap();
+    assert!(source["text"].as_str().unwrap().contains("EnumerationType"), "{source}");
+    let checked = ann.call(
+        "check",
+        json!({"file": file, "text": "<entities><entity entity-name=\"Bad\" package=\"x\"><relationship type=\"one\" related=\"no.Such\"/></entity></entities>"}),
+        json!({}),
+    );
+    let checked: Json = serde_json::from_str(&text(&checked)).unwrap();
+    let rules: Vec<&str> = checked["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|problem| problem["rule"].as_str())
+        .collect();
+    assert!(rules.contains(&"reference.entity"), "{checked}");
+    assert!(rules.contains(&"upstream.edit"), "the framework is upstream: {checked}");
+}

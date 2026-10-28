@@ -296,7 +296,7 @@ fn classify(factory: &ExecutionContextFactory, path: &Path) -> Option<FileReload
 }
 
 /// The kind of the file at `relative` in component `component`.
-fn kind_of(component: &str, relative: &Path) -> ArtifactKind {
+pub(crate) fn kind_of(component: &str, relative: &Path) -> ArtifactKind {
     let text = relative.to_string_lossy().replace('\\', "/");
     let name = text.rsplit('/').next().unwrap_or(&text);
     let top = text.split('/').next().unwrap_or("");

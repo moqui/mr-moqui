@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Customizations (plans/design-dev-aide.md 7.2, D17): every extension the site components make (an extend-entity, a
+    screen-extend and each anchor it names, an ECA rule on an upstream service or entity), with whether what it extends is
+    still there: the upgrade checklist after a pull. Broken first. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Customizations" default-menu-index="3">
+    <transition name="refs"><default-response url="../Refs"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.ArtifactServices.get#Customizations" out-map="custom"/>
+        <set field="extensions" from="custom.extensions || []"/>
+    </actions>
+    <widgets>
+        <label type="h5" text="Site extensions: ${custom.extensionCount || 0}, ${custom.brokenCount || 0} broken" id="CustomizationsSummary"/>
+        <label type="p" text="No site component is set: Home creates one, Settings names one." condition="!(custom.siteComponents || []).length"/>
+        <form-list name="CustomizationList" list="extensions" skip-form="true">
+            <field name="state"><default-field title="State"><display text="${resolved ? 'OK' : 'Broken'}"/></default-field></field>
+            <field name="component"><default-field title="Component"><display/></default-field></field>
+            <field name="kind"><default-field title="Kind"><display text="${refType == 'anchor' ? kind + ' anchor' : kind}"/></default-field></field>
+            <field name="target"><default-field title="Extends">
+                <link url="refs" text="${refType == 'anchor' ? target + ' in ' + scope : target}" parameter-map="{artifactId: target}" link-type="anchor"/>
+            </default-field></field>
+            <field name="file"><default-field title="Where">
+                <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-3).join('/')}:${line}" link-type="anchor" condition="url"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>

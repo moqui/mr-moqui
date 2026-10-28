@@ -1408,6 +1408,36 @@ are independent of P4 and may run beside it.
   - keeping the app drawer closed on the Workspace, which takes the window's height by CSS;
   - unsaved text is kept in `localStorage`, not IndexedDB.
 
+**P3, the index** (Oct 28, 2026), with these differences:
+
+- **Tables.** `DevArtifactFile` (each file's hash, and whether its rows are stale because it no longer parses) joins the
+  three of §7.1. An extension is a reference: an `extend-entity`'s entity, a `screen-extend`'s base screen and each
+  anchor it names, an ECA rule's service or entity, a DbForm's form are `extend` or `anchor` references, so an origin is
+  the defining component and the incoming `extend` references, and a broken extension is an unresolved one. The search
+  key is the short name's segments; a qualified name also matches the full name.
+- **What is read.** Every component's entity, service, ECA, REST, screen, `screen-extend`, data (XML), script and skill
+  files, and as rows service jobs, data documents, email templates and DbForm forms. A script's names come from the
+  string literals of its service and entity calls by pattern, not by oxc. A `link` or response URL is a reference when it
+  is a transition of the same screen; relative screen paths, service parameters and artifact group patterns are not
+  indexed yet. Screen anchors are every named widget outside a form, as `check --extensions` read them before.
+- **When.** A `moqui run` server builds it in the background at start (`Artifact index built in …` in the log); a test's
+  server builds it at first use, or with `rebuild#ArtifactIndex`. Each reload's files are read again through
+  `on_reload`; a pull reloads the files it changed at once and answers the site's extensions it broke.
+- **Measured** (release build, embedded Postgres, a developer laptop, `it::devaide::the_index_scales`): the corpus of this
+  repository's components, 1,659 files, 20,652 artifacts and 30,563 references, builds in 1.4 s (reading 0.2 s, writing
+  1.15 s); a per-file update of `OrderEntities.xml` (277 artifacts) takes 41 ms; a find 6 ms. The synthetic corpus ten
+  times its size (16,590 files, 206,520 artifacts, 305,630 references) builds in 18.8 s, updates a file in 198 ms and
+  finds in 157 ms: linear, with the write the cost. Rows go a hundred files to a transaction with the data loader's
+  pipelining; a batch that fails is written again file by file.
+- **Command line.** `moqui refs` and `moqui check --extensions` read the files into a memory index on the model-only boot
+  (about 0.5 s for the corpus); `refs` takes ids, names and files, `--kind` over the index's kinds, and `--json`.
+- **Editor and screens.** F12 and Mod+click go to a definition, Shift+F12 lists the references under the editor, and
+  Ctrl+Shift+O goes to an artifact; `dev/Artifacts` has Search, References (the List view) and Customizations; Home shows
+  "Site extensions: n, m broken"; the shell palette has an Artifacts group.
+- **MCP.** `artifact`, `source` and `check` are tools of the dev-aide's crate with the `dev.aide` capability and
+  `ToolSpec.mcp`; the MCP server lists them for a caller with a Dev AIDE permission (`it::mcp::the_dev_tools_over_mcp`,
+  over HTTP rather than the Python SDK script).
+
 ---
 
 ## 19. Tests

@@ -550,17 +550,64 @@ fn fetch_remote(
 }
 
 /// `pull#Remote`: fast-forward only.
+///
+/// The files the pull changed are reloaded at once (the watcher then passes over them), which keeps the artifact index
+/// current, and the answer names the site's extensions whose targets the pull removed (`extensionsAffected`, the
+/// upgrade checklist of plans/design-dev-aide.md 4.7).
 fn pull_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
-    network(
+    let head = |context: &Context, root: &Root| {
+        context
+            .git()
+            .read(&root.path, &["rev-parse", "-q", "--verify", "HEAD"])
+            .map(|out| out.trim().to_string())
+            .unwrap_or_default()
+    };
+    let before = {
+        let context = Context::of(ec, Tier::Extend)?;
+        let root = git_root(&context, parameters)?;
+        head(&context, root)
+    };
+    let mut out = network(
         ec,
         parameters,
         &|_, _| Ok(vec!["pull".into(), "--ff-only".into()]),
         "pull",
-    )
+    )?;
+    let context = Context::of(ec, Tier::Extend)?;
+    let root = git_root(&context, parameters)?;
+    let after = head(&context, root);
+    if before.is_empty() || before == after {
+        return Ok(out);
+    }
+    let changed: Vec<std::path::PathBuf> = context
+        .git()
+        .read(&root.path, &["diff", "--name-only", "-z", &before, &after])
+        .unwrap_or_default()
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| root.path.join(path))
+        .collect();
+    let report = moqui_core::devtools::reload_paths(&context.factory, &changed);
+    out.insert("reload".into(), json_value(&report));
+    match crate::artifacts::customizations(&context) {
+        Ok((extensions, broken)) => {
+            let affected: Vec<&serde_json::Value> = extensions
+                .iter()
+                .filter(|extension| extension["state"] == "broken")
+                .collect();
+            out.insert(
+                "extensionsAffected".into(),
+                Value::I64(i64::try_from(broken).unwrap_or(0)),
+            );
+            out.insert("brokenExtensions".into(), json_value(&affected));
+        }
+        Err(err) => tracing::error!("Dev AIDE: the extensions were not checked after a pull: {err}"),
+    }
+    Ok(out)
 }
 
 /// The current branch, which a push needs.

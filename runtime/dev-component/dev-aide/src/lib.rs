@@ -20,6 +20,8 @@
 //! Every service checks the instance purpose (dev) and the user's tier ([`tier`]) first; paths are confined to the roots
 //! ([`confine`]); the git layer runs the developer's own git command ([`git`]); every write is audited ([`audit`]).
 
+pub mod agent;
+mod artifacts;
 pub mod audit;
 pub mod confine;
 pub mod git;
@@ -28,7 +30,7 @@ pub mod roots;
 pub mod settings;
 pub mod tier;
 mod vcs;
-mod workspace;
+pub(crate) mod workspace;
 
 use moqui_core::context::Error;
 use moqui_core::native::{submit_component, NativeComponent, NativeRegistry};
@@ -39,5 +41,6 @@ submit_component! {
 
 fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
+    artifacts::register(registry)?;
     vcs::register(registry)
 }

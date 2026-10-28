@@ -347,6 +347,26 @@ pub fn start_with_files_and_links(
     )
 }
 
+/// [`start_with_files_and_links`] with more conf in the runtime's `MoquiDevConf.xml` too.
+pub fn start_with_conf_files_and_links(
+    label: &str,
+    data: Option<&str>,
+    extra_conf: &str,
+    properties: &[(&str, &str)],
+    files: &[(&str, &str)],
+    links: &[(&str, &str)],
+) -> Gate {
+    start_seeded(
+        label,
+        false,
+        data.map(|text| (text, None)),
+        extra_conf,
+        properties,
+        files,
+        links,
+    )
+}
+
 /// Clears the properties a gate set, before the gate gives up the lock.
 #[derive(Default)]
 pub struct PropertyReset(Vec<String>);

@@ -152,6 +152,12 @@ impl EntityFacade {
         self.inner.tables.find_check.store(true, Ordering::Relaxed);
     }
 
+    /// Whether [`Self::set_model_only`] was called: this facade never asks a database.
+    #[must_use]
+    pub fn is_model_only(&self) -> bool {
+        self.inner.tables.model_only.load(Ordering::Relaxed)
+    }
+
     /// Forget what is known of the tables, as Java's `forceCheckExistingTables`, so the next use asks again.
     pub fn forget_tables(&self) {
         lock(&self.inner.tables.exists).clear();

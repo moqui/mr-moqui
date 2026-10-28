@@ -38,7 +38,7 @@ Check
   convert          --groovy [--write] <dir> ...             Mechanical Groovy rewrites
   types            [--out dir]                              TypeScript declarations from the loaded definitions
   check            [paths] [--extensions] [--json]          Check Moqui XML files: schema, references, expressions
-  refs             <name> [--in | --out] [--kind k]         What uses an entity, service or file, or what it uses
+  refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
 
 Test
   test             [component ...] [options]                Run component JavaScript specs
@@ -242,8 +242,9 @@ moqui check [paths] [--extensions] [--json]
 Checks each file (a directory: the XML files in it) against the framework's XSDs, the names it uses
 (entities, fields, services, service parameters, locations) against the loaded definitions, and its
 JavaScript expressions and scripts. With no paths, checks the XML files git shows as changed under the
-current directory. --extensions also checks each component's screen-extend files against the screens
-they extend. Each problem prints as path:line:col: severity: message [rule, skill#section]; --json
+current directory. --extensions also checks every extension against what it extends: each screen-extend
+file's base screen and the forms, containers, sections and transitions it names there, each
+extend-entity's entity, and each ECA rule's service or entity. Each problem prints as path:line:col: severity: message [rule, skill#section]; --json
 prints one JSON object per line. Exits 1 when there is an error, so it runs as a git or agent hook;
 warnings do not fail it. This does not open a database.
 
@@ -253,13 +254,16 @@ warnings do not fail it. This does not open a database.
 ";
 
 const REFS: &str = "\
-moqui refs <name> [--in | --out] [--kind entity|service|field|parameter|location]
+moqui refs <name> [--in | --out] [--kind k] [--json]
     What uses an artifact, or what it uses.
 
-name is a service (a name with #), an entity (full or short name), or a file or location. --in (the
-default) lists the references to it in every component's entity, service, screen and screen-extend
-files; --out lists the references made inside its definition. Each prints as path:line: kind
-element@attribute value (in artifact). This does not open a database.
+name is an artifact id (entity:moqui.example.Example, service:a.B.run#Thing, screen:component://...,
+form:component://...#Name), a full or short name (OrderHeader, place#Order), or a file. --in (the
+default) lists the references to it in every component's files; --out lists the references made
+inside its definition. For a screen or an entity, its transitions, forms and fields count as it.
+--kind keeps the references whose other side is of that kind (entity, field, service, screen,
+transition, form, anchor, seca, eeca, script, data ...). Each prints as path:line: how artifact;
+--json prints one JSON object per line. This does not open a database.
 
   moqui refs moqui.example.Example
   moqui refs org.moqui.impl.UserServices.create#UserAccount --out

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The artifact index of the development tools (plans/design-dev-aide.md 7.1, F11): every definition the components'
+    files make, the references between them, and the calls observed on a dev instance. Kept by the framework
+    (moqui_core::devtools::index) on dev instances: built in the background at startup, each file's rows replaced when
+    a reload reads it again, so a restart keeps the index and a file whose hash is unchanged is not read again. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="DevArtifactFile" package="moqui.devtools" use="nontransactional" cache="never">
+        <description>A file the index has read: its hash, so an unchanged file is not read again, and whether its rows are
+            stale because it no longer parses.</description>
+        <field name="filePath" type="text-medium" is-pk="true"/>
+        <field name="location" type="text-medium"><description>component://name/path when the file is in a component</description></field>
+        <field name="component" type="text-medium"/>
+        <field name="fileKind" type="text-short"><description>entity, service, seca, eeca, rest, screen, screen-extend, data, script</description></field>
+        <field name="fileHash" type="text-short"/>
+        <field name="indexedDate" type="date-time"/>
+        <field name="stale" type="text-indicator"/>
+        <field name="problem" type="text-long"/>
+    </entity>
+    <entity entity-name="DevArtifact" package="moqui.devtools" use="nontransactional" cache="never">
+        <description>One artifact: an entity, field, service, screen, transition, form, anchor, ECA rule, REST resource,
+            extension, script and the rest, with the file and line that define it.</description>
+        <field name="artifactId" type="text-medium" is-pk="true"><description>entity:mantle.order.OrderHeader,
+            service:mantle.order.OrderServices.place#Order, screen:component://..., form:component://...#Name and so on</description></field>
+        <field name="artifactKind" type="text-short"/>
+        <field name="artifactName" type="text-medium"/>
+        <field name="shortName" type="text-medium"/>
+        <field name="searchKey" type="text-medium"><description>The short name's segments, lower case and space separated,
+            for camel case and segment matching</description></field>
+        <field name="component" type="text-medium"/>
+        <field name="filePath" type="text-medium"/>
+        <field name="lineNumber" type="number-integer"/>
+        <field name="columnNumber" type="number-integer"/>
+        <field name="summary" type="text-medium"/>
+        <field name="parentArtifactId" type="text-medium"><description>A field's entity, a transition's or form's screen</description></field>
+        <field name="sequenceNum" type="number-integer"><description>Its order in its file</description></field>
+        <index name="DEV_ARTIFACT_FILE"><index-field name="filePath"/><index-field name="lineNumber"/></index>
+        <index name="DEV_ARTIFACT_KIND"><index-field name="artifactKind"/><index-field name="shortName"/></index>
+        <index name="DEV_ARTIFACT_COMP"><index-field name="component"/></index>
+    </entity>
+    <entity entity-name="DevArtifactRef" package="moqui.devtools" use="nontransactional" cache="never">
+        <description>One reference from an artifact to another: where it is made and how it refers. An extension's target
+            (an extend-entity's entity, a screen-extend's base screen and its named anchors, an ECA rule's service or
+            entity) is a reference too, so an extension whose target is gone is an unresolved reference.</description>
+        <field name="filePath" type="text-medium" is-pk="true"/>
+        <field name="refSeqId" type="id" is-pk="true"/>
+        <field name="fromArtifactId" type="text-medium"/>
+        <field name="toArtifactId" type="text-medium"><description>The artifact it resolves to, when it does</description></field>
+        <field name="toKind" type="text-short"><description>What it names: entity, service, field, location, anchor, transition</description></field>
+        <field name="toName" type="text-medium"/>
+        <field name="toScope" type="text-medium"><description>What the name is relative to: a field's entity, an anchor's base screen</description></field>
+        <field name="refType" type="text-short"><description>How it refers: entity-find, service-call, relationship, extend,
+            anchor, implements, subscreens-item, link, script and the rest</description></field>
+        <field name="lineNumber" type="number-integer"/>
+        <field name="columnNumber" type="number-integer"/>
+        <field name="resolved" type="text-indicator"/>
+        <index name="DEV_AREF_TO"><index-field name="toArtifactId"/><index-field name="refType"/></index>
+        <index name="DEV_AREF_FROM"><index-field name="fromArtifactId"/></index>
+        <index name="DEV_AREF_NAME"><index-field name="toName"/><index-field name="resolved"/></index>
+    </entity>
+    <entity entity-name="DevArtifactCall" package="moqui.devtools" use="nontransactional" cache="never">
+        <description>Calls observed on the artifact stack of a dev instance: one row per caller and callee, with how often.
+            What static reading cannot see (a name made at run time) and what really runs.</description>
+        <field name="fromArtifactId" type="text-medium" is-pk="true"/>
+        <field name="toArtifactId" type="text-medium" is-pk="true"/>
+        <field name="callCount" type="number-integer"/>
+        <field name="lastCallDate" type="date-time"/>
+        <index name="DEV_ACALL_TO"><index-field name="toArtifactId"/></index>
+    </entity>
+</entities>

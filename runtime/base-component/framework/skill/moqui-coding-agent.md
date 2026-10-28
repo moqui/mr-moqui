@@ -48,7 +48,9 @@ before changing a file for one. References, expressions and XML that does not pa
 
 ## References
 Names in a file are checked against what the server loaded. `moqui refs <name>` lists what uses an artifact (`--in`)
-or what it uses (`--out`).
+or what it uses (`--out`): the name is an artifact id (`entity:moqui.example.Example`, `service:a.B.run#Thing`,
+`screen:component://...`, `form:component://...#Name`), a full or short name (`OrderHeader`, `place#Order`), or a file.
+On a dev server the same index answers the MCP tools `artifact` (find, describe, refs, at), `source` and `check`.
 
 - No entity or view entity has this name.
 - No service has this name, and it is not an entity-auto name of an entity.
@@ -76,6 +78,8 @@ edited in place: an edit there is a fork that every upgrade fights. Put the chan
 
 - A screen-extend file names no base screen at its path.
 - The base screen has no element of this name to extend.
+- No entity has this name to extend.
+- No service or entity has this name for the rule to run on.
 
 `moqui check --extensions` checks every site extension against what it extends, which is worth running after pulling
 an upstream component. A `screen-extend` needs a named form, container, section or transition in the base screen to anchor to. When the base

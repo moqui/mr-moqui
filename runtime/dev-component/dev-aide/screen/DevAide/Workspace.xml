@@ -76,6 +76,12 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="schema" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#SchemaDigest" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="definition" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#Definition" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="refs" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#Refs" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="artifacts" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.search#Artifacts" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 

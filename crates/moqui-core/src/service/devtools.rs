@@ -29,6 +29,12 @@ pub(in crate::service) fn register(
     rust_service!(map, restart_server)?;
     rust_service!(map, apply_xml_ops)?;
     rust_service!(map, get_schema_digest)?;
+    rust_service!(map, find_artifacts)?;
+    rust_service!(map, get_artifact)?;
+    rust_service!(map, get_artifact_refs)?;
+    rust_service!(map, get_artifact_at)?;
+    rust_service!(map, get_artifact_extensions)?;
+    rust_service!(map, rebuild_artifact_index)?;
     Ok(())
 }
 
@@ -50,6 +56,206 @@ fn allowed(what: &str) -> bool {
         });
     }
     permitted
+}
+
+/// Whether the current user may read the artifact index here: a dev instance, and one of the dev-aide's permissions
+/// (`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) or the `ADMIN` group. Adds the error and answers false otherwise.
+fn allowed_read(what: &str) -> bool {
+    if !crate::devtools::is_dev_instance() {
+        ExecutionContext::with_current(|ec| {
+            ec.message()
+                .add_error(format!("{what} is only available when instance_purpose is dev"));
+        });
+        return false;
+    }
+    let permitted = ["DEV_AIDE_VIEW", "DEV_AIDE_EXTEND", "DEV_AIDE"]
+        .iter()
+        .any(|permission| crate::user::has_permission(permission).unwrap_or(false))
+        || crate::user::is_in_group("ADMIN").unwrap_or(false);
+    if !permitted {
+        ExecutionContext::with_current(|ec| {
+            ec.message()
+                .add_error(format!("{what} needs the DEV_AIDE_VIEW permission"));
+        });
+    }
+    permitted
+}
+
+fn text_in(parameters: &BTreeMap<String, Value>, name: &str) -> String {
+    parameters
+        .get(name)
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default()
+}
+
+/// A list parameter given as a list or a comma separated text.
+fn list_in(parameters: &BTreeMap<String, Value>, name: &str) -> Vec<String> {
+    match parameters.get(name) {
+        Some(Value::List(items)) => items
+            .iter()
+            .map(moqui_lib::object::to_plain_string)
+            .filter(|item| !item.is_empty())
+            .collect(),
+        Some(value) => moqui_lib::object::to_plain_string(value)
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+fn json_value(value: &impl serde::Serialize) -> Value {
+    moqui_lib::json::from_json(&serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+}
+
+/// Run `body` with the factory, answering its error as a message.
+fn with_index<T>(
+    body: impl FnOnce(&std::sync::Arc<crate::context::ExecutionContextFactory>) -> Result<T, LibError>,
+) -> Option<T> {
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))?;
+    match body(&factory) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
+            None
+        }
+    }
+}
+
+/// `find#Artifacts`: the artifacts whose names match a text (plans/design-dev-aide.md 7.2). Out: `artifacts`.
+fn find_artifacts(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    let limit = text_in(parameters, "limit")
+        .parse::<usize>()
+        .unwrap_or(50)
+        .clamp(1, 500);
+    let found = with_index(|factory| {
+        crate::devtools::index::find(
+            factory,
+            &text_in(parameters, "text"),
+            &list_in(parameters, "kinds"),
+            &list_in(parameters, "components"),
+            limit,
+        )
+    });
+    if let Some(found) = found {
+        out.insert("artifacts".to_string(), json_value(&found));
+    }
+    Ok(out)
+}
+
+/// `get#Artifact`: one artifact by its id, or the best match of a name. Out: `artifact`.
+fn get_artifact(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    if let Some(found) =
+        with_index(|factory| crate::devtools::index::named(factory, &text_in(parameters, "artifactId")))
+    {
+        out.insert("artifact".to_string(), json_value(&found));
+    }
+    Ok(out)
+}
+
+/// `get#ArtifactRefs`: what uses an artifact (`direction` in) or what it uses (out). Out: `refs`.
+fn get_artifact_refs(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    let direction = crate::devtools::index::Direction::parse(&text_in(parameters, "direction"));
+    let found = with_index(|factory| {
+        crate::devtools::index::refs(
+            factory,
+            &text_in(parameters, "artifactId"),
+            direction,
+            &list_in(parameters, "kinds"),
+        )
+    });
+    if let Some(found) = found {
+        out.insert("refs".to_string(), json_value(&found));
+    }
+    Ok(out)
+}
+
+/// `get#ArtifactAt`: the reference or definition at a line of a file, for go to definition. Out: `reference`,
+/// `artifact`.
+fn get_artifact_at(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    let line = text_in(parameters, "line").parse::<u32>().unwrap_or(0);
+    let found = with_index(|factory| {
+        crate::devtools::index::at(
+            factory,
+            &text_in(parameters, "path"),
+            line,
+            &text_in(parameters, "word"),
+        )
+    });
+    if let Some(Some((reference, artifact))) = found {
+        out.insert("reference".to_string(), json_value(&reference));
+        out.insert("artifact".to_string(), json_value(&artifact));
+    }
+    Ok(out)
+}
+
+/// `get#ArtifactExtensions`: the extensions of components (every component when none is named) with whether their
+/// targets are there, broken first. Out: `extensions`, `brokenCount`.
+fn get_artifact_extensions(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    let found = with_index(|factory| crate::devtools::index::extensions(factory, &list_in(parameters, "components")));
+    if let Some(found) = found {
+        let broken = found.iter().filter(|extension| !extension.resolved).count();
+        out.insert("extensions".to_string(), json_value(&found));
+        out.insert(
+            "brokenCount".to_string(),
+            Value::I64(i64::try_from(broken).unwrap_or(0)),
+        );
+    }
+    Ok(out)
+}
+
+/// `rebuild#ArtifactIndex`: read every file whose hash changed (all of them with `full`), now. Out: `report`.
+fn rebuild_artifact_index(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    if !allowed_read("The artifact index") {
+        return Ok(out);
+    }
+    let full = text_in(parameters, "full") == "true";
+    let found = with_index(|factory| crate::devtools::index::rebuild(factory, full));
+    if let Some(report) = found {
+        out.insert("report".to_string(), json_value(&report));
+    }
+    Ok(out)
 }
 
 /// `apply#XmlOps`: the operations of the lossless XML layer (`moqui_lib::xml_edit`, plans/design-dev-aide.md 5.2) on a

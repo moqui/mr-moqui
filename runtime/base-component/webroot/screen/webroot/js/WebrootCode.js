@@ -229,7 +229,9 @@
             modelValue: { type: String, default: "" }, language: String, fileName: String, readOnly: Boolean,
             lineNumbers: { type: Boolean, default: true }, wrap: Boolean, highlightLines: Array, schema: Object, lint: Function,
             name: String, form: String, minHeight: { type: String, default: "6rem" }, maxHeight: String, height: String,
-            autofocus: Boolean, placeholder: String
+            autofocus: Boolean, placeholder: String,
+            // more extensions from the page (CM) => extension: a keymap, event handlers, completion sources
+            extensions: Function
         },
         emits: ["update:modelValue", "save", "cursor", "ready"],
         data() { return { failed: false, ready: false, text: this.modelValue || "" }; },
@@ -286,6 +288,7 @@
                     keys(CM, [{ key: "Mod-s", preventDefault: true, run: (view) => { this.$emit("save", view.state.doc.toString()); return true; } }]),
                     configured,
                     this.placeholder ? CM.placeholder(this.placeholder) : [],
+                    this.extensions ? this.extensions(CM) : [],
                     this.lint ? [CM.linter((view) => Promise.resolve(this.lint(view.state.doc.toString()))
                         .then((problems) => editor.diagnostics(problems, view.state.doc.toString()))
                         .catch(() => []), { delay: 500 }), CM.lintGutter()] : [],

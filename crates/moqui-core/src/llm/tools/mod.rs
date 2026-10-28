@@ -130,6 +130,11 @@ pub mod caps {
     pub const QUESTION_INLINE: &str = "question.inline";
     /// A question as a data part the client answers (A2A input-required).
     pub const QUESTION_DATA: &str = "question.data";
+    /// The development tools (plans/design-dev-aide.md 13.2): a dev instance with the dev-aide loaded, for a user with
+    /// one of its permissions ([`crate::devtools::dev_aide_user`]).
+    pub const DEV: &str = "dev.aide";
+    /// The `screen-xml` canvas dialect (plans/design-dev-aide.md 13.5), on the drawer of a dev-aide user.
+    pub const UI_SCREEN_XML: &str = "ui.write:screen-xml";
 }
 
 /// The capabilities in effect for a run: the surface's, lowered by what the client says it can do. A client may lower
@@ -256,6 +261,9 @@ pub struct ToolSpec {
     /// An add-on tool of the lazy catalog: offered as a tool of its own only to an agent that pins it (an
     /// `AgentToolPolicy` row whose pattern is its exact name), else reached through `run_tool`.
     pub lazy: bool,
+    /// A read tool the MCP server lists beside its own read tools when the caller's capabilities fit it (the dev
+    /// tools `artifact`, `source` and `check`).
+    pub mcp: bool,
 }
 
 impl ToolSpec {
@@ -272,6 +280,7 @@ impl ToolSpec {
             artifact: None,
             may_pause: false,
             lazy: false,
+            mcp: false,
         }
     }
 

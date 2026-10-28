@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Search the artifact index (plans/design-dev-aide.md 7.2): a name with camel case or segments (OrdHdr, place#Order), a
+    kind and a component; each result opens in the Workspace at its line, or its references. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Search" default-menu-index="1">
+    <parameter name="text"/>
+    <parameter name="kind"/>
+    <parameter name="component"/>
+    <transition name="refs"><default-response url="../Refs"/></transition>
+
+    <actions>
+        <set field="artifacts" from="[]"/>
+        <if condition="text">
+            <service-call name="org.moqui.devaide.ArtifactServices.search#Artifacts" out-map="found"
+                    in-map="{text: text, kinds: kind, components: component, limit: 100}"/>
+            <set field="artifacts" from="found.artifacts || []"/>
+        </if>
+    </actions>
+    <widgets>
+        <form-single name="ArtifactSearch" transition="." focus-field="text">
+            <field name="text"><default-field title="Name"><text-line size="40"/></default-field></field>
+            <field name="kind"><default-field title="Kind"><drop-down allow-empty="true">
+                <option key="entity" text="Entity"/><option key="view-entity" text="View entity"/><option key="field" text="Field"/>
+                <option key="service" text="Service"/><option key="screen" text="Screen"/><option key="transition" text="Transition"/>
+                <option key="form" text="Form"/><option key="seca" text="SECA rule"/><option key="eeca" text="EECA rule"/>
+                <option key="rest" text="REST resource"/><option key="extend-entity" text="Entity extension"/>
+                <option key="screen-extend" text="Screen extension"/><option key="data" text="Data file"/><option key="script" text="Script"/>
+                <option key="job" text="Service job"/><option key="dbform" text="DbForm"/>
+            </drop-down></default-field></field>
+            <field name="component"><default-field title="Component"><text-line size="20"/></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+        </form-single>
+        <form-list name="ArtifactResults" list="artifacts" skip-form="true">
+            <field name="kind"><default-field title="Kind"><display/></default-field></field>
+            <field name="shortName"><default-field title="Name">
+                <link url="refs" text="${shortName}" parameter-map="{artifactId: id}" link-type="anchor"/></default-field></field>
+            <field name="component"><default-field title="Component"><display text="${component}${upstream ? '' : ' · site'}"/></default-field></field>
+            <field name="summary"><default-field title="Summary"><display/></default-field></field>
+            <field name="open"><default-field title="File">
+                <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-2).join('/')}:${line}" link-type="anchor" condition="url"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>

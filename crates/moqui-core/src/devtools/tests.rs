@@ -244,3 +244,25 @@ fn the_watcher_reloads_a_service_file_changed_on_disk() {
     let _entered = bed.ctx.enter();
     assert!(defined("devtest.Watched.run#Thing").unwrap().contains("second"));
 }
+
+/// Each rule a check quotes is in its skill section word for word (plans/design-dev-aide.md 13.1), so a person and a
+/// model read the same rule.
+#[test]
+fn each_check_rule_is_in_its_skill_section() {
+    let skill = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/base-component/framework/skill/moqui-coding-agent.md"
+    ))
+    .unwrap();
+    for (rule, section, sentence) in super::check::RULES {
+        let start = skill
+            .find(&format!("\n## {section}\n"))
+            .unwrap_or_else(|| panic!("{rule}: no section {section}"));
+        let body = &skill[start + 1..];
+        let body = &body[..body[3..].find("\n## ").map_or(body.len(), |end| end + 3)];
+        assert!(
+            body.contains(sentence),
+            "{rule}: \"{sentence}\" is not in section {section}"
+        );
+    }
+}

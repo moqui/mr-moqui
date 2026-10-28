@@ -17,6 +17,7 @@
 //! outside the server alike, so they are the framework's and not the dev-aide's.
 
 pub mod check;
+pub mod index;
 pub mod refs;
 pub mod reload;
 pub mod restart;
@@ -32,6 +33,24 @@ use serde::Serialize;
 #[must_use]
 pub fn is_dev_instance() -> bool {
     moqui_lib::env::get_prop_or_env("instance_purpose") == "dev"
+}
+
+/// The permissions of the dev-aide's tiers (plans/design-dev-aide.md 3.4); `ADMIN` holds `DEV_AIDE` by its seed.
+pub const DEV_AIDE_PERMISSIONS: [&str; 3] = ["DEV_AIDE_VIEW", "DEV_AIDE_EXTEND", "DEV_AIDE"];
+
+/// Whether `user_id` may use the development tools here: a dev instance with the dev-aide component loaded, and one of
+/// its permissions. The agents' dev tools and the `screen-xml` dialect are offered on this (plans/design-dev-aide.md 13.2).
+#[must_use]
+pub fn dev_aide_user(factory: &crate::context::ExecutionContextFactory, user_id: &str) -> bool {
+    is_dev_instance()
+        && !user_id.is_empty()
+        && factory
+            .components()
+            .iter()
+            .any(|component| component.name == "dev-aide")
+        && DEV_AIDE_PERMISSIONS
+            .iter()
+            .any(|permission| crate::user::user_has_permission(user_id, permission).unwrap_or(false))
 }
 
 /// One problem a check or a reload found in a file, as the Problems panel, `moqui check` and the agents read it.

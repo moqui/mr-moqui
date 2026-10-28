@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::refs::{self, RefKind, Reference};
+use moqui_core::devtools::index::{Direction, MemoryIndex};
 use moqui_core::devtools::{check, Problem, Severity};
 use moqui_lib::error::Error;
 
@@ -230,161 +230,99 @@ fn model_only() -> Result<Arc<ExecutionContextFactory>, Error> {
     Ok(factory)
 }
 
-/// `moqui refs <name> [--in | --out] [--kind entity|service|field|parameter|location]`: what uses an artifact (`--in`,
-/// the default) or what it uses (`--out`), from the references in every component's entity, service, screen and
-/// screen-extend files.
+/// `moqui refs <name> [--in | --out] [--kind k] [--json]`: what uses an artifact (`--in`, the default) or what it uses
+/// (`--out`), from the artifact index read into memory (plans/design-dev-aide.md 7.1, 13.6). The name is an index id
+/// (`entity:moqui.example.Example`), a full or short name (`OrderHeader`, `place#Order`), or a file; `--kind` keeps the
+/// references whose other side is of that kind (entity, field, service, screen, transition, form, seca, ...).
 pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
     let mut name = None;
     let mut outgoing = false;
-    let mut kind = None;
+    let mut json = false;
+    let mut kinds = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--in" => outgoing = false,
             "--out" => outgoing = true,
-            "--kind" => kind = rest.next().cloned(),
-            other if other.starts_with("--kind=") => kind = Some(other["--kind=".len()..].to_string()),
+            "--json" => json = true,
+            "--kind" => kinds.extend(rest.next().cloned()),
+            other if other.starts_with("--kind=") => kinds.push(other["--kind=".len()..].to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("refs")),
             other if name.is_none() => name = Some(other.to_string()),
             _ => return Err(crate::usage::command_usage("refs")),
         }
     }
     let name = name.ok_or_else(|| crate::usage::command_usage("refs"))?;
-    let kind = kind.map(|kind| kind_named(&kind)).transpose()?;
     crate::logging::install_with_console(Some(tracing::Level::ERROR));
     let factory = model_only()?;
-    let mut found: Vec<Reference> = Vec::new();
-    for file in refs::component_xml_files(&factory) {
-        found.extend(refs::scan_file(&file));
+    let index = MemoryIndex::build(&factory);
+    // a file: every artifact it defines
+    let targets: Vec<String> = match Path::new(&name)
+        .exists()
+        .then(|| std::fs::canonicalize(&name).ok())
+        .flatten()
+    {
+        Some(path) => {
+            let path = path.display().to_string();
+            index
+                .artifacts
+                .iter()
+                .filter(|artifact| artifact.path == path && artifact.parent.is_none())
+                .map(|artifact| artifact.id.clone())
+                .collect()
+        }
+        None => {
+            let location = name.strip_prefix("component://").map(|_| format!("screen:{name}"));
+            location
+                .and_then(|id| index.describe(&id))
+                .or_else(|| index.named(&name))
+                .map(|artifact| vec![artifact.id])
+                .unwrap_or_default()
+        }
+    };
+    if targets.is_empty() {
+        return Err(Error::new(format!("moqui refs: no artifact is named {name}")));
     }
-    let target = Target::of(&factory, &name);
+    let direction = if outgoing { Direction::Out } else { Direction::In };
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut count = 0;
-    for reference in found {
-        if kind.is_some_and(|kind| kind != reference.kind) {
-            continue;
+    for target in &targets {
+        for found in index.refs(target, direction) {
+            if !kinds.is_empty() {
+                let kind = found
+                    .other
+                    .as_ref()
+                    .map_or_else(|| found.to_kind.clone(), |other| other.kind.clone());
+                if !kinds.contains(&kind) {
+                    continue;
+                }
+            }
+            count += 1;
+            if json {
+                println!("{}", serde_json::to_string(&found).unwrap_or_default());
+                continue;
+            }
+            let path = Path::new(&found.path);
+            let other = match direction {
+                Direction::In => found.from.clone(),
+                Direction::Out => found
+                    .to_id
+                    .clone()
+                    .unwrap_or_else(|| format!("{}:{} (unresolved)", found.to_kind, found.to_name)),
+            };
+            println!(
+                "{}:{}: {} {other}",
+                path.strip_prefix(&cwd).unwrap_or(path).display(),
+                found.line,
+                found.ref_type,
+            );
         }
-        let matches = if outgoing {
-            target.is_from(&reference)
-        } else {
-            target.is_named_by(&factory, &reference)
-        };
-        if !matches {
-            continue;
-        }
-        count += 1;
-        let path = Path::new(&reference.path);
-        println!(
-            "{}:{}: {} {}@{} {} (in {})",
-            path.strip_prefix(&cwd).unwrap_or(path).display(),
-            reference.line,
-            kind_name(reference.kind),
-            reference.element,
-            reference.attribute,
-            reference.value,
-            reference.from
-        );
     }
     eprintln!(
-        "moqui refs: {count} reference{} {} {name}",
+        "moqui refs: {count} reference{} {} {}",
         if count == 1 { "" } else { "s" },
-        if outgoing { "from" } else { "to" }
+        if outgoing { "from" } else { "to" },
+        targets.join(", ")
     );
     Ok(())
-}
-
-fn kind_named(name: &str) -> Result<RefKind, Error> {
-    Ok(match name {
-        "entity" => RefKind::Entity,
-        "service" => RefKind::Service,
-        "field" => RefKind::FindField,
-        "parameter" => RefKind::ServiceParameter,
-        "location" => RefKind::Location,
-        other => {
-            return Err(Error::new(format!(
-                "--kind {other}: one of entity, service, field, parameter, location"
-            )))
-        }
-    })
-}
-
-fn kind_name(kind: RefKind) -> &'static str {
-    match kind {
-        RefKind::Entity => "entity",
-        RefKind::Service => "service",
-        RefKind::FindField => "field",
-        RefKind::ServiceParameter => "parameter",
-        RefKind::Location => "location",
-    }
-}
-
-/// What `moqui refs` was asked about: a service (a name with `#`), a file or location, or an entity.
-enum Target {
-    Service(String),
-    Location(String),
-    Entity(String),
-}
-
-impl Target {
-    fn of(factory: &ExecutionContextFactory, name: &str) -> Self {
-        if name.contains('#') {
-            return Self::Service(name.to_string());
-        }
-        if name.contains("://") || name.ends_with(".xml") || Path::new(name).exists() {
-            let path = std::fs::canonicalize(name).map_or_else(|_| name.to_string(), |path| path.display().to_string());
-            return Self::Location(path);
-        }
-        Self::Entity(full_entity_name(factory, name).unwrap_or_else(|| name.to_string()))
-    }
-
-    /// The reference names this target.
-    fn is_named_by(&self, factory: &ExecutionContextFactory, reference: &Reference) -> bool {
-        match (self, reference.kind) {
-            (Self::Service(name), RefKind::Service) => {
-                reference.value == *name || reference.value.replace('#', "") == name.replace('#', "")
-            }
-            (Self::Entity(name), RefKind::Entity) => {
-                full_entity_name(factory, &reference.value).as_deref() == Some(name.as_str())
-                    || reference.value == *name
-            }
-            (Self::Service(name), RefKind::Entity) => {
-                // entity-auto: create#moqui.basic.Enumeration is used by name only.
-                name.split_once('#').is_some_and(|(_, noun)| reference.value == noun)
-            }
-            (Self::Location(location), RefKind::Location) => {
-                reference.value == *location
-                    || factory
-                        .resource()
-                        .get(&reference.value)
-                        .ok()
-                        .and_then(|resource| resource.file_path().map(Path::to_path_buf))
-                        .and_then(|path| std::fs::canonicalize(path).ok())
-                        .is_some_and(|path| path.display().to_string() == *location)
-            }
-            _ => false,
-        }
-    }
-
-    /// The reference is made inside this target's definition.
-    fn is_from(&self, reference: &Reference) -> bool {
-        match self {
-            Self::Service(name) => reference.from == format!("service:{name}"),
-            Self::Entity(name) => {
-                reference.from == format!("entity:{name}")
-                    || reference
-                        .from
-                        .rsplit_once('.')
-                        .is_some_and(|(_, short)| format!("entity:{short}") == format!("entity:{name}"))
-            }
-            Self::Location(location) => {
-                std::fs::canonicalize(&reference.path).is_ok_and(|path| path.display().to_string() == *location)
-            }
-        }
-    }
-}
-
-/// The full name of an entity named in full or short, when the model has it.
-fn full_entity_name(factory: &ExecutionContextFactory, name: &str) -> Option<String> {
-    let facade = factory.entity()?;
-    moqui_core::entity::info::entity_full_name(&facade, name)
 }

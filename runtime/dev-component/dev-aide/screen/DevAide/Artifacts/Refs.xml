@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- An artifact's references as lists (plans/design-dev-aide.md 7.3, the browser's List view): the artifact, then what
+    uses it and what it uses, each by kind, static and observed (with the calls counted on this dev instance). A row's
+    name makes it the center; its file opens in the Workspace at the line. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="References" default-menu-index="2">
+    <parameter name="artifactId"/>
+    <transition name="refs"><default-response url="."/></transition>
+
+    <actions>
+        <set field="usedBy" from="[]"/>
+        <set field="uses" from="[]"/>
+        <set field="extensions" from="[]"/>
+        <set field="artifact" from="null"/>
+        <if condition="artifactId">
+            <service-call name="org.moqui.devaide.ArtifactServices.get#ArtifactDetail" out-map="detail" in-map="{artifactId: artifactId}"/>
+            <set field="artifact" from="detail.artifact || null"/>
+        </if>
+        <if condition="artifact">
+            <service-call name="org.moqui.devaide.ArtifactServices.get#Refs" out-map="incoming" in-map="{artifactId: artifact.id, direction: 'in'}"/>
+            <service-call name="org.moqui.devaide.ArtifactServices.get#Refs" out-map="outgoing" in-map="{artifactId: artifact.id, direction: 'out'}"/>
+        </if>
+        <script><![CDATA[
+            // one row of a list: the other side's kind and name (it becomes the center), how, where, the calls observed
+            const row = (entry) => {
+                const other = entry.other
+                return {
+                    kind: other ? other.kind : entry.toKind,
+                    name: other ? other.shortName : entry.toName,
+                    id: other ? other.id : (entry.toId || ''),
+                    how: entry.refType,
+                    file: (entry.relativePath || entry.path || '').split('/').slice(-2).join('/') + ':' + entry.line,
+                    url: entry.url || '',
+                    calls: entry.calls || 0,
+                    resolved: entry.resolved,
+                }
+            }
+            const byKind = (a, b) => String(a.kind).localeCompare(String(b.kind)) || String(a.name).localeCompare(String(b.name))
+            usedBy = artifact ? (incoming.refs || []).map((entry) => row(entry.other ? entry
+                : Object.assign({}, entry, { other: { kind: (entry.from || '').split(':')[0], shortName: entry.from, id: entry.from } }))).sort(byKind) : []
+            uses = artifact ? (outgoing.refs || []).map(row).sort(byKind) : []
+        ]]></script>
+        <set field="extensions" from="artifact ? (detail.extensions || []) : []"/>
+    </actions>
+    <widgets>
+        <form-single name="RefsFind" transition="refs" focus-field="artifactId">
+            <field name="artifactId"><default-field title="Artifact (id or name)"><text-line size="60"/></default-field></field>
+            <field name="submitButton"><default-field title="Show"><submit/></default-field></field>
+        </form-single>
+        <section name="RefsArtifact" condition="artifact"><widgets>
+            <container-box id="RefsCenter"><box-header title="${artifact.kind} ${artifact.shortName}"/><box-body>
+                <label type="p" text="${artifact.name}"/>
+                <label type="p" text="${artifact.summary}" condition="artifact.summary"/>
+                <label type="p" text="${artifact.component}${artifact.upstream ? ' (upstream)' : ' (site)'} · ${(artifact.relativePath || artifact.path || '')}:${artifact.line}"/>
+                <link url="${artifact.url || ''}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="artifact.url"/>
+                <label type="p" text="Extended by ${extensions.length}: ${extensions.map(e => (e.other ? e.other.component + ' ' + e.other.kind : e.from) + (e.resolved ? '' : ' (broken)')).join(', ')}" condition="extensions.length"/>
+            </box-body></container-box>
+            <container-box id="RefsUsedBy"><box-header title="Used by: ${usedBy.length}"/><box-body-nopad>
+                <form-list name="UsedByList" list="usedBy" skip-form="true">
+                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                    <field name="name"><default-field title="Name">
+                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor" condition="id"/>
+                        <display text="${name}" condition="!id"/></default-field></field>
+                    <field name="how"><default-field title="How"><display/></default-field></field>
+                    <field name="calls"><default-field title="Calls"><display text="${calls || ''}"/></default-field></field>
+                    <field name="file"><default-field title="Where">
+                        <link url="${url}" url-type="plain" text="${file}" link-type="anchor" condition="url"/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+            <container-box id="RefsUses"><box-header title="Uses: ${uses.length}"/><box-body-nopad>
+                <form-list name="UsesList" list="uses" skip-form="true">
+                    <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                    <field name="name"><default-field title="Name">
+                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor" condition="id"/>
+                        <display text="${name}${resolved ? '' : ' (not found)'}" condition="!id"/></default-field></field>
+                    <field name="how"><default-field title="How"><display/></default-field></field>
+                    <field name="calls"><default-field title="Calls"><display text="${calls || ''}"/></default-field></field>
+                    <field name="file"><default-field title="Where">
+                        <link url="${url}" url-type="plain" text="${file}" link-type="anchor" condition="url"/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

@@ -78,6 +78,20 @@
 
     // A storage key of a root's state in the browser.
     pure.storageKey = (rootId, what) => "moqui.devAide." + what + "." + rootId;
+    // The name under the cursor for go to definition: the attribute value around `column` (0-based) of a line, else
+    // the word of name characters there (letters, digits, . _ # : / -).
+    pure.valueAt = (text, column) => {
+        const quoted = /"([^"]*)"|'([^']*)'/g;
+        let match;
+        while ((match = quoted.exec(text))) {
+            if (column > match.index && column < match.index + match[0].length) return match[1] !== undefined ? match[1] : match[2];
+        }
+        const name = /[A-Za-z0-9_.#:/-]/;
+        let from = column, to = column;
+        while (from > 0 && name.test(text[from - 1])) from--;
+        while (to < text.length && name.test(text[to])) to++;
+        return text.slice(from, to);
+    };
 
     // ---- the browser ----
 
@@ -98,6 +112,7 @@
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [] }, busy: "", schemas: {},
+                refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [] },
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null
             };
         },
@@ -335,6 +350,76 @@
                 this.get("files", { rootId: this.rootId }).then((answer) => { this.goto.files = answer.files || []; }, this.fail);
             },
             gotoFile(path) { this.goto.open = false; if (path) this.openFile(path); },
+            // ---- the artifact index: go to definition (F12, Mod+click), references (Shift+F12), go to artifact ----
+            editorExtensions() {
+                return (CM) => [
+                    CM.keymap.of([
+                        { key: "F12", run: (view) => { this.goToDefinition(view, view.state.selection.main.head); return true; } },
+                        { key: "Shift-F12", run: (view) => { this.findReferences(view, view.state.selection.main.head); return true; } }
+                    ]),
+                    CM.EditorView.domEventHandlers({
+                        mousedown: (event, view) => {
+                            if (!(event.ctrlKey || event.metaKey)) return false;
+                            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+                            if (pos == null) return false;
+                            event.preventDefault();
+                            this.goToDefinition(view, pos);
+                            return true;
+                        }
+                    })
+                ];
+            },
+            atPosition(view, pos) {
+                const line = view.state.doc.lineAt(pos);
+                return { line: line.number, word: pure.valueAt(line.text, pos - line.from) };
+            },
+            goToDefinition(view, pos) {
+                const tab = this.current;
+                if (!tab) return;
+                const at = this.atPosition(view, pos);
+                this.get("definition", { rootId: this.rootId, path: tab.path, line: at.line, word: at.word }).then((answer) => {
+                    const artifact = answer.artifact;
+                    if (!artifact) { this.note("No definition found for " + (at.word || "this line"), "warning"); return; }
+                    this.openArtifact(artifact);
+                }, this.fail);
+            },
+            openArtifact(artifact) {
+                if (!artifact.rootId || !artifact.relativePath) { this.note(artifact.name + " is not in a root of the Workspace", "warning"); return; }
+                if (artifact.rootId !== this.rootId) this.selectRoot(artifact.rootId);
+                this.openFile(artifact.relativePath, artifact.line || 0);
+            },
+            findReferences(view, pos) {
+                const tab = this.current;
+                if (!tab) return;
+                const at = this.atPosition(view, pos);
+                this.refs = { title: "References", items: [], loading: true };
+                this.get("definition", { rootId: this.rootId, path: tab.path, line: at.line, word: at.word }).then((answer) => {
+                    const artifact = answer.artifact;
+                    if (!artifact) { this.refs = { title: "No artifact at line " + at.line, items: [], loading: false }; return; }
+                    this.showReferences(artifact);
+                }, (error) => { this.refs.loading = false; this.fail(error); });
+            },
+            showReferences(artifact) {
+                this.refs = { title: "Used by " + artifact.kind + " " + artifact.shortName, items: [], loading: true, artifactId: artifact.id };
+                this.get("refs", { artifactId: artifact.id, direction: "in" }).then((answer) => {
+                    this.refs.items = (answer.refs || []).map((entry) => ({
+                        label: (entry.other ? entry.other.kind + " " + entry.other.shortName : entry.from),
+                        caption: entry.refType + " · " + (entry.relativePath || entry.path || "").split("/").slice(-2).join("/") + ":" + entry.line +
+                            (entry.calls ? " · " + entry.calls + " calls" : ""),
+                        rootId: entry.rootId, relativePath: entry.relativePath, line: entry.line
+                    }));
+                    this.refs.loading = false;
+                }, (error) => { this.refs.loading = false; this.fail(error); });
+            },
+            openArtifactGoto() { this.artifactGoto = { open: true, text: "", results: [] }; },
+            searchArtifacts() {
+                const text = this.artifactGoto.text;
+                if (!text || text.length < 2) { this.artifactGoto.results = []; return; }
+                this.get("artifacts", { text, limit: 30 }).then((answer) => {
+                    if (this.artifactGoto.text === text) this.artifactGoto.results = answer.artifacts || [];
+                }, this.fail);
+            },
+            gotoArtifact(artifact) { this.artifactGoto.open = false; if (artifact) this.openArtifact(artifact); },
             // ---- changes and commits ----
             paths(entries) { return entries.map((entry) => entry.path).join(","); },
             stage(entries) { this.post("stage", { rootId: this.rootId, paths: this.paths(entries) }).then(() => this.refreshStatus(), this.fail); },
@@ -364,6 +449,10 @@
                 this.post(what, { rootId: this.rootId }).then((answer) => {
                     this.busy = "";
                     this.note((what.charAt(0).toUpperCase() + what.slice(1)) + " done" + (answer.output ? ": " + answer.output.trim().split("\n").pop() : ""));
+                    // an upstream change that removed what the site extends: the upgrade checklist
+                    if (answer.extensionsAffected) this.$q.notify({ type: "warning", timeout: 0, closeBtn: "Close",
+                        message: "Extensions affected: " + answer.extensionsAffected, actions: [{ label: "Customizations", color: "white",
+                            handler: () => { window.location.href = "/qapps/dev/Artifacts/Customizations"; } }] });
                     this.refreshStatus(); this.treeKey++;
                 }, this.fail);
             },
@@ -408,7 +497,8 @@
             },
             onKey(event) {
                 const mod = event.ctrlKey || event.metaKey;
-                if (mod && event.key.toLowerCase() === "p") { event.preventDefault(); this.openGoto(); }
+                if (mod && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); this.openArtifactGoto(); }
+                else if (mod && event.key.toLowerCase() === "p") { event.preventDefault(); this.openGoto(); }
                 else if (mod && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); this.tab = "code"; this.rail = "search"; }
             }
         },
@@ -458,6 +548,7 @@
         <q-btn dense flat round size="sm" icon="sym_o_note_add" :disable="!canWrite" @click="newFile(null)"><q-tooltip>New file</q-tooltip></q-btn>
         <q-btn dense flat round size="sm" icon="sym_o_create_new_folder" :disable="!canWrite" @click="newFolder(null)"><q-tooltip>New folder</q-tooltip></q-btn>
         <q-btn dense flat round size="sm" icon="sym_o_search" @click="openGoto"><q-tooltip>Go to file (Ctrl+P)</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_data_object" @click="openArtifactGoto" id="DevGotoArtifact"><q-tooltip>Go to artifact (Ctrl+Shift+O)</q-tooltip></q-btn>
       </div>
       <div v-show="rail === 'files'" class="col scroll">
         <m-file-tree v-if="rootId" :key="rootId" :load="loadDir" :reload-key="treeKey" v-model:selected="selected" @open="openFile" @menu="treeMenu"></m-file-tree>
@@ -524,7 +615,17 @@
         <div v-else-if="current.binary" class="q-pa-md m-muted">A binary file: it opens in the browser, not in the editor.</div>
         <m-code-editor v-else-if="!current.loading" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
             :read-only="current.readOnly" :schema="current.schema" :lint="lintOf(current)" height="100%"
-            :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"></m-code-editor>
+            :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
+            :extensions="editorExtensions()"></m-code-editor>
+        <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
+          <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
+            <q-space></q-space><q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
+          <q-list dense>
+            <q-item v-for="(item, index) in refs.items" :key="index" clickable @click="openArtifact(item)">
+              <q-item-section><q-item-label>{{item.label}}</q-item-label><q-item-label caption>{{item.caption}}</q-item-label></q-item-section>
+            </q-item>
+          </q-list>
+        </div>
         <div class="m-dev-problems" v-if="problems.length" id="DevProblems">
           <div class="text-caption q-px-sm q-pt-xs text-weight-medium">Problems {{problems.length}}</div>
           <q-list dense>
@@ -596,6 +697,15 @@
       <m-diff-view v-if="diff" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
+  <q-dialog v-model="artifactGoto.open">
+    <q-card style="width: 44rem; max-width: 95vw">
+      <q-card-section class="q-pb-none"><q-input dense outlined autofocus v-model="artifactGoto.text" placeholder="Go to artifact: OrdHdr, place#Order"
+          debounce="200" @update:model-value="searchArtifacts" @keyup.enter="gotoArtifact(artifactGoto.results[0])" id="DevGotoArtifactInput"></q-input></q-card-section>
+      <q-list dense class="scroll" style="max-height: 50vh"><q-item v-for="artifact in artifactGoto.results" :key="artifact.id" clickable @click="gotoArtifact(artifact)">
+        <q-item-section><q-item-label>{{artifact.shortName}} <span class="m-muted">{{artifact.kind}}</span></q-item-label>
+          <q-item-label caption>{{artifact.component}}{{artifact.upstream ? '' : ' · site'}} · {{artifact.name}}</q-item-label></q-item-section></q-item></q-list>
+    </q-card>
+  </q-dialog>
   <q-dialog v-model="goto.open">
     <q-card style="width: 40rem; max-width: 95vw">
       <q-card-section class="q-pb-none"><q-input dense outlined autofocus v-model="goto.filter" placeholder="Go to file"

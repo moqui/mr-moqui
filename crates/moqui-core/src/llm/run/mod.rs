@@ -455,6 +455,13 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
         {
             caps = caps.with([screen_cap]);
         }
+        // the development tools, and on the drawer the screen-xml dialect, for a dev-aide user on a dev instance
+        if crate::devtools::dev_aide_user(factory, &request.user_id) {
+            caps = caps.with([crate::llm::tools::caps::DEV]);
+            if caps.has(crate::llm::tools::caps::UI_OPENUI) {
+                caps = caps.with([crate::llm::tools::caps::UI_SCREEN_XML]);
+            }
+        }
         // the canvas dialects the agent does not write are off whatever the surface offers (Vue SFC is off by default)
         let caps = caps.dialects_only(|dialect| agent.allows_dialect(dialect));
         let caps = caps.with(request.extra_caps.iter().map(String::as_str));

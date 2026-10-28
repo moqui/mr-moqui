@@ -1120,6 +1120,11 @@ fn serve_thread(
     if matches!(bind, ListenBind::Property) {
         moqui_core::devtools::watch::start(&factory);
     }
+    // The artifact index (plans/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
+    // builds it at first use.
+    if matches!(bind, ListenBind::Property) {
+        moqui_core::devtools::index::start(&factory);
+    }
     // The dev-aide gives its users code execution as this process's user (plans/design-dev-aide.md 15): say so when the
     // listener is reachable from other machines.
     if moqui_core::devtools::is_dev_instance()

@@ -52,3 +52,10 @@ test("error text from a transition's answer", () => {
     assert.equal(pure.errorText(new Error("boom")), "boom");
     assert.equal(pure.storageKey("site", "tabs"), "moqui.devAide.tabs.site");
 });
+
+test("go to definition takes the attribute value under the cursor", () => {
+    const line = '        <entity-find entity-name="moqui.example.Example" list="examples">';
+    assert.equal(pure.valueAt(line, line.indexOf("example.Example") + 3), "moqui.example.Example");
+    assert.equal(pure.valueAt(line, line.indexOf("list") + 1), "list");
+    assert.equal(pure.valueAt("ec.entity.find(x) place#Order y", 22), "place#Order");
+});

@@ -112,6 +112,10 @@ impl<'a> Ctx<'a> {
         if crate::llm::screen::installed() {
             caps = caps.with([caps::SCREEN]);
         }
+        // the dev tools (artifact, source, check) for a dev-aide user on a dev instance
+        if crate::devtools::dev_aide_user(factory, &caller.user_id) {
+            caps = caps.with([caps::DEV]);
+        }
         Ok(Self {
             factory,
             facade,
@@ -289,6 +293,16 @@ pub fn listed(ctx: &Ctx<'_>) -> Vec<Listed> {
         .filter_map(|name| registry_tool(name))
         .map(of_tool)
         .collect();
+    // the read tools a component registers for MCP whose capabilities the caller has (the dev tools)
+    out.extend(
+        offered
+            .iter()
+            .filter(|offered| {
+                let spec = offered.tool.spec();
+                spec.mcp && spec.classification.is_read() && !READ_TOOLS.contains(&spec.name.as_str())
+            })
+            .map(|offered| of_tool(Arc::clone(&offered.tool))),
+    );
     let catalog = Catalog::for_mcp(&ctx.facade, &ctx.caps, &ctx.policy, &ctx.agent.role_groups());
     let services: Vec<&Entry> = catalog
         .entries

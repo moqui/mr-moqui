@@ -48,3 +48,27 @@ feature("the Workspace answers its roots", {
         roots.roots.some((root) => root.components.some((component) => component.name == "dev-aide"))
     },
 })
+
+feature("Artifacts: search, references and customizations render in both modes", {
+    expect() {
+        const search = dev().render("Artifacts/Search", { text: "Example", kind: "entity" }, null)
+        const refs = dev().render("Artifacts/Refs", { artifactId: "entity:moqui.example.Example" }, null)
+        const custom = dev().render("Artifacts/Customizations", null, null)
+        const refsTui = dev().renderMode("tui").render("Artifacts/Refs", { artifactId: "entity:moqui.example.Example" }, null)
+        search.status == 200 && search.errorMessages.length == 0
+        search.output.includes("moqui.example.Example")
+        refs.status == 200 && refs.errorMessages.length == 0
+        refs.output.includes("Used by")
+        custom.status == 200 && custom.errorMessages.length == 0
+        custom.output.includes("Site extensions")
+        refsTui.status == 200 && refsTui.errorMessages.length == 0
+    },
+})
+
+feature("the palette's Artifacts group answers entities and services", {
+    expect() {
+        const rows = ec.service.sync().name("org.moqui.devaide.ArtifactServices.search#Palette").parameters({ text: "create#UserAccount" }).call().rows
+        rows.length > 0
+        rows[0].url.startsWith("/qapps/dev/Workspace?rootId=")
+    },
+})

@@ -41,6 +41,61 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="rootElement" required="true"/></in-parameters>
         <out-parameters><parameter name="digest" type="Map"/></out-parameters>
     </service>
+    <service verb="find" noun="Artifacts" type="rust" location="moqui_core::service::devtools::find_artifacts"
+            allow-remote="false" read-only="true">
+        <description>The artifacts of the index (plans/design-dev-aide.md 7.1) whose names match a text, best first:
+            segments and camel case match (OrdHdr, place#Order), an exact id or name first. Any user with a dev-aide
+            permission.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="kinds" type="Object"><description>A list or comma separated text: entity, view-entity,
+                field, service, screen, transition, form, anchor, seca, eeca, rest, data, script, skill ...</description></parameter>
+            <parameter name="components" type="Object"/>
+            <parameter name="limit" type="Integer" default-value="50"/>
+        </in-parameters>
+        <out-parameters><parameter name="artifacts" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Artifact" type="rust" location="moqui_core::service::devtools::get_artifact"
+            allow-remote="false" read-only="true">
+        <description>One artifact of the index by its id (entity:moqui.example.Example), or the best match of a name.</description>
+        <in-parameters><parameter name="artifactId" required="true"/></in-parameters>
+        <out-parameters><parameter name="artifact" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="ArtifactRefs" type="rust" location="moqui_core::service::devtools::get_artifact_refs"
+            allow-remote="false" read-only="true">
+        <description>What uses an artifact (direction in) or what it uses (out), from the files and the calls observed
+            on this dev instance; a screen's or entity's transitions, forms and fields count as it.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="direction" default-value="in"/>
+            <parameter name="kinds" type="Object"/>
+        </in-parameters>
+        <out-parameters><parameter name="refs" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="ArtifactAt" type="rust" location="moqui_core::service::devtools::get_artifact_at"
+            allow-remote="false" read-only="true">
+        <description>The reference at a line of a file (the one naming word when given) and the artifact it resolves
+            to, else the artifact defined on the line: go to definition.</description>
+        <in-parameters>
+            <parameter name="path" required="true"/>
+            <parameter name="line" type="Integer" required="true"/>
+            <parameter name="word"/>
+        </in-parameters>
+        <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="ArtifactExtensions" type="rust" location="moqui_core::service::devtools::get_artifact_extensions"
+            allow-remote="false" read-only="true">
+        <description>The extensions the components make (extend-entity, screen-extend and its anchors, ECA rules on
+            another's service or entity) with whether each target is there, broken first.</description>
+        <in-parameters><parameter name="components" type="Object"/></in-parameters>
+        <out-parameters><parameter name="extensions" type="List"/><parameter name="brokenCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="rebuild" noun="ArtifactIndex" type="rust" location="moqui_core::service::devtools::rebuild_artifact_index"
+            allow-remote="false">
+        <description>Read every component file whose hash changed into the index now; with full, every file.</description>
+        <in-parameters><parameter name="full" type="Boolean" default-value="false"/></in-parameters>
+        <out-parameters><parameter name="report" type="Map"/></out-parameters>
+    </service>
     <service verb="restart" noun="Server" type="rust" location="moqui_core::service::devtools::restart_server"
             allow-remote="false">
         <description>Shut the server down gracefully, as on SIGTERM, and run it again with the same arguments: the

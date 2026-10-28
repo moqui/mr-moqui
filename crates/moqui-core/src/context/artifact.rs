@@ -115,6 +115,12 @@ impl ArtifactStack {
         let artifact_type = known(artifact_type);
         let name = name.to_string();
         let action = known(action);
+        // the calls observed on a dev instance, for the artifact index (plans/design-dev-aide.md 7.1)
+        if crate::devtools::index::calls::enabled() {
+            if let Some(parent) = self.frames.last() {
+                crate::devtools::index::calls::observe(&parent.artifact_type, &parent.name, &artifact_type, &name);
+            }
+        }
         let telemetry = crate::telemetry::current();
         let legacy_slow = telemetry
             .as_ref()

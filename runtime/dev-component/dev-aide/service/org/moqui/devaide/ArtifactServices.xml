@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The framework's artifact index (plans/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
+    and path that open it in the Workspace and whether it is the site's or upstream. The view tier and above. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="search" noun="Artifacts" type="rust" location="dev_aide::artifacts::search_artifacts" allow-remote="false" read-only="true">
+        <description>The artifacts whose names match a text, best first (OrdHdr, place#Order), by kind and component.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="kinds" type="Object"/>
+            <parameter name="components" type="Object"/>
+            <parameter name="limit" type="Integer" default-value="50"/>
+        </in-parameters>
+        <out-parameters><parameter name="artifacts" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="ArtifactDetail" type="rust" location="dev_aide::artifacts::get_artifact_detail" allow-remote="false" read-only="true">
+        <description>An artifact with its origin: where it is defined and each extension of it, the site's first; the counts of what uses it and what it uses.</description>
+        <in-parameters><parameter name="artifactId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="artifact" type="Map"/>
+            <parameter name="extensions" type="List"/>
+            <parameter name="usedByCount" type="Integer"/>
+            <parameter name="usesCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Refs" type="rust" location="dev_aide::artifacts::get_refs" allow-remote="false" read-only="true">
+        <description>What uses an artifact (direction in) or what it uses (out), static and observed, grouped by kind.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="direction" default-value="in"/>
+            <parameter name="kinds" type="Object"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifact" type="Map"/>
+            <parameter name="groups" type="List"/>
+            <parameter name="refs" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Definition" type="rust" location="dev_aide::artifacts::get_definition" allow-remote="false" read-only="true">
+        <description>Go to definition: the artifact the reference at a line of a file names (the one naming word), with where it opens.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="line" type="Integer" required="true"/>
+            <parameter name="word"/>
+        </in-parameters>
+        <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Customizations" type="rust" location="dev_aide::artifacts::get_customizations" allow-remote="false" read-only="true">
+        <description>Every extension the site components make (extend-entity, screen-extend and its anchors, ECA rules on
+            upstream services and entities), with whether what it extends is there: the upgrade checklist after a pull.</description>
+        <out-parameters>
+            <parameter name="extensionCount" type="Integer"/>
+            <parameter name="brokenCount" type="Integer"/>
+            <parameter name="extensions" type="List"/>
+            <parameter name="siteComponents" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="search" noun="Palette" type="rust" location="dev_aide::artifacts::search_palette" allow-remote="false" read-only="true">
+        <description>The shell palette's Artifacts group: entities, services, screens and rules matching the text.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="limit" type="Integer"/>
+            <parameter name="docTypes" type="Object"/>
+        </in-parameters>
+        <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
+    </service>
+</services>

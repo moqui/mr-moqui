@@ -130,12 +130,16 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="pull" noun="Remote" type="rust" location="dev_aide::vcs::pull_remote" allow-remote="false">
-        <description>git pull --ff-only.</description>
+        <description>git pull --ff-only; the changed files reloaded at once, and the site's extensions whose targets the pull
+            removed (the upgrade checklist).</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="output"/>
+            <parameter name="reload" type="Map"/>
+            <parameter name="extensionsAffected" type="Integer"/>
+            <parameter name="brokenExtensions" type="List"/>
         </out-parameters>
     </service>
     <service verb="push" noun="Remote" type="rust" location="dev_aide::vcs::push_remote" allow-remote="false">
