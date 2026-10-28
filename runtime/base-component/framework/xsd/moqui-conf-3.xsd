@@ -1827,6 +1827,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="git-read-timeout" type="xs:string" default="15"><xs:annotation><xs:documentation>Seconds
                 a git read may run.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="git-network-timeout" type="xs:string" default="300"/>
+            <xs:attribute name="git-write-timeout" type="xs:string" default="120"><xs:annotation><xs:documentation>Seconds a write (which may run hooks) may take.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-edit-bytes" type="xs:string" default="2097152"><xs:annotation><xs:documentation>A
                 text over this many bytes opens read only.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>

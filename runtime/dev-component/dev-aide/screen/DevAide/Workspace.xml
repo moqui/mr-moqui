@@ -74,6 +74,69 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- git depth (P8) -->
+    <transition name="hunks" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Hunks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stageHunks"><service-call name="org.moqui.devaide.VcsServices.stage#Hunks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="unstageHunks"><service-call name="org.moqui.devaide.VcsServices.unstage#Hunks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="discardHunks"><service-call name="org.moqui.devaide.VcsServices.discard#Hunks" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="branches" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Branches" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="renameBranch"><service-call name="org.moqui.devaide.VcsServices.rename#Branch" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="deleteBranch"><service-call name="org.moqui.devaide.VcsServices.delete#Branch" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="mergeBranch"><service-call name="org.moqui.devaide.VcsServices.merge#Branch" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="compareRefs" read-only="true"><service-call name="org.moqui.devaide.VcsServices.compare#Refs" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="tags" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Tags" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createTag"><service-call name="org.moqui.devaide.VcsServices.create#Tag" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="deleteTag"><service-call name="org.moqui.devaide.VcsServices.delete#Tag" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="pushTag"><service-call name="org.moqui.devaide.VcsServices.push#Tag" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stashes" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Stashes" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createStash"><service-call name="org.moqui.devaide.VcsServices.create#Stash" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="applyStash"><service-call name="org.moqui.devaide.VcsServices.apply#Stash" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="popStash"><service-call name="org.moqui.devaide.VcsServices.pop#Stash" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="dropStash"><service-call name="org.moqui.devaide.VcsServices.drop#Stash" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="revertCommit"><service-call name="org.moqui.devaide.VcsServices.revert#Commit" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="cherryPick"><service-call name="org.moqui.devaide.VcsServices.cherryPick#Commit" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="tree" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Tree" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="fileAt" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#FileAt" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="blame" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Blame" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="conflictSides" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#ConflictSides" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="resolveConflict"><service-call name="org.moqui.devaide.VcsServices.resolve#Conflict" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="abortOperation"><service-call name="org.moqui.devaide.VcsServices.abort#Operation" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="addRemote"><service-call name="org.moqui.devaide.VcsServices.add#Remote" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="setRemoteUrl"><service-call name="org.moqui.devaide.VcsServices.set#RemoteUrl" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="removeRemote"><service-call name="org.moqui.devaide.VcsServices.remove#Remote" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="pruneRemote"><service-call name="org.moqui.devaide.VcsServices.prune#Remote" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="cancelGit"><service-call name="org.moqui.devaide.VcsServices.cancel#GitOperation" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="xmlOp"><service-call name="org.moqui.impl.DevToolsServices.apply#XmlOps" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="outline" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#XmlOutline" in-map="true" web-send-json-response="true"/>

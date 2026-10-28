@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -40,6 +41,35 @@ pub struct Git {
     pub command: String,
     pub read_timeout: Duration,
     pub network_timeout: Duration,
+    pub write_timeout: Duration,
+}
+
+/// A long command's progress (plans/design-dev-aide.md 4.2): its `--progress` lines handed to `sink` as they come, at
+/// most a few a second and the last always, and Cancel by `id` ([`cancel`]) while it runs.
+pub struct Progress {
+    pub id: String,
+    pub sink: Box<dyn Fn(&str) + Send + Sync>,
+}
+
+fn running() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static RUNNING: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Ask the command running as operation `id` to stop; whether one was running.
+#[must_use]
+pub fn cancel(id: &str) -> bool {
+    let running = running().lock().unwrap_or_else(|err| err.into_inner());
+    running.get(id).is_some_and(|flag| {
+        flag.store(true, Ordering::SeqCst);
+        true
+    })
+}
+
+/// Whether a write of `repo` is waiting for another to finish.
+#[must_use]
+pub fn write_queued(repo: &Path) -> bool {
+    write_lock(repo).try_lock().is_err()
 }
 
 #[derive(Clone, Debug)]
@@ -104,6 +134,23 @@ impl Git {
         env: &[(&str, String)],
         stdin: Option<&str>,
     ) -> Result<Output, Error> {
+        self.run_with(repo, mode, args, env, stdin, None)
+    }
+
+    /// [`Git::run`] with its progress lines handed on and Cancel by the progress's id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when git cannot start, runs past its timeout or is cancelled (it is killed).
+    pub fn run_with(
+        &self,
+        repo: &Path,
+        mode: Mode,
+        args: &[&str],
+        env: &[(&str, String)],
+        stdin: Option<&str>,
+        progress: Option<Progress>,
+    ) -> Result<Output, Error> {
         let lock = (mode != Mode::Read).then(|| write_lock(repo));
         let _held = lock
             .as_ref()
@@ -145,17 +192,43 @@ impl Git {
             })
         };
         let stdout = reader(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
-        let stderr = reader(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
-        // a write may run hooks (pre-commit), so it has longer than a read
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (stderr, id) = match progress {
+            Some(progress) => {
+                running()
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .insert(progress.id.clone(), Arc::clone(&cancelled));
+                let pipe = child.stderr.take();
+                let id = progress.id.clone();
+                (
+                    std::thread::spawn(move || read_progress(pipe, &progress.sink)),
+                    Some(id),
+                )
+            }
+            None => (
+                reader(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>)),
+                None,
+            ),
+        };
+        let _registered = Registered(id);
         let timeout = match mode {
             Mode::Read => self.read_timeout,
-            Mode::Write => Duration::from_secs(120),
+            Mode::Write => self.write_timeout,
             Mode::Network => self.network_timeout,
         };
         let deadline = Instant::now() + timeout;
         let status = loop {
             if let Some(status) = child.try_wait().map_err(|err| Error::new(format!("git: {err}")))? {
                 break status;
+            }
+            if cancelled.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::new(format!(
+                    "git {} was cancelled",
+                    args.iter().find(|arg| !arg.starts_with('-')).copied().unwrap_or("")
+                )));
             }
             if Instant::now() > deadline {
                 let _ = child.kill();
@@ -186,6 +259,67 @@ impl Git {
             .checked(args.first().copied().unwrap_or(""))?
             .stdout)
     }
+}
+
+/// An operation's Cancel flag, dropped from the running ones when its command ends.
+struct Registered(Option<String>);
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        if let Some(id) = &self.0 {
+            running().lock().unwrap_or_else(|err| err.into_inner()).remove(id);
+        }
+    }
+}
+
+/// The stderr of a command with `--progress`: each line (git ends a progress line with a carriage return) to `sink`, at
+/// most four a second and the last always, and the whole text kept as the answer's stderr.
+fn read_progress(pipe: Option<std::process::ChildStderr>, sink: &(dyn Fn(&str) + Send + Sync)) -> String {
+    let Some(mut pipe) = pipe else {
+        return String::new();
+    };
+    let mut kept = Vec::new();
+    let mut line = Vec::new();
+    let mut last_sent = Instant::now() - Duration::from_secs(1);
+    let mut pending = None::<String>;
+    let mut buffer = [0u8; 4096];
+    loop {
+        let read = match pipe.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        for &byte in &buffer[..read] {
+            kept.push(byte);
+            if byte == b'\n' || byte == b'\r' {
+                if !line.is_empty() {
+                    pending = Some(String::from_utf8_lossy(&line).into_owned());
+                    line.clear();
+                }
+            } else {
+                line.push(byte);
+            }
+        }
+        if let Some(text) = pending
+            .as_ref()
+            .filter(|_| last_sent.elapsed() >= Duration::from_millis(250))
+        {
+            sink(text);
+            pending = None;
+            last_sent = Instant::now();
+        }
+    }
+    if !line.is_empty() {
+        pending = Some(String::from_utf8_lossy(&line).into_owned());
+    }
+    if let Some(text) = pending {
+        sink(&text);
+    }
+    // the progress lines are not part of the answer: keep the lines that end with a newline
+    let text = String::from_utf8_lossy(&kept).into_owned();
+    text.split('\n')
+        .map(|line| line.rsplit('\r').next().unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One changed path of `git status --porcelain=v2`.
@@ -403,8 +537,92 @@ pub fn with_trailer(message: &str, task: Option<&str>) -> String {
     }
 }
 
+/// A run of lines that one commit last changed, from `git blame --porcelain`.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameRange {
+    /// The first and last line, from 1.
+    pub from: u32,
+    pub to: u32,
+    pub commit: String,
+    pub author: String,
+    /// Seconds since the epoch.
+    pub time: i64,
+    pub summary: String,
+}
+
+/// Parse `git blame --porcelain` into ranges of consecutive lines of one commit. The commit's author, time and
+/// summary come with its first group only, so they are kept by commit.
+#[must_use]
+pub fn parse_blame(out: &str) -> Vec<BlameRange> {
+    let mut info: HashMap<String, (String, i64, String)> = HashMap::new();
+    let mut ranges: Vec<BlameRange> = Vec::new();
+    let mut current: Option<(String, u32)> = None;
+    for line in out.lines() {
+        if line.starts_with('\t') {
+            let Some((commit, final_line)) = current.take() else {
+                continue;
+            };
+            let (author, time, summary) = info.get(&commit).cloned().unwrap_or_default();
+            match ranges.last_mut() {
+                Some(last) if last.commit == commit && last.to + 1 == final_line => last.to = final_line,
+                _ => ranges.push(BlameRange {
+                    from: final_line,
+                    to: final_line,
+                    commit,
+                    author,
+                    time,
+                    summary,
+                }),
+            }
+            continue;
+        }
+        let mut words = line.split(' ');
+        let first = words.next().unwrap_or("");
+        if first.len() == 40 && first.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            let final_line = words.nth(1).and_then(|number| number.parse().ok()).unwrap_or(0);
+            info.entry(first.to_string()).or_default();
+            current = Some((first.to_string(), final_line));
+            continue;
+        }
+        let Some((commit, _)) = &current else {
+            continue;
+        };
+        let rest = line.split_once(' ').map_or("", |(_, rest)| rest);
+        let entry = info.entry(commit.clone()).or_default();
+        match first {
+            "author" => entry.0 = rest.to_string(),
+            "author-time" => entry.1 = rest.parse().unwrap_or(0),
+            "summary" => entry.2 = rest.to_string(),
+            _ => {}
+        }
+    }
+    ranges
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blame_groups_lines_by_commit() {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        let out = format!(
+            "{a} 1 1 2\nauthor Jane\nauthor-time 1700000000\nsummary First\nfilename f.txt\n\tone\n{a} 2 2\n\ttwo\n\
+             {b} 3 3 1\nauthor Raj\nauthor-time 1700000100\nsummary Second\nfilename f.txt\n\tthree\n{a} 4 4 1\n\tfour\n"
+        );
+        let ranges = super::parse_blame(&out);
+        assert_eq!(ranges.len(), 3, "{ranges:?}");
+        assert_eq!(
+            (ranges[0].from, ranges[0].to, ranges[0].author.as_str()),
+            (1, 2, "Jane")
+        );
+        assert_eq!(
+            (ranges[1].from, ranges[1].summary.as_str(), ranges[1].time),
+            (3, "Second", 1_700_000_100)
+        );
+        assert_eq!((ranges[2].from, ranges[2].summary.as_str()), (4, "First"));
+    }
+
     use super::*;
 
     #[test]

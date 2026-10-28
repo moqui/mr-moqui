@@ -52,7 +52,7 @@ pub const CURRENT_TASK: &str = "DEV_AIDE_CURRENT_TASK";
 /// The publish branch an admin set for a user (question 15), a name or a pattern with `{user}`.
 pub const PUBLISH_BRANCH: &str = "DEV_AIDE_PUBLISH_BRANCH";
 
-fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Root, LibError> {
+pub(crate) fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Root, LibError> {
     let root = context.root(&text(parameters, "rootId"))?;
     if root.kind != RootKind::Git {
         return Err(LibError::new(format!("{} is not a git repository", root.label)));
@@ -61,7 +61,7 @@ fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Result<&'a Roo
 }
 
 /// The paths of a `paths` parameter (a list, or comma-separated text), each confined to the root.
-fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<String>, LibError> {
+pub(crate) fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<String>, LibError> {
     let listed: Vec<String> = match parameters.get("paths") {
         Some(Value::List(items)) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
         Some(other) => moqui_lib::object::to_plain_string(other)
@@ -81,7 +81,7 @@ fn paths(context: &Context, root: &Root, parameters: &Parameters) -> Result<Vec<
 }
 
 /// The author of a commit: the logged-in user's name and email (D19: a shared server names who made each commit).
-fn author_env(context: &Context) -> Vec<(&'static str, String)> {
+pub(crate) fn author_env(context: &Context) -> Vec<(&'static str, String)> {
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let row = context
         .facade
@@ -106,7 +106,7 @@ fn author_env(context: &Context) -> Vec<(&'static str, String)> {
     env
 }
 
-fn network_allowed(context: &Context) -> Result<(), LibError> {
+pub(crate) fn network_allowed(context: &Context) -> Result<(), LibError> {
     if context.settings.shared && !context.settings.network_git {
         return Err(LibError::new(
             "Network git commands are off on this shared dev server until an admin enables them in Dev AIDE Settings",
@@ -170,15 +170,41 @@ fn token_helper(username: String, token: String) -> (Vec<String>, Vec<(&'static 
     )
 }
 
-/// Run a network command with the stored token when there is one.
-fn run_network(context: &Context, root: &Root, args: &[&str]) -> Result<crate::git::Output, LibError> {
+/// Run a network command with the stored token when there is one, its progress sent to the user as `DevGitProgress`
+/// notifications when the page named an operation (`operationId`), and Cancel by that id.
+pub(crate) fn run_network_with(
+    context: &Context,
+    root: &Root,
+    args: &[&str],
+    operation: Option<&str>,
+) -> Result<crate::git::Output, LibError> {
     let (mut argv, env) = credential_args(context, root);
+    let progress = operation.filter(|id| !id.is_empty()).map(|id| progress(context, id));
+    let mut args: Vec<&str> = args.to_vec();
+    if progress.is_some() && matches!(args.first(), Some(&("fetch" | "pull" | "push" | "clone"))) {
+        args.insert(1, "--progress");
+    }
     argv.extend(args.iter().map(|arg| (*arg).to_string()));
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    context.git().run(&root.path, Mode::Network, &argv, &env, None)
+    context
+        .git()
+        .run_with(&root.path, Mode::Network, &argv, &env, None, progress)
 }
 
-fn audit_git(context: &Context, root: &Root, command: &str, detail: serde_json::Value) {
+/// The progress of operation `id`, each line to the current user.
+pub(crate) fn progress(context: &Context, id: &str) -> crate::git::Progress {
+    let factory = std::sync::Arc::clone(&context.factory);
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let operation = id.to_string();
+    crate::git::Progress {
+        id: id.to_string(),
+        sink: Box::new(move |line: &str| {
+            crate::notify::send_progress(&factory, &user, &operation, line);
+        }),
+    }
+}
+
+pub(crate) fn audit_git(context: &Context, root: &Root, command: &str, detail: serde_json::Value) {
     audit::record(
         &context.facade,
         &Write {
@@ -269,11 +295,17 @@ fn get_status(
     out.insert("committerName".into(), Value::string(config("user.name")));
     out.insert("committerEmail".into(), Value::string(config("user.email")));
     out.insert("currentTask".into(), task.map_or(Value::Null, Value::string));
+    let conflicted = status.entries.iter().any(|entry| entry.conflicted);
+    out.insert(
+        "operation".into(),
+        crate::repo::operation(&context, root, conflicted).map_or(Value::Null, Value::string),
+    );
+    out.insert("writeQueued".into(), Value::Bool(git::write_queued(&root.path)));
     Ok(out)
 }
 
 /// The text of `spec` (`HEAD:path`, `:path` for the index), empty when it is not there.
-fn show(context: &Context, root: &Root, spec: &str) -> String {
+pub(crate) fn show(context: &Context, root: &Root, spec: &str) -> String {
     context.git().read(&root.path, &["show", spec]).unwrap_or_default()
 }
 
@@ -381,7 +413,7 @@ fn get_commit(
 }
 
 /// Run a write command over paths and answer git's output.
-fn write_paths(
+pub(crate) fn write_paths(
     context: &Context,
     root: &Root,
     args: &[&str],
@@ -567,9 +599,14 @@ fn commit_changes(
 }
 
 /// The git arguments of a network command, from the context and the root.
-type Argv = dyn Fn(&Context, &Root) -> Result<Vec<String>, LibError>;
+pub(crate) type Argv = dyn Fn(&Context, &Root) -> Result<Vec<String>, LibError>;
 
-fn network(ec: &ExecutionContext, parameters: &Parameters, build: &Argv, what: &str) -> Result<Parameters, LibError> {
+pub(crate) fn network(
+    ec: &ExecutionContext,
+    parameters: &Parameters,
+    build: &Argv,
+    what: &str,
+) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
     let root = git_root(&context, parameters)?;
@@ -582,7 +619,7 @@ fn network(ec: &ExecutionContext, parameters: &Parameters, build: &Argv, what: &
     }
     let args = build(&context, root)?;
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = run_network(&context, root, &argv)?;
+    let output = run_network_with(&context, root, &argv, Some(&text(parameters, "operationId")))?;
     let shown = format!("{}{}", output.stdout, output.stderr);
     audit_git(&context, root, what, serde_json::json!({ "ok": output.success() }));
     if !output.success() {
@@ -674,7 +711,7 @@ fn pull_remote(
 }
 
 /// The current branch, which a push needs.
-fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
+pub(crate) fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
     let branch = context
         .git()
         .read(&root.path, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -687,7 +724,7 @@ fn current_branch(context: &Context, root: &Root) -> Result<String, LibError> {
 }
 
 /// The remote a push goes to: the branch's, else origin, else the only one.
-fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<String, LibError> {
+pub(crate) fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<String, LibError> {
     let configured = context
         .git()
         .read(&root.path, &["config", "--get", &format!("branch.{branch}.remote")])
@@ -705,15 +742,24 @@ fn push_remote_name(context: &Context, root: &Root, branch: &str) -> Result<Stri
 }
 
 /// `push#Remote`: the current branch to its upstream, set on the first push.
+///
+/// With `forceWithLease` (the full tier's, question 8) it overwrites the remote branch, but only while the remote has
+/// what this repository last fetched of it, and only when `confirmRef` names the remote branch (`origin/main`), typed
+/// back on the page's confirm.
 fn push_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
+    let force = flag(parameters, "forceWithLease");
+    let confirm = text(parameters, "confirmRef");
+    if force && Context::of(ec, Tier::Full).is_err() {
+        return Err(LibError::new("A force push needs the full tier of Dev AIDE"));
+    }
     network(
         ec,
         parameters,
-        &|context, root| {
+        &move |context, root| {
             if root.publish_branch_required {
                 return Err(LibError::new(format!(
                     "{} publishes to its publish branch: use Publish",
@@ -722,6 +768,15 @@ fn push_remote(
             }
             let branch = current_branch(context, root)?;
             let remote = push_remote_name(context, root, &branch)?;
+            if force {
+                let target = format!("{remote}/{branch}");
+                if confirm != target {
+                    return Err(LibError::new(format!(
+                        "A force push overwrites {target}: type {target} to confirm"
+                    )));
+                }
+                return Ok(vec!["push".into(), "--force-with-lease".into(), remote, branch]);
+            }
             Ok(vec!["push".into(), "-u".into(), remote, branch])
         },
         "push",
@@ -784,7 +839,7 @@ fn create_branch(
     Ok(out)
 }
 
-fn valid_branch(name: &str) -> Result<(), LibError> {
+pub(crate) fn valid_branch(name: &str) -> Result<(), LibError> {
     let valid = !name.is_empty()
         && !name.starts_with('-')
         && !name.contains("..")
@@ -915,7 +970,7 @@ fn publish_site(
     } else {
         vec!["push", "-u", &remote, &refspec]
     };
-    let output = run_network(&context, root, &push_args)?;
+    let output = run_network_with(&context, root, &push_args, Some(&text(&parameters, "operationId")))?;
     audit_git(
         &context,
         root,

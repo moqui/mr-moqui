@@ -106,6 +106,7 @@ impl Context {
             command: self.settings.git_command.clone(),
             read_timeout: self.settings.git_read_timeout,
             network_timeout: self.settings.git_network_timeout,
+            write_timeout: self.settings.git_write_timeout,
         }
     }
 

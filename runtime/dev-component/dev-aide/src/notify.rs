@@ -176,3 +176,27 @@ pub(crate) fn announce_save(
     let json = serde_json::json!({ "rootId": root, "path": path, "userId": user, "username": username });
     send_to_users(facade, SAVED_TOPIC, json.to_string(), Some(user));
 }
+
+/// The notification topic of a long git command's progress lines.
+pub const PROGRESS_TOPIC: &str = "DevGitProgress";
+
+/// A progress line of operation `operation` to `user`, on its own context (it comes from the command's reader thread).
+pub(crate) fn send_progress(factory: &Arc<ExecutionContextFactory>, user: &str, operation: &str, line: &str) {
+    if user.is_empty() {
+        return;
+    }
+    let ctx = factory.new_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let json = serde_json::json!({ "operationId": operation, "line": line });
+    let sent = moqui_core::notify::NotificationMessage::new()
+        .topic(PROGRESS_TOPIC)
+        .user_ids(vec![user.to_string()])
+        .message_json(json.to_string())
+        .persist(false)
+        .show_alert(false)
+        .send();
+    if let Err(err) = sent {
+        tracing::warn!("Could not send the Dev AIDE git progress: {err}");
+    }
+}

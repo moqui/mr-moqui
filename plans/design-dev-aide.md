@@ -1273,7 +1273,7 @@ framework's:
 
 ```xml
 <dev-aide site-component="my-site" shared="false" allow-upstream-edits="false"
-        git-command="git" git-read-timeout="15" git-network-timeout="300" max-edit-bytes="2097152">
+        git-command="git" git-read-timeout="15" git-network-timeout="300" git-write-timeout="120" max-edit-bytes="2097152">
     <root location="/home/me/work/notes" label="Notes"/>
     <exclude pattern="runtime/db/**"/>
     <task-app name="projects" title="IronStone Projects"
@@ -1604,6 +1604,24 @@ assigned to no phase and goes with P8. The Workspace has no Settings tab (§4.3;
 timeout (§4.2), the Commits tab one page of 100, and the current task's preference is read but never written (§14):
 P8 takes them up. F14 overlays screen definitions only, not the text a `<text location>` reads, which a `.qvue`'s
 design mode needs (P9).
+
+**P8, git depth and tasks** (Oct 28, 2026), with these differences:
+
+- **The git layer.** A write's timeout is the conf's `git-write-timeout` (120 s). A network command the page names
+  (`operationId`) runs with `--progress`, its lines sent to the user as `DevGitProgress` (at most four a second, the
+  last always), and `cancel#GitOperation` stops it; `get#Status` says when a write waits for another
+  (`writeQueued`) and which operation stopped at a conflict (`operation`: merge, cherry-pick or revert by git's own
+  marker files, rebase, or `stash` for files unmerged with none of them, so no audit row is read for it).
+- **Hunks** come from `git diff -U3` of the file (`patch.rs`): `get#Hunks` answers their ranges and the diff's hash, and
+  `stage#Hunks`, `unstage#Hunks` and `discard#Hunks` apply the patch of the chosen ones (`apply --cached`, `--cached -R`,
+  `-R`), each hunk's start moved by the ones left out, refused when the diff changed since it was read.
+- **Writes**: branches (rename, delete with a forced second step, merge fast-forward only or with a merge commit,
+  compare as Gitea's), tags (annotated when there is a message; the tagger is the server's identity, as a commit's
+  committer is), stashes, revert and cherry-pick, each answering a conflict as `conflict: true` rather than an error;
+  the conflict's sides (`get#ConflictSides`, the index's stages 1 to 3 and the work tree), `resolve#Conflict` through the
+  save pipeline (refused while markers remain) and `git add`, and `abort#Operation` (a stash applied has no abort: git
+  kept the stash); remotes; `push --force-with-lease` for the full tier with the remote branch typed back; a clone into
+  `runtime/component` or `runtime/dev-component`; blame, a commit's tree and a file at it.
 
 ---
 
