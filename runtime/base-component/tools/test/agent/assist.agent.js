@@ -135,14 +135,18 @@ agentSpec({
                 make("moqui.agent.AgentToolExposure", { toolName: "update_user_group",
                     serviceName: "update#moqui.security.UserGroup", title: "Update a user group",
                     description: "Change a user group's description, type or allowed IPs.", lockVersion: 1 })
-                // a tool call has no screen above it to inherit from: the user needs the entity's permission itself
+                // a tool call has no screen above it to inherit from: the user needs the entity's permission itself, to
+                // view the record the approval card shows (read as the user) and to update it
                 make("moqui.security.ArtifactGroup", { artifactGroupId: "AGENT_EVAL_TOOL", description: "Agent eval tool" })
                 make("moqui.security.ArtifactGroupMember", { artifactGroupId: "AGENT_EVAL_TOOL",
                     artifactName: "moqui.security.UserGroup", artifactTypeEnumId: "AT_ENTITY", nameIsPattern: "N" })
                 make("moqui.security.ArtifactAuthz", { artifactAuthzId: "AGENT_EVAL_TOOL", userGroupId: "ADMIN",
                     artifactGroupId: "AGENT_EVAL_TOOL", authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_UPDATE" })
+                make("moqui.security.ArtifactAuthz", { artifactAuthzId: "AGENT_EVAL_TOOL_VIEW", userGroupId: "ADMIN",
+                    artifactGroupId: "AGENT_EVAL_TOOL", authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_VIEW" })
             },
             cleanup() {
+                remove("moqui.security.ArtifactAuthz", "artifactAuthzId", "AGENT_EVAL_TOOL_VIEW")
                 remove("moqui.security.ArtifactAuthz", "artifactAuthzId", "AGENT_EVAL_TOOL")
                 remove("moqui.security.ArtifactGroupMember", "artifactGroupId", "AGENT_EVAL_TOOL")
                 remove("moqui.security.ArtifactGroup", "artifactGroupId", "AGENT_EVAL_TOOL")
