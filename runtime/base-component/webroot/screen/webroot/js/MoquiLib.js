@@ -304,6 +304,10 @@
         previewToken: (() => {
             try { return new URL(root.location.href).searchParams.get("moquiPreview") || ""; } catch (_) { return ""; }
         })(),
+        // the screen builder's canvas asks for each widget's source stamped on it (moquiAide=source, F10)
+        aideMode: (() => {
+            try { return new URL(root.location.href).searchParams.get("moquiAide") || ""; } catch (_) { return ""; }
+        })(),
 
         // fetch with the session cookie and token. params is an object (a FormData, a string or a plain object). Resolves to
         // { ok, status, headers, text, json } and rejects with the same shape plus error on a network failure.
@@ -321,6 +325,7 @@
             // a page opened as a preview of proposed screen text (moquiPreview in its URL, a dev instance) asks for every
             // part of itself the same way (plans/design-dev-aide.md F14)
             if (moqui.previewToken) headers["X-Moqui-Preview"] = moqui.previewToken;
+            if (moqui.aideMode) headers["X-Moqui-Aide"] = moqui.aideMode;
             const init = { method, headers, credentials: "same-origin", signal: opts.signal };
             let target = url;
             const data = opts.params;

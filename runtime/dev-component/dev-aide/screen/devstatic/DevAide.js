@@ -129,6 +129,15 @@
     // The views of the dev-aide, whose scripts load on first use and register their components.
     devAide.registerView({ name: "entity", label: "Entity", roots: ["entities", "entity-facade-xml"], component: "m-dev-entity-view",
         script: "/devstatic/DevAideEntity.js", ready: () => !!devAide.entityViewRegistered });
+    devAide.registerView({ name: "screen", label: "Screen", roots: ["screen", "screen-extend"], component: "m-dev-screen-view",
+        script: "/devstatic/DevAideScreen.js", ready: () => !!devAide.screenViewRegistered });
+    // A screen in the screen builder (11.2): the entity view's "Show it on a form" and the like, by the reference's
+    // other side (an index row with its root and path).
+    devAide.openInBuilder = (ref) => {
+        const other = (ref && ref.other) || ref || {};
+        if (!other.rootId || !other.relativePath) return;
+        root.location.href = "/qapps/dev/Screens/Design?rootId=" + encodeURIComponent(other.rootId) + "&path=" + encodeURIComponent(other.relativePath);
+    };
     // The views offered for a file: Text first, then each spec whose roots take the file's root element.
     pure.viewsFor = (specs, path, element) => {
         const offered = [{ name: "text", label: "Text" }];
@@ -278,6 +287,7 @@
                     const view = this.query && this.query.view, artifact = this.query && this.query.artifact;
                     if (this.query && this.query.path) this.openFile(this.query.path, Number(this.query.line) || 0, false, { view, artifact });
                     else if (artifact) this.openArtifactId(artifact, view);
+                    else if (this.query && this.query.page) this.openPage(this.query.page);
                 }, this.fail);
             },
             selectRoot(id) {
@@ -317,7 +327,7 @@
                 if (!path) return;
                 how = how || {};
                 const opened = pure.openTab(this.tabs, { path, text: "", saved: "", base: "", loading: true, problems: [], line: line || 0,
-                    view: "text", artifact: how.artifact || "", outline: null, outlineError: "", companions: [] });
+                    view: "text", artifact: how.artifact || "", page: how.page || "", outline: null, outlineError: "", companions: [] });
                 this.tabs = opened.tabs;
                 if (!quiet) this.active = opened.active;
                 this.tab = "code";
@@ -353,6 +363,16 @@
                     if (!artifact || !artifact.rootId) { this.note("No artifact " + artifactId + " in the Workspace's roots", "warning"); return; }
                     if (artifact.rootId !== this.rootId) this.selectRoot(artifact.rootId);
                     this.openFile(artifact.relativePath, artifact.line || 0, false, { view, artifact: artifact.id });
+                }, this.fail);
+            },
+            // An app page in the screen builder (Open in screen builder, 11.2): its screen's file in the screen view, the
+            // page's path and query kept on the tab for the canvas.
+            openPage(page) {
+                this.get("screenView", { page }).then((answer) => {
+                    const base = answer.view && answer.view.base;
+                    if (!base) { this.note("The screen of " + page + " is not in the Workspace's roots", "warning"); return; }
+                    if (base.rootId !== this.rootId) this.selectRoot(base.rootId);
+                    this.openFile(base.path, 0, false, { view: "screen", page });
                 }, this.fail);
             },
             // ---- visual views (5.2) ----

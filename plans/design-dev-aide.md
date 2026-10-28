@@ -1,6 +1,6 @@
 # Dev AIDE: the assisted IDE
 
-Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3, P4 and P5 on Oct 28, 2026; what is not built yet is listed
+Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P6 on Oct 28, 2026; what is not built yet is listed
 in "Built so far" at the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
@@ -1504,6 +1504,40 @@ are independent of P4 and may run beside it.
   language to the L10n messages; the view entity's condition editor (Text) and its member diagram (P9, with the
   pan-and-zoom layer); the SQL of a view entity's Run (its first rows show); a link to Tools' Data Edit; data files' Load
   the changed records, Check and Export (§12; Load this file is built).
+
+**P6, the screen builder** (Oct 28, 2026), with these differences:
+
+- **Stamps (F10).** On a dev instance each widget element of a screen keeps its file, line and column as an `mq-src`
+  attribute through the fragments (a `screen-extend`'s merged elements their own file; a form merge's fields theirs,
+  the form keeping the base's), and the walker's generated code names a stamped element to `sri.stamp` before its macro
+  runs; the form macros do so for each field's box and list cell. A render that asks (`moquiAide=source` or
+  `X-Moqui-Aide: source`, a Dev AIDE user on a dev instance) writes the pending stamp on the first element tag written,
+  as `data-m-src` (a `template` passed over), and answers `frame-ancestors 'self'`; MoquiLib carries `moquiAide` from a
+  frame's URL on its requests as it does `moquiPreview`. Stamped: the containers, boxes, rows and columns, panels,
+  dialogs, menus, trees, links, images, labels and the other widgets that write an element of their own, forms and their
+  fields; a section writes none and is not. DbForm fields are not stamped yet, and the server-static path neither.
+- **The canvas** renders the tab's buffers through F14: `put#CanvasBuffer` keeps a user's unsaved texts under a buffer
+  id, and the frame's `buffer:<id>` token renders them (an empty buffer renders the files), under the read fence. A
+  frame whose source changes no longer warns of the requests it cut off.
+- **Extension mode** writes form merges (`form-list` and `form-single` of the form's name, the field with `after=`) and
+  `widgets-extend` (after, before, or append inside a named container) into the site's `screen-extend` of the screen,
+  a companion buffer made on its first save, with Replace section and Override transition (the base element copied in
+  to change there) and Actions before and after (`actions-extend`); in place the field goes after the selected one with its `field-ref` in the
+  `field-layout` or a `form-list-column` of its own. A site's first `screen-extend` file now drops the cached screen it
+  extends (the screen facade's `forget`), as no source of the screen named the component's missing directory.
+- **"Open in screen builder"** is a `page-action` with a `screen` (new: it opens that screen of the app with the page's
+  path and query as `page`), in the Assist drawer's header beside "Customize this screen"; `dev/Screens/Design?page=`
+  resolves a shell page under the apps root. The entity view's "Show it on a form" opens the screen in the builder.
+- **The tree** is `dev/Screens`, a list a level at a time (Children goes down) with how each screen is mounted (the
+  screen facade's new `mounted_by`: directory, item, conf mount, row), its menu index, default, modes and subscreens, and
+  New subscreen from a gallery archetype; a list, so the terminal reaches it.
+- **The Outline** is the block tree (`DevAideBlocks.js`, SortableJS nested groups, Alt+Up and Down, Delete), on the
+  screen file's widgets in place or the `screen-extend`'s elements in extension mode; Properties edits the selected
+  element's attributes from the schema digest.
+- **Not built:** Move, Remove, Set default and Reorder in the tree (Text, Properties and the Workspace's rename do
+  them); Add filter, Add section, Add button and Add row action; double-click to edit a title in place; "Add an anchor here"
+  (the full tier names the element in Text with the upstream toggle on); the archetype's gallery preview; the
+  `screen-xml` canvas's "Open in the builder" carrying the proposal as the builder's buffer.
 
 ---
 

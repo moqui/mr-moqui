@@ -112,6 +112,22 @@ pub(crate) fn site_file(
     })
 }
 
+/// The site's file at `relative` in the component (`screen-extend/example/screen/Gallery/ExampleDetail.xml`).
+pub(crate) fn site_path(context: &Context, relative: &str) -> Option<SiteFile> {
+    let (root, component) = site_component(context)?;
+    let path = if component.path.is_empty() {
+        relative.to_string()
+    } else {
+        format!("{}/{relative}", component.path)
+    };
+    Some(SiteFile {
+        root_id: root.id.clone(),
+        exists: root.path.join(&path).is_file(),
+        path,
+        component: component.name.clone(),
+    })
+}
+
 /// Where a file at `path` opens in the Workspace: its root and its path there, and whether it is the site's.
 pub(crate) fn located(context: &Context, path: &str) -> Json {
     match crate::roots::locate(&context.roots, Path::new(path)) {

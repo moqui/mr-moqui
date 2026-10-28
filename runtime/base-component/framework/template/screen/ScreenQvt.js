@@ -2237,13 +2237,17 @@
     const valueDescs = (fields, kind) => `[${fields.map((field) => valueDesc(field, kind)).filter((text) => text).join(",\n")}]`;
 
     // The code of one field of a form-single.
+    // A field's source stamp (dev instances, plans/design-dev-aide.md F10): the form macros write a field's box or
+    // cell themselves, so the field names its source to the render just before it.
+    const stampCode = (node) => (node.src ? `sri.stamp(${lit(node.src)});\n` : "");
+
     const singleFieldCode = (field, bigRow) => {
         const code = fieldChain(field, (sub) => {
             if (child(sub, "ignored")) return "";
             if (child(sub, "hidden")) return subWidgets(sub);
             const style = attr(sub, "container-style");
             const when = child(sub, "visible-when");
-            return js`
+            return stampCode(field) + js`
                 $v.fieldBox(${when ? bareLit(when) : "null"}, ${style ? noL10n(style) : '""'}, ${!!bigRow});
                 sri.pushContext();
                 try {
@@ -2371,7 +2375,7 @@
         const isHidden = !!child(sub, "hidden");
         const style = attr(sub, "container-style");
         const align = attr(field, "align");
-        const inner = isHidden ? subWidgets(sub) : js`
+        const inner = isHidden ? subWidgets(sub) : stampCode(field) + js`
             $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
             sri.pushContext();
             try {

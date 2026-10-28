@@ -29,6 +29,7 @@ mod entities;
 pub mod git;
 mod notify;
 pub mod roots;
+mod screens;
 pub mod settings;
 mod site;
 pub mod tier;
@@ -47,5 +48,6 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     artifacts::register(registry)?;
     changeset::register(registry)?;
     entities::register(registry)?;
+    screens::register(registry)?;
     vcs::register(registry)
 }

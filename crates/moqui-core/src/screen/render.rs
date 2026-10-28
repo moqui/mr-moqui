@@ -647,15 +647,37 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
     if token.is_empty() {
         token = job.request.header("x-moqui-preview").unwrap_or_default().to_string();
     }
+    // the screen builder's canvas: each widget's source stamped on what it writes (F10)
+    let mut aide = text_of(job.parameters.get("moquiAide"));
+    if aide.is_empty() {
+        aide = job.request.header("x-moqui-aide").unwrap_or_default().to_string();
+    }
+    let stamped = aide == "source"
+        && crate::devtools::is_dev_instance()
+        && crate::user::current_user_id()
+            .ok()
+            .flatten()
+            .is_some_and(|user| crate::devtools::dev_aide_user(factory, &user));
+    let run = || {
+        if stamped {
+            web::set_header(
+                "Content-Security-Policy",
+                Some("frame-ancestors 'self'; form-action 'self';"),
+            );
+            super::stamp::with(|| run_job_now(factory, job))
+        } else {
+            run_job_now(factory, job)
+        }
+    };
     if let Some(overlay) = super::overlay::for_token(factory, &token) {
         web::set_header(
             "Content-Security-Policy",
             Some("frame-ancestors 'self'; form-action 'self';"),
         );
         let _fence = crate::entity::fence::enter("a preview of proposed screen text");
-        return super::overlay::with(overlay, || run_job_now(factory, job));
+        return super::overlay::with(overlay, run);
     }
-    run_job_now(factory, job)
+    run()
 }
 
 fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {

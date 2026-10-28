@@ -621,13 +621,28 @@ impl ScreenFacade {
                 .iter()
                 .any(|file| *file == path || (path.is_dir() && file.starts_with(&path)))
         };
+        // a screen-extend file names the screen it extends by its path (screen-extend/<component>/screen/<path>, or
+        // <path> under screen/): a component's first one makes no source of the screen's stale, so it is named here
+        let extended: Vec<String> = files
+            .iter()
+            .filter_map(|file| {
+                let text = file.to_string_lossy().replace('\\', "/");
+                text.split_once("/screen-extend/").map(|(_, rest)| rest.to_string())
+            })
+            .collect();
+        let extends = |location: &str| {
+            extended
+                .iter()
+                .any(|rest| location == format!("component://{rest}") || location.ends_with(&format!("/screen/{rest}")))
+        };
         let mut dropped = Vec::new();
         let _ = self.definitions.remove_where(|location, def| {
-            let stale = def
-                .sources
-                .iter()
-                .chain(def.generated.dependencies().iter())
-                .any(&reads_changed);
+            let stale = extends(location)
+                || def
+                    .sources
+                    .iter()
+                    .chain(def.generated.dependencies().iter())
+                    .any(&reads_changed);
             if stale {
                 dropped.push(location.clone());
             }

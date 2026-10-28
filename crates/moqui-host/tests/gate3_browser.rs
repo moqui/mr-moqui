@@ -4555,7 +4555,10 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
         ("component/my-site/MoquiConf.xml", site_conf),
         ("component/my-site/screen/MySite.xml", site_screen),
-        ("component/upstream-app/component.xml", r#"<component name="upstream-app"/>"#),
+        (
+            "component/upstream-app/component.xml",
+            r#"<component name="upstream-app"/>"#,
+        ),
         ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
     ];
     // the site's screen, for ADMIN
@@ -4566,7 +4569,11 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     <moqui.security.ArtifactAuthz artifactAuthzId="MY_SITE_APP_ADMIN" userGroupId="ADMIN" artifactGroupId="MY_SITE_APP" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>"#,
     );
-    let dev_aide = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/dev-component/dev-aide")).unwrap();
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
     let gate = common::start_with_files_and_links(
         "browser-dev-aide-entity",
         Some(&security),
@@ -4586,13 +4593,27 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     }
     for component in ["my-site", "upstream-app"] {
         let dir = gate.runtime.join("component").join(component);
-        for args in [&["init", "-q", "-b", "main"][..], &["add", "-A"][..], &["commit", "-q", "-m", "Start"][..]] {
-            assert!(std::process::Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"][..],
+            &["commit", "-q", "-m", "Start"][..],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success());
         }
     }
     let facade = gate.server.factory().entity().unwrap();
     let columns = |facade: &moqui_core::entity::EntityFacade| -> Vec<String> {
-        facade.table_columns("upapp.Widget").unwrap().into_iter().map(|(name, _)| name.to_ascii_lowercase()).collect()
+        facade
+            .table_columns("upapp.Widget")
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect()
     };
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -4611,12 +4632,18 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     let pick_kind = |browser: &mut Browser, kind: &str| {
         browser.click(
             kind,
-            &format!("[...document.querySelectorAll('#DevFieldKind button')].find(b => b.innerText.trim() === '{kind}')"),
+            &format!(
+                "[...document.querySelectorAll('#DevFieldKind button')].find(b => b.innerText.trim() === '{kind}')"
+            ),
         );
     };
     let add_field = |browser: &mut Browser, kind: &str, words: &str| {
         browser.click("Add field", "document.getElementById('DevAddField')");
-        browser.wait_for("the Add field dialog", "!!document.getElementById('DevFieldWords')", WAIT);
+        browser.wait_for(
+            "the Add field dialog",
+            "!!document.getElementById('DevFieldWords')",
+            WAIT,
+        );
         pick_kind(browser, kind);
         browser.click("What it holds", "document.getElementById('DevFieldWords')");
         browser.type_text(words);
@@ -4624,7 +4651,11 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
 
     // a Date field: shown unsaved at once, then saved through the site's extend-entity
     add_field(&mut browser, "Date", "Due date");
-    browser.wait_for("its name", "(document.getElementById('DevFieldName') || {value: ''}).value === 'dueDate'", WAIT);
+    browser.wait_for(
+        "its name",
+        "(document.getElementById('DevFieldName') || {value: ''}).value === 'dueDate'",
+        WAIT,
+    );
     browser.click("Add", "document.getElementById('DevFieldAdd')");
     browser.wait_for(
         "the unsaved field",
@@ -4641,18 +4672,38 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         WAIT,
     );
     let site_file = std::fs::read_to_string(gate.runtime.join("component/my-site/entity/MySiteEntities.xml")).unwrap();
-    assert!(site_file.contains("<extend-entity entity-name=\"Widget\" package=\"upapp\">"), "{site_file}");
-    assert!(site_file.contains("<field name=\"dueDate\" type=\"date\"/>"), "{site_file}");
-    assert!(columns(&facade).contains(&"due_date".to_string()), "the column without a restart");
-    assert!(std::fs::read_to_string(gate.runtime.join("component/upstream-app/entity/UpEntities.xml")).unwrap() == upstream_entities);
+    assert!(
+        site_file.contains("<extend-entity entity-name=\"Widget\" package=\"upapp\">"),
+        "{site_file}"
+    );
+    assert!(
+        site_file.contains("<field name=\"dueDate\" type=\"date\"/>"),
+        "{site_file}"
+    );
+    assert!(
+        columns(&facade).contains(&"due_date".to_string()),
+        "the column without a restart"
+    );
+    assert!(
+        std::fs::read_to_string(gate.runtime.join("component/upstream-app/entity/UpEntities.xml")).unwrap()
+            == upstream_entities
+    );
 
     // a Picklist: its field, relationship and seed records in one Save; the records load
     add_field(&mut browser, "Picklist", "Priority");
     browser.click("the values", "document.getElementById('DevPicklistValues')");
     browser.type_text("High\nLow");
-    browser.wait_for("its name", "(document.getElementById('DevFieldName') || {value: ''}).value === 'priorityEnumId'", WAIT);
+    browser.wait_for(
+        "its name",
+        "(document.getElementById('DevFieldName') || {value: ''}).value === 'priorityEnumId'",
+        WAIT,
+    );
     browser.click("Add", "document.getElementById('DevFieldAdd')");
-    browser.wait_for("the unsaved picklist field", "!!document.querySelector('#DevEntityView [data-field=priorityEnumId]')", WAIT);
+    browser.wait_for(
+        "the unsaved picklist field",
+        "!!document.querySelector('#DevEntityView [data-field=priorityEnumId]')",
+        WAIT,
+    );
     browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
     browser.click("Save", "document.getElementById('DevSave')");
     let seed = gate.runtime.join("component/my-site/data/MySiteSeedData.xml");
@@ -4671,7 +4722,12 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         let context = gate.server.factory().new_context();
         let _entered = context.enter();
         let _authz = context.disable_authz();
-        facade.find("moqui.basic.Enumeration").unwrap().eq("enumTypeId", moqui_lib::object::Value::string("WidgetPriority")).count().unwrap()
+        facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumTypeId", moqui_lib::object::Value::string("WidgetPriority"))
+            .count()
+            .unwrap()
     };
     for _ in 0..50 {
         if loaded() == 2 {
@@ -4688,21 +4744,30 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         let mut save = |browser: &mut Browser, name: &str| {
             browser.pump(Duration::from_millis(600));
             let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
-            let bytes = base64::engine::general_purpose::STANDARD.decode(shot["data"].as_str().unwrap()).unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
             std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
         };
         save(&mut browser, "entity-view-light");
         browser.eval("Quasar.Dark.set(true)");
         save(&mut browser, "entity-view-dark");
         browser.eval("Quasar.Dark.set(false)");
-        browser.call("Emulation.setDeviceMetricsOverride", serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}));
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
         save(&mut browser, "entity-view-390");
         browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
     }
 
     // the site's drop-down shows the picklist's values
     browser.navigate(&format!("{base}/qapps/mysite"));
-    browser.wait_for("the site form", "!!document.querySelector('#WidgetForm_priorityEnumId, [name=priorityEnumId], .q-select')", WAIT);
+    browser.wait_for(
+        "the site form",
+        "!!document.querySelector('#WidgetForm_priorityEnumId, [name=priorityEnumId], .q-select')",
+        WAIT,
+    );
     browser.click("the drop-down", "document.querySelector('.q-select .q-field__control')");
     browser.wait_for(
         "its options",
@@ -4710,6 +4775,243 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
         WAIT,
     );
     assert_clean(&mut browser, "the site form");
+}
+
+/// The screen builder (plans/design-dev-aide.md P6, 11, F10): an upstream app page opened in the builder (what "Open in
+/// screen builder" opens) renders on the canvas with each widget stamped with its source; selecting a list cell offers
+/// Add column, which writes a form-list merge into the site's screen-extend and shows the column on the canvas before
+/// Save (the buffer through F14) and after; a field added to a form with a field-layout lands in the layout after the
+/// selected field; an unnamed container is reported with its nearest named anchor.
+#[test]
+fn the_screen_builder_extends_an_upstream_list_in_chromium() {
+    let upstream_entities = "<entities>\n    <entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\n        <field name=\"widgetName\" type=\"text-medium\"/>\n    </entity>\n</entities>\n";
+    let upstream_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+        <subscreens-item name="upapp" menu-title="Up App" location="component://upstream-app/screen/UpApp.xml"/>
+    </screen></screen-facade></moqui-conf>"#;
+    let upstream_screen = r#"<screen require-authentication="true">
+    <actions><entity-find entity-name="upapp.Widget" list="widgetList"><order-by field-name="widgetId"/></entity-find></actions>
+    <widgets>
+        <container-box name="WidgetBox"><box-header title="Widgets"/><box-body>
+            <form-list name="WidgetList" list="widgetList" skip-form="true">
+                <field name="widgetId"><default-field title="Id"><display/></default-field></field>
+                <field name="widgetName"><default-field title="Name"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <form-single name="WidgetForm" transition=".">
+            <field name="widgetId"><default-field title="Id"><text-line/></default-field></field>
+            <field name="widgetName"><default-field title="Name"><text-line/></default-field></field>
+            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            <field-layout><field-row><field-ref name="widgetId"/><field-ref name="widgetName"/></field-row><field-ref name="submitButton"/></field-layout>
+        </form-single>
+        <container name="Notes"><label text="Notes here"/></container>
+        <container><label text="Unnamed content"/></container>
+    </widgets>
+</screen>"#;
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        (
+            "component/upstream-app/component.xml",
+            r#"<component name="upstream-app"/>"#,
+        ),
+        ("component/upstream-app/MoquiConf.xml", upstream_conf),
+        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+        ("component/upstream-app/screen/UpApp.xml", upstream_screen),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="UP_APP" description="Up app"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="UP_APP" artifactName="component://upstream-app/screen/UpApp.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="UP_APP_ADMIN" userGroupId="ADMIN" artifactGroupId="UP_APP" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    <upapp.Widget widgetId="W1" widgetName="First widget"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-screen",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    for component in ["my-site", "upstream-app"] {
+        let dir = gate.runtime.join("component").join(component);
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"][..],
+            &["commit", "-q", "-m", "Start"][..],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    let frame = "document.getElementById('DevCanvasFrame').contentDocument";
+
+    // the app page in the builder: the canvas stamped with the sources
+    browser.navigate(&format!("{base}/qapps/dev/Screens/Design?page=%2Fqapps%2Fupapp"));
+    browser.wait_for(
+        "the stamped canvas",
+        &format!("!!document.getElementById('DevCanvasFrame') && !!{frame} && {frame}.body.innerText.indexOf('First widget') >= 0 \
+                  && !!{frame}.querySelector('[data-m-src]')"),
+        WAIT,
+    );
+    browser.wait_for(
+        "extension mode",
+        "(document.getElementById('DevScreenTarget') || {innerText: ''}).innerText.indexOf('Extension mode') >= 0",
+        WAIT,
+    );
+    browser.wait_for(
+        "the extension points",
+        "(document.getElementById('DevExtensionPoints') || {innerText: ''}).innerText.indexOf('WidgetList') >= 0 \
+         && document.getElementById('DevExtensionPoints').innerText.indexOf('nearest anchor is Notes') >= 0",
+        WAIT,
+    );
+    let click_in_frame = |browser: &mut Browser, what: &str, text: &str| {
+        browser.wait_for(
+            what,
+            &format!("[...{frame}.querySelectorAll('[data-m-src]')].some(el => el.innerText.trim() === '{text}')"),
+            WAIT,
+        );
+        browser.eval(&format!(
+            "(() => {{ const el = [...{frame}.querySelectorAll('[data-m-src]')].reverse().find(el => el.innerText.trim() === '{text}'); \
+             el.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}})); return true; }})()"
+        ));
+    };
+
+    // a column on the upstream list: before Save on the canvas, then saved in the site's screen-extend
+    click_in_frame(&mut browser, "the list cell", "First widget");
+    browser.wait_for("Add column", "!!document.getElementById('DevAddColumn')", WAIT);
+    browser.click("Add column", "document.getElementById('DevAddColumn')");
+    browser.wait_for("the dialog", "!!document.getElementById('DevScreenFieldName')", WAIT);
+    browser.click("the name", "document.getElementById('DevScreenFieldName')");
+    browser.type_text("widgetName");
+    browser.eval("(() => { const input = document.getElementById('DevScreenFieldName'); input.value = ''; input.dispatchEvent(new Event('input')); return true; })()");
+    browser.type_text("dueNote");
+    browser.click("the title", "document.getElementById('DevScreenFieldTitle')");
+    browser.type_text("Due note");
+    browser.click("Add", "document.getElementById('DevScreenFieldAdd')");
+    browser.wait_for(
+        "the column before Save",
+        &format!("{frame}.body.innerText.indexOf('Due note') >= 0"),
+        WAIT,
+    );
+    let extend = gate
+        .runtime
+        .join("component/my-site/screen-extend/upstream-app/screen/UpApp.xml");
+    assert!(!extend.exists(), "nothing written before Save");
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    for _ in 0..100 {
+        if extend.exists() {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let extend_text = std::fs::read_to_string(&extend).unwrap();
+    assert!(extend_text.contains("<form-list name=\"WidgetList\">"), "{extend_text}");
+    assert!(
+        extend_text.contains("<field name=\"dueNote\" after=\"widgetName\">"),
+        "{extend_text}"
+    );
+    browser.wait_for(
+        "the column after Save",
+        &format!("{frame}.body.innerText.indexOf('Due note') >= 0"),
+        WAIT,
+    );
+
+    // a field into the form with a field-layout: after the selected field, in its row
+    browser.wait_for(
+        "the form field",
+        &format!("!!{frame}.querySelector('[data-m-src] input')"),
+        WAIT,
+    );
+    browser.eval(&format!(
+        "(() => {{ const inputs = [...{frame}.querySelectorAll('input')].filter(i => i.closest('[data-m-src]')); \
+         const name = inputs.find(i => (i.getAttribute('name') || '').indexOf('widgetName') >= 0) || inputs[1]; \
+         name.closest('[data-m-src]').dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}})); return true; }})()"
+    ));
+    browser.wait_for("Add field", "!!document.getElementById('DevAddFormField')", WAIT);
+    browser.click("Add field", "document.getElementById('DevAddFormField')");
+    browser.wait_for("the dialog", "!!document.getElementById('DevScreenFieldName')", WAIT);
+    browser.click("the name", "document.getElementById('DevScreenFieldName')");
+    browser.type_text("note");
+    browser.click("Add", "document.getElementById('DevScreenFieldAdd')");
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&extend)
+            .unwrap_or_default()
+            .contains("form-single")
+        {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let extend_text = std::fs::read_to_string(&extend).unwrap();
+    assert!(
+        extend_text.contains("<form-single name=\"WidgetForm\"><field name=\"note\" after=\"widgetName\">"),
+        "{extend_text}"
+    );
+    // the layout puts the new field in the selected field's row, before the submit button
+    browser.wait_for(
+        "the field in the layout",
+        &format!("(() => {{ const names = [...{frame}.querySelectorAll('input, button')].map(e => e.getAttribute('name') || e.innerText.trim()); \
+                  const at = names.findIndex(n => /(^|_)note$/.test(n)); const save = names.findIndex(n => n === 'Save' || /submitButton/.test(n)); \
+                  const name = names.findIndex(n => /(^|_)widgetName$/.test(n)); return at > name && name >= 0 && (save < 0 || at < save); }})()"),
+        WAIT,
+    );
+
+    // an unnamed container: its nearest anchor
+    click_in_frame(&mut browser, "the unnamed container", "Unnamed content");
+    browser.wait_for(
+        "the nearest anchor",
+        "(document.getElementById('DevNearestAnchor') || {innerText: ''}).innerText.indexOf('nearest anchor is Notes') >= 0",
+        WAIT,
+    );
+    assert_clean(&mut browser, "the screen builder");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "screen-builder-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "screen-builder-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "screen-builder-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
 }
 
 /// A change set of the dev agent (plans/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
@@ -4802,7 +5104,8 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     // Customize this screen: Dev Assist on this page
     browser.wait_for(
         "Customize this screen",
-        "!!document.querySelector('[data-assist-page-action=dev]')",
+        // with the screen builder's beside it: the header is right aligned, so the second moves the first
+        "!!document.querySelector('[data-assist-page-action=dev]') && !!document.querySelector('[data-assist-page-action=\"dev/Screens/Design\"]')",
         WAIT,
     );
     browser.click(

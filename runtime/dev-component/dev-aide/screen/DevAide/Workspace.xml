@@ -99,6 +99,17 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="loadSeed"><service-call name="org.moqui.devaide.EntityServices.load#SeedFile" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <!-- the screen view (ScreenServices) -->
+    <transition name="screenChildren" read-only="true"><service-call name="org.moqui.devaide.ScreenServices.get#ScreenChildren" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="screenView" read-only="true"><service-call name="org.moqui.devaide.ScreenServices.get#ScreenView" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="canvasBuffer"><service-call name="org.moqui.devaide.ScreenServices.put#CanvasBuffer" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stamps"><service-call name="org.moqui.devaide.ScreenServices.resolve#Stamps" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createSubscreen"><service-call name="org.moqui.devaide.ScreenServices.create#Subscreen" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 

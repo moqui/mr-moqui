@@ -425,7 +425,11 @@ pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &s
 fn lit_of(node: &MNode, with_children: bool) -> NodeLit {
     NodeLit {
         name: node.name(),
-        attrs: node.attributes().into_iter().collect(),
+        attrs: node
+            .attributes()
+            .into_iter()
+            .filter(|(key, _)| key != super::stamp::ATTRIBUTE)
+            .collect(),
         text: node.text().unwrap_or_default(),
         children: if with_children {
             node.children().iter().map(lit_down).collect()
@@ -439,7 +443,11 @@ fn lit_of(node: &MNode, with_children: bool) -> NodeLit {
 fn lit_down(node: &MNode) -> NodeLit {
     NodeLit {
         name: node.name(),
-        attrs: node.attributes().into_iter().collect(),
+        attrs: node
+            .attributes()
+            .into_iter()
+            .filter(|(key, _)| key != super::stamp::ATTRIBUTE)
+            .collect(),
         text: node.text().unwrap_or_default(),
         children: node.children().iter().map(lit_down).collect(),
         parent: None,

@@ -7357,7 +7357,7 @@
               ], 8, ["type"]))
             }
         } },
-        "m-shell-assist": { hash: "e6640d96", make: function (Vue) {
+        "m-shell-assist": { hash: "e37ed5d1", make: function (Vue) {
             const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -7491,13 +7491,13 @@
                             : _createCommentVNode("", true),
                           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.pageActions, (action) => {
                             return (_openBlock(), _createBlock(_component_q_btn, {
-                              key: action.source + action.agent,
+                              key: action.source + (action.agent || action.screen),
                               flat: "",
                               round: "",
                               dense: "",
                               icon: action.icon || 'sym_o_bolt',
                               "aria-label": action.label,
-                              "data-assist-page-action": action.agent,
+                              "data-assist-page-action": action.agent || action.screen,
                               onClick: $event => (_ctx.runPageAction(action))
                             }, {
                               default: _withCtx(() => [

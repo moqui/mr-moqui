@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- The screen builder (plans/design-dev-aide.md 11): the screen tree as the screen facade mounts it, a screen's view
+    (where it renders, where its edits go: the base file in place, or the site's screen-extend of an upstream screen,
+    D17), the Design frame's canvas buffers (its buffer:<id> preview token, F14), the stamps of a stamped render
+    resolved to their files (F10), and a new subscreen from a gallery archetype. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="ScreenChildren" type="rust" location="dev_aide::screens::get_screen_children" allow-remote="false" read-only="true">
+        <description>The subscreens of a screen (the apps under the shell by default), one level, each with its path, file and how it is mounted.</description>
+        <in-parameters>
+            <parameter name="location"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters><parameter name="children" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="ScreenView" type="rust" location="dev_aide::screens::get_screen_view" allow-remote="false" read-only="true">
+        <description>A screen as the builder opens it, from its file (a screen or a screen-extend) or an app page: its
+            location and file, where it renders, its parameters, and where its edits go.</description>
+        <in-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="page"><description>An app page's path and query, as Open in screen builder sends it.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="view" type="Map"/></out-parameters>
+    </service>
+    <service verb="put" noun="CanvasBuffer" type="rust" location="dev_aide::screens::put_canvas_buffer" allow-remote="false">
+        <description>The unsaved texts a Design frame renders, kept for the user under a buffer id for two hours.</description>
+        <in-parameters>
+            <parameter name="bufferId" required="true"/>
+            <parameter name="files" type="Object" allow-html="any"><description>A list of {rootId, path, text}, or its JSON text.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="files" type="Integer"/></out-parameters>
+    </service>
+    <service verb="resolve" noun="Stamps" type="rust" location="dev_aide::screens::resolve_stamps" allow-remote="false" read-only="true">
+        <description>The source stamps of a stamped render (file:line:column) as the Workspace opens them.</description>
+        <in-parameters><parameter name="stamps" type="Object"/></in-parameters>
+        <out-parameters><parameter name="stamps" type="Map"/></out-parameters>
+    </service>
+    <service verb="create" noun="Subscreen" type="rust" location="dev_aide::screens::create_subscreen" allow-remote="false">
+        <description>A new screen file in the directory of a parent screen, from a gallery archetype or empty.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="parentPath" required="true"/>
+            <parameter name="name" required="true"/>
+            <parameter name="archetype"/>
+            <parameter name="menuTitle"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="path"/>
+            <parameter name="upstreamParent" type="Boolean"/>
+            <parameter name="hash"/>
+        </out-parameters>
+    </service>
+</services>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- The screen tree (plans/design-dev-aide.md 11.1): a screen's subscreens as the screen facade mounts them (a file in
+    the parent's directory, a subscreens-item, a conf mount, a row), each with its menu title and index, whether it is the
+    default, its render modes and authentication; Children goes a level down, Design opens it in the builder. New
+    subscreen makes a file from a gallery archetype in the parent's directory. A list, so the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Screens" default-menu-index="1">
+    <parameter name="location"/>
+    <parameter name="path"/>
+    <parameter name="parentRootId"/>
+    <parameter name="parentPath"/>
+    <transition name="children"><default-response url="."/></transition>
+    <transition name="design"><default-response url="../Design"/></transition>
+    <transition name="createSubscreen">
+        <service-call name="org.moqui.devaide.ScreenServices.create#Subscreen" in-map="[rootId: parentRootId, parentPath: parentPath, name: name, archetype: archetype, menuTitle: menuTitle]"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.ScreenServices.get#ScreenChildren" out-map="found" in-map="{location: location, path: path}"/>
+        <set field="screens" from="found.children || []"/>
+        <set field="shownPath" from="path || '/qapps'"/>
+    </actions>
+    <widgets>
+        <label text="${shownPath}" type="h6"/>
+        <form-list name="ScreenList" list="screens" skip-form="true">
+            <field name="menuTitle"><default-field title="Screen">
+                <link url="children" text="${menuTitle}" parameter-map="{location: location, path: path, parentRootId: rootId, parentPath: relativePath}" link-type="anchor"/></default-field></field>
+            <field name="name"><default-field title="Name"><display/></default-field></field>
+            <field name="menuIndex"><default-field title="Menu"><display text="${menuIndex == null ? '' : menuIndex}${menuInclude ? '' : ' (hidden)'}${isDefault ? ' · default' : ''}"/></default-field></field>
+            <field name="mountedBy"><default-field title="Mounted by"><display text="${(mountedBy || '').split('/').slice(-2).join('/')}"/></default-field></field>
+            <field name="renderModes"><default-field title="Modes"><display text="${(renderModes || []).join(', ')}"/></default-field></field>
+            <field name="subscreenCount"><default-field title="Subscreens"><display text="${subscreenCount || ''}"/></default-field></field>
+            <field name="design"><default-field title="">
+                <link url="design" text="Design" parameter-map="{rootId: rootId, path: relativePath}" link-type="anchor" condition="relativePath"/></default-field></field>
+        </form-list>
+        <section name="NewSubscreenSection" condition="parentPath">
+            <widgets>
+                <form-single name="NewSubscreen" transition="createSubscreen">
+                    <field name="parentRootId"><default-field><hidden/></default-field></field>
+                    <field name="parentPath"><default-field><hidden/></default-field></field>
+                    <field name="location"><default-field><hidden/></default-field></field>
+                    <field name="path"><default-field><hidden/></default-field></field>
+                    <field name="name"><default-field title="New subscreen"><text-line size="20"/></default-field></field>
+                    <field name="menuTitle"><default-field title="Menu title"><text-line size="20"/></default-field></field>
+                    <field name="archetype"><default-field title="From"><drop-down allow-empty="true">
+                        <option key="Landing"/><option key="List"/><option key="Detail"/><option key="Record360" text="360"/><option key="Task"/>
+                        <option key="Board"/><option key="Calendar"/><option key="Split"/><option key="Settings"/><option key="Wizard"/>
+                        <option key="Dialog"/><option key="Report"/><option key="Editor"/><option key="Panel"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+                </form-single>
+            </widgets>
+        </section>
+    </widgets>
+</screen>
