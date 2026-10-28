@@ -78,7 +78,8 @@
 
     // The words of a service or transition error answer.
     pure.errorText = (error) => {
-        const json = error && error.json;
+        // an answer's json, or an error thrown as `{ errors }`
+        const json = error && (error.json || (error.errors ? error : null));
         const errors = json && (json.errors || json.errorMessage || json.message);
         if (Array.isArray(errors) && errors.length) return errors.join("; ");
         if (typeof errors === "string" && errors) return errors;
@@ -269,6 +270,8 @@
         set(key, value) { try { if (root.localStorage) root.localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* no storage */ } },
         drop(key) { try { if (root.localStorage) root.localStorage.removeItem(key); } catch (err) { /* no storage */ } }
     };
+    // for the views: what they keep in the browser, by the same rules
+    devAide.store = store;
 
     const workspace = {
         name: "mDevWorkspace",
@@ -348,7 +351,18 @@
             }
             if (this.query && this.query.review) this.openReview(this.query.review);
             this.outlineTimers = {};
-            this.saveHooks = {};
+            // what a draft and the presence are made of: the paths and the texts, not the outlines and views (a deep
+            // watch walked them on every keystroke); the drafts written half a second after the typing stops
+            this.$watch(() => this.tabs.map((tab) => [tab.path, tab.text, tab.saved,
+                (tab.companions || []).map((buffer) => [buffer.text, buffer.saved])]), () => {
+                clearTimeout(this.rememberTimer);
+                this.rememberTimer = setTimeout(() => this.remember(), 500);
+                this.tellPresence(false);
+            });
+            this.rememberNow = () => { clearTimeout(this.rememberTimer); this.remember(); };
+            root.addEventListener("pagehide", this.rememberNow);
+            // each view's hook after its Save all, by its tab; a view takes its own off when it unmounts
+            this.saveHooks = new Map();
         },
         beforeUnmount() {
             if (this.offReload) this.offReload();
@@ -356,6 +370,9 @@
             if (this.offSaved) this.offSaved();
             if (this.offProgress) this.offProgress();
             clearInterval(this.presenceTimer);
+            Object.values(this.outlineTimers || {}).forEach(clearTimeout);
+            this.rememberNow();
+            root.removeEventListener("pagehide", this.rememberNow);
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
             const assist = moqui.assist;
@@ -365,7 +382,7 @@
             }
         },
         watch: {
-            tabs: { deep: true, handler() { this.remember(); this.tellPresence(false); } },
+
             tab(name) { if (["branches", "tags", "stashes", "settings"].indexOf(name) >= 0) this.loadGit(); },
             advanced(on) { store.set("advanced", on); if (!on && ["branches", "tags", "stashes"].indexOf(this.tab) >= 0) this.tab = "code"; },
             active() { this.remember(); },
@@ -395,6 +412,11 @@
             },
             selectRoot(id) {
                 if (!id) return;
+                if (id !== this.rootId && this.tabs.some((tab) => pure.isDirtyAll(tab))) {
+                    // their drafts are in the browser already (remember): each is offered back when it opens again
+                    this.remember();
+                    this.note("Unsaved changes in " + ((this.roots.find((item) => item.id === this.rootId) || {}).label || this.rootId) + " are kept in this browser until you open them again", "info");
+                }
                 this.rootId = id;
                 this.tabs = []; this.active = null; this.status = null; this.diff = null; this.log = []; this.commitDetail = null;
                 this.treeKey++;
@@ -406,14 +428,30 @@
                 this.refreshStatus();
             },
             remember() {
-                if (!this.rootId || this.guided) return;
-                store.set(pure.storageKey(this.rootId, "tabs"), { paths: this.tabs.map((tab) => tab.path), active: this.active });
+                if (!this.rootId) return;
+                if (!this.guided) store.set(pure.storageKey(this.rootId, "tabs"), { paths: this.tabs.map((tab) => tab.path), active: this.active });
+                const keep = (rootId, buffer) => {
+                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    if (buffer.text !== buffer.saved) store.set(key, { base: buffer.base, text: buffer.text });
+                    else store.drop(key);
+                };
                 for (const tab of this.tabs) {
                     if (tab.loading) continue;
-                    const key = pure.storageKey(this.rootId, "draft:" + tab.path);
-                    if (pure.isDirty(tab)) store.set(key, { base: tab.base, text: tab.text });
-                    else store.drop(key);
+                    if (!this.guided) keep(this.rootId, tab);
+                    // a view's companion buffers (the site's extend-entity, screen-extend, seed data) are kept too
+                    for (const buffer of tab.companions || []) keep(buffer.rootId, buffer);
                 }
+            },
+            // The unsaved text an earlier visit left of `buffer`, offered back.
+            offerDraft(buffer, rootId) {
+                const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                const draft = store.get(key);
+                if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) return;
+                this.$q.dialog({
+                    title: "Unsaved changes", message: buffer.path + " has changes from an earlier visit that were not saved." +
+                        (draft.base !== buffer.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
+                    ok: { label: "Restore" }
+                }).onOk(() => { buffer.text = draft.text; }).onCancel(() => store.drop(key));
             },
             refreshStatus() {
                 if (!this.isGit) { this.status = null; return Promise.resolve(); }
@@ -450,14 +488,7 @@
                         readOnly: !!file.readOnly || !this.canWrite, readOnlyReason: file.readOnlyReason || (this.narrow ? "Read only below 1024 px" : ""),
                         binary: !!file.binary, lineEnding: file.lineEnding || "LF", component: file.component
                     });
-                    const draft = store.get(pure.storageKey(this.rootId, "draft:" + path));
-                    if (draft && draft.text !== tab.text && !tab.readOnly) {
-                        this.$q.dialog({
-                            title: "Unsaved changes", message: path + " has changes from an earlier visit that were not saved." +
-                                (draft.base !== tab.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
-                            ok: { label: "Restore" }
-                        }).onOk(() => { tab.text = draft.text; }).onCancel(() => store.drop(pure.storageKey(this.rootId, "draft:" + path)));
-                    }
+                    this.offerDraft(tab, this.rootId);
                     this.loadSchema(tab);
                     this.takeDraft(tab, this.rootId);
                     if (how.view && how.view !== "text") this.setView(tab, how.view);
@@ -535,23 +566,29 @@
                     tab, base: this.base, tier: this.tier, rootId: this.rootId, root: this.root, roots: this.roots,
                     site: this.siteComponent, canWrite: this.canWrite && !tab.readOnly, mayWrite: this.canWrite, upstreamEdits: this.upstreamEdits,
                     get: (name, params) => vm.get(name, params), post: (name, params) => vm.post(name, params),
+                    schema: (element) => vm.schemaOf(element),
                     note: (message, type) => vm.note(message, type), fail: (error) => vm.fail(error),
                     apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),
                     undo: () => vm.undo(tab), redo: () => vm.redo(tab),
                     outlineOf: (text) => vm.post("outline", { text }).then((answer) => answer.outline || null),
                     companion: (rootId, path, initialText) => vm.companion(tab, rootId, path, initialText),
-                    save: () => vm.save(tab), onSaved: (hook) => { vm.saveHooks[tab.path] = hook; },
+                    save: () => vm.save(tab), onSaved: (hook) => {
+                        vm.saveHooks.set(tab, hook);
+                        return () => { if (vm.saveHooks.get(tab) === hook) vm.saveHooks.delete(tab); };
+                    },
                     openFile: (path, line) => vm.openFile(path, line), openArtifact: (artifact) => vm.openArtifact(artifact),
                     openArtifactId: (id, view) => vm.openArtifactId(id, view), showText: () => { tab.view = "text"; },
                     showReferences: (artifact) => vm.showReferences(artifact)
                 };
             },
+            // The Text view's editor while it is on the page: a tab switch or Compare unmounts it, and its view is gone.
+            liveEditorView() { const view = this.editorView; return view && view.dom && view.dom.isConnected ? view : null; },
             postOps(text, ops) { return this.post("xmlOp", { text, ops: JSON.stringify(ops) }); },
             applyOps(tab, ops, buffer) {
                 if (!ops || !ops.length) return Promise.resolve();
                 if (!buffer || buffer === tab) {
                     if (tab.readOnly) return Promise.reject(new Error(tab.readOnlyReason || "read only"));
-                    const view = this.current === tab ? this.editorView : null;
+                    const view = this.current === tab ? this.liveEditorView() : null;
                     let answered = null;
                     const post = (text, list) => this.postOps(text, list).then((answer) => { answered = answer; return answer; });
                     if (view && moqui.codeEditor) {
@@ -578,11 +615,11 @@
             },
             undo(tab) {
                 const CM = root.CodeMirror;
-                if (this.current === tab && this.editorView && CM && CM.undo) CM.undo(this.editorView);
+                if (this.current === tab && this.liveEditorView() && CM && CM.undo) CM.undo(this.liveEditorView());
             },
             redo(tab) {
                 const CM = root.CodeMirror;
-                if (this.current === tab && this.editorView && CM && CM.redo) CM.redo(this.editorView);
+                if (this.current === tab && this.liveEditorView() && CM && CM.redo) CM.redo(this.liveEditorView());
             },
             // A second buffer of a tab's view: a file in any root, made with `initialText` on its first save when missing.
             companion(tab, rootId, path, initialText) {
@@ -594,6 +631,7 @@
                     tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
                         readOnly: !!file.readOnly, readOnlyReason: file.readOnlyReason || "", outline: null, undo: [], redo: [] });
                     const buffer = tab.companions[tab.companions.length - 1];
+                    this.offerDraft(buffer, rootId);
                     this.takeDraft(buffer, rootId);
                     return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; return buffer; },
                         () => buffer);
@@ -603,17 +641,23 @@
                 if (!/\.xml$/i.test(tab.path)) return;
                 const element = pure.rootElement(tab.text);
                 if (!element) return;
-                if (this.schemas[element] !== undefined) { tab.schema = this.schemas[element]; return; }
-                this.get("schema", { rootElement: element }).then((answer) => {
+                this.schemaOf(element).then((digest) => { tab.schema = digest; });
+            },
+            // The schema digest of a root element, read once for every tab and view.
+            schemaOf(element) {
+                if (this.schemas[element] !== undefined) return Promise.resolve(this.schemas[element]);
+                return this.get("schema", { rootElement: element }).then((answer) => {
                     this.schemas[element] = answer.digest || null;
-                    tab.schema = this.schemas[element];
-                }, () => { this.schemas[element] = null; });
+                    return this.schemas[element];
+                }, () => { this.schemas[element] = null; return null; });
             },
             closeTab(path) {
                 const tab = this.tabs.find((item) => item.path === path);
                 const close = () => {
                     const next = pure.closeTab(this.tabs, path, this.active); this.tabs = next.tabs; this.active = next.active;
                     if (moqui.codeEditor && moqui.codeEditor.dropState) moqui.codeEditor.dropState(this.rootId + ":" + path);
+                    clearTimeout(this.outlineTimers[path]); delete this.outlineTimers[path];
+                    this.saveHooks.delete(tab);
                 };
                 if (pure.isDirtyAll(tab)) {
                     this.$q.dialog({ title: "Close " + path + "?", message: "Its changes are not saved.", cancel: true, ok: { label: "Close", color: "negative" } }).onOk(close);
@@ -641,7 +685,7 @@
                     tab.saving = false;
                     const files = reports.map((answer) => ((answer.reload && answer.reload.files) || []).map((file) => file.summary).join("; ")).filter((text) => text);
                     if (files.length) this.lastReload = (this.lastReload ? this.lastReload + " · " : "Saved · ") + files.join(" · ");
-                    const hook = this.saveHooks[tab.path];
+                    const hook = this.saveHooks.get(tab);
                     if (hook) return hook(reports);
                 }, (error) => { tab.saving = false; this.fail(error); });
             },
@@ -661,6 +705,8 @@
                     tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
+                        // in a view's Save all, the buffers after it and the view's hook wait for Compare
+                        if (inAll) throw { errors: tab.path + " changed on disk since it was opened: compare them, then save again" };
                         this.note(tab.path + " changed on disk since it was opened: compare them", "warning");
                         return;
                     }
@@ -673,7 +719,7 @@
                     this.note(this.lastReload, tab.problems.some((problem) => problem.severity === "error") ? "warning" : "positive");
                     this.treeKey++;
                     this.refreshStatus();
-                    if (!inAll) { const hook = this.saveHooks[tab.path]; if (hook) return hook([answer]); }
+                    if (!inAll) { const hook = this.saveHooks.get(tab); if (hook) return hook([answer]); }
                 }, (error) => { tab.saving = false; if (inAll) throw error; this.fail(error); });
             },
             keepMine(tab) { tab.base = tab.conflict.diskHash; tab.conflict = null; this.save(tab); },
@@ -712,8 +758,7 @@
             },
             editorsOf(path) { return pure.editorsOf(this.editors, path); },
             onReload(message) {
-                let report = message && (message.message !== undefined ? message.message : message);
-                if (typeof report === "string") { try { report = JSON.parse(report); } catch (err) { return; } }
+                const report = pure.messageJson(message);
                 if (!this.root || !report) return;
                 const paths = pure.reloadedPaths(report, this.root.path);
                 if (!paths.length) return;
@@ -788,7 +833,7 @@
             editorState() {
                 const tab = this.current;
                 if (!tab) return null;
-                const view = this.editorView;
+                const view = this.liveEditorView();
                 let element = "", selection = "";
                 if (view && view.state) {
                     const range = view.state.selection.main;
@@ -801,7 +846,7 @@
                     unsaved: pure.isDirty(tab), element, line: this.cursor.line, selection, problems: (tab.problems || []).length };
             },
             insertCode(code, replace) {
-                const view = this.editorView;
+                const view = this.liveEditorView();
                 if (!view || !this.current || this.current.readOnly) { this.note("Open a file you may edit first", "warning"); return; }
                 const range = view.state.selection.main;
                 view.dispatch({ changes: { from: replace ? range.from : range.head, to: replace ? range.to : range.head, insert: code } });

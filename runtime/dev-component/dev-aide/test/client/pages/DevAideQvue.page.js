@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// A .qvue template's elements as the server stamps them (the same lines and columns as stamp_qvue's test), and the
-// Design view's edits of the template.
+// A .qvue template's elements as the server stamps them (the same lines and columns as stamp_qvue's test, and the
+// vectors both scans are held to), and the Design view's edits of the template.
 "use strict";
 
 const pure = moqui.devAide.pure;
@@ -20,6 +20,17 @@ test("the template's elements, with the lines and columns the server stamps", ()
     assert.equal(pure.vueElementAt(elements, "component://a/A.qvue:3:3", "component://a/A.qvue"), 1);
     assert.equal(pure.vueElementAt(elements, "component://other/B.qvue:3:3", "component://a/A.qvue"), -1);
     assert.deepEqual(pure.vueElements("<script>x</script>"), []);
+});
+
+test("the shared vectors: the server's stamps and this scan agree", async () => {
+    const response = await fetch("/files/crates/moqui-lib/testdata/qvue-element-vectors.json");
+    const vectors = await response.json();
+    assert.ok(vectors.length > 0);
+    for (const vector of vectors) {
+        const stamped = pure.vueElements(vector.text).filter((element) => element.stamped)
+            .map((element) => element.name + "@" + element.line + ":" + element.column);
+        assert.deepEqual(stamped, vector.stamped, vector.name);
+    }
 });
 
 const BOARD = "<template>\n<div class=\"board\">\n    <q-btn label=\"One\"/>\n    <q-btn label=\"Two\"/>\n</div>\n</template>\n";

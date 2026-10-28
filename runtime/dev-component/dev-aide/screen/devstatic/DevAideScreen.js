@@ -342,11 +342,11 @@
         },
         mounted() {
             this.load();
-            this.ctx.onSaved(() => this.render());
+            this.offSaved = this.ctx.onSaved(() => this.render());
             this.onScroll = () => this.drawHover();
             root.addEventListener("resize", this.onScroll);
         },
-        beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); },
+        beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
             load() {
                 const params = this.tab.page ? { page: this.tab.page } : { rootId: this.ctx.rootId, path: this.tab.path };
@@ -361,7 +361,7 @@
                     return Promise.all(tasks);
                 }).then(() => {
                     const root = this.editOutline ? this.editOutline.name : "screen";
-                    this.ctx.get("schema", { rootElement: root }).then((answer) => { this.schema = answer.digest || null; }, () => {});
+                    this.ctx.schema(root).then((digest) => { this.schema = digest; });
                     this.render();
                 }, (error) => { this.error = pure.errorText(error); });
             },
@@ -466,27 +466,34 @@
                     this.drawHover();
                 }, (error) => this.ctx.fail(error));
             },
+            // The canvas element stamped with `line` (and `column`, when given) of the `which` buffer's file: several files
+            // may write the same line (the base screen and its screen-extend, a template), so each candidate's file is
+            // resolved as a click's is.
+            stampedAt(line, column, which) {
+                const frame = this.$refs.frame;
+                const doc = frame && frame.contentDocument;
+                if (!doc || !line) return Promise.resolve(null);
+                const candidates = [...doc.querySelectorAll("[data-m-src]")].filter((el) => {
+                    const parts = (el.getAttribute("data-m-src") || "").split(":");
+                    return Number(parts[parts.length - 2]) === line && (!column || Number(parts[parts.length - 1]) === column);
+                });
+                if (candidates.length <= 1) return Promise.resolve(candidates[0] || null);
+                return Promise.all(candidates.map((el) => this.resolve(el.getAttribute("data-m-src")).catch(() => ({}))))
+                    .then((known) => candidates.find((el, i) => this.whichOf(known[i].loc) === which) || candidates[0]);
+            },
             selectNode(node) {
                 this.selection = { stamp: "", loc: null, which: "edit", node };
-                const frame = this.$refs.frame;
-                const doc = frame && frame.contentDocument;
-                const loc = node && doc ? [...doc.querySelectorAll("[data-m-src]")].find((el) => {
-                    const parts = (el.getAttribute("data-m-src") || "").split(":");
-                    return Number(parts[parts.length - 2]) === node.line;
-                }) : null;
-                this.selectedEl = loc || null;
-                this.drawHover();
-                if (loc) loc.scrollIntoView({ block: "nearest" });
+                this.stampedAt(node && node.line, 0, "edit").then((loc) => {
+                    this.selectedEl = loc || null;
+                    this.drawHover();
+                    if (loc) loc.scrollIntoView({ block: "nearest" });
+                });
             },
             selectPoint(point) {
-                const frame = this.$refs.frame;
-                const doc = frame && frame.contentDocument;
-                const el = doc ? [...doc.querySelectorAll("[data-m-src]")].find((candidate) => {
-                    const parts = (candidate.getAttribute("data-m-src") || "").split(":");
-                    return Number(parts[parts.length - 2]) === point.line;
-                }) : null;
-                if (el && point.kind !== "transition") { this.selectElement(el); el.scrollIntoView({ block: "nearest" }); }
-                else this.selection = { stamp: "", loc: null, which: this.extensionMode ? "base" : "edit", node: pure.outlineAt(this.baseOutline, point.path) };
+                this.stampedAt(point.line, 0, "base").then((el) => {
+                    if (el && point.kind !== "transition") { this.selectElement(el); el.scrollIntoView({ block: "nearest" }); }
+                    else this.selection = { stamp: "", loc: null, which: this.extensionMode ? "base" : "edit", node: pure.outlineAt(this.baseOutline, point.path) };
+                });
             },
             apply(list) {
                 if (!list || !list.length) return Promise.resolve();
@@ -814,8 +821,6 @@
         return (node && attrOf(node, name)) || "";
     };
 
-    devAide.registerView({ name: "screen", label: "Screen", roots: ["screen", "screen-extend"], component: "m-dev-screen-view",
-        script: "/devstatic/DevAideScreen.js", ready: () => !!devAide.screenViewRegistered });
     const register = () => {
         const qvt = moqui.qvt;
         if (qvt && qvt.registerLate) qvt.registerLate("m-dev-screen-view", screenView);

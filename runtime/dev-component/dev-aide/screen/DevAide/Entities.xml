@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Entities (plans/design-dev-aide.md 8, D18 guided): the entities and view entities by package and component; each
     opens in the entity view (Edit, the artifact in its view with Save, Text one click away, Problems and Assist). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Entities" default-menu-index="4">
+        default-menu-title="Entities" default-menu-index="5">
     <subscreens default-item="List">
         <subscreens-item name="List" menu-title="Entities" menu-index="1" location="component://dev-aide/screen/DevAide/Entities/List.xml"/>
         <subscreens-item name="Edit" menu-title="Edit" menu-index="2" menu-include="false" location="component://dev-aide/screen/DevAide/Entities/Edit.xml"/>

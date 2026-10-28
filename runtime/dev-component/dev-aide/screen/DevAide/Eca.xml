@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
     in the order they run, each with its file and line, priority, condition and actions; a rule a later one of its id
     replaced is under it, marked so. A rule opens in the Workspace's ECA view. A list, so the terminal reaches it. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="ECA Rules" default-menu-index="7">
+        default-menu-title="ECA Rules" default-menu-index="8">
     <parameter name="kind"/>
     <parameter name="component"/>
     <parameter name="target"/>

@@ -119,7 +119,10 @@
             go(id, fromTrail) {
                 if (!fromTrail) { this.trail = this.trail.slice(0, this.at + 1).concat([id]); this.at = this.trail.length - 1; }
                 this.error = ""; this.cards = []; this.sizes = {}; this.open = {};
+                // a later Back, Forward or go wins over an answer still on its way
+                const seq = this.seq = (this.seq || 0) + 1;
                 this.get("artifactDetail", { artifactId: id }).then((detail) => {
+                    if (seq !== this.seq) return;
                     if (!detail.artifact) { this.error = "No artifact " + id + " in the index"; return; }
                     const center = { id: "c", artifactId: detail.artifact.id, artifact: detail.artifact, generation: 0, parentId: null };
                     // the framework's own artifacts show when the center is one of them
@@ -128,7 +131,7 @@
                     this.addSide(center, "in", -1);
                     this.addSide(center, "out", 1);
                     this.$nextTick(() => this.fitSoon());
-                }, (error) => { this.error = (devAide.pure.errorText || String)(error); });
+                }, (error) => { if (seq === this.seq) this.error = (devAide.pure.errorText || String)(error); });
             },
             back() { if (this.at > 0) { this.at--; this.go(this.trail[this.at], true); } },
             forward() { if (this.at < this.trail.length - 1) { this.at++; this.go(this.trail[this.at], true); } },
@@ -140,7 +143,9 @@
                 this.cards.push(card);
                 // the reactive card, whose changes render
                 const live = this.cards[this.cards.length - 1];
+                const seq = this.seq;
                 this.get("refs", { artifactId: card.artifactId, direction }).then((answer) => {
+                    if (seq !== this.seq) return;
                     live.refs = answer.refs || []; live.loading = false;
                     this.$nextTick(() => this.measure());
                 }, (error) => { live.loading = false; live.error = (devAide.pure.errorText || String)(error); });
@@ -162,6 +167,10 @@
             },
             removeFrom(card) {
                 for (const child of this.cards.filter((other) => other.parentId === card.id)) this.removeFrom(child);
+                const el = this.$refs["card-" + card.id];
+                const node = Array.isArray(el) ? el[0] : el;
+                const dom = node && (node.$el || node);
+                if (this.observer && dom && dom.__mObserved) { this.observer.unobserve(dom); dom.__mObserved = false; }
                 this.cards = this.cards.filter((other) => other.id !== card.id);
             },
             // the cards' sizes and their rows' offsets, after render

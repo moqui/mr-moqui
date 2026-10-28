@@ -400,9 +400,10 @@
         },
         mounted() {
             this.pickEntity();
-            this.ctx.onSaved((reports) => this.afterSave(reports));
-            this.ctx.get("schema", { rootElement: this.isData ? "entity-facade-xml" : "entities" }).then((answer) => { this.schema = answer.digest || null; }, () => {});
+            this.offSaved = this.ctx.onSaved((reports) => this.afterSave(reports));
+            this.ctx.schema(this.isData ? "entity-facade-xml" : "entities").then((digest) => { this.schema = digest; });
         },
+        beforeUnmount() { if (this.offSaved) this.offSaved(); },
         methods: {
             pickEntity() {
                 if (this.isData) return;
@@ -1025,8 +1026,6 @@
     entityView.computed.operators = () => ["equals", "not-equals", "less", "greater", "less-equals", "greater-equals", "in", "not-in", "between", "like", "not-like", "is-null", "is-not-null"];
 
 
-    devAide.registerView({ name: "entity", label: "Entity", roots: ["entities", "entity-facade-xml"], component: "m-dev-entity-view",
-        script: "/devstatic/DevAideEntity.js", ready: () => !!devAide.entityViewRegistered });
     const qvt = moqui.qvt;
     if (qvt && qvt.registerLate) qvt.registerLate("m-dev-entity-view", entityView);
     devAide.entityViewRegistered = true;
