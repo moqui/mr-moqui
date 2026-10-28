@@ -1326,12 +1326,20 @@ fn resource_digests_archives_and_line_windows() {
             return first.lines.join("|") === "first|second" && !first.done && rest.lines.join("|") === "third" && rest.done;
         })()"#,
     );
+    holds(r#"ec.resource.markdownHtml("A *b*\n\n- c") === "<p>A <em>b</em></p>\n<ul>\n<li>c</li>\n</ul>\n""#);
     holds(
         r#"ec.resource.gunzip(dir + "/dump.sql.gz", dir + "/dump.sql", 100) === 8
             && ec.resource.getLocationText(dir + "/dump.sql") === "one\ntwo\n""#,
     );
     holds(
         r#"(function () { try { ec.resource.gunzip(dir + "/dump.sql.gz", dir + "/small.sql", 4); return false } catch (e) { return true } })()"#,
+    );
+    holds(
+        r#"(function () {
+            ec.resource.writeTarGz(dir + "/round.tar.gz", [{path: "a/abc.txt", location: dir + "/abc.txt"}]);
+            const out = ec.resource.extractArchive(dir + "/round.tar.gz", dir + "/round", {});
+            return out.entries.length === 1 && ec.resource.getLocationText(dir + "/round/a/abc.txt") === "abc";
+        })()"#,
     );
     let _ = std::fs::remove_dir_all(&dir);
     clear_context_stack();

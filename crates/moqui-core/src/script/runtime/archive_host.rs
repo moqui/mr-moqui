@@ -22,6 +22,8 @@
 //!     a tar, gzip-compressed or not; regular files only, no absolute or parent paths, limits {maxBytes, maxEntries}
 //! ec.resource.readLines(location, offset, maxLines, maxBytes)  -> {lines, nextOffset, done}
 //!     lines from a byte offset, so a long file is read in checkpointed pieces
+//! ec.resource.writeTarGz(target, [{path, location}])            -> entries written
+//!     a gzip-compressed tar of files, the tar counterpart of writeZip
 //! ```
 
 use super::*;
@@ -277,6 +279,47 @@ fn resource_read_lines<'js>(
     })
 }
 
+fn resource_write_tar_gz<'js>(ctx: Ctx<'js>, target: String, entries: rquickjs::Array<'js>) -> rquickjs::Result<f64> {
+    host_guard(&ctx, || {
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let mut count = 0f64;
+        for item in entries.iter::<Object>() {
+            let item = item?;
+            let path: String = item.get("path")?;
+            let location: String = item.get("location")?;
+            let Some(path) = safe_path(std::path::Path::new(&path)) else {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    &format!("{path} is not a relative path"),
+                ));
+            };
+            let bytes = with_ec(&ctx, |ec| ec.factory().resource().get(&location))?
+                .and_then(|found| found.read_bytes())
+                .map_err(|err| throw_context(&ctx, &err))?;
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, &path, bytes.as_slice())
+                .map_err(|err| Exception::throw_message(&ctx, &format!("cannot add {path}: {err}")))?;
+            count += 1.0;
+        }
+        let encoder = builder
+            .into_inner()
+            .map_err(|err| Exception::throw_message(&ctx, &format!("cannot finish the archive: {err}")))?;
+        let bytes = encoder
+            .finish()
+            .map_err(|err| Exception::throw_message(&ctx, &format!("cannot finish the archive: {err}")))?;
+        let written = with_ec(&ctx, |ec| ec.factory().resource().write_bytes(&target, &bytes))?;
+        written.map_err(|err| Exception::throw_message(&ctx, err.message()))?;
+        Ok(count)
+    })
+}
+
 pub(super) fn methods<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> Result<(), Error> {
     macro_rules! method {
         ($name:literal, $function:expr) => {
@@ -288,5 +331,6 @@ pub(super) fn methods<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> Result<(), Err
     method!("resourceGunzip", resource_gunzip);
     method!("resourceExtractArchive", resource_extract_archive);
     method!("resourceReadLines", resource_read_lines);
+    method!("resourceWriteTarGz", resource_write_tar_gz);
     Ok(())
 }

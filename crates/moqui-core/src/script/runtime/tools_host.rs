@@ -598,11 +598,14 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
         toName == null ? "new" : String(toName));
+    // CommonMark as HTML, unsanitized: a caller showing it to others cleans it
+    ec.resource.markdownHtml = (text) => host.markdownHtml(text == null ? "" : String(text));
     // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
     ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
     ec.resource.gunzip = (source, target, maxBytes) => host.resourceGunzip(String(source), String(target),
         maxBytes == null ? 4 * 1024 * 1024 * 1024 : Number(maxBytes));
     ec.resource.extractArchive = (source, target, limits) => host.resourceExtractArchive(String(source), String(target), limits || {});
+    ec.resource.writeTarGz = (target, entries) => host.resourceWriteTarGz(String(target), Array.from(entries || []));
     ec.resource.readLines = (location, offset, maxLines, maxBytes) => host.resourceReadLines(String(location), Number(offset || 0),
         Number(maxLines || 1000), Number(maxBytes || 16 * 1024 * 1024));
     // a second argument that is a charset name (a Rust-port extension; Java's is the cache flag) decodes the bytes in it
@@ -2016,6 +2019,12 @@ fn text_diff<'js>(
     })
 }
 
+/// `ec.resource.markdownHtml(text)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text a
+/// script holds, such as imported posts. Raw HTML passes through, so a caller showing the result to others sanitizes it.
+fn markdown_html(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
+    host_guard(&ctx, || Ok(moqui_lib::markdown::to_html(&text)))
+}
+
 // ---- SQL on a database named by a conf map (InstanceServices) ----
 
 /// The `entity_ds_*` entries of a conf map, as Java's `getConfConnection` reads them.
@@ -2701,6 +2710,7 @@ pub(super) fn install<'js>(
     method!("resourceVersionText", resource_version_text);
     method!("resourceVersionDiff", resource_version_diff);
     method!("textDiff", text_diff);
+    method!("markdownHtml", markdown_html);
     method!("restSend", rest_send);
     super::web_host::methods(ctx, &host)?;
     super::archive_host::methods(ctx, &host)?;
