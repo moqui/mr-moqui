@@ -1326,6 +1326,10 @@ fn resource_digests_archives_and_line_windows() {
             return first.lines.join("|") === "first|second" && !first.done && rest.lines.join("|") === "third" && rest.done;
         })()"#,
     );
+    std::fs::write(dir.join("oneline.txt"), "x".repeat(200)).unwrap();
+    holds(
+        r#"(function () { try { ec.resource.readLines(dir + "/oneline.txt", 0, 10, 50); return false } catch (e) { return String(e.message).includes("limit") } })()"#,
+    );
     holds(r#"ec.resource.markdownHtml("A *b*\n\n- c") === "<p>A <em>b</em></p>\n<ul>\n<li>c</li>\n</ul>\n""#);
     holds(
         r#"ec.resource.gunzip(dir + "/dump.sql.gz", dir + "/dump.sql", 100) === 8
