@@ -476,6 +476,7 @@ fn csv_frames(frames: &[Json]) -> String {
 /// One table of a data export: a table panel's frames, with a file name and a sheet name unique in the export.
 struct ExportTable {
     file: String,
+    #[cfg_attr(not(feature = "xlsx"), allow(dead_code))]
     sheet: String,
     frames: Vec<Json>,
 }

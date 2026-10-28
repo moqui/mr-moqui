@@ -185,7 +185,7 @@ Internal and external sources share the same documents and the same screens, tol
 | `opentelemetry` | API: tracer, meter, logger, context, W3C `traceparent` propagator |
 | `opentelemetry_sdk` | Simple span/log processors feeding the bounded telemetry worker, periodic metric reader, logger provider and resource |
 | `opentelemetry-proto` | OTLP messages (prost) for the receiver, and for our own exporter if needed |
-| `opentelemetry-otlp` (http-proto) | Not used. The optional external exporter is our own: it posts OTLP JSON through `moqui_lib::http::RestClient` (`telemetry/otlp.rs`). Protobuf export is in Remaining-Work |
+| `opentelemetry-otlp` (http-proto) | Not used. The optional external exporter is our own: it posts OTLP protobuf (or JSON, by `otlp-protocol`) through `moqui_lib::http::RestClient` (`telemetry/otlp.rs`), encoded with the `opentelemetry-proto` messages the receiver uses |
 
 - **Versions.** All `opentelemetry*` crates go on one minor version, pinned by `Cargo.lock`.
 - **Not used:** `tracing-subscriber`, `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Spans come from the artifact stack and logs from `LineSubscriber`, so neither needs a `Registry`. tonic is deferred along with gRPC.
@@ -229,9 +229,9 @@ Internal and external sources share the same documents and the same screens, tol
 - **Export:** the periodic reader runs every 60 s and writes one document per series per interval (count, sum, min, max and histogram buckets). This is SkyWalking's pre-aggregation done by the SDK, so RED charts never scan raw spans.
   - The reader uses delta temporality, so each document holds one interval's values, and a series with no activity in an interval writes nothing.
   - Histogram boundaries are fixed per instrument (the semantic-convention boundaries for durations), so documents of one series can be merged.
-- **Volume:** there is at most one minute document per active series, which is series × instances × 1440 a day. For example, 2,000 artifact series on one instance give about 2.9 M documents a day; this has not been measured at production cardinality. An attribute allow-list (one global list, not yet per instrument) keeps the series bounded.
+- **Volume:** there is at most one minute document per active series, which is series × instances × 1440 a day. For example, 2,000 artifact series on one instance give about 2.9 M documents a day; this has not been measured at production cardinality. An attribute allow-list keeps the series bounded: a global list, replaced per instrument by `<telemetry><metric name attributes>`.
 - **Rollups:** a job rolls minute documents up to hour and day documents.
-- **`/metrics`** stays, with the telemetry counters added. Prometheus text from the same readers is in Remaining-Work.
+- **`/metrics`** stays, with the telemetry counters added, and answers Prometheus text (`?format=prometheus` or a Prometheus `Accept`) from a second, cumulative SDK reader (`telemetry/prometheus.rs`). Guard values are observable gauges.
 
 **Logs**
 - `LineSubscriber` keeps stderr, the files and the taps.
@@ -579,7 +579,7 @@ A panel is queries, then transformations, then a visualization with its options 
   - **Header:** folder and title, star, variables, time picker, refresh, share, edit.
   - **Panel menu:** view, edit, share, explore, inspect (data as formatted or raw CSV, requests and stats, JSON), duplicate, new alert rule, remove.
   - **Edit mode:** an options pane for the selected item, a search over all options, and save with a note.
-  - **Keys:** `t-` zoom out, `t←`/`t→` shift the range, `e` edit, `v` view, `i` inspect, `d k` kiosk, Esc back out of kiosk and then the single-panel view. The TUI uses the same keys (no kiosk yet).
+  - **Keys:** `t-` zoom out, `t←`/`t→` shift the range, `e` edit, `v` view, `i` inspect, `d k` kiosk, Esc back out of kiosk and then the single-panel view. The TUI uses the same keys, kiosk included.
   - **Kiosk mode and playlists** for wall displays, such as a NOC or a warehouse shipping board.
 
 ### Explore
@@ -615,7 +615,7 @@ The rule model follows Grafana's.
 - **Routing:**
   - Labels from the rule and the series route an alert to contact points: NotificationMessage topics (the header notifications), email through `EmailTemplate`, and a webhook.
   - Notifications are grouped by labels, with group-wait and repeat intervals.
-  - Silences (one-off, by labels) and mute timings (recurring, such as weekends) hold notifications back. As built, silences, mute timings and contact points live in each rule's body; shared ones are in Remaining-Work.
+  - Silences (one-off, by labels) and mute timings (recurring, such as weekends) hold notifications back. As built, they live in the rule's body or as shared `contactPoint`, `silence` and `muteTiming` definitions that rules reference by id.
 - **History:** state changes are written to the annotations index, so they show on dashboards. Each rule links back to its panel.
 - **Business rules** use the same model, for example daily sales below a floor or overdue receivables above a ceiling.
 
@@ -625,7 +625,7 @@ The rule model follows Grafana's.
   - one or more dashboards, each with its own time range and variable values
   - `paper` (letter or a4)
   - PDF, portrait or landscape, in the dashboard's grid or one panel per row, with an optional appendix of table data
-  - CSV and xlsx (as built: one CSV of every panel frame, and one xlsx sheet per frame; a file per table panel is in Remaining-Work)
+  - CSV and xlsx, one file or sheet per table panel (a dashboard with no table panel exports each panel with data)
   - a PNG of the dashboard inline in the email body, with a link to the live view
   - preview, send now, and pause
 - **Rendering** uses the existing Chromium engine.
@@ -785,7 +785,7 @@ M1–M7 acceptance ran Oct 26–27, 2026 on one macOS host (Apple M1 Pro, 8 CPUs
 | M3 | Dataset, group and row restrictions applied before totals, paging, documents, embeds and exports on both stores; read-only shipped definitions, copies, versions, import and references; the Mantle sales dashboard; the browser editors, Explore and the inspector; every new screen in the TUI |
 | M4 | Fingerprints stable across message parameters and line shifts; concurrent counts from two writers add up on both stores; errors link to their logs and traces |
 | M5 | Ingest keys (revocation, owner, permission), limits, compression, redaction, partial success and cumulative resets; a real OpenTelemetry Collector sending JSON and protobuf for all three signals, and receiving all three from the exporter |
-| M6 | Alert states under a controlled clock (Pending, Firing, Recovering, Normal, No Data, Error), hysteresis, grouping, repeat, silences and mute timings, restart, four concurrent evaluators, and SMTP and webhook delivery with retries. Version comparison is Explore's Split screen over two ranges or filters, on raw documents; RED charts per version are in Remaining-Work |
+| M6 | Alert states under a controlled clock (Pending, Firing, Recovering, Normal, No Data, Error), hysteresis, grouping, repeat, silences and mute timings, restart, four concurrent evaluators, and SMTP and webhook delivery with retries. Version comparison is Explore's Split screen over two ranges or filters, on raw documents, with RED charts per `service.version` from the request metric |
 | M7 | Chromium PDF and PNG with the network blocked, waiting for the charts; CSV and xlsx from the same authorized frames; empty reports skipped; schedule leases under restart and concurrency; absolute-time links, embeds and playlists |
 
 Counts on Oct 27, before the review pass: core 2,021 passed (three ignored: a manual benchmark and two live OpenSearch tests, which passed in the 73-test search run), host 217, TUI 176, `monitor_edge` 6/6, search 73/73 against OpenSearch 3.0.0, replacement readers and rollups 5/5, server JS specs 29/29 and 1/1, browser specs `WebrootReport` 18/18, `WebrootAssistCanvas` 16/16 and `Monitoring` 6/6. `cargo lint` and `cargo lint-min` passed.

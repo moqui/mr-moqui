@@ -141,6 +141,11 @@
             dashboardFrames[panelId] = panel.frames || []
             dashboardNotices.push(...(panel.notices || []).map(notice=>panelId+': '+(typeof notice === 'string' ? notice : notice.message || JSON.stringify(notice))))
         }
+        // A fractional number comes back from the service as a decimal. JSON.stringify writes it as a number (its toJSON),
+        // but the TUI and other host conversions of these values do not call toJSON; the widgets take numbers.
+        const plain = value => value == null || typeof value !== 'object' ? value : typeof value.toNumber === 'function' ? value.toNumber() :
+            Array.isArray(value) ? value.map(plain) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]))
+        dashboardFrames = plain(dashboardFrames); dashboardDefinition = plain(dashboardDefinition)
     ]]></script></actions>
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>

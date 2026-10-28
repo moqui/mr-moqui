@@ -44,6 +44,8 @@ with an `artifact` override and the receiver limits written out:
         span-retention-days="7" log-retention-days="7" error-retention-days="90"
         minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730">
     <artifact type="AT_ENTITY" spans="true" metrics="true"/>
+    <artifact type="AT_SERVICE" sample-ratio="0.25"/>
+    <metric name="http.server.request.duration" attributes="http.route,http.request.method,http.response.status_code"/>
     <receiver enabled="true" body-limit="4194304" requests-per-minute="600" concurrent-requests="8"/>
 </telemetry>
 ```
@@ -60,6 +62,12 @@ with an `artifact` override and the receiver limits written out:
   traces.
 - **`artifact`** turns spans and metrics on or off per artifact type. Entity frames are off by default and screen
   content gets metrics only; the dev conf (`runtime/conf/MoquiDevConf.xml`) adds content spans and entity metrics.
+  Its `sample-ratio` (0 to 1) overrides the global ratio for that type's frame spans (and `AT_LLM` provider spans);
+  roots and the tail rule are unchanged, and SQL and other child spans follow the global ratio.
+- **`metric`** sets the attributes kept on one instrument, replacing the global allow-list for it; `attributes=""`
+  keeps none. Instruments without one keep the global list.
+- **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
+  on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
 - **`interval-seconds`** is for tests; the metric documents are minute documents.
@@ -87,8 +95,17 @@ with an `artifact` override and the receiver limits written out:
   works on it unchanged.
 
 **Out.** `otlp-endpoint` (for example `http://collector:4318`) also sends everything to an OpenTelemetry Collector or
-any OTLP/HTTP backend, as OTLP JSON. `otlp-headers` is a comma-separated `name=value` list; header values are never
-logged. Local storage and the remote export fail separately and are counted separately.
+any OTLP/HTTP backend. `otlp-protocol` is `http/protobuf` (the default) or `http/json`. Each request groups its
+records by resource and scope. `otlp-headers` is a comma-separated `name=value` list; header values are never
+logged. The remote export runs on its own thread with a bounded queue (8,192 records, 64 batches; 2 s connect and 5 s
+request timeouts), so a slow or down collector drops and counts records (`remote_dropped`) and never holds up local
+storage. Local storage and the remote export fail separately and are counted separately.
+
+**Scrape.** `/metrics` answers Prometheus text (format 0.0.4) for `?format=prometheus` or a Prometheus `Accept`
+header, and the plain `name value` lines otherwise. The text comes from a cumulative reader of this server's own
+instruments (metrics received over OTLP are not on it), plus the pool, statement, guard and telemetry loss totals,
+and a `target_info` series with the resource. It has the same address gate as `/health`, and a public site never
+takes either path.
 
 ## Deploy markers and annotations
 
@@ -108,16 +125,18 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Screen | What it shows |
 | --- | --- |
 | Overview | Request rate and duration, job runs, top error groups and telemetry loss |
-| Services | Requests and artifacts by service, with duration percentiles |
-| Traces | Requests (SERVER root spans) by default, or all spans, by query and time, with the user and a Logs link; TraceDetail draws the waterfall, span attributes and the trace's logs |
+| Services | Services, endpoints and instances (with version) as tables that narrow the dashboard when clicked; request rate, 5xx errors and duration percentiles over time; the busiest artifacts, linking to Artifacts |
+| Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes and the trace's logs |
 | Logs | Explore over `otel_logs`: query, filters, paging both ways, context lines, a live tail, the trace link per line, CSV |
-| Errors | Error groups by fingerprint, then samples, the stack and their traces and logs |
-| Metrics | Explore over `otel_metrics` |
+| Errors | Failed requests and jobs over time, error groups by fingerprint, then samples, the stack and their traces and logs |
+| Compare | Two ranges or versions side by side: requests, 5xx errors and duration percentiles per `service.version`, and the documents |
+| Metrics | A metric picker (statistic, including p50/p95/p99 from the buckets, and group by an attribute) over Explore on `otel_metrics` |
 | Artifacts | Hits, total, min, max, average, p50/p95/p99, std dev, slow hits and last active minute per artifact, by type, sub type and name, plus the same stats over time |
 | Sources | Ingest keys (a new key's token shows once, in a message; the log masks it), the latest data from each source, exporter status and loss counters |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
-export, inspect and tail links work for a user with `MONITOR_APP`. The System app's Visit screens list a visit's
+export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
+for the same reason. The System app's Visit screens list a visit's
 requests from the request spans, and a job run links to its trace and its logs.
 
 ## The Dashboards app
@@ -137,6 +156,16 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel
   view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display.
+  The time picker has quick ranges, the viewer's recent ranges and an absolute range. Each panel's menu has view,
+  edit, share (a link with the time made absolute), explore, inspect, duplicate, remove and new alert rule. The
+  editor suggests visualizations from the query's or the data's columns. Tables can have footer calculations
+  (computed from every row, not the ones shown) and sparkline cells; text panels take `${name}` variables and
+  `${__from}`/`${__thru}`, escaped as text; a heatmap draws latency from histogram buckets. The TUI draws the same
+  charts with block characters, formats currency, and has kiosk mode and auto refresh.
+- **Embedding.** `<report-embed definition-id="" panel-id="" from="now-7d" thru="now" variables="[map expression]"/>`
+  places a saved dashboard, one of its panels or a library panel on any screen. It renders as the viewer, so a
+  visitor who is not signed in (such as on a public site) gets nothing, and one that cannot be read logs a warning
+  and renders nothing.
 - **Definitions.** Dashboards, library panels, datasets, saved searches, alert rules and report schedules are JSON in
   `moqui.report.Definition`, with versions (diff and restore) and references (the "used in" lists, export and
   import). Components ship them as `report/*.json`, one file each with `id`, `type`, `title` and `body`; shipped ones
@@ -148,12 +177,17 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   counts as healthy. A series missing for `pruneAfterMissing` evaluations in a row (10 by default) is removed, with a
   resolved notification if it was not Normal; a rule tracks at most 500 series. Contacts are the `ReportAlert`
   notification topic (or another), email through an `EmailTemplate`, and webhooks (which need `REPORT_CONTACT_ADMIN`;
-  credentials come from server properties, never from the rule). Group wait, repeat, silences and mute timings are set
-  per rule. State changes are written as annotations.
+  credentials come from server properties, never from the rule). Group wait and repeat are set per contact point.
+  Contact points, silences and mute timings are set in the rule or shared as their own definitions (Dashboards ›
+  Alerts), which rules name in `contactPointRefs`, `silenceRefs` and `muteTimingRefs`. A rule's query and deliveries
+  run outside its lock, with rules evaluated on `alert-workers` threads (`<report>`, default 4). Relative ranges use
+  the evaluator's effective time. State changes are written as annotations. mr-mantle ships a "Daily sales below
+  floor" rule template.
 - **Reports.** A report schedule extends `ScreenScheduled`: one or more dashboards, each with its own range and
   variables, rendered by the server's Chromium to PDF (`orientation` portrait or landscape, `layout` grid or rows,
   `appendix` for table data, `paper` letter or a4), a PNG inline in the email with a link to the live dashboard, CSV
-  or xlsx. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
+  or xlsx: one CSV, or one sheet, per table panel (a dashboard with no table panel exports each panel with data), and
+  a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
   location needs `REPORT_SAVE_LOCATION`.
 
 ## Security
@@ -172,8 +206,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 
 ## Capacity and loss
 
-Telemetry never blocks or fails business work. Records go to a bounded queue (8,192 records and 32 MiB, with 512 and 2
-MiB of that kept for request and job roots) and are written by one worker thread, never inside a business transaction.
+Telemetry never blocks or fails business work. Records go to a bounded queue (8,192 records and 32 MiB by default,
+with 512 and 2 MiB of that kept for request and job roots) and are written by one worker thread, never inside a business transaction.
 When the queue is full or the store is down, records are dropped and counted: `/metrics` and Monitor › Sources show
 queued, exported, dropped and failed counts for the local store and the remote exporter; `failed` is the records a store
 refused or could not take (part of `dropped`), and `/metrics` shows it as `telemetry_export_failures_total`. Missing
@@ -187,7 +221,8 @@ take the index refresh interval to appear.
 - A new database loads `TelemetryData.xml`, `ReportSetupData.xml` and `ReportEmailData.xml` from the conf's `load-data`
   list (the retention, rollup and alert jobs, the `ReportAlert` topic and the report email template). Before the review
   pass they were not on that list, so a database created then lacks them: load them as below.
-- The entity check creates the `moqui.report` and `moqui.monitor` tables. `ScreenScheduled` gains report definition,
+- The entity check creates the `moqui.report` and `moqui.monitor` tables, and adds `claimToken` and `claimedUntil` to
+  `AlertRuleLock`. `ScreenScheduled` gains report definition,
   owner and pause fields, and `ScreenScheduledLock` gains lease fields. On an existing database, review any records
   you customized with the same ids, then load only the new seed files:
 
@@ -223,6 +258,5 @@ take the index refresh interval to appear.
 
 ## Not built
 
-The open items are in [Remaining-Work](../plans/Remaining-Work.md#monitoring): Prometheus text on `/metrics`,
-protobuf OTLP export, shared silences and contact points, a time picker with quick ranges, embedding a saved panel by
-id, and more. Browser RUM, profiling, incidents and recovery are the Later stages of the plan.
+The open items are in [Remaining-Work](../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
+Browser RUM, profiling, incidents and recovery are the Later stages of the plan.

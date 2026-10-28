@@ -231,6 +231,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="week-start" type="xs:integer"/>
         <xs:attribute name="fiscal-start-month" type="xs:positiveInteger"/>
         <xs:attribute name="fiscal-start-day" type="xs:positiveInteger"/>
+        <xs:attribute name="alert-workers" type="xs:string">
+            <xs:annotation><xs:documentation>Threads that evaluate alert rules in one pass, default 4, at most 32. The
+                calling thread also takes rules.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="server-stats">
         <xs:complexType>

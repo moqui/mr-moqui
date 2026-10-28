@@ -329,6 +329,7 @@ fn partial_response(rejected: u64, message: &str) -> Vec<u8> {
     response
 }
 
+#[cfg(feature = "axum")]
 /// The guard of the listeners now serving, which the guard gauges observe; a later serve replaces it.
 #[derive(Default)]
 struct ServingGuard {
@@ -336,6 +337,7 @@ struct ServingGuard {
     registered: std::sync::atomic::AtomicBool,
 }
 
+#[cfg(feature = "axum")]
 /// The guard's `/metrics` values as observable gauges, `edge_denied` as `moqui.edge.denied` and `request_queue_full` as
 /// `moqui.request.queue_full`, with the runtime gauges, so a scrape and the minute metric documents have them whether
 /// or not search is installed.
@@ -348,6 +350,7 @@ pub(crate) fn register_guard_gauges(factory: &Arc<ExecutionContextFactory>, guar
     }
 }
 
+#[cfg(feature = "axum")]
 fn observe_guard(telemetry: &moqui_core::telemetry::Telemetry, slot: &Arc<ServingGuard>, guard: &crate::guard::Guard) {
     for (index, (name, _)) in guard.values().into_iter().enumerate() {
         let weak = Arc::downgrade(slot);
@@ -358,6 +361,7 @@ fn observe_guard(telemetry: &moqui_core::telemetry::Telemetry, slot: &Arc<Servin
     }
 }
 
+#[cfg(feature = "axum")]
 /// `edge_denied` is `moqui.edge.denied`.
 fn guard_gauge_name(name: &str) -> String {
     format!("moqui.{}", name.replacen('_', ".", 1))
@@ -425,7 +429,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "telemetry")]
+    #[cfg(all(feature = "telemetry", feature = "axum"))]
     #[test]
     fn guard_values_are_gauges_and_the_scrape_adds_the_totals_no_instrument_has() {
         assert_eq!(guard_gauge_name("edge_denied"), "moqui.edge.denied");
