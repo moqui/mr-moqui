@@ -17,6 +17,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
   or the columns), inserts at a named anchor or the nearest one, the Extension points, the Outline on the block tree and
   Properties from the schema digest. "Open in screen builder" on any app page opens it on that page.
+- **Services** is the service writer: a service's settings and parameters, its actions in the logic composer (blocks as
+  sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
+  rows it would write, Save as spec and Run spec (in the sim). **ECA Rules** lists the active rules of each kind with their
+  files; a rules file opens in the ECA view.
 - **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
   publish branches, more directories, and network git on a shared dev server.
 
@@ -38,6 +42,6 @@ and the services say they are not built in.
 - **Tests:** `./moq test dev-aide` (the screens), `cargo test -p dev-aide` (confinement, the git parsers),
   `moqui test-client runtime/dev-component/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink), and `cargo test -p moqui-host --test gate3_browser the_workspace` and
-  `the_entity_modeler` and `the_screen_builder` (Chromium). `test/vectors/` are the visual views' operations, which the page tests make and the
+  `the_entity_modeler`, `the_screen_builder` and `the_service_writer` (Chromium). `test/vectors/` are the visual views' operations, which the page tests make and the
   crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).
 - **Screenshots:** `MOQUI_DEV_SHOTS=<dir>` writes them in light, dark and 390 px.

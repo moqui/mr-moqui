@@ -131,7 +131,7 @@
             }, [
                 this.tree.readOnly ? null : h("span", { class: "m-dev-block-handle", title: "Drag to move" }, "⋮⋮"),
                 h("span", { class: "m-dev-block-name" }, label.text),
-                (label.chips || []).map((chip, index) => h("span", { class: "m-dev-block-chip" + (chip.warn ? " warn" : ""), key: index,
+                (label.chips || []).map((chip, index) => chip.word ? h("span", { class: "m-dev-block-word", key: index }, chip.text) : h("span", { class: "m-dev-block-chip" + (chip.warn ? " warn" : ""), key: index,
                     title: chip.title || "", onClick: chip.edit ? (event) => { event.stopPropagation(); this.tree.$emit("chip", { node: this.node, chip }); } : undefined }, chip.text)),
                 label.badge ? h("span", { class: "m-dev-block-badge " + (label.badgeClass || "") }, label.badge) : null
             ]);
@@ -205,7 +205,7 @@
             ".m-dev-block-head:hover{background:rgba(127,127,127,.1)}.m-dev-block-head.selected{background:rgba(25,118,210,.16);outline:1px solid rgba(25,118,210,.5)}" +
             ".m-dev-block-handle{cursor:grab;opacity:.45;font-size:10px;letter-spacing:-2px}.m-dev-block-name{font-weight:500}" +
             ".m-dev-block-chip{padding:0 5px;border-radius:8px;background:rgba(127,127,127,.14);font-family:ui-monospace,Menlo,monospace;font-size:11px;max-width:22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
-            ".m-dev-block-chip.warn{background:rgba(229,115,0,.22)}.m-dev-block-badge{margin-left:auto;font-size:10px;opacity:.8}" +
+            ".m-dev-block-chip.warn{background:rgba(229,115,0,.22)}.m-dev-block-word{opacity:.7}.m-dev-block-badge{margin-left:auto;font-size:10px;opacity:.8}" +
             ".sortable-ghost>.m-dev-block-head{opacity:.4}";
         root.document.head.appendChild(style);
     }

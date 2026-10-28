@@ -5014,6 +5014,240 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     }
 }
 
+/// The service writer (plans/design-dev-aide.md P7, 9): a site service in its view, its actions as blocks in the logic
+/// composer; a block added from the palette and a chip edited, each an operation on the buffer, saved and reloaded; a
+/// Try in sim lists the rows it would write, Save as spec writes the feature and Run spec passes it. The composer's block
+/// tree draws 300 blocks within the measure of 9.2 (100 ms).
+#[test]
+fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
+    let site_entities = "<entities><entity entity-name=\"Thing\" package=\"mysite\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\
+        <field name=\"thingName\" type=\"text-medium\"/></entity></entities>\n";
+    let site_services = "<services>\n    <service verb=\"make\" noun=\"Thing\">\n        <in-parameters><parameter name=\"thingId\" required=\"true\"/><parameter name=\"thingName\"/></in-parameters>\n        <out-parameters><parameter name=\"thingId\"/></out-parameters>\n        <actions>\n            <set field=\"thingName\" from=\"thingName || 'unnamed'\"/>\n            <service-call name=\"create#mysite.Thing\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/entity/MySiteEntities.xml", site_entities),
+        ("component/my-site/service/mysite/Things.xml", site_services),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="MY_THINGS" description="Things"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="mysite\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="mysite\..*" artifactTypeEnumId="AT_ENTITY" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="create#mysite.Thing" artifactTypeEnumId="AT_SERVICE" nameIsPattern="N" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MY_THINGS_ADMIN" userGroupId="ADMIN" artifactGroupId="MY_THINGS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-service",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    let site = gate.runtime.join("component/my-site");
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "-A"][..],
+        &["commit", "-q", "-m", "Start"][..],
+    ] {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&site)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Services/Edit?artifact=service%3Amysite.Things.make%23Thing"
+    ));
+    browser.wait_for(
+        "the composer's blocks",
+        "!!document.querySelector('#DevServiceView #DevComposer .m-dev-block-head') \
+         && document.getElementById('DevComposer').innerText.indexOf('create#mysite.Thing') >= 0",
+        WAIT,
+    );
+
+    // a block from the palette, after the selected one, and a chip edited
+    browser.click(
+        "the first block",
+        "document.querySelector('#DevComposer .m-dev-block-head')",
+    );
+    browser.click("Add", "document.getElementById('DevComposerAdd')");
+    browser.wait_for(
+        "the palette",
+        "!!document.querySelector('[data-palette=\"Check errors\"]')",
+        WAIT,
+    );
+    browser.click(
+        "Check errors",
+        "document.querySelector('[data-palette=\"Check errors\"]')",
+    );
+    browser.wait_for(
+        "the new block",
+        "document.getElementById('DevComposer').innerText.indexOf('Check errors') >= 0",
+        WAIT,
+    );
+    browser.wait_for("the menu closed", "!document.querySelector('.q-menu')", WAIT);
+    browser.click(
+        "the set's value",
+        "[...document.querySelectorAll('#DevComposer .m-dev-block-chip')].find(chip => chip.innerText.indexOf(\"thingName || 'unnamed'\") >= 0)",
+    );
+    browser.wait_for("the chip editor", "!!document.getElementById('DevChipValue')", WAIT);
+    browser.eval("(() => { const input = document.getElementById('DevChipValue'); input.select(); return true; })()");
+    browser.type_text("thingName || 'nameless'");
+    browser.click("Set", "document.getElementById('DevChipSet')");
+    browser.wait_for(
+        "the edited chip",
+        "document.getElementById('DevComposer').innerText.indexOf(\"thingName || 'nameless'\") >= 0",
+        WAIT,
+    );
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    let file = site.join("service/mysite/Things.xml");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&file).unwrap().contains("nameless") {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        saved.contains("<set field=\"thingName\" from=\"thingName || 'nameless'\"/>\n            <check-errors/>"),
+        "{saved}"
+    );
+    assert!(saved.contains("<service-call name=\"create#mysite.Thing\""), "{saved}");
+
+    // Try in sim, then Save as spec and Run spec
+    browser.click("Try", "document.getElementById('DevTryTab')");
+    browser.wait_for("the Try form", "!!document.getElementById('DevTry_thingId')", WAIT);
+    browser.click("thingId", "document.getElementById('DevTry_thingId')");
+    browser.type_text("T-1");
+    browser.click("Run in sim", "document.getElementById('DevRunInSim')");
+    browser.wait_for(
+        "the rows it would write",
+        "!!document.getElementById('DevTryRows') && document.getElementById('DevTryRows').innerText.indexOf('mysite.Thing') >= 0 \
+         && document.getElementById('DevTryRows').innerText.indexOf('nameless') >= 0",
+        WAIT,
+    );
+    browser.click("Save as spec", "document.getElementById('DevSaveSpec')");
+    browser.wait_for("Run spec", "!!document.getElementById('DevRunSpec')", WAIT);
+    let spec = std::fs::read_to_string(site.join("test/Things.spec.js")).unwrap();
+    assert!(
+        spec.contains("call(\"mysite.Things.make#Thing\", {\"thingId\":\"T-1\"})"),
+        "{spec}"
+    );
+    browser.click("Run spec", "document.getElementById('DevRunSpec')");
+    browser.wait_for(
+        "the spec passed",
+        "(document.getElementById('DevSpecRun') || {innerText: ''}).innerText.indexOf('The spec passed') >= 0",
+        WAIT,
+    );
+
+    // the measure of 9.2: the block tree draws 300 blocks in under 100 ms
+    browser.eval(
+        "window.__blocksMs = undefined; (async () => { const host = document.createElement('div'); document.body.appendChild(host); \
+         const nodes = Array.from({length: 300}, (_, i) => ({ name: 'set', path: [0, i], attrs: [['field', 'f' + i], ['from', 'i + ' + i]], children: [] })); \
+         const started = performance.now(); \
+         const app = Vue.createApp({ render: () => Vue.h(moqui.devAide.blocks.components['m-dev-block-tree'], { nodes, parentPath: [0], readOnly: true, \
+           labelFn: moqui.devAide.serviceOps.sentence }) }); \
+         app.mount(host); await Vue.nextTick(); const drawn = host.querySelectorAll('.m-dev-block-head').length; const ms = performance.now() - started; \
+         app.unmount(); host.remove(); window.__blocksMs = drawn === 300 ? ms : -1; })(); true",
+    );
+    let millis = browser
+        .wait_for(
+            "the 300 blocks drawn",
+            "window.__blocksMs === undefined ? false : window.__blocksMs",
+            WAIT,
+        )
+        .as_f64()
+        .unwrap_or(-1.0);
+    eprintln!("the block tree drew 300 blocks in {millis:.1} ms");
+    assert!((0.0..100.0).contains(&millis), "300 blocks in {millis} ms");
+
+    // a SECA rule on the service in the site's secas file, then in the ECA view
+    browser.click("SECA rules", "[...document.querySelectorAll('#DevServiceView .q-tab')].find(tab => tab.innerText.indexOf('SECA rules') >= 0)");
+    browser.click("Add a SECA rule", "document.getElementById('DevAddSeca')");
+    browser.wait_for(
+        "the unsaved rule",
+        "(document.getElementById('DevServiceRules') || {innerText: ''}).innerText.indexOf('(unsaved)') >= 0",
+        WAIT,
+    );
+    browser.click("Save", "document.getElementById('DevSave')");
+    let secas = site.join("service/MySite.secas.xml");
+    for _ in 0..100 {
+        if secas.exists() {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let secas_text = std::fs::read_to_string(&secas).unwrap();
+    assert!(
+        secas_text.contains("<seca service=\"mysite.Things.make#Thing\" when=\"post-service\">"),
+        "{secas_text}"
+    );
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId=my-site&path=service/MySite.secas.xml&view=eca"
+    ));
+    browser.wait_for(
+        "the ECA view",
+        "(document.getElementById('DevEcaView') || {innerText: ''}).innerText.indexOf('seca mysite.Things.make#Thing') >= 0 && !!document.getElementById('DevComposer')",
+        WAIT,
+    );
+    browser.navigate(&format!("{base}/qapps/dev/Eca?kind=seca&target=make%23Thing"));
+    browser.wait_for("the ECA list", "document.body.innerText.indexOf('mysite.Things.make#Thing') >= 0 && document.body.innerText.indexOf('my-site · site') >= 0", WAIT);
+    assert_clean(&mut browser, "the service writer");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "eca-list-light");
+        browser.navigate(&format!(
+            "{base}/qapps/dev/Services/Edit?artifact=service%3Amysite.Things.make%23Thing"
+        ));
+        browser.wait_for(
+            "the composer",
+            "!!document.querySelector('#DevComposer .m-dev-block-head')",
+            WAIT,
+        );
+        save(&mut browser, "service-writer-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "service-writer-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "service-writer-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+}
+
 /// A change set of the dev agent (plans/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
 /// opens Dev Assist, whose scripted `propose_edit` proposes a `screen-extend` of the page's form and an edit of a site
 /// service; the card reads the change as artifacts and its Preview frames the page with the proposal in place (the new
@@ -5108,10 +5342,8 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
         "!!document.querySelector('[data-assist-page-action=dev]') && !!document.querySelector('[data-assist-page-action=\"dev/Screens/Design\"]')",
         WAIT,
     );
-    browser.click(
-        "Customize this screen",
-        "document.querySelector('[data-assist-page-action=dev]')",
-    );
+    // the element's own click: the header settles as its buttons come, so a click by position may land beside it
+    browser.eval("document.querySelector('[data-assist-page-action=dev]').click(); true");
     browser.wait_for("the dev agent", "moqui.assist.state.agentId === 'dev'", WAIT);
 
     let call = |id: &str, name: &str, arguments: serde_json::Value| {

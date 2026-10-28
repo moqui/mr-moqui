@@ -138,7 +138,8 @@ pub fn next_cron_execution(cron: &str, after_millis: i64) -> Result<Option<i64>,
 /// The definition of `name` as the service detail screen reads a `ServiceDefinition`: the names, type, location,
 /// authentication, transaction settings, and the service XML. `None` when there is no such service.
 pub fn service_definition_info(name: &str) -> Option<IndexMap<String, Value>> {
-    let def = define::find(name)?;
+    // an entity-auto service has the definition a call makes for it
+    let def = super::call::resolve(name, super::validate::current_facade().as_ref()).ok()?;
     let mut map = IndexMap::new();
     let text = |value: &str| Value::string(value);
     map.insert("serviceName".to_string(), text(&def.name));
@@ -212,6 +213,164 @@ pub fn service_definition_info(name: &str) -> Option<IndexMap<String, Value>> {
         Value::List(in_params.iter().map(|param| text(&param.name)).collect()),
     );
     map.insert("serviceXml".to_string(), text(&service_xml(&def)));
+    Some(map)
+}
+
+/// A service as the dev-aide's service view reads it (plans/design-dev-aide.md 9.1): its names, type, location and method,
+/// its settings, the file and line of its actions, what it implements, and its in- and out-parameters, nested, each
+/// with its type, required, default, allow-html, checks and description; an in-parameter that `auto-parameters`
+/// implies is marked `implied`. `None` when there is no such service.
+pub fn service_detail(name: &str) -> Option<IndexMap<String, Value>> {
+    // an entity-auto service has the definition a call makes for it
+    let def = super::call::resolve(name, super::validate::current_facade().as_ref()).ok()?;
+    let mut map = service_definition_info(name)?;
+    let text = |value: &str| Value::string(value);
+    map.insert("method".to_string(), text(&def.method));
+    map.insert(
+        "kind".to_string(),
+        text(match def.kind {
+            ServiceKind::Inline => "inline",
+            ServiceKind::EntityAuto => "entity-auto",
+            ServiceKind::Script => "script",
+            ServiceKind::Interface => "interface",
+            ServiceKind::RemoteRest => "remote-rest",
+            ServiceKind::Rust => "rust",
+            ServiceKind::Native => "native",
+            ServiceKind::Unsupported => "unsupported",
+        }),
+    );
+    map.insert("validate".to_string(), Value::Bool(def.validate_input));
+    map.insert("readOnly".to_string(), Value::Bool(def.read_only));
+    map.insert(
+        "semaphore".to_string(),
+        text(&format!("{:?}", def.semaphore).to_lowercase()),
+    );
+    if let Some(source) = &def.action_source {
+        map.insert(
+            "actionsFile".to_string(),
+            source.file.as_deref().map_or(Value::Null, text),
+        );
+        map.insert("actionsLine".to_string(), Value::I64(i64::from(source.line)));
+    }
+    map.insert(
+        "implements".to_string(),
+        Value::List(def.implements.iter().map(|item| text(&item.service)).collect()),
+    );
+    fn param_detail(param: &define::ParamDef, implied: bool) -> Value {
+        let mut row = IndexMap::new();
+        row.insert("name".to_string(), Value::string(&param.name));
+        row.insert("type".to_string(), Value::string(&param.java_type));
+        row.insert(
+            "required".to_string(),
+            Value::string(match param.required {
+                Required::True => "true",
+                Required::Disabled => "disabled",
+                Required::False => "false",
+            }),
+        );
+        row.insert(
+            "default".to_string(),
+            param
+                .default_value
+                .as_deref()
+                .or(param.default_expr.as_deref())
+                .map_or(Value::Null, Value::string),
+        );
+        row.insert(
+            "allowHtml".to_string(),
+            Value::string(match param.allow_html {
+                AllowHtml::None => "none",
+                AllowHtml::Safe => "safe",
+                AllowHtml::Any => "any",
+            }),
+        );
+        row.insert(
+            "checks".to_string(),
+            Value::List(
+                param
+                    .checks
+                    .iter()
+                    .map(|check| Value::string(format!("{check:?}")))
+                    .collect(),
+            ),
+        );
+        row.insert(
+            "description".to_string(),
+            param.description.as_deref().map_or(Value::Null, Value::string),
+        );
+        row.insert("implied".to_string(), Value::Bool(implied));
+        row.insert(
+            "children".to_string(),
+            Value::List(param.children.iter().map(|child| param_detail(child, false)).collect()),
+        );
+        Value::Map(row)
+    }
+    let facade = super::validate::current_facade();
+    // an entity-auto service's parameters all come from its entity
+    let entity_auto = matches!(def.kind, ServiceKind::EntityAuto);
+    let declared: std::collections::BTreeSet<&str> = def.in_params.iter().map(|param| param.name.as_str()).collect();
+    let in_params = super::validate::declared_in(&def, facade.as_ref()).ok()?;
+    map.insert(
+        "inParameters".to_string(),
+        Value::List(
+            in_params
+                .iter()
+                .map(|item| param_detail(item, entity_auto || !declared.contains(item.name.as_str())))
+                .collect(),
+        ),
+    );
+    // an entity-auto service with no parameters of its own takes the entity's fields: its key, required but on a create
+    if entity_auto && in_params.is_empty() {
+        if let Some(info) = facade
+            .as_ref()
+            .and_then(|facade| crate::entity::info::definition_info(facade, &def.noun))
+        {
+            if let Some(Value::List(fields)) = info.get("fields") {
+                let rows: Vec<Value> = fields
+                    .iter()
+                    .filter_map(|field| match field {
+                        Value::Map(field) => {
+                            let text = |key: &str| {
+                                field
+                                    .get(key)
+                                    .map(moqui_lib::object::to_plain_string)
+                                    .unwrap_or_default()
+                            };
+                            let pk = matches!(field.get("isPk"), Some(Value::Bool(true)));
+                            let mut row = IndexMap::new();
+                            row.insert("name".to_string(), Value::string(text("name")));
+                            row.insert("type".to_string(), Value::string(text("javaType")));
+                            row.insert(
+                                "required".to_string(),
+                                Value::string(if pk && def.verb != "create" { "true" } else { "false" }),
+                            );
+                            row.insert("default".to_string(), Value::Null);
+                            row.insert("allowHtml".to_string(), Value::string("none"));
+                            row.insert("checks".to_string(), Value::List(Vec::new()));
+                            row.insert("description".to_string(), Value::Null);
+                            row.insert("implied".to_string(), Value::Bool(true));
+                            row.insert("children".to_string(), Value::List(Vec::new()));
+                            Some(Value::Map(row))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                map.insert("inParameters".to_string(), Value::List(rows));
+            }
+        }
+    }
+    let declared_out: std::collections::BTreeSet<&str> =
+        def.out_params.iter().map(|param| param.name.as_str()).collect();
+    let out_params = super::validate::expand_params(&def, &def.out_params, facade.as_ref()).ok()?;
+    map.insert(
+        "outParameters".to_string(),
+        Value::List(
+            out_params
+                .iter()
+                .map(|item| param_detail(item, !declared_out.contains(item.name.as_str())))
+                .collect(),
+        ),
+    );
     Some(map)
 }
 

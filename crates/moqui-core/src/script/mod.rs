@@ -25,7 +25,7 @@ pub mod template;
 pub(crate) mod walker;
 
 pub(crate) use actions::run_actions_at;
-pub use actions::{check_actions, eval_condition_element, eval_condition_group, run_actions};
+pub use actions::{check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions};
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;
 pub use parse::parse_js;

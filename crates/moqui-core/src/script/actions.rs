@@ -150,6 +150,21 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
     super::parse::check_program(script.text())
 }
 
+/// The JavaScript the framework runs for an `<actions>` XML text, as the service writer's Generated view shows it
+/// (plans/design-dev-aide.md 9.2): with `debug`, each statement after a comment naming its element, as
+/// `MOQUI_ACTIONS_DEBUG` writes it. Not cached, and not the cache's.
+///
+/// # Errors
+///
+/// Returns an error when the XML does not parse or does not generate.
+pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
+    if super::runtime::in_script() {
+        generate_apart(xml, debug)
+    } else {
+        generate_with(xml, debug)
+    }
+}
+
 fn generated(xml: &str) -> Result<ScriptText, Error> {
     let scripts = generated_scripts();
     let cached = scripts.lock().unwrap_or_else(PoisonError::into_inner).get(xml);

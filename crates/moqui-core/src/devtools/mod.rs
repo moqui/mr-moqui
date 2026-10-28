@@ -17,6 +17,7 @@
 //! outside the server alike, so they are the framework's and not the dev-aide's.
 
 pub mod check;
+pub mod eca;
 pub mod index;
 pub mod refs;
 pub mod reload;

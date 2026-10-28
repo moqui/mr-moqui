@@ -131,6 +131,10 @@
         script: "/devstatic/DevAideEntity.js", ready: () => !!devAide.entityViewRegistered });
     devAide.registerView({ name: "screen", label: "Screen", roots: ["screen", "screen-extend"], component: "m-dev-screen-view",
         script: "/devstatic/DevAideScreen.js", ready: () => !!devAide.screenViewRegistered });
+    devAide.registerView({ name: "service", label: "Service", roots: ["services"], component: "m-dev-service-view",
+        script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
+    devAide.registerView({ name: "eca", label: "Rules", roots: ["secas", "eecas", "emecas", "gitecas"], component: "m-dev-eca-view",
+        script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
     // A screen in the screen builder (11.2): the entity view's "Show it on a form" and the like, by the reference's
     // other side (an index row with its root and path).
     devAide.openInBuilder = (ref) => {

@@ -1,2 +1,2 @@
 // Offline page specs. No server.
-suite(["DevAide", "DevAideEntity", "DevAideScreen"])
+suite(["DevAide", "DevAideEntity", "DevAideScreen", "DevAideService"])

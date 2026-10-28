@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- The service writer and the ECA rules (plans/design-dev-aide.md 9, 10): the services with their SECA rules and the
+    calls of the last spec run, a service's view, Try in sim (or for real, confirmed and audited), a snippet run in sim,
+    Save as spec, Run spec in sim, the generated JavaScript of an actions block, and the active ECA rules. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="list" noun="Services" type="rust" location="dev_aide::services::list_services" allow-remote="false" read-only="true">
+        <description>The services of the artifact index by name, with their component, file, SECA count and the calls of the last spec run.</description>
+        <in-parameters>
+            <parameter name="filter"/>
+            <parameter name="component"/>
+        </in-parameters>
+        <out-parameters><parameter name="services" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="ServiceView" type="rust" location="dev_aide::services::get_service_view" allow-remote="false" read-only="true">
+        <description>A service as its view shows it: its definition with the parameters nested (those auto-parameters
+            imply marked), its file and line, its script's file, its SECA rules, what uses it, the last spec run's calls.</description>
+        <in-parameters>
+            <parameter name="artifactId"/>
+            <parameter name="serviceName"/>
+        </in-parameters>
+        <out-parameters><parameter name="view" type="Map"/></out-parameters>
+    </service>
+    <service verb="try" noun="Service" type="rust" location="dev_aide::services::try_service" allow-remote="false">
+        <description>Run a service in the sim, nothing kept: its out-parameters, messages and the rows it would write; or
+            with real and confirm, for real (the extend tier), audited.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="parameters" type="Object" allow-html="any"/>
+            <parameter name="real" type="Boolean"/>
+            <parameter name="confirm" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="try" noun="Snippet" type="rust" location="dev_aide::services::try_snippet" allow-remote="false">
+        <description>A scratch inline service of XML Actions or JavaScript run in the sim, its messages and rows.</description>
+        <in-parameters>
+            <parameter name="language" default-value="xml"/>
+            <parameter name="body" required="true" allow-html="any"/>
+            <parameter name="parameters" type="Object" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="save" noun="TrySpec" type="rust" location="dev_aide::services::save_try_spec" allow-remote="false">
+        <description>A feature from a Try (call, then, checkData of its rows) appended to the service's spec file, in its
+            component when the user may write there, else in the site's.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="parameters" type="Object" allow-html="any"/>
+            <parameter name="out" type="Object" allow-html="any"/>
+            <parameter name="rows" type="Object" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="spec"/>
+            <parameter name="hash"/>
+        </out-parameters>
+    </service>
+    <service verb="run" noun="Spec" type="rust" location="dev_aide::services::run_spec" allow-remote="false">
+        <description>A spec file run in process inside the sim, nothing kept: each feature's outcome and each service's calls.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="feature"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="cases" type="List"/>
+            <parameter name="setupFailure"/>
+            <parameter name="calls" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="GeneratedJs" type="rust" location="dev_aide::services::get_generated_js" allow-remote="false" read-only="true">
+        <description>The JavaScript the framework runs for an actions block, each statement after its element.</description>
+        <in-parameters><parameter name="xml" required="true" allow-html="any"/></in-parameters>
+        <out-parameters>
+            <parameter name="source"/>
+            <parameter name="error"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="EcaRules" type="rust" location="dev_aide::services::list_eca_rules" allow-remote="false" read-only="true">
+        <description>The active SECA, EECA, EmECA and gitECA rules with their files, priorities, conditions and actions,
+            the rules a later one replaced under it.</description>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="component"/>
+            <parameter name="target"/>
+            <parameter name="when"/>
+        </in-parameters>
+        <out-parameters><parameter name="rules" type="List"/></out-parameters>
+    </service>
+</services>

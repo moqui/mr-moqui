@@ -1,6 +1,6 @@
 # Dev AIDE: the assisted IDE
 
-Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P6 on Oct 28, 2026; what is not built yet is listed
+Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 to P7 on Oct 28, 2026; what is not built yet is listed
 in "Built so far" at the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
@@ -1538,6 +1538,35 @@ are independent of P4 and may run beside it.
   them); Add filter, Add section, Add button and Add row action; double-click to edit a title in place; "Add an anchor here"
   (the full tier names the element in Text with the upstream toggle on); the archetype's gallery preview; the
   `screen-xml` canvas's "Open in the builder" carrying the proposal as the builder's buffer.
+
+**P7, the service writer and ECA rules** (Oct 28, 2026), with these differences:
+
+- **The framework** gains `service::info::service_detail` (the parameters nested with their checks, those
+  `auto-parameters` imply marked, an entity-auto service's from its entity), `script::generated_source` (an actions
+  block's JavaScript, each statement after its element) and `devtools::eca::rule_list` (every SECA, EECA, EmECA and
+  gitECA rule with its file and line, read in the loads' order with their replacement by id and their priorities, each
+  replaced rule after the one that replaced it). The rule holders themselves are unchanged: the list reads the files.
+  The service info of an entity-auto service is the definition a call makes for it.
+- **The service view** has the header's settings, the parameters (Add and Remove on the declared ones), the
+  implementation (inline actions in the composer; a script service's file opened in the Workspace, not a second buffer of
+  the view), the SECA rules with Add (into the site's `service/<Site>.secas.xml`, a companion buffer), what uses it and the
+  last spec run's calls (the coverage column of `dev/Services`, from Run spec here, not `moqui test --coverage`).
+- **Try** runs in the sim as the user (`try#Service`), or for real behind a confirm, audited (`DAA_TRY`); the agent's
+  `try_service` keeps its own code over the same `run_in_sim`. The sim gives no log lines. A snippet (`try#Snippet`) runs
+  XML Actions or JavaScript in the sim, its `result` its last message. **Save as spec** appends a feature of `call`,
+  `then` and `checkData` to `test/<Services file>.spec.js` of the service's component, or of the site's when the
+  service is upstream; **Run spec** runs the file in process inside the sim (`testkit::run_spec`), so it writes nothing,
+  rather than a `moqui test` child process.
+- **The composer** is the block tree of P6 with a sentence table over the XML Actions elements (each chip an attribute
+  the XSD gives the element, which a page test checks against the XSD), chips that edit one attribute (entity and
+  service names from the index), the palette by §9.2's groups with snippets, the names known before each block warning on
+  an unknown one, a service-call's in-parameters added as `field-map`s, a script's popup editor, and Generated. Measured
+  in Chromium: 300 blocks drawn in about 10 ms; the nested drag's moves and a chip edit are in the shared vectors
+  (`composer: ...` in `xml-edit-vectors.json`). Tiptap was not needed. It edits the actions of services and ECA rules;
+  screen and transition actions are edited in Text.
+- **ECA**: `dev/Eca` lists the active rules with filters; the ECA view of a rules file lists its rules with a rule's
+  attributes from the digest, its condition as an expression, its actions in the composer, and Add, Remove and Move.
+  Not built: a rule's condition against a recorded context.
 
 ---
 

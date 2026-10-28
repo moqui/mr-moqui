@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- ECA Rules (plans/design-dev-aide.md 10): the active SECA, EECA, EmECA and gitECA rules as the framework holds them,
+    in the order they run, each with its file and line, priority, condition and actions; a rule a later one of its id
+    replaced is under it, marked so. A rule opens in the Workspace's ECA view. A list, so the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="ECA Rules" default-menu-index="7">
+    <parameter name="kind"/>
+    <parameter name="component"/>
+    <parameter name="target"/>
+    <parameter name="when"/>
+
+    <actions>
+        <service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" out-map="found"
+                in-map="{kind: kind, component: component, target: target, when: when}"/>
+        <set field="rules" from="(found.rules || []).slice(0, 1000)"/>
+        <set field="ruleCount" from="(found.rules || []).filter((rule) => !rule.replacedBy).length"/>
+    </actions>
+    <widgets>
+        <form-single name="EcaFilter" transition=".">
+            <field name="kind"><default-field title="Kind"><drop-down allow-empty="true">
+                <option key="seca" text="SECA"/><option key="eeca" text="EECA"/><option key="emeca" text="EmECA"/><option key="giteca" text="gitECA"/>
+            </drop-down></default-field></field>
+            <field name="target"><default-field title="Service, entity or event"><text-line size="30"/></default-field></field>
+            <field name="when"><default-field title="When"><text-line size="14"/></default-field></field>
+            <field name="component"><default-field title="Component"><text-line size="16"/></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+        </form-single>
+        <label text="${ruleCount} active rules" type="p"/>
+        <form-list name="EcaList" list="rules" skip-form="true">
+            <field name="kind"><default-field title="Kind"><display text="${kind}${replacedBy ? ' (replaced)' : ''}"/></default-field></field>
+            <field name="target"><default-field title="On"><display/></default-field></field>
+            <field name="when"><default-field title="When"><display/></default-field></field>
+            <field name="priority"><default-field title="Priority"><display text="${priority == null ? '' : priority}"/></default-field></field>
+            <field name="id"><default-field title="Id"><display/></default-field></field>
+            <field name="condition"><default-field title="Condition"><display/></default-field></field>
+            <field name="actionsText"><default-field title="Actions"><display/></default-field></field>
+            <field name="component"><default-field title="Component"><display text="${component}${site ? ' · site' : ''}"/></default-field></field>
+            <field name="open"><default-field title="File">
+                <link url="${url || ''}" url-type="plain" text="${file.split('/').slice(-2).join('/')}:${line}" link-type="anchor" condition="url"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>
