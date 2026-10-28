@@ -69,6 +69,7 @@ gix-pack = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 # gzip of outgoing OTLP; already linked through zip's deflate.
 flate2 = { workspace = true }
+tar = { workspace = true }
 rust_decimal = { workspace = true, optional = true }
 
 # No prebuilt QuickJS bindings ship for this target. bindgen needs libclang and the emsdk sysroot;

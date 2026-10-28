@@ -41,6 +41,7 @@ use rquickjs::{
     Runtime, Undefined, Value as JsValue,
 };
 
+mod archive_host;
 mod compiled;
 mod conditions;
 mod convert;
