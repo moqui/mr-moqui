@@ -1267,3 +1267,72 @@ fn location_text_and_a_stream_read_in_the_charset_given() {
     let _ = std::fs::remove_dir_all(&dir);
     clear_context_stack();
 }
+
+#[test]
+fn resource_digests_archives_and_line_windows() {
+    use std::io::Write;
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    clear_context_stack();
+    let dir = std::env::temp_dir().join(format!("moqui-archive-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("abc.txt"), "abc").unwrap();
+    // a gzip-compressed tar with a nested file, a symlink and an unsafe path
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_bytes);
+        let mut header = tar::Header::new_gnu();
+        let body = b"first\r\nsecond\nthird";
+        header.set_size(body.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "dump/rows.sql", &body[..]).unwrap();
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Symlink);
+        link.set_size(0);
+        builder.append_link(&mut link, "uploads/link", "/etc/passwd").unwrap();
+        let mut bad = tar::Header::new_gnu();
+        bad.set_size(1);
+        bad.set_mode(0o644);
+        let name = b"../escape.txt";
+        bad.as_old_mut().name[..name.len()].copy_from_slice(name);
+        bad.set_cksum();
+        builder.append(&bad, &b"x"[..]).unwrap();
+        builder.finish().unwrap();
+    }
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&tar_bytes).unwrap();
+    std::fs::write(dir.join("archive.tar.gz"), gz.finish().unwrap()).unwrap();
+    let mut single = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    single.write_all(b"one\ntwo\n").unwrap();
+    std::fs::write(dir.join("dump.sql.gz"), single.finish().unwrap()).unwrap();
+    set_dir(&dir);
+    holds(
+        r#"ec.resource.digest(dir + "/abc.txt", "sha256") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            && ec.resource.digest(dir + "/abc.txt", "sha1") === "a9993e364706816aba3e25717850c26c9cd0d89d""#,
+    );
+    holds(
+        r#"(function () {
+            const out = ec.resource.extractArchive(dir + "/archive.tar.gz", dir + "/out", {});
+            return out.entries.length === 1 && out.entries[0].path === "dump/rows.sql" && out.skipped.length === 2
+                && ec.resource.getLocationText(dir + "/out/dump/rows.sql") === "first\r\nsecond\nthird";
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const first = ec.resource.readLines(dir + "/out/dump/rows.sql", 0, 2, 1000);
+            const rest = ec.resource.readLines(dir + "/out/dump/rows.sql", first.nextOffset, 10, 1000);
+            return first.lines.join("|") === "first|second" && !first.done && rest.lines.join("|") === "third" && rest.done;
+        })()"#,
+    );
+    holds(
+        r#"ec.resource.gunzip(dir + "/dump.sql.gz", dir + "/dump.sql", 100) === 8
+            && ec.resource.getLocationText(dir + "/dump.sql") === "one\ntwo\n""#,
+    );
+    holds(
+        r#"(function () { try { ec.resource.gunzip(dir + "/dump.sql.gz", dir + "/small.sql", 4); return false } catch (e) { return true } })()"#,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    clear_context_stack();
+}

@@ -598,6 +598,13 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
         toName == null ? "new" : String(toName));
+    // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
+    ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
+    ec.resource.gunzip = (source, target, maxBytes) => host.resourceGunzip(String(source), String(target),
+        maxBytes == null ? 4 * 1024 * 1024 * 1024 : Number(maxBytes));
+    ec.resource.extractArchive = (source, target, limits) => host.resourceExtractArchive(String(source), String(target), limits || {});
+    ec.resource.readLines = (location, offset, maxLines, maxBytes) => host.resourceReadLines(String(location), Number(offset || 0),
+        Number(maxLines || 1000), Number(maxBytes || 16 * 1024 * 1024));
     // a second argument that is a charset name (a Rust-port extension; Java's is the cache flag) decodes the bytes in it
     ec.resource.getLocationText = (location, cacheOrCharset) => typeof cacheOrCharset === "string" && cacheOrCharset.trim()
         ? host.resourceTextIn(String(location), cacheOrCharset) : host.resourceText(String(location));
@@ -2696,6 +2703,7 @@ pub(super) fn install<'js>(
     method!("textDiff", text_diff);
     method!("restSend", rest_send);
     super::web_host::methods(ctx, &host)?;
+    super::archive_host::methods(ctx, &host)?;
     method!("runTokenCommand", run_token_command);
     method!("testConfConnection", test_conf_connection);
     method!("runSqlCountConf", run_sql_count_conf);
