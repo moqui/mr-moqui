@@ -733,6 +733,43 @@ fn request_scripts_have_room_for_nested_app_templates() {
 }
 
 #[test]
+fn heap_pressure_releases_cached_code_without_losing_live_values() {
+    // A fresh thread has its own engine pool. Keep a real JS allocation alive across cache reclamation, below the
+    // hard limit, and verify the next script can still read it. No retry of a possibly side-effectful script occurs.
+    std::thread::spawn(|| -> Result<(), Error> {
+        assert!(eval_condition("1 + 1 === 2")?);
+        let engine = super::ENGINES.with(|engines| engines.borrow()[0].clone());
+        assert!(!engine.reclaim_cache_pressure());
+        let retained = engine.context.with(|ctx| -> Result<_, Error> {
+            let array: rquickjs::Array = ctx.eval("new Array(3200000).fill(42)").map_err(js_error)?;
+            Ok(rquickjs::Persistent::save(&ctx, array))
+        })?;
+        assert!(engine.scripts.borrow().len() > 0);
+        assert!(
+            engine.reclaim_cache_pressure(),
+            "heap usage: {:?}",
+            engine.runtime.memory_usage()
+        );
+        assert_eq!(engine.scripts.borrow().len(), 0);
+        let first = engine.context.with(|ctx| {
+            retained
+                .clone()
+                .restore(&ctx)
+                .and_then(|array| array.get::<i32>(0))
+                .map_err(js_error)
+        })?;
+        assert_eq!(first, 42, "live objects survive cache reclamation");
+        drop(retained);
+        engine.runtime.run_gc();
+        assert!(eval_condition("1 + 2 === 3")?);
+        Ok(())
+    })
+    .join()
+    .expect("cache reclamation does not crash the engine")
+    .unwrap();
+}
+
+#[test]
 fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
     clear_context_stack();
     assert!(eval_condition("1 + 1 === 2")?);
