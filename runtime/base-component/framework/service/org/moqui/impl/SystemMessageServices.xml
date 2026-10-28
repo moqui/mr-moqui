@@ -346,7 +346,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="retryTimestamp" from="Math.trunc(Date.now() - toDecimal(retryMinutes).toNumber() * 60000)" type="Timestamp"/>
             <script><![CDATA[
                 const ownedTypes = ec.entity.find('moqui.service.message.SystemMessageType')
-                    .condition('sendScheduled', 'N').list().map(type => type.get('systemMessageTypeId'));
+                    .condition('useScheduledSender', 'N').list().map(type => type.get('systemMessageTypeId'));
                 let messages = ec.entity.find('moqui.service.message.SystemMessage')
                     .condition('statusId', 'SmsgProduced').condition('isOutgoing', 'Y')
                     .condition(ec.entity.conditionFactory.makeCondition([

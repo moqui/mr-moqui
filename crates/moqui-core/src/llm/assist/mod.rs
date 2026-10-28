@@ -344,7 +344,7 @@ impl Caller {
             self.facade
                 .find(crate::llm::run::CONVERSATION)?
                 .eq("conversationId", Value::string(conversation_id))
-                .condition(crate::entity::Condition::is_null("managedBy"))
+                .condition(crate::entity::Condition::is_null("managingComponent"))
                 .disable_authz()
                 .one()
         })?

@@ -126,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
             contextVersion the newest page version its tab reported (raised when the user navigates); the agent's
             ui.* events carry both, so a tab applies only its own and only for the page they were made for.</description>
         <field name="conversationId" type="id" is-pk="true"/>
-        <field name="managedBy" type="text-short"><description>External component that owns this conversation. Empty for
+        <field name="managingComponent" type="text-short"><description>External component that owns this conversation. Empty for
             conversations of the built-in run engine; that engine cannot start a run in an externally managed conversation.</description></field>
         <field name="userId" type="id"/>
         <field name="agentId" type="id"/>
