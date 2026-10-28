@@ -25,11 +25,13 @@
 //! selector such as `service[verb=place][noun=Order]/actions/entity-find[2]`, each step an element name with optional
 //! `[attribute=value]` filters and an optional 1-based `[n]`, the first step matching the root element.
 
+pub mod outline;
 pub mod tokenize;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
+pub use outline::{outline, OutlineNode};
 pub use tokenize::{Doc, Kind};
 
 /// An element of the text.

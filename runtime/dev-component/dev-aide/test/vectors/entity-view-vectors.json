@@ -1,0 +1,1620 @@
+{
+  "specs": {
+    "picklist": {
+      "enumTypeId": "ExamplePriority",
+      "fieldName": "priorityEnumId",
+      "title": "Priority",
+      "values": [
+        {
+          "description": "High",
+          "id": "ExpHigh"
+        },
+        {
+          "description": "Low",
+          "id": "ExpLow"
+        }
+      ]
+    },
+    "status": {
+      "items": [
+        {
+          "description": "Open",
+          "id": "ExsOpen"
+        },
+        {
+          "description": "Done",
+          "id": "ExsDone"
+        }
+      ],
+      "statusTypeId": "ExampleStatus"
+    }
+  },
+  "vectors": [
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "description": "When it is due",
+              "name": "dueDate",
+              "type": "date"
+            },
+            "exampleName"
+          ],
+          "builder": "addField"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"dueDate\" type=\"date\"><description>When it is due</description></field>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "a field after another keeps the comments and the order",
+      "ops": [
+        {
+          "at": [
+            0,
+            1
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<field name=\"dueDate\" type=\"date\"><description>When it is due</description></field>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "name": "note",
+              "type": "text-long"
+            }
+          ],
+          "builder": "addField"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <field name=\"note\" type=\"text-long\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "a field with no place given goes after the last field, before the relationships",
+      "ops": [
+        {
+          "at": [
+            0,
+            2
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<field name=\"note\" type=\"text-long\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "exampleName",
+            "not-null",
+            true
+          ],
+          "builder": "setFieldAttribute"
+        },
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "exampleId",
+            "is-pk",
+            ""
+          ],
+          "builder": "setFieldAttribute"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\" not-null=\"true\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "an attribute of a field of the element",
+      "ops": [
+        {
+          "at": [
+            0,
+            1
+          ],
+          "name": "not-null",
+          "op": "set-attribute",
+          "value": "true"
+        },
+        {
+          "at": [
+            0,
+            0
+          ],
+          "name": "is-pk",
+          "op": "remove-attribute"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "exampleName",
+            "enable-audit-log",
+            "true"
+          ],
+          "builder": "setFieldAttribute"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"exampleName\" enable-audit-log=\"true\"/>\n    </extend-entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
+      "name": "an attribute of an upstream field is an override field of the extend-entity",
+      "ops": [
+        {
+          "at": [
+            0,
+            0
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<field name=\"exampleName\" enable-audit-log=\"true\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "dueDate"
+                  ],
+                  [
+                    "type",
+                    "date"
+                  ]
+                ],
+                "column": 9,
+                "from16": 158,
+                "line": 5,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 193
+              }
+            ],
+            "column": 5,
+            "from16": 88,
+            "line": 4,
+            "name": "extend-entity",
+            "path": [
+              0
+            ],
+            "to16": 214
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entities",
+        "path": [],
+        "to16": 226
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$outline": true
+            },
+            "moqui.example.Example"
+          ],
+          "builder": "ensureExtend",
+          "take": "ops"
+        },
+        {
+          "args": [
+            {
+              "$path": [
+                0
+              ]
+            },
+            {
+              "name": "dueDate",
+              "type": "date"
+            }
+          ],
+          "builder": "addField"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n</entities>\n",
+      "name": "the site's extend-entity made in an empty file, then its field",
+      "ops": [
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<extend-entity entity-name=\"Example\" package=\"moqui.example\"/>"
+        },
+        {
+          "at": [
+            0
+          ],
+          "op": "insert",
+          "position": "last",
+          "xml": "<field name=\"dueDate\" type=\"date\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [
+          [
+            "xmlns:xsi",
+            "http://www.w3.org/2001/XMLSchema-instance"
+          ],
+          [
+            "xsi:noNamespaceSchemaLocation",
+            "http://moqui.org/xsd/entity-definition-3.xsd"
+          ]
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entities",
+        "path": [],
+        "to16": 192
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "exampleName",
+            "What it is called"
+          ],
+          "builder": "setFieldDescription"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\">\n            <description>What it is called</description>\n        </field>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "a field's description is its child",
+      "ops": [
+        {
+          "at": [
+            0,
+            1
+          ],
+          "op": "insert",
+          "position": "last",
+          "xml": "<description>What it is called</description>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "statusId",
+            "exampleName",
+            "before"
+          ],
+          "builder": "moveField"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"statusId\" type=\"id\"/>\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "a field moved before another",
+      "ops": [
+        {
+          "at": [
+            0,
+            2
+          ],
+          "op": "move",
+          "position": "before",
+          "to": [
+            0,
+            1
+          ]
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "keyMaps": [
+                {
+                  "fieldName": "priorityEnumId",
+                  "related": "enumId"
+                }
+              ],
+              "related": "moqui.basic.Enumeration",
+              "title": "Priority",
+              "type": "one"
+            }
+          ],
+          "builder": "addRelationship"
+        },
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            "moqui.basic.StatusItem",
+            ""
+          ],
+          "builder": "removeRelationship"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>\n    </entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- the app's entities -->\n<entities>\n    <!-- an example: what the gallery shows -->\n    <entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"exampleId\" type=\"id\" is-pk=\"true\"/>\n        <!-- its name -->\n        <field name=\"exampleName\" type=\"text-medium\"/>\n        <field name=\"statusId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"moqui.basic.StatusItem\"/>\n    </entity>\n</entities>\n",
+      "name": "a relationship after the last, and one removed",
+      "ops": [
+        {
+          "at": [
+            0,
+            3
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>"
+        },
+        {
+          "at": [
+            0,
+            3
+          ],
+          "op": "remove"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ],
+                  [
+                    "is-pk",
+                    "true"
+                  ]
+                ],
+                "column": 9,
+                "from16": 193,
+                "line": 6,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 241
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "exampleName"
+                  ],
+                  [
+                    "type",
+                    "text-medium"
+                  ]
+                ],
+                "column": 9,
+                "from16": 276,
+                "line": 8,
+                "name": "field",
+                "path": [
+                  0,
+                  1
+                ],
+                "to16": 322
+              },
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "statusId"
+                  ],
+                  [
+                    "type",
+                    "id"
+                  ]
+                ],
+                "column": 9,
+                "from16": 331,
+                "line": 9,
+                "name": "field",
+                "path": [
+                  0,
+                  2
+                ],
+                "to16": 365
+              },
+              {
+                "attrs": [
+                  [
+                    "type",
+                    "one"
+                  ],
+                  [
+                    "related",
+                    "moqui.basic.StatusItem"
+                  ]
+                ],
+                "column": 9,
+                "from16": 374,
+                "line": 10,
+                "name": "relationship",
+                "path": [
+                  0,
+                  3
+                ],
+                "to16": 433
+              }
+            ],
+            "column": 5,
+            "from16": 130,
+            "line": 5,
+            "name": "entity",
+            "path": [
+              0
+            ],
+            "to16": 447
+          }
+        ],
+        "column": 1,
+        "from16": 67,
+        "line": 3,
+        "name": "entities",
+        "path": [],
+        "to16": 459
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "name": "priorityEnumId",
+              "type": "id"
+            }
+          ],
+          "builder": "addField"
+        },
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "$picklist": "relationship"
+            }
+          ],
+          "builder": "insertRelationship"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"priorityEnumId\" type=\"id\"/>\n        <relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>\n    </extend-entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
+      "name": "a picklist's field and relationship in an extend-entity, in one list of operations",
+      "ops": [
+        {
+          "at": [
+            0,
+            0
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<field name=\"priorityEnumId\" type=\"id\"/>"
+        },
+        {
+          "at": [
+            0
+          ],
+          "op": "insert",
+          "position": "last",
+          "xml": "<relationship type=\"one\" title=\"Priority\" related=\"moqui.basic.Enumeration\"><key-map field-name=\"priorityEnumId\" related=\"enumId\"/></relationship>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "dueDate"
+                  ],
+                  [
+                    "type",
+                    "date"
+                  ]
+                ],
+                "column": 9,
+                "from16": 158,
+                "line": 5,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 193
+              }
+            ],
+            "column": 5,
+            "from16": 88,
+            "line": 4,
+            "name": "extend-entity",
+            "path": [
+              0
+            ],
+            "to16": 214
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entities",
+        "path": [],
+        "to16": 226
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$outline": true
+            },
+            {
+              "$picklist": "seed"
+            }
+          ],
+          "builder": "insertRecords"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Old\"/>\n    <moqui.basic.EnumerationType enumTypeId=\"ExamplePriority\" description=\"Priority\"/>\n    <moqui.basic.Enumeration enumId=\"ExpHigh\" enumTypeId=\"ExamplePriority\" sequenceNum=\"10\" description=\"High\"/>\n    <moqui.basic.Enumeration enumId=\"ExpLow\" enumTypeId=\"ExamplePriority\" sequenceNum=\"20\" description=\"Low\"/>\n</entity-facade-xml>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Old\"/>\n</entity-facade-xml>\n",
+      "name": "a picklist's seed records after those there",
+      "ops": [
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.EnumerationType enumTypeId=\"ExamplePriority\" description=\"Priority\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.Enumeration enumId=\"ExpHigh\" enumTypeId=\"ExamplePriority\" sequenceNum=\"10\" description=\"High\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.Enumeration enumId=\"ExpLow\" enumTypeId=\"ExamplePriority\" sequenceNum=\"20\" description=\"Low\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [
+          [
+            "type",
+            "seed"
+          ]
+        ],
+        "children": [
+          {
+            "attrs": [
+              [
+                "enumTypeId",
+                "Old"
+              ],
+              [
+                "description",
+                "Old"
+              ]
+            ],
+            "column": 5,
+            "from16": 93,
+            "line": 4,
+            "name": "moqui.basic.EnumerationType",
+            "path": [
+              0
+            ],
+            "to16": 158
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entity-facade-xml",
+        "path": [],
+        "to16": 179
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$outline": true
+            },
+            {
+              "$status": "seed"
+            }
+          ],
+          "builder": "insertRecords"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Old\"/>\n    <moqui.basic.StatusType statusTypeId=\"ExampleStatus\" description=\"ExampleStatus\"/>\n    <moqui.basic.StatusItem statusId=\"ExsOpen\" statusTypeId=\"ExampleStatus\" sequenceNum=\"10\" description=\"Open\"/>\n    <moqui.basic.StatusItem statusId=\"ExsDone\" statusTypeId=\"ExampleStatus\" sequenceNum=\"20\" description=\"Done\"/>\n    <moqui.basic.StatusFlow statusFlowId=\"ExampleStatus\" statusTypeId=\"ExampleStatus\" description=\"ExampleStatus flow\"/>\n    <moqui.basic.StatusFlowTransition statusFlowId=\"ExampleStatus\" statusId=\"ExsOpen\" toStatusId=\"ExsDone\" transitionName=\"Done\"/>\n</entity-facade-xml>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Old\"/>\n</entity-facade-xml>\n",
+      "name": "a status field's seed records with its flow",
+      "ops": [
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.StatusType statusTypeId=\"ExampleStatus\" description=\"ExampleStatus\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.StatusItem statusId=\"ExsOpen\" statusTypeId=\"ExampleStatus\" sequenceNum=\"10\" description=\"Open\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.StatusItem statusId=\"ExsDone\" statusTypeId=\"ExampleStatus\" sequenceNum=\"20\" description=\"Done\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.StatusFlow statusFlowId=\"ExampleStatus\" statusTypeId=\"ExampleStatus\" description=\"ExampleStatus flow\"/>"
+        },
+        {
+          "at": [],
+          "op": "insert",
+          "position": "last",
+          "xml": "<moqui.basic.StatusFlowTransition statusFlowId=\"ExampleStatus\" statusId=\"ExsOpen\" toStatusId=\"ExsDone\" transitionName=\"Done\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [
+          [
+            "type",
+            "seed"
+          ]
+        ],
+        "children": [
+          {
+            "attrs": [
+              [
+                "enumTypeId",
+                "Old"
+              ],
+              [
+                "description",
+                "Old"
+              ]
+            ],
+            "column": 5,
+            "from16": 93,
+            "line": 4,
+            "name": "moqui.basic.EnumerationType",
+            "path": [
+              0
+            ],
+            "to16": 158
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entity-facade-xml",
+        "path": [],
+        "to16": 179
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$row": [
+                0
+              ]
+            },
+            "description",
+            "Older"
+          ],
+          "builder": "setRecordValue"
+        },
+        {
+          "args": [
+            {
+              "$outline": true
+            },
+            {
+              "$table": 0
+            },
+            {
+              "description": "New",
+              "enumTypeId": "New"
+            }
+          ],
+          "builder": "addRecord"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Older\"/>\n    <moqui.basic.EnumerationType enumTypeId=\"New\" description=\"New\"/>\n</entity-facade-xml>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n    <!-- kept -->\n    <moqui.basic.EnumerationType enumTypeId=\"Old\" description=\"Old\"/>\n</entity-facade-xml>\n",
+      "name": "a seed row's value set and a row added",
+      "ops": [
+        {
+          "at": [
+            0
+          ],
+          "name": "description",
+          "op": "set-attribute",
+          "value": "Older"
+        },
+        {
+          "at": [
+            0
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<moqui.basic.EnumerationType enumTypeId=\"New\" description=\"New\"/>"
+        }
+      ],
+      "outline": {
+        "attrs": [
+          [
+            "type",
+            "seed"
+          ]
+        ],
+        "children": [
+          {
+            "attrs": [
+              [
+                "enumTypeId",
+                "Old"
+              ],
+              [
+                "description",
+                "Old"
+              ]
+            ],
+            "column": 5,
+            "from16": 93,
+            "line": 4,
+            "name": "moqui.basic.EnumerationType",
+            "path": [
+              0
+            ],
+            "to16": 158
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entity-facade-xml",
+        "path": [],
+        "to16": 179
+      }
+    },
+    {
+      "calls": [
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "name": "ownerPartyId",
+              "type": "id"
+            },
+            "dueDate"
+          ],
+          "builder": "addField"
+        },
+        {
+          "args": [
+            {
+              "$element": [
+                0
+              ]
+            },
+            {
+              "keyMaps": [
+                {
+                  "fieldName": "ownerPartyId",
+                  "related": ""
+                }
+              ],
+              "related": "mantle.party.Party",
+              "type": "one"
+            }
+          ],
+          "builder": "addRelationship"
+        }
+      ],
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n        <field name=\"ownerPartyId\" type=\"id\"/>\n        <relationship type=\"one\" related=\"mantle.party.Party\"><key-map field-name=\"ownerPartyId\"/></relationship>\n    </extend-entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
+      "name": "a reference field and its relationship where there is none yet",
+      "ops": [
+        {
+          "at": [
+            0,
+            0
+          ],
+          "op": "insert",
+          "position": "after",
+          "xml": "<field name=\"ownerPartyId\" type=\"id\"/>"
+        },
+        {
+          "at": [
+            0
+          ],
+          "op": "insert",
+          "position": "last",
+          "xml": "<relationship type=\"one\" related=\"mantle.party.Party\"><key-map field-name=\"ownerPartyId\"/></relationship>"
+        }
+      ],
+      "outline": {
+        "attrs": [],
+        "children": [
+          {
+            "attrs": [
+              [
+                "entity-name",
+                "Example"
+              ],
+              [
+                "package",
+                "moqui.example"
+              ]
+            ],
+            "children": [
+              {
+                "attrs": [
+                  [
+                    "name",
+                    "dueDate"
+                  ],
+                  [
+                    "type",
+                    "date"
+                  ]
+                ],
+                "column": 9,
+                "from16": 158,
+                "line": 5,
+                "name": "field",
+                "path": [
+                  0,
+                  0
+                ],
+                "to16": 193
+              }
+            ],
+            "column": 5,
+            "from16": 88,
+            "line": 4,
+            "name": "extend-entity",
+            "path": [
+              0
+            ],
+            "to16": 214
+          }
+        ],
+        "column": 1,
+        "from16": 39,
+        "line": 2,
+        "name": "entities",
+        "path": [],
+        "to16": 226
+      }
+    }
+  ]
+}

@@ -94,6 +94,9 @@ pub struct FileReload {
     pub removed: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub problems: Vec<Problem>,
+    /// The DDL a change ran (an entity file's table check).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ddl: Vec<String>,
     /// The change takes a restart to apply.
     pub restart: bool,
     /// The change takes a rebuild (`./moq build`) and a restart.
@@ -229,7 +232,7 @@ fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadRepor
         }
     }
     files.sort_by_key(|file| file.kind.order());
-    reload_entities(&mut files);
+    reload_entities(factory, &mut files);
     reload_services(&mut files);
     reload_secas(factory, &mut files);
     reload_eecas(factory, &mut files);
@@ -275,6 +278,7 @@ fn classify(factory: &ExecutionContextFactory, path: &Path) -> Option<FileReload
         added: Vec::new(),
         removed: Vec::new(),
         problems: Vec::new(),
+        ddl: Vec::new(),
         restart: false,
         rebuild: false,
     };
@@ -329,16 +333,86 @@ pub(crate) fn kind_of(component: &str, relative: &Path) -> ArtifactKind {
     }
 }
 
-fn reload_entities(files: &mut [FileReload]) {
-    for file in files.iter_mut().filter(|file| file.kind == ArtifactKind::Entity) {
-        // F5 (an entity model swap) is staged to the entity modeler's phase; until then the restart's startup check
-        // makes the new tables and columns.
-        file.summary = "restart to apply the entity change".into();
-        file.restart = true;
-        if let Err(problem) = parses(&file.path, "reload.entity") {
-            file.problems.push(problem);
+/// The entity files: the model relinked once for all of them and swapped in, and their entities' tables checked
+/// (F5). A file that does not parse, or a model that does not link, keeps the old model, with the problem and "restart
+/// to apply" as the fallback.
+fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+    let changed = indexes(files, &[ArtifactKind::Entity]);
+    if changed.is_empty() {
+        return;
+    }
+    let mut failed = false;
+    for &at in &changed {
+        if let Err(problem) = parses(&files[at].path, "reload.entity") {
+            files[at].problems.push(problem);
+            failed = true;
         }
     }
+    let relinked = match factory.entity() {
+        Some(_) if failed => Err("an entity file does not parse, so the model was not relinked".to_string()),
+        Some(facade) => {
+            // a site's first entity file makes its entity directory, which the model is read from from now on
+            facade.set_component_entity_dirs(crate::context::component_entity_dirs(factory));
+            let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
+            facade.relink(&paths).map_err(|err| err.to_string())
+        }
+        None => Err("no entity facade".to_string()),
+    };
+    match relinked {
+        Ok(report) => {
+            // forms built over the entities (auto-fields-entity) read the new fields on next use
+            crate::screen::ScreenFacade::of(factory).clear();
+            for &at in &changed {
+                let file = &mut files[at];
+                let named = entities_of(&file.path, &report.changed);
+                file.summary = format!(
+                    "entity model relinked in {} ms{}{}",
+                    report.millis,
+                    if named.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", named.join(", "))
+                    },
+                    if report.ddl.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; {} DDL statement{} ran", report.ddl.len(), plural(report.ddl.len()))
+                    }
+                );
+                file.added = report.added.clone();
+                file.removed = report.removed.clone();
+                file.ddl = report.ddl.clone();
+                for problem in &report.problems {
+                    file.problems
+                        .push(Problem::file_error(&file.path, "reload.entity", problem.clone()));
+                }
+            }
+        }
+        Err(err) => {
+            for &at in &changed {
+                let file = &mut files[at];
+                file.summary = "restart to apply the entity change".into();
+                file.restart = true;
+                if !failed {
+                    file.problems
+                        .push(Problem::file_error(&file.path, "reload.entity", err.clone()));
+                }
+            }
+        }
+    }
+}
+
+/// The short names of `changed` (full names) that a file defines or extends, as its text names them.
+fn entities_of(path: &str, changed: &[String]) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    changed
+        .iter()
+        .filter_map(|full| {
+            let short = full.rsplit('.').next().unwrap_or(full);
+            let quoted = format!("\"{short}\"");
+            text.contains(&quoted).then(|| short.to_string())
+        })
+        .collect()
 }
 
 fn reload_services(files: &mut [FileReload]) {

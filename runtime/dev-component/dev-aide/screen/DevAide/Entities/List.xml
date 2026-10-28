@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- The entities of the artifact index (plans/design-dev-aide.md 8): by name, with their component and whether the site
+    extends them; a name opens the entity view, the file the Workspace at its line. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Entities" default-menu-index="1">
+    <parameter name="filter"/>
+    <parameter name="component"/>
+    <parameter name="kind"/>
+    <transition name="edit"><default-response url="../Edit"/></transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.EntityServices.list#Entities" out-map="found"
+                in-map="{filter: filter, component: component, kind: kind}"/>
+        <set field="entities" from="(found.entities || []).slice(0, 500)"/>
+        <set field="entityCount" from="(found.entities || []).length"/>
+    </actions>
+    <widgets>
+        <form-single name="EntityFilter" transition="." focus-field="filter">
+            <field name="filter"><default-field title="Name"><text-line size="30"/></default-field></field>
+            <field name="component"><default-field title="Component"><text-line size="20"/></default-field></field>
+            <field name="kind"><default-field title="Kind"><drop-down allow-empty="true">
+                <option key="entity" text="Entity"/><option key="view-entity" text="View entity"/></drop-down></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+        </form-single>
+        <label text="${entityCount} entities${entityCount > 500 ? ', the first 500 shown' : ''}" type="p"/>
+        <form-list name="EntityList" list="entities" skip-form="true">
+            <field name="shortName"><default-field title="Entity">
+                <link url="edit" text="${shortName}" parameter-map="{artifact: id}" link-type="anchor"/></default-field></field>
+            <field name="package"><default-field title="Package"><display/></default-field></field>
+            <field name="kind"><default-field title="Kind"><display/></default-field></field>
+            <field name="component"><default-field title="Component"><display text="${component}${upstream ? '' : ' · site'}"/></default-field></field>
+            <field name="extensions"><default-field title="Extensions"><display text="${extensions || ''}"/></default-field></field>
+            <field name="open"><default-field title="File">
+                <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-2).join('/')}:${line}" link-type="anchor" condition="url"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>

@@ -748,3 +748,429 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
     assert!(!gate.runtime.join("component/my-site/screen-extend").exists());
     assert!(!text(&render()).contains("Extra Note"));
 }
+
+/// Source stamps (plans/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE
+/// user on a dev instance) writes each widget's file, line and column as `data-m-src`, a field a site's `screen-extend`
+/// merges naming the screen-extend file; a render that does not ask has none.
+#[test]
+fn a_stamped_render_names_each_widgets_file() {
+    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <container name=\"Box\"><label text=\"Hello\"/></container>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
+    let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        (
+            "component/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            extend,
+        ),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/screen/UpApp/Detail.xml", screen),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-stamps",
+        Some(include_str!(
+            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let render = |stamped: bool| {
+        let mut test = moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://upstream-app/screen/UpApp/Detail.xml")
+            .render_mode("qvt");
+        if stamped {
+            test = test.header("x-moqui-aide", "source");
+        }
+        test.render("", BTreeMap::new()).unwrap().text()
+    };
+    let plain = render(false);
+    assert!(plain.contains("Extra Note") && !plain.contains("data-m-src"), "{plain}");
+    let stamped = render(true);
+    assert!(
+        stamped.contains("data-m-src=\"component://upstream-app/screen/UpApp/Detail.xml:3:9\""),
+        "{stamped}"
+    );
+    assert!(
+        stamped.contains("component://upstream-app/screen/UpApp/Detail.xml:4:9\""),
+        "the base form: {stamped}"
+    );
+    assert!(
+        stamped.contains("component://upstream-app/screen/UpApp/Detail.xml:4:35\""),
+        "the field of the base: {stamped}"
+    );
+    assert!(
+        stamped.contains("my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml:2:31\""),
+        "the merged field names its screen-extend: {stamped}"
+    );
+}
+
+const WRITER: &str = "org.moqui.devaide.ServiceWriterServices.";
+
+/// The upstream app of the service writer's tests: a widget entity and an inline service that makes one.
+fn writer_gate(label: &str) -> crate::common::Gate {
+    let entities = "<entities><entity entity-name=\"Widget\" package=\"upapp\"><field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\
+        <field name=\"widgetName\" type=\"text-medium\"/></entity></entities>\n";
+    let services = "<services>\n    <service verb=\"make\" noun=\"Widget\">\n        <in-parameters><parameter name=\"widgetId\" required=\"true\"/><parameter name=\"widgetName\"/></in-parameters>\n        <out-parameters><parameter name=\"widgetId\"/></out-parameters>\n        <actions>\n            <service-call name=\"create#upapp.Widget\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="UP_WIDGETS" description="Widgets"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="UP_WIDGETS" artifactName="upapp\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="UP_WIDGETS" artifactName="upapp\..*" artifactTypeEnumId="AT_ENTITY" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="UP_WIDGETS" artifactName="create#upapp.Widget" artifactTypeEnumId="AT_SERVICE" nameIsPattern="N" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="UP_WIDGETS_ADMIN" userGroupId="ADMIN" artifactGroupId="UP_WIDGETS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/entity/UpEntities.xml", entities),
+        ("component/upstream-app/service/upapp/WidgetServices.xml", services),
+    ];
+    start_with_files_and_links(
+        label,
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    )
+}
+
+/// Try in sim and Save as spec (plans/design-dev-aide.md P7, 9.4): a Try lists the rows the service would write and
+/// keeps none; Save as spec writes its feature into the site's spec file, as the service is upstream; Run spec runs it in
+/// the sim, and it passes.
+#[test]
+fn a_try_saved_as_a_spec_passes() {
+    let gate = writer_gate("dev-aide-try-spec");
+    let factory = Arc::clone(gate.server.factory());
+    let parameters = r#"{"widgetId": "W-TRY", "widgetName": "From a try"}"#;
+    let tried = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}try#Service"),
+        &[
+            ("serviceName", "upapp.WidgetServices.make#Widget"),
+            ("parameters", parameters),
+        ],
+    )
+    .unwrap();
+    let result = moqui_lib::json::to_json(&tried["result"]);
+    assert_eq!(result["sim"], true, "{result}");
+    assert!(result.get("failed").is_none(), "{result}");
+    let rows = result["rows"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["entity"] == "upapp.Widget" && row["action"] == "create"),
+        "{result}"
+    );
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        assert!(
+            facade
+                .find("upapp.Widget")
+                .unwrap()
+                .eq("widgetId", Value::string("W-TRY"))
+                .one()
+                .unwrap()
+                .is_none(),
+            "nothing kept"
+        );
+    }
+    let saved = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}save#TrySpec"),
+        &[
+            ("serviceName", "upapp.WidgetServices.make#Widget"),
+            ("parameters", parameters),
+            ("out", &result["out"].to_string()),
+            ("rows", &result["rows"].to_string()),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&saved, "rootId"), "my-site");
+    assert_eq!(text(&saved, "path"), "test/WidgetServices.spec.js");
+    let spec = std::fs::read_to_string(gate.runtime.join("component/my-site/test/WidgetServices.spec.js")).unwrap();
+    assert!(
+        spec.contains("spec({})") && spec.contains("call(\"upapp.WidgetServices.make#Widget\""),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("<upapp.Widget widgetId=\"W-TRY\" widgetName=\"From a try\"/>"),
+        "{spec}"
+    );
+    let ran = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}run#Spec"),
+        &[("rootId", "my-site"), ("path", "test/WidgetServices.spec.js")],
+    )
+    .unwrap();
+    assert_eq!(
+        ran["passed"],
+        Value::Bool(true),
+        "{:?}",
+        moqui_lib::json::to_json(&ran["cases"])
+    );
+    assert!(
+        text(&ran, "calls").contains("upapp.WidgetServices.make#Widget"),
+        "{ran:?}"
+    );
+}
+
+/// A new SECA rule in the site component runs after its save (plans/design-dev-aide.md P7, 10): the rule set is built
+/// again from the files, no restart.
+#[test]
+fn a_site_seca_runs_after_its_save() {
+    let gate = writer_gate("dev-aide-seca");
+    let factory = Arc::clone(gate.server.factory());
+    let make = |id: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let parameters: BTreeMap<String, Value> = [("widgetId".to_string(), Value::string(id))].into_iter().collect();
+        moqui_core::service::sync("upapp.WidgetServices.make#Widget", &parameters).unwrap();
+        let messages = context.message().messages().to_vec();
+        messages
+    };
+    assert!(!make("W1").iter().any(|message| message.contains("site rule ran")));
+    let secas = "<secas>\n    <seca service=\"upapp.WidgetServices.make#Widget\" when=\"post-service\">\n        <actions><message>the site rule ran for ${widgetId}</message></actions>\n    </seca>\n</secas>\n";
+    let saved = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "service/MySite.secas.xml"),
+            ("text", secas),
+            ("baseHash", ""),
+        ],
+    )
+    .unwrap();
+    assert!(
+        moqui_lib::json::to_json(&saved["reload"]).to_string().contains("SECA"),
+        "{saved:?}"
+    );
+    assert!(make("W2").iter().any(|message| message == "the site rule ran for W2"));
+    let rules = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}list#EcaRules"),
+        &[("kind", "seca"), ("target", "make#Widget")],
+    )
+    .unwrap();
+    let rules = moqui_lib::json::to_json(&rules["rules"]);
+    assert_eq!(rules.as_array().unwrap().len(), 1, "{rules}");
+    assert_eq!(rules[0]["site"], true, "{rules}");
+}
+
+const ENTITY: &str = "org.moqui.devaide.EntityServices.";
+
+/// The entity modeler's save (plans/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
+/// entity file as where its edits go; a save of the site's `extend-entity` relinks the model at once and adds the
+/// column, no restart; a file that does not parse keeps the model there was, with "restart to apply" and the problem;
+/// a site's seed data file loads.
+#[test]
+fn an_entity_save_relinks_and_adds_its_column() {
+    let upstream_entities = r#"<entities>
+    <entity entity-name="Widget" package="upapp">
+        <field name="widgetId" type="id" is-pk="true"/>
+        <field name="widgetName" type="text-medium"/>
+    </entity>
+</entities>
+"#;
+    let site_entities =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities>\n    <!-- the site's additions -->\n</entities>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/entity/MySiteEntities.xml", site_entities),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-entity",
+        Some(include_str!(
+            "../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let facade = factory.entity().unwrap();
+    let columns = |facade: &moqui_core::entity::EntityFacade| -> Vec<String> {
+        facade
+            .table_columns("upapp.Widget")
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect()
+    };
+    assert!(!columns(&facade).contains(&"due_date".to_string()));
+
+    // the view of the upstream entity: its edits go to the site's entity file
+    let view = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}get#EntityView"),
+        &[("artifactId", "entity:upapp.Widget")],
+    )
+    .unwrap();
+    let view = moqui_lib::json::to_json(&view["view"]);
+    assert_eq!(view["upstream"], true, "{view}");
+    assert_eq!(view["target"]["rootId"], "my-site", "{view}");
+    assert_eq!(view["target"]["path"], "entity/MySiteEntities.xml");
+    assert_eq!(view["target"]["exists"], true);
+    assert_eq!(view["seedFile"]["path"], "data/MySiteSeedData.xml");
+    assert!(
+        view["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["name"] == "widgetName" && field["component"] == "upstream-app"),
+        "{view}"
+    );
+
+    // the save of the extension: relinked, the column added, no restart
+    let path = "entity/MySiteEntities.xml";
+    let base = text(
+        &call(
+            &factory,
+            "john.doe",
+            &format!("{WS}get#File"),
+            &[("rootId", "my-site"), ("path", path)],
+        )
+        .unwrap(),
+        "hash",
+    );
+    let extended = site_entities.replace(
+        "</entities>",
+        "    <extend-entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>",
+    );
+    let saved = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[
+            ("rootId", "my-site"),
+            ("path", path),
+            ("text", &extended),
+            ("baseHash", &base),
+        ],
+    )
+    .unwrap();
+    let report = moqui_lib::json::to_json(&saved["reload"]);
+    let entity_file = &report["files"][0];
+    assert_eq!(saved["restart"], Value::Bool(false), "{report}");
+    assert!(
+        entity_file["summary"].as_str().unwrap().contains("relinked"),
+        "{report}"
+    );
+    assert!(
+        entity_file["ddl"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|sql| sql.as_str().unwrap().contains("due_date")),
+        "{report}"
+    );
+    assert!(columns(&facade).contains(&"due_date".to_string()));
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let mut widget = facade.make_value("upapp.Widget").unwrap();
+        widget.set("widgetId", Value::string("W1"));
+        widget.set("dueDate", Value::string("2026-11-01"));
+        widget.create(&facade).unwrap();
+        let found = facade
+            .find("upapp.Widget")
+            .unwrap()
+            .eq("widgetId", Value::string("W1"))
+            .one()
+            .unwrap()
+            .unwrap();
+        assert!(
+            !matches!(found.fields()["dueDate"], Value::Null),
+            "the new column holds the date"
+        );
+    }
+
+    // a file that does not parse keeps the model there was
+    let base = text(&saved, "hash");
+    let broken = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[
+            ("rootId", "my-site"),
+            ("path", path),
+            ("text", "<entities><extend-entity entity-name="),
+            ("baseHash", &base),
+        ],
+    )
+    .unwrap();
+    assert_eq!(broken["restart"], Value::Bool(true));
+    assert!(moqui_lib::json::to_json(&broken["problems"])
+        .to_string()
+        .contains("reload.entity"));
+    assert!(facade.with_entity_table("upapp.Widget").is_some());
+    let fields = moqui_core::entity::info::definition_info(&facade, "upapp.Widget").unwrap();
+    assert!(moqui_lib::json::to_json(&Value::Map(fields))
+        .to_string()
+        .contains("dueDate"));
+
+    // a site's seed data loads
+    let seed = "<entity-facade-xml type=\"seed\">\n    <moqui.basic.EnumerationType enumTypeId=\"WidgetPriority\" description=\"Priority\"/>\n    <moqui.basic.Enumeration enumId=\"WpHigh\" enumTypeId=\"WidgetPriority\" description=\"High\"/>\n</entity-facade-xml>\n";
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "data/MySiteSeedData.xml"),
+            ("text", seed),
+            ("baseHash", ""),
+        ],
+    )
+    .unwrap();
+    let loaded = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}load#SeedFile"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+    )
+    .unwrap();
+    assert_eq!(text(&loaded, "records"), "2");
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    assert!(facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumId", Value::string("WpHigh"))
+        .one()
+        .unwrap()
+        .is_some());
+}

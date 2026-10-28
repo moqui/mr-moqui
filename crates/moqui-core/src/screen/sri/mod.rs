@@ -218,7 +218,7 @@ pub fn write(state: &RenderState, text: &str) {
     if !web::output_sent() {
         web::start_output(200, &content_type_header(state));
     }
-    web::write_output(text);
+    web::write_output(&super::stamp::inject(text));
 }
 
 /// Text added with `appendToAfterScreenWriter` and `appendToScriptWriter` that nothing else wrote.

@@ -92,6 +92,12 @@ pub(crate) fn read_shape(facade: &EntityFacade, entity: &EntityDefinition, diale
     shape
 }
 
+/// Drop the shapes and the SQL rendered for them: the model was swapped (plans/design-dev-aide.md F5).
+pub(crate) fn forget_model(facade: &EntityFacade) {
+    facade.drop_slot::<ReadShapes>();
+    facade.drop_slot::<SqlText>();
+}
+
 const CAP: usize = 256;
 
 #[derive(Default)]

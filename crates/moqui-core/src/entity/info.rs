@@ -456,6 +456,214 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<IndexMap<Str
     found.ok()
 }
 
+/// [`definition_info`] with what an entity view shows besides (plans/design-dev-aide.md 8.1, 8.3): each field's SQL
+/// type in its group's database, the indexes, the master definitions with their details, and for a view entity its
+/// members, its aliases as declared (not those `alias-all` made), its `alias-all`s and whether it has a condition.
+pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<String, Value>> {
+    let mut map = definition_info(facade, name)?;
+    let extra = facade.with_entity(name, |entity, dialect, _| {
+        let mut extra = IndexMap::new();
+        extra.insert("databaseName".to_string(), text(&dialect.name));
+        extra.insert(
+            "sqlTypes".to_string(),
+            Value::Map(
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        (
+                            field.name.clone(),
+                            dialect.sql_type(&field.field_type).map_or(Value::Null, text),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+        let list = |items: Vec<Value>| Value::List(items);
+        extra.insert(
+            "indexes".to_string(),
+            list(
+                entity
+                    .indexes
+                    .iter()
+                    .map(|index| {
+                        let mut row = IndexMap::new();
+                        row.insert("name".to_string(), text(&index.name));
+                        row.insert("unique".to_string(), Value::Bool(index.unique));
+                        row.insert(
+                            "fields".to_string(),
+                            Value::List(index.fields.iter().map(Value::string).collect()),
+                        );
+                        Value::Map(row)
+                    })
+                    .collect(),
+            ),
+        );
+        fn detail(of: &moqui_db::model::MasterDetail) -> Value {
+            let mut row = IndexMap::new();
+            row.insert("relationship".to_string(), text(&of.relationship));
+            row.insert(
+                "useMaster".to_string(),
+                of.use_master.as_deref().map_or(Value::Null, text),
+            );
+            row.insert(
+                "details".to_string(),
+                Value::List(of.details.iter().map(detail).collect()),
+            );
+            Value::Map(row)
+        }
+        extra.insert(
+            "masters".to_string(),
+            list(
+                entity
+                    .masters
+                    .iter()
+                    .map(|master| {
+                        let mut row = IndexMap::new();
+                        row.insert("name".to_string(), text(&master.name));
+                        row.insert(
+                            "details".to_string(),
+                            Value::List(master.details.iter().map(detail).collect()),
+                        );
+                        Value::Map(row)
+                    })
+                    .collect(),
+            ),
+        );
+        if entity.is_view {
+            extra.insert(
+                "members".to_string(),
+                list(
+                    entity
+                        .member_entities
+                        .iter()
+                        .map(|member| {
+                            let mut row = IndexMap::new();
+                            row.insert("entityAlias".to_string(), text(&member.entity_alias));
+                            row.insert("entityName".to_string(), text(&member.entity_name));
+                            row.insert(
+                                "joinFromAlias".to_string(),
+                                member.join_from_alias.as_deref().map_or(Value::Null, text),
+                            );
+                            row.insert("joinOptional".to_string(), Value::Bool(member.join_optional));
+                            row.insert(
+                                "relationship".to_string(),
+                                member.relationship.as_deref().map_or(Value::Null, text),
+                            );
+                            row.insert(
+                                "keyMaps".to_string(),
+                                Value::List(
+                                    member
+                                        .key_map
+                                        .iter()
+                                        .map(|key| {
+                                            let mut pair = IndexMap::new();
+                                            pair.insert("fieldName".to_string(), text(&key.field_name));
+                                            pair.insert(
+                                                "related".to_string(),
+                                                key.related.as_deref().map_or(Value::Null, text),
+                                            );
+                                            Value::Map(pair)
+                                        })
+                                        .collect(),
+                                ),
+                            );
+                            Value::Map(row)
+                        })
+                        .collect(),
+                ),
+            );
+            extra.insert(
+                "aliases".to_string(),
+                list(
+                    entity
+                        .aliases
+                        .iter()
+                        .filter(|alias| !alias.from_alias_all)
+                        .map(|alias| {
+                            let mut row = IndexMap::new();
+                            row.insert("name".to_string(), text(&alias.name));
+                            row.insert(
+                                "entityAlias".to_string(),
+                                alias.entity_alias.as_deref().map_or(Value::Null, text),
+                            );
+                            row.insert("field".to_string(), alias.field.as_deref().map_or(Value::Null, text));
+                            row.insert(
+                                "function".to_string(),
+                                alias.function.as_deref().map_or(Value::Null, text),
+                            );
+                            row.insert(
+                                "type".to_string(),
+                                alias.field_type.as_deref().map_or(Value::Null, text),
+                            );
+                            Value::Map(row)
+                        })
+                        .collect(),
+                ),
+            );
+            extra.insert(
+                "aliasAlls".to_string(),
+                list(
+                    entity
+                        .alias_alls
+                        .iter()
+                        .map(|all| {
+                            let mut row = IndexMap::new();
+                            row.insert("entityAlias".to_string(), text(&all.entity_alias));
+                            row.insert("prefix".to_string(), all.prefix.as_deref().map_or(Value::Null, text));
+                            row.insert(
+                                "exclude".to_string(),
+                                Value::List(all.exclude.iter().map(Value::string).collect()),
+                            );
+                            Value::Map(row)
+                        })
+                        .collect(),
+                ),
+            );
+            extra.insert(
+                "hasCondition".to_string(),
+                Value::Bool(entity.entity_condition.is_some()),
+            );
+        }
+        Ok(extra)
+    });
+    if let Ok(extra) = extra {
+        map.extend(extra);
+    }
+    Some(map)
+}
+
+/// The field types of the entity model's dictionary, each with its Java type and its SQL type in the database of
+/// `group` (the default group's when none), for an entity view's type picker.
+pub fn field_types(facade: &EntityFacade, group: Option<&str>) -> Vec<IndexMap<String, Value>> {
+    let dialect = {
+        let default_group = facade.inner.default_group.as_str();
+        facade
+            .inner
+            .groups
+            .get(group.unwrap_or(default_group))
+            .or_else(|| facade.inner.groups.get(default_group))
+            .map(|runtime| runtime.dialect.clone())
+    };
+    facade.with_model(|model| {
+        model
+            .dictionary_types()
+            .iter()
+            .map(|entry| {
+                let mut row = IndexMap::new();
+                row.insert("type".to_string(), text(&entry.type_name));
+                row.insert("javaType".to_string(), text(&entry.java_type));
+                let sql = dialect
+                    .as_ref()
+                    .and_then(|dialect| dialect.sql_type(&entry.type_name))
+                    .unwrap_or(&entry.default_sql_type);
+                row.insert("sqlType".to_string(), text(sql));
+                row
+            })
+            .collect()
+    })
+}
+
 /// The entity group names, sorted: `getDatasourceGroupNames`.
 pub fn datasource_group_names(facade: &EntityFacade) -> Vec<String> {
     let mut names: Vec<String> = facade.inner.groups.keys().cloned().collect();

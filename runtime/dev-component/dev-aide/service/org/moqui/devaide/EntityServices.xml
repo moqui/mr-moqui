@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The entity modeler (plans/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
+    and where an edit goes (the site's extend-entity for an upstream entity, D17), the table against the fields, the
+    changes the table check never makes (the full tier, typed confirm, audited) and the load of a modeler's seed data. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="list" noun="Entities" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
+        <description>The entities and view entities of the artifact index by name, with their component, file and how many site extensions each has.</description>
+        <in-parameters>
+            <parameter name="filter"/>
+            <parameter name="component"/>
+            <parameter name="kind"><description>entity, view-entity, or empty for both</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="entities" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="EntityView" type="rust" location="dev_aide::entities::get_entity_view" allow-remote="false" read-only="true">
+        <description>An entity as its view shows it: the merged definition, each field's origin, the extensions, where an
+            edit goes, the seed data file, the incoming relationships, the EECA rules, the table against the fields, the
+            first rows, and the field types with their SQL types.</description>
+        <in-parameters>
+            <parameter name="artifactId"/>
+            <parameter name="entityName"/>
+        </in-parameters>
+        <out-parameters><parameter name="view" type="Map"/></out-parameters>
+    </service>
+    <service verb="plan" noun="EntityDdl" type="rust" location="dev_aide::entities::plan_entity_ddl" allow-remote="false" read-only="true">
+        <description>The SQL of a change the table check never makes, to read before running it: drop-column, change-type,
+            copy-column (a renamed field's data, then the old column dropped) or recreate-table. The full tier.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="fieldName"/>
+            <parameter name="columnName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statements" type="List"/>
+            <parameter name="tableName"/>
+        </out-parameters>
+    </service>
+    <service verb="run" noun="EntityDdl" type="rust" location="dev_aide::entities::run_entity_ddl" allow-remote="false">
+        <description>Run a planned change when confirmTable is the table's name typed back; each statement audited. The full tier.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="fieldName"/>
+            <parameter name="columnName"/>
+            <parameter name="confirmTable" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="ran" type="List"/></out-parameters>
+    </service>
+    <service verb="load" noun="SeedFile" type="rust" location="dev_aide::entities::load_seed_file" allow-remote="false">
+        <description>Load one data file the user may write (a site component's) into the database, audited.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="records" type="Long"/>
+            <parameter name="file"/>
+        </out-parameters>
+    </service>
+</services>

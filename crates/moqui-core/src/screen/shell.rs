@@ -150,12 +150,15 @@ pub struct ResponseAction {
 }
 
 /// A `page-action`: an action the Assist drawer offers on every app page of a user who may open the app (the dev-aide's
-/// "Customize this screen", plans/design-dev-aide.md 3.5): it opens the drawer with `agent` and its prompts for the page.
+/// "Customize this screen", plans/design-dev-aide.md 3.5): it opens the drawer with `agent` and its prompts for the page,
+/// or, with `screen`, opens that screen of the app with the page's path and query as `page` (the screen builder's "Open
+/// in screen builder", 11.2).
 #[derive(Clone, Debug, Default)]
 pub struct PageAction {
     pub label: String,
     pub icon: String,
     pub agent: String,
+    pub screen: String,
     pub sequence: Option<i64>,
 }
 
@@ -304,10 +307,11 @@ impl ShellProviders {
                         label: attr(&child, "label"),
                         icon: attr(&child, "icon"),
                         agent: attr(&child, "agent"),
+                        screen: attr(&child, "screen"),
                         sequence: sequence_of(&child),
                     };
-                    if action.label.is_empty() || action.agent.is_empty() {
-                        tracing::error!("{location}: a page-action needs a label and an agent; skipped");
+                    if action.label.is_empty() || (action.agent.is_empty() && action.screen.is_empty()) {
+                        tracing::error!("{location}: a page-action needs a label and an agent or a screen; skipped");
                     } else {
                         out.page_actions.push(action);
                     }
@@ -837,7 +841,8 @@ impl<'a> Shell<'a> {
             let mut entry = Item::new();
             entry.insert("label".to_string(), Value::string(l10n::localize(&action.label)?));
             entry.insert("icon".to_string(), text_or_null(&action.icon));
-            entry.insert("agent".to_string(), Value::string(&action.agent));
+            entry.insert("agent".to_string(), text_or_null(&action.agent));
+            entry.insert("screen".to_string(), text_or_null(&action.screen));
             entry.insert("sequence".to_string(), number_or_null(action.sequence));
             page_actions.push(Value::Map(entry));
         }

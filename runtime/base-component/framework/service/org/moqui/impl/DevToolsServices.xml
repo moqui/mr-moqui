@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <!-- The framework's development tools (crates/moqui-core/src/devtools; plans/design-dev-aide.md 17), for the
         dev-aide component, the command line and agents outside the server. Each answers only when instance_purpose is
-        dev, for a user with the DEV_AIDE permission or in the ADMIN group. -->
+        dev, for a user with the DEV_AIDE permission or in the ADMIN group; the pure text services (the XML operations,
+        the outline, the schema digest) and the index's reads for any dev-aide permission. -->
     <service verb="apply" noun="XmlOps" type="rust" location="moqui_core::service::devtools::apply_xml_ops"
             allow-remote="false" read-only="true">
         <description>The operations of the lossless XML layer (plans/design-dev-aide.md 5.2) on a text: set, remove and
@@ -25,13 +26,22 @@ along with this software (see the LICENSE.md file). If not, see
             Pure text: nothing is read or written.</description>
         <in-parameters>
             <parameter name="text" required="true" allow-html="any"/>
-            <parameter name="ops" type="Object" required="true"><description>A list of operations, or the JSON text of
+            <parameter name="ops" type="Object" required="true" allow-html="any"><description>A list of operations, or the JSON text of
                 one: {op: "set-attribute", at: [0, 2] or "services/service[verb=run]", name, value}, and the like.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="text"/>
             <parameter name="steps" type="List"/>
+            <parameter name="outline" type="Map"><description>The outline of the new text, as get#XmlOutline answers it.</description></parameter>
         </out-parameters>
+    </service>
+    <service verb="get" noun="XmlOutline" type="rust" location="moqui_core::service::devtools::get_xml_outline"
+            allow-remote="false" read-only="true">
+        <description>The outline of an XML text (plans/design-dev-aide.md 5.2): its elements as a tree, each with the path
+            the XML operations take, its name, its attributes as values, its line and column, its span in UTF-16 code
+            units and the text of a leaf element. The visual views read it. Pure text: nothing is read or written.</description>
+        <in-parameters><parameter name="text" required="true" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="outline" type="Map"/></out-parameters>
     </service>
     <service verb="get" noun="SchemaDigest" type="rust" location="moqui_core::service::devtools::get_schema_digest"
             allow-remote="false" read-only="true">

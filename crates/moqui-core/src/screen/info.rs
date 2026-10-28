@@ -348,3 +348,58 @@ fn flatten(info: Info, levels: usize, out: &mut Vec<IndexMap<String, Value>>) {
 fn count(number: usize) -> i64 {
     i64::try_from(number).unwrap_or(i64::MAX)
 }
+
+/// The subscreens of the screen at `location`, one level, as the screen builder's tree shows them (plans/design-dev-
+/// aide.md 11.1): each with its name, location, menu title and index, whether it is in the menu and the default (`isDefault`), how it
+/// is mounted (`directory`, `item <file>:<line>`, `conf <file>:<line>`, `row`), its render modes and authentication,
+/// and how many subscreens it has. A subscreen that does not load is listed with its error.
+///
+/// # Errors
+///
+/// Returns an error when the screen at `location` does not load.
+pub fn screen_children(
+    factory: &ExecutionContextFactory,
+    location: &str,
+) -> Result<Vec<IndexMap<String, Value>>, Error> {
+    let facade = ScreenFacade::of(factory);
+    let def = facade.screen_def(factory, location)?;
+    let mut items: Vec<_> = def.subscreens.items.iter().collect();
+    items.sort_by(|left, right| left.name.cmp(&right.name));
+    items.sort_by_key(|item| item.menu_index.unwrap_or(i64::MAX));
+    Ok(items
+        .into_iter()
+        .map(|item| {
+            let mut row = IndexMap::new();
+            row.insert("name".to_string(), Value::string(&item.name));
+            row.insert("location".to_string(), Value::string(&item.location));
+            row.insert("menuTitle".to_string(), Value::string(&item.menu_title));
+            row.insert("menuIndex".to_string(), item.menu_index.map_or(Value::Null, Value::I64));
+            row.insert("menuInclude".to_string(), Value::Bool(item.menu_include));
+            row.insert(
+                "isDefault".to_string(),
+                Value::Bool(def.subscreens.default_item.as_deref() == Some(item.name.as_str())),
+            );
+            row.insert("mountedBy".to_string(), Value::string(&item.mounted_by));
+            match facade.screen_def(factory, &item.location) {
+                Ok(child) => {
+                    row.insert(
+                        "renderModes".to_string(),
+                        Value::List(child.render_modes.iter().map(Value::string).collect()),
+                    );
+                    row.insert(
+                        "authentication".to_string(),
+                        Value::string(format!("{:?}", child.authentication)),
+                    );
+                    row.insert(
+                        "subscreenCount".to_string(),
+                        Value::I64(i64::try_from(child.subscreens.items.len()).unwrap_or(0)),
+                    );
+                }
+                Err(err) => {
+                    row.insert("error".to_string(), Value::string(err.to_string()));
+                }
+            }
+            row
+        })
+        .collect())
+}

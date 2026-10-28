@@ -122,7 +122,11 @@ fn context_text(name: &str) -> String {
 fn node_lit(node: &MNode) -> NodeLit {
     NodeLit {
         name: node.name(),
-        attrs: node.attributes().into_iter().collect(),
+        attrs: node
+            .attributes()
+            .into_iter()
+            .filter(|(key, _)| key != super::stamp::ATTRIBUTE)
+            .collect(),
         text: node.text().unwrap_or_default(),
         children: node.children().iter().map(node_lit).collect(),
         parent: None,

@@ -69,3 +69,39 @@ test("a review counts the hunks of a proposal and those kept", () => {
     assert.equal(pure.hunks("a\nb\nc\nd\nE\n", proposed), 1);
     assert.equal(pure.hunks("", "x\n"), 1);
 });
+
+test("the views of a file follow its root element", () => {
+    const specs = [{ name: "entity", label: "Entity", roots: ["entities"] }, { name: "screen", label: "Screen", roots: ["screen", "screen-extend"] }];
+    assert.deepEqual(pure.viewsFor(specs, "entity/A.xml", "entities").map((view) => view.name), ["text", "entity"]);
+    assert.deepEqual(pure.viewsFor(specs, "screen-extend/x/B.xml", "screen-extend").map((view) => view.name), ["text", "screen"]);
+    assert.deepEqual(pure.viewsFor(specs, "service/A.xml", "services").map((view) => view.name), ["text"]);
+    assert.deepEqual(pure.viewsFor(specs, "README.md", null).map((view) => view.name), ["text"]);
+});
+
+test("Save all writes entities, services, rules, screens, then the rest", () => {
+    const buffers = [
+        { path: "data/SeedData.xml", text: "a", saved: "" },
+        { path: "screen-extend/x/A.xml", text: "a", saved: "" },
+        { path: "service/Site.secas.xml", text: "a", saved: "" },
+        { path: "entity/SiteEntities.xml", text: "a", saved: "" },
+        { path: "service/x/Services.xml", text: "a", saved: "" },
+        { path: "entity/Clean.xml", text: "a", saved: "a" }
+    ];
+    assert.deepEqual(pure.saveOrder(buffers).map((buffer) => buffer.path), ["entity/SiteEntities.xml", "service/x/Services.xml",
+        "service/Site.secas.xml", "screen-extend/x/A.xml", "data/SeedData.xml"]);
+    assert.equal(pure.isDirtyAll({ text: "a", saved: "a", companions: [{ text: "b", saved: "" }] }), true);
+    assert.equal(pure.isDirtyAll({ text: "a", saved: "a", companions: [] }), false);
+});
+
+test("an outline is walked and read by path", () => {
+    const outline = { name: "entities", path: [], attrs: [], children: [
+        { name: "entity", path: [0], attrs: [["entity-name", "A"]], children: [{ name: "field", path: [0, 0], attrs: [["name", "x"]] }] }] };
+    assert.equal(pure.outlineAt(outline, [0, 0]).name, "field");
+    assert.equal(pure.outlineAt(outline, [3]), null);
+    assert.equal(pure.attr(pure.outlineAt(outline, [0]), "entity-name"), "A");
+    const seen = [];
+    pure.walkOutline(outline, (node, depth) => seen.push(node.name + depth));
+    assert.deepEqual(seen, ["entities0", "entity1", "field2"]);
+    assert.equal(pure.workspaceBase("/qapps/dev/Entities/Edit"), "/qapps/dev/Workspace");
+    assert.equal(pure.workspaceBase("/qapps/dev/Workspace"), "/qapps/dev/Workspace");
+});

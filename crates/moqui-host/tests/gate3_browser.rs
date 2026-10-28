@@ -4531,6 +4531,723 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     );
 }
 
+/// The entity modeler (plans/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its
+/// edits going to the site's extend-entity (D17); Add field by its kind shows the field at once (unsaved), and Save
+/// writes the site's entity file, relinks the model and adds the column with no restart; a Picklist writes its field,
+/// its relationship and its seed records in one Save, the records load, and a site screen's drop-down shows them.
+#[test]
+fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
+    let upstream_entities = "<entities>\n    <!-- the app's widgets -->\n    <entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\n        <field name=\"widgetName\" type=\"text-medium\"/>\n    </entity>\n</entities>\n";
+    let site_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+        <subscreens-item name="mysite" menu-title="My Site" location="component://my-site/screen/MySite.xml"/>
+    </screen></screen-facade></moqui-conf>"#;
+    let site_screen = r#"<screen require-authentication="true">
+    <widgets>
+        <form-single name="WidgetForm" transition=".">
+            <field name="priorityEnumId"><default-field title="Priority"><drop-down allow-empty="true">
+                <entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                    <econdition field-name="enumTypeId" value="WidgetPriority"/><order-by field-name="sequenceNum"/></entity-find></entity-options>
+            </drop-down></default-field></field>
+        </form-single>
+    </widgets>
+</screen>"#;
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/MoquiConf.xml", site_conf),
+        ("component/my-site/screen/MySite.xml", site_screen),
+        (
+            "component/upstream-app/component.xml",
+            r#"<component name="upstream-app"/>"#,
+        ),
+        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+    ];
+    // the site's screen, for ADMIN
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="MY_SITE_APP" description="My site"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_SITE_APP" artifactName="component://my-site/screen/MySite.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MY_SITE_APP_ADMIN" userGroupId="ADMIN" artifactGroupId="MY_SITE_APP" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-entity",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    for component in ["my-site", "upstream-app"] {
+        let dir = gate.runtime.join("component").join(component);
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"][..],
+            &["commit", "-q", "-m", "Start"][..],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+    let facade = gate.server.factory().entity().unwrap();
+    let columns = |facade: &moqui_core::entity::EntityFacade| -> Vec<String> {
+        facade
+            .table_columns("upapp.Widget")
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect()
+    };
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+
+    // Entities lists it; its view says where the edits go
+    browser.navigate(&format!("{base}/qapps/dev/Entities?filter=Widget"));
+    browser.wait_for("the entity list", "document.body.innerText.indexOf('upapp') >= 0", WAIT);
+    browser.navigate(&format!("{base}/qapps/dev/Entities/Edit?artifact=entity:upapp.Widget"));
+    browser.wait_for(
+        "the entity view",
+        "!!document.querySelector('#DevEntityView [data-field=widgetName]') \
+         && (document.getElementById('DevEntityTarget') || {innerText: ''}).innerText.indexOf('Extending in my-site') >= 0",
+        WAIT,
+    );
+    let pick_kind = |browser: &mut Browser, kind: &str| {
+        browser.click(
+            kind,
+            &format!(
+                "[...document.querySelectorAll('#DevFieldKind button')].find(b => b.innerText.trim() === '{kind}')"
+            ),
+        );
+    };
+    let add_field = |browser: &mut Browser, kind: &str, words: &str| {
+        browser.click("Add field", "document.getElementById('DevAddField')");
+        browser.wait_for(
+            "the Add field dialog",
+            "!!document.getElementById('DevFieldWords')",
+            WAIT,
+        );
+        pick_kind(browser, kind);
+        browser.click("What it holds", "document.getElementById('DevFieldWords')");
+        browser.type_text(words);
+    };
+
+    // a Date field: shown unsaved at once, then saved through the site's extend-entity
+    add_field(&mut browser, "Date", "Due date");
+    browser.wait_for(
+        "its name",
+        "(document.getElementById('DevFieldName') || {value: ''}).value === 'dueDate'",
+        WAIT,
+    );
+    browser.click("Add", "document.getElementById('DevFieldAdd')");
+    browser.wait_for(
+        "the unsaved field",
+        "!!document.querySelector('#DevEntityView [data-field=dueDate]') && document.querySelector('#DevEntityView [data-field=dueDate]').innerText.indexOf('unsaved') >= 0",
+        WAIT,
+    );
+    assert!(!columns(&facade).contains(&"due_date".to_string()));
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    browser.wait_for(
+        "the saved field from my-site",
+        "!!document.querySelector('#DevEntityView [data-field=dueDate]') && document.querySelector('#DevEntityView [data-field=dueDate]').innerText.indexOf('unsaved') < 0 \
+         && document.querySelector('#DevEntityView [data-field=dueDate]').innerText.indexOf('my-site') >= 0",
+        WAIT,
+    );
+    let site_file = std::fs::read_to_string(gate.runtime.join("component/my-site/entity/MySiteEntities.xml")).unwrap();
+    assert!(
+        site_file.contains("<extend-entity entity-name=\"Widget\" package=\"upapp\">"),
+        "{site_file}"
+    );
+    assert!(
+        site_file.contains("<field name=\"dueDate\" type=\"date\"/>"),
+        "{site_file}"
+    );
+    assert!(
+        columns(&facade).contains(&"due_date".to_string()),
+        "the column without a restart"
+    );
+    assert!(
+        std::fs::read_to_string(gate.runtime.join("component/upstream-app/entity/UpEntities.xml")).unwrap()
+            == upstream_entities
+    );
+
+    // a Picklist: its field, relationship and seed records in one Save; the records load
+    add_field(&mut browser, "Picklist", "Priority");
+    browser.click("the values", "document.getElementById('DevPicklistValues')");
+    browser.type_text("High\nLow");
+    browser.wait_for(
+        "its name",
+        "(document.getElementById('DevFieldName') || {value: ''}).value === 'priorityEnumId'",
+        WAIT,
+    );
+    browser.click("Add", "document.getElementById('DevFieldAdd')");
+    browser.wait_for(
+        "the unsaved picklist field",
+        "!!document.querySelector('#DevEntityView [data-field=priorityEnumId]')",
+        WAIT,
+    );
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    let seed = gate.runtime.join("component/my-site/data/MySiteSeedData.xml");
+    browser.wait_for(
+        "the picklist saved",
+        "!!document.querySelector('#DevEntityView [data-field=priorityEnumId]') && document.querySelector('#DevEntityView [data-field=priorityEnumId]').innerText.indexOf('unsaved') < 0",
+        WAIT,
+    );
+    let seed_text = std::fs::read_to_string(&seed).unwrap();
+    assert!(seed_text.contains("enumTypeId=\"WidgetPriority\""), "{seed_text}");
+    assert!(seed_text.contains("description=\"High\""), "{seed_text}");
+    assert!(columns(&facade).contains(&"priority_enum_id".to_string()));
+    let site_file = std::fs::read_to_string(gate.runtime.join("component/my-site/entity/MySiteEntities.xml")).unwrap();
+    assert!(site_file.contains("related=\"moqui.basic.Enumeration\""), "{site_file}");
+    let loaded = || {
+        let context = gate.server.factory().new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumTypeId", moqui_lib::object::Value::string("WidgetPriority"))
+            .count()
+            .unwrap()
+    };
+    for _ in 0..50 {
+        if loaded() == 2 {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    assert_eq!(loaded(), 2, "the seed records loaded after the save");
+    assert_clean(&mut browser, "the entity modeler");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "entity-view-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "entity-view-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "entity-view-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+
+    // the site's drop-down shows the picklist's values
+    browser.navigate(&format!("{base}/qapps/mysite"));
+    browser.wait_for(
+        "the site form",
+        "!!document.querySelector('#WidgetForm_priorityEnumId, [name=priorityEnumId], .q-select')",
+        WAIT,
+    );
+    browser.click("the drop-down", "document.querySelector('.q-select .q-field__control')");
+    browser.wait_for(
+        "its options",
+        "[...document.querySelectorAll('.q-menu .q-item')].map(i => i.innerText.trim()).join('|').indexOf('High|Low') >= 0",
+        WAIT,
+    );
+    assert_clean(&mut browser, "the site form");
+}
+
+/// The screen builder (plans/design-dev-aide.md P6, 11, F10): an upstream app page opened in the builder (what "Open in
+/// screen builder" opens) renders on the canvas with each widget stamped with its source; selecting a list cell offers
+/// Add column, which writes a form-list merge into the site's screen-extend and shows the column on the canvas before
+/// Save (the buffer through F14) and after; a field added to a form with a field-layout lands in the layout after the
+/// selected field; an unnamed container is reported with its nearest named anchor.
+#[test]
+fn the_screen_builder_extends_an_upstream_list_in_chromium() {
+    let upstream_entities = "<entities>\n    <entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\n        <field name=\"widgetName\" type=\"text-medium\"/>\n    </entity>\n</entities>\n";
+    let upstream_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+        <subscreens-item name="upapp" menu-title="Up App" location="component://upstream-app/screen/UpApp.xml"/>
+    </screen></screen-facade></moqui-conf>"#;
+    let upstream_screen = r#"<screen require-authentication="true">
+    <actions><entity-find entity-name="upapp.Widget" list="widgetList"><order-by field-name="widgetId"/></entity-find></actions>
+    <widgets>
+        <container-box name="WidgetBox"><box-header title="Widgets"/><box-body>
+            <form-list name="WidgetList" list="widgetList" skip-form="true">
+                <field name="widgetId"><default-field title="Id"><display/></default-field></field>
+                <field name="widgetName"><default-field title="Name"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <form-single name="WidgetForm" transition=".">
+            <field name="widgetId"><default-field title="Id"><text-line/></default-field></field>
+            <field name="widgetName"><default-field title="Name"><text-line/></default-field></field>
+            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            <field-layout><field-row><field-ref name="widgetId"/><field-ref name="widgetName"/></field-row><field-ref name="submitButton"/></field-layout>
+        </form-single>
+        <container name="Notes"><label text="Notes here"/></container>
+        <container><label text="Unnamed content"/></container>
+    </widgets>
+</screen>"#;
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        (
+            "component/upstream-app/component.xml",
+            r#"<component name="upstream-app"/>"#,
+        ),
+        ("component/upstream-app/MoquiConf.xml", upstream_conf),
+        ("component/upstream-app/entity/UpEntities.xml", upstream_entities),
+        ("component/upstream-app/screen/UpApp.xml", upstream_screen),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="UP_APP" description="Up app"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="UP_APP" artifactName="component://upstream-app/screen/UpApp.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="UP_APP_ADMIN" userGroupId="ADMIN" artifactGroupId="UP_APP" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    <upapp.Widget widgetId="W1" widgetName="First widget"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-screen",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    for component in ["my-site", "upstream-app"] {
+        let dir = gate.runtime.join("component").join(component);
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", "-A"][..],
+            &["commit", "-q", "-m", "Start"][..],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    let frame = "document.getElementById('DevCanvasFrame').contentDocument";
+
+    // the app page in the builder: the canvas stamped with the sources
+    browser.navigate(&format!("{base}/qapps/dev/Screens/Design?page=%2Fqapps%2Fupapp"));
+    browser.wait_for(
+        "the stamped canvas",
+        &format!("!!document.getElementById('DevCanvasFrame') && !!{frame} && {frame}.body.innerText.indexOf('First widget') >= 0 \
+                  && !!{frame}.querySelector('[data-m-src]')"),
+        WAIT,
+    );
+    browser.wait_for(
+        "extension mode",
+        "(document.getElementById('DevScreenTarget') || {innerText: ''}).innerText.indexOf('Extension mode') >= 0",
+        WAIT,
+    );
+    browser.wait_for(
+        "the extension points",
+        "(document.getElementById('DevExtensionPoints') || {innerText: ''}).innerText.indexOf('WidgetList') >= 0 \
+         && document.getElementById('DevExtensionPoints').innerText.indexOf('nearest anchor is Notes') >= 0",
+        WAIT,
+    );
+    let click_in_frame = |browser: &mut Browser, what: &str, text: &str| {
+        browser.wait_for(
+            what,
+            &format!("[...{frame}.querySelectorAll('[data-m-src]')].some(el => el.innerText.trim() === '{text}')"),
+            WAIT,
+        );
+        browser.eval(&format!(
+            "(() => {{ const el = [...{frame}.querySelectorAll('[data-m-src]')].reverse().find(el => el.innerText.trim() === '{text}'); \
+             el.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}})); return true; }})()"
+        ));
+    };
+
+    // a column on the upstream list: before Save on the canvas, then saved in the site's screen-extend
+    click_in_frame(&mut browser, "the list cell", "First widget");
+    browser.wait_for("Add column", "!!document.getElementById('DevAddColumn')", WAIT);
+    browser.click("Add column", "document.getElementById('DevAddColumn')");
+    browser.wait_for("the dialog", "!!document.getElementById('DevScreenFieldName')", WAIT);
+    browser.click("the name", "document.getElementById('DevScreenFieldName')");
+    browser.type_text("widgetName");
+    browser.eval("(() => { const input = document.getElementById('DevScreenFieldName'); input.value = ''; input.dispatchEvent(new Event('input')); return true; })()");
+    browser.type_text("dueNote");
+    browser.click("the title", "document.getElementById('DevScreenFieldTitle')");
+    browser.type_text("Due note");
+    browser.click("Add", "document.getElementById('DevScreenFieldAdd')");
+    browser.wait_for(
+        "the column before Save",
+        &format!("{frame}.body.innerText.indexOf('Due note') >= 0"),
+        WAIT,
+    );
+    let extend = gate
+        .runtime
+        .join("component/my-site/screen-extend/upstream-app/screen/UpApp.xml");
+    assert!(!extend.exists(), "nothing written before Save");
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    for _ in 0..100 {
+        if extend.exists() {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let extend_text = std::fs::read_to_string(&extend).unwrap();
+    assert!(extend_text.contains("<form-list name=\"WidgetList\">"), "{extend_text}");
+    assert!(
+        extend_text.contains("<field name=\"dueNote\" after=\"widgetName\">"),
+        "{extend_text}"
+    );
+    browser.wait_for(
+        "the column after Save",
+        &format!("{frame}.body.innerText.indexOf('Due note') >= 0"),
+        WAIT,
+    );
+
+    // a field into the form with a field-layout: after the selected field, in its row
+    browser.wait_for(
+        "the form field",
+        &format!("!!{frame}.querySelector('[data-m-src] input')"),
+        WAIT,
+    );
+    browser.eval(&format!(
+        "(() => {{ const inputs = [...{frame}.querySelectorAll('input')].filter(i => i.closest('[data-m-src]')); \
+         const name = inputs.find(i => (i.getAttribute('name') || '').indexOf('widgetName') >= 0) || inputs[1]; \
+         name.closest('[data-m-src]').dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}})); return true; }})()"
+    ));
+    browser.wait_for("Add field", "!!document.getElementById('DevAddFormField')", WAIT);
+    browser.click("Add field", "document.getElementById('DevAddFormField')");
+    browser.wait_for("the dialog", "!!document.getElementById('DevScreenFieldName')", WAIT);
+    browser.click("the name", "document.getElementById('DevScreenFieldName')");
+    browser.type_text("note");
+    browser.click("Add", "document.getElementById('DevScreenFieldAdd')");
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&extend)
+            .unwrap_or_default()
+            .contains("form-single")
+        {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let extend_text = std::fs::read_to_string(&extend).unwrap();
+    assert!(
+        extend_text.contains("<form-single name=\"WidgetForm\"><field name=\"note\" after=\"widgetName\">"),
+        "{extend_text}"
+    );
+    // the layout puts the new field in the selected field's row, before the submit button
+    browser.wait_for(
+        "the field in the layout",
+        &format!("(() => {{ const names = [...{frame}.querySelectorAll('input, button')].map(e => e.getAttribute('name') || e.innerText.trim()); \
+                  const at = names.findIndex(n => /(^|_)note$/.test(n)); const save = names.findIndex(n => n === 'Save' || /submitButton/.test(n)); \
+                  const name = names.findIndex(n => /(^|_)widgetName$/.test(n)); return at > name && name >= 0 && (save < 0 || at < save); }})()"),
+        WAIT,
+    );
+
+    // an unnamed container: its nearest anchor
+    click_in_frame(&mut browser, "the unnamed container", "Unnamed content");
+    browser.wait_for(
+        "the nearest anchor",
+        "(document.getElementById('DevNearestAnchor') || {innerText: ''}).innerText.indexOf('nearest anchor is Notes') >= 0",
+        WAIT,
+    );
+    assert_clean(&mut browser, "the screen builder");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "screen-builder-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "screen-builder-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "screen-builder-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+}
+
+/// The service writer (plans/design-dev-aide.md P7, 9): a site service in its view, its actions as blocks in the logic
+/// composer; a block added from the palette and a chip edited, each an operation on the buffer, saved and reloaded; a
+/// Try in sim lists the rows it would write, Save as spec writes the feature and Run spec passes it. The composer's block
+/// tree draws 300 blocks within the measure of 9.2 (100 ms).
+#[test]
+fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
+    let site_entities = "<entities><entity entity-name=\"Thing\" package=\"mysite\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\
+        <field name=\"thingName\" type=\"text-medium\"/></entity></entities>\n";
+    let site_services = "<services>\n    <service verb=\"make\" noun=\"Thing\">\n        <in-parameters><parameter name=\"thingId\" required=\"true\"/><parameter name=\"thingName\"/></in-parameters>\n        <out-parameters><parameter name=\"thingId\"/></out-parameters>\n        <actions>\n            <set field=\"thingName\" from=\"thingName || 'unnamed'\"/>\n            <service-call name=\"create#mysite.Thing\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/entity/MySiteEntities.xml", site_entities),
+        ("component/my-site/service/mysite/Things.xml", site_services),
+    ];
+    let security = include_str!("../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.security.ArtifactGroup artifactGroupId="MY_THINGS" description="Things"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="mysite\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="mysite\..*" artifactTypeEnumId="AT_ENTITY" nameIsPattern="Y" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MY_THINGS" artifactName="create#mysite.Thing" artifactTypeEnumId="AT_SERVICE" nameIsPattern="N" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MY_THINGS_ADMIN" userGroupId="ADMIN" artifactGroupId="MY_THINGS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-aide-service",
+        Some(&security),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    for (name, value) in [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_COMMITTER_NAME", "Dev Server"),
+        ("GIT_COMMITTER_EMAIL", "server@example.com"),
+        ("GIT_AUTHOR_NAME", "Setup"),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com"),
+    ] {
+        std::env::set_var(name, value);
+    }
+    let site = gate.runtime.join("component/my-site");
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "-A"][..],
+        &["commit", "-q", "-m", "Start"][..],
+    ] {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&site)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Services/Edit?artifact=service%3Amysite.Things.make%23Thing"
+    ));
+    browser.wait_for(
+        "the composer's blocks",
+        "!!document.querySelector('#DevServiceView #DevComposer .m-dev-block-head') \
+         && document.getElementById('DevComposer').innerText.indexOf('create#mysite.Thing') >= 0",
+        WAIT,
+    );
+
+    // a block from the palette, after the selected one, and a chip edited
+    browser.click(
+        "the first block",
+        "document.querySelector('#DevComposer .m-dev-block-head')",
+    );
+    browser.click("Add", "document.getElementById('DevComposerAdd')");
+    browser.wait_for(
+        "the palette",
+        "!!document.querySelector('[data-palette=\"Check errors\"]')",
+        WAIT,
+    );
+    browser.click(
+        "Check errors",
+        "document.querySelector('[data-palette=\"Check errors\"]')",
+    );
+    browser.wait_for(
+        "the new block",
+        "document.getElementById('DevComposer').innerText.indexOf('Check errors') >= 0",
+        WAIT,
+    );
+    browser.wait_for("the menu closed", "!document.querySelector('.q-menu')", WAIT);
+    browser.click(
+        "the set's value",
+        "[...document.querySelectorAll('#DevComposer .m-dev-block-chip')].find(chip => chip.innerText.indexOf(\"thingName || 'unnamed'\") >= 0)",
+    );
+    browser.wait_for("the chip editor", "!!document.getElementById('DevChipValue')", WAIT);
+    browser.eval("(() => { const input = document.getElementById('DevChipValue'); input.select(); return true; })()");
+    browser.type_text("thingName || 'nameless'");
+    browser.click("Set", "document.getElementById('DevChipSet')");
+    browser.wait_for(
+        "the edited chip",
+        "document.getElementById('DevComposer').innerText.indexOf(\"thingName || 'nameless'\") >= 0",
+        WAIT,
+    );
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    browser.click("Save", "document.getElementById('DevSave')");
+    let file = site.join("service/mysite/Things.xml");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&file).unwrap().contains("nameless") {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        saved.contains("<set field=\"thingName\" from=\"thingName || 'nameless'\"/>\n            <check-errors/>"),
+        "{saved}"
+    );
+    assert!(saved.contains("<service-call name=\"create#mysite.Thing\""), "{saved}");
+
+    // Try in sim, then Save as spec and Run spec
+    browser.click("Try", "document.getElementById('DevTryTab')");
+    browser.wait_for("the Try form", "!!document.getElementById('DevTry_thingId')", WAIT);
+    browser.click("thingId", "document.getElementById('DevTry_thingId')");
+    browser.type_text("T-1");
+    browser.click("Run in sim", "document.getElementById('DevRunInSim')");
+    browser.wait_for(
+        "the rows it would write",
+        "!!document.getElementById('DevTryRows') && document.getElementById('DevTryRows').innerText.indexOf('mysite.Thing') >= 0 \
+         && document.getElementById('DevTryRows').innerText.indexOf('nameless') >= 0",
+        WAIT,
+    );
+    browser.click("Save as spec", "document.getElementById('DevSaveSpec')");
+    browser.wait_for("Run spec", "!!document.getElementById('DevRunSpec')", WAIT);
+    let spec = std::fs::read_to_string(site.join("test/Things.spec.js")).unwrap();
+    assert!(
+        spec.contains("call(\"mysite.Things.make#Thing\", {\"thingId\":\"T-1\"})"),
+        "{spec}"
+    );
+    browser.click("Run spec", "document.getElementById('DevRunSpec')");
+    browser.wait_for(
+        "the spec passed",
+        "(document.getElementById('DevSpecRun') || {innerText: ''}).innerText.indexOf('The spec passed') >= 0",
+        WAIT,
+    );
+
+    // the measure of 9.2: the block tree draws 300 blocks in under 100 ms
+    browser.eval(
+        "window.__blocksMs = undefined; (async () => { const host = document.createElement('div'); document.body.appendChild(host); \
+         const nodes = Array.from({length: 300}, (_, i) => ({ name: 'set', path: [0, i], attrs: [['field', 'f' + i], ['from', 'i + ' + i]], children: [] })); \
+         const started = performance.now(); \
+         const app = Vue.createApp({ render: () => Vue.h(moqui.devAide.blocks.components['m-dev-block-tree'], { nodes, parentPath: [0], readOnly: true, \
+           labelFn: moqui.devAide.serviceOps.sentence }) }); \
+         app.mount(host); await Vue.nextTick(); const drawn = host.querySelectorAll('.m-dev-block-head').length; const ms = performance.now() - started; \
+         app.unmount(); host.remove(); window.__blocksMs = drawn === 300 ? ms : -1; })(); true",
+    );
+    let millis = browser
+        .wait_for(
+            "the 300 blocks drawn",
+            "window.__blocksMs === undefined ? false : window.__blocksMs",
+            WAIT,
+        )
+        .as_f64()
+        .unwrap_or(-1.0);
+    eprintln!("the block tree drew 300 blocks in {millis:.1} ms");
+    assert!((0.0..100.0).contains(&millis), "300 blocks in {millis} ms");
+
+    // a SECA rule on the service in the site's secas file, then in the ECA view
+    browser.click("SECA rules", "[...document.querySelectorAll('#DevServiceView .q-tab')].find(tab => tab.innerText.indexOf('SECA rules') >= 0)");
+    browser.click("Add a SECA rule", "document.getElementById('DevAddSeca')");
+    browser.wait_for(
+        "the unsaved rule",
+        "(document.getElementById('DevServiceRules') || {innerText: ''}).innerText.indexOf('(unsaved)') >= 0",
+        WAIT,
+    );
+    browser.click("Save", "document.getElementById('DevSave')");
+    let secas = site.join("service/MySite.secas.xml");
+    for _ in 0..100 {
+        if secas.exists() {
+            break;
+        }
+        browser.pump(Duration::from_millis(100));
+    }
+    let secas_text = std::fs::read_to_string(&secas).unwrap();
+    assert!(
+        secas_text.contains("<seca service=\"mysite.Things.make#Thing\" when=\"post-service\">"),
+        "{secas_text}"
+    );
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId=my-site&path=service/MySite.secas.xml&view=eca"
+    ));
+    browser.wait_for(
+        "the ECA view",
+        "(document.getElementById('DevEcaView') || {innerText: ''}).innerText.indexOf('seca mysite.Things.make#Thing') >= 0 && !!document.getElementById('DevComposer')",
+        WAIT,
+    );
+    browser.navigate(&format!("{base}/qapps/dev/Eca?kind=seca&target=make%23Thing"));
+    browser.wait_for("the ECA list", "document.body.innerText.indexOf('mysite.Things.make#Thing') >= 0 && document.body.innerText.indexOf('my-site · site') >= 0", WAIT);
+    assert_clean(&mut browser, "the service writer");
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "eca-list-light");
+        browser.navigate(&format!(
+            "{base}/qapps/dev/Services/Edit?artifact=service%3Amysite.Things.make%23Thing"
+        ));
+        browser.wait_for(
+            "the composer",
+            "!!document.querySelector('#DevComposer .m-dev-block-head')",
+            WAIT,
+        );
+        save(&mut browser, "service-writer-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "service-writer-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "service-writer-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+}
+
 /// A change set of the dev agent (plans/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
 /// opens Dev Assist, whose scripted `propose_edit` proposes a `screen-extend` of the page's form and an edit of a site
 /// service; the card reads the change as artifacts and its Preview frames the page with the proposal in place (the new
@@ -4621,13 +5338,12 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     // Customize this screen: Dev Assist on this page
     browser.wait_for(
         "Customize this screen",
-        "!!document.querySelector('[data-assist-page-action=dev]')",
+        // with the screen builder's beside it: the header is right aligned, so the second moves the first
+        "!!document.querySelector('[data-assist-page-action=dev]') && !!document.querySelector('[data-assist-page-action=\"dev/Screens/Design\"]')",
         WAIT,
     );
-    browser.click(
-        "Customize this screen",
-        "document.querySelector('[data-assist-page-action=dev]')",
-    );
+    // the element's own click: the header settles as its buttons come, so a click by position may land beside it
+    browser.eval("document.querySelector('[data-assist-page-action=dev]').click(); true");
     browser.wait_for("the dev agent", "moqui.assist.state.agentId === 'dev'", WAIT);
 
     let call = |id: &str, name: &str, arguments: serde_json::Value| {

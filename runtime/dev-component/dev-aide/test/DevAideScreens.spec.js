@@ -72,3 +72,15 @@ feature("the palette's Artifacts group answers entities and services", {
         rows[0].url.startsWith("/qapps/dev/Workspace?rootId=")
     },
 })
+
+feature("the Workspace runs XML operations and answers the outline", {
+    expect() {
+        const ops = JSON.stringify([{ op: "insert", at: [], position: "last", xml: "<extend-entity entity-name=\"Example\"/>" }])
+        const answer = dev().render("Workspace/xmlOp", { text: "<?xml version=\"1.0\"?>\n<entities>\n</entities>\n", ops }, null)
+        const outline = dev().render("Workspace/outline", { text: "<entities><entity entity-name=\"A\"/></entities>" }, null)
+        answer.status == 200
+        JSON.parse(answer.output).text.includes("<extend-entity entity-name=\"Example\"/>")
+        JSON.parse(answer.output).outline.children[0].name == "extend-entity"
+        JSON.parse(outline.output).outline.children[0].attrs[0][1] == "A"
+    },
+})

@@ -15,3 +15,5 @@ risk: reversible
 2. Write a feature that calls it with those parameters, checks the out-parameters, and `checkData` of the rows the sim
    wrote (trimmed to the fields that matter).
 3. `propose_edit` it into `component://<component>/test/<Service>.spec.js` (append a feature when the file is there).
+4. Tell the user the service view's Try panel does the same by hand: Save as spec after a Try in sim, then Run spec runs
+   the file in the sim, so it writes nothing.

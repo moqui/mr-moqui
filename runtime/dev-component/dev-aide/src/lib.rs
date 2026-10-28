@@ -25,10 +25,14 @@ mod artifacts;
 pub mod audit;
 mod changeset;
 pub mod confine;
+mod entities;
 pub mod git;
 mod notify;
 pub mod roots;
+mod screens;
+mod services;
 pub mod settings;
+mod site;
 pub mod tier;
 mod vcs;
 pub(crate) mod workspace;
@@ -44,5 +48,8 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
     artifacts::register(registry)?;
     changeset::register(registry)?;
+    entities::register(registry)?;
+    screens::register(registry)?;
+    services::register(registry)?;
     vcs::register(registry)
 }

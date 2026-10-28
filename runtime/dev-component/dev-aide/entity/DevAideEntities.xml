@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="auditId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="auditDate" type="date-time"/>
-        <field name="actionEnumId" type="id"><description>DAA_SAVE, DAA_CREATE, DAA_MOVE, DAA_DELETE, DAA_GIT</description></field>
+        <field name="actionEnumId" type="id"><description>DAA_SAVE, DAA_CREATE, DAA_MOVE, DAA_DELETE, DAA_GIT, DAA_DDL, DAA_LOAD, DAA_TRY</description></field>
         <field name="rootId" type="text-short"/>
         <field name="filePath" type="text-medium"/>
         <field name="hashBefore" type="text-medium"/>

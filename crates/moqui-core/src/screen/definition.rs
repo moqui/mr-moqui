@@ -461,6 +461,10 @@ pub struct SubscreensItem {
     pub disable_when: Option<String>,
     /// From a `SubscreensItem` row: only members of this group see the item.
     pub user_group_id: Option<String>,
+    /// How it is mounted, for the screen builder's tree (plans/design-dev-aide.md 11.1): `directory` (a file in the
+    /// directory named like the parent), `item <file>:<line>` (a `subscreens-item` of the parent), `conf <file>:<line>`
+    /// (a `screen-facade` mount) or `row` (a `SubscreensItem` row).
+    pub mounted_by: String,
 }
 
 impl SubscreensItem {
@@ -823,6 +827,25 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
+        if crate::devtools::is_dev_instance() {
+            // F10: each widget element keeps the file that wrote it, merged ones their screen-extend's
+            for root in node
+                .children()
+                .iter()
+                .filter(|child| child.has_name("widgets") || child.has_name("fail-widgets"))
+            {
+                super::stamp::stamp_tree(root);
+            }
+            // a form merge's own attributes go onto the base form, which keeps its file: only what it adds is stamped
+            for item in &extended.forms {
+                for child in item.children() {
+                    super::stamp::stamp_tree(&child);
+                }
+            }
+            for item in &extended.sections {
+                super::stamp::stamp_tree(item);
+            }
+        }
         Self::build(facade, factory, &node, location, depth, extended, sources)
     }
 
@@ -1428,6 +1451,7 @@ fn load_subscreens(
                 no_sub_path: false,
                 disable_when: None,
                 user_group_id: None,
+                mounted_by: "directory".to_string(),
             });
         }
     }
@@ -1451,7 +1475,7 @@ fn load_subscreens(
             subscreens.conditional_defaults.push((condition, name));
         }
         for item in element.named_iter("subscreens-item") {
-            if let Some(item) = subscreens_item_of(factory, base, &item, sources) {
+            if let Some(item) = subscreens_item_of(factory, base, &item, sources, "item") {
                 subscreens.put(item);
             }
         }
@@ -1459,7 +1483,7 @@ fn load_subscreens(
     // Conf `screen-facade/screen` adds and overrides items for a screen by location.
     if let Some(conf) = facade.conf().screens.get(location) {
         for item in &conf.items {
-            if let Some(item) = subscreens_item_of(factory, base, &item.node(), sources) {
+            if let Some(item) = subscreens_item_of(factory, base, &item.node(), sources, "conf") {
                 subscreens.put(item);
             }
         }
@@ -1502,6 +1526,7 @@ fn load_subscreens(
                         no_sub_path: text("noSubPath").as_deref() == Some("Y"),
                         disable_when: None,
                         user_group_id: text("userGroupId"),
+                        mounted_by: "row".to_string(),
                         name,
                         location: item_location,
                         menu_title,
@@ -1542,6 +1567,7 @@ fn subscreens_item_of(
     base: &str,
     item: &MNode,
     sources: &mut Vec<Source>,
+    how: &str,
 ) -> Option<SubscreensItem> {
     let name = item.attribute("name").filter(|text| !text.is_empty())?;
     // An empty location means the file named like the item under the screen's directory.
@@ -1569,6 +1595,10 @@ fn subscreens_item_of(
         no_sub_path: item.attribute_is("no-sub-path", "true"),
         disable_when: item.attribute("disable-when").filter(|text| !text.is_empty()),
         user_group_id: None,
+        mounted_by: match item.file_location() {
+            Some(file) => format!("{how} {file}:{}", item.line()),
+            None => how.to_string(),
+        },
         location,
     })
 }

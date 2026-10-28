@@ -2637,7 +2637,7 @@
             tierOptions() { return this.tiers.map((tier) => ({ label: tier.charAt(0).toUpperCase() + tier.slice(1), value: tier })); },
             agentOptions() { return this.agents.map((agent) => ({ label: agent.name || agent.agentId, value: agent.agentId })); },
             // the page actions of the apps (page-action) whose agent this user has
-            pageActions() { const ids = this.agents.map((agent) => agent.agentId); return (st().prompts.pageActions || []).filter((action) => ids.indexOf(action.agent) >= 0); },
+            pageActions() { const ids = this.agents.map((agent) => agent.agentId); return (st().prompts.pageActions || []).filter((action) => action.screen || ids.indexOf(action.agent) >= 0); },
             paused() { const run = this.convo.activeRunId ? this.convo.runs[this.convo.activeRunId] : null; return !!run && assist.isPaused(run.state); },
             elsewhere() { const follow = this.convo.follow; return !!(this.convo.conversationId && follow.clientId && follow.clientId !== assist.clientId); },
             approvals() { return Object.keys(this.convo.approvals).map((key) => this.convo.approvals[key]); },
@@ -2660,7 +2660,15 @@
             setTier(tier) { st().tier = tier; },
             setAgent(agentId) { if (agentId !== st().agentId) { st().agentId = agentId; assist.newConversation(); } },
             // a page action: its agent in a new conversation on this page, with its suggested prompts
-            runPageAction(action) { this.setAgent(action.agent); assist.loadPrompts(true); assist.openDrawer(true); },
+            runPageAction(action) {
+                if (action.screen) {
+                    // a screen of the app opened with this page as its parameter (the screen builder on this page)
+                    const base = this.$root.linkBasePath || "/qapps";
+                    root.location.href = base + "/" + String(action.screen).replace(/^\//, "") + "?page=" + encodeURIComponent(root.location.pathname + root.location.search);
+                    return;
+                }
+                this.setAgent(action.agent); assist.loadPrompts(true); assist.openDrawer(true);
+            },
             newConversation() { assist.newConversation(); },
             pane(name) {
                 st().pane = st().pane === name ? "chat" : name;
@@ -2715,8 +2723,8 @@
                         '<div v-if="meter" class="m-assist-context q-mx-xs" id="m-assist-context" tabindex="0" :data-assist-context-level="meter.level" :data-percent="meter.percent" :aria-label="meter.tooltip">' +
                             '<q-circular-progress :value="meter.value" size="24px" :thickness="0.2" :color="meter.level === \'warning\' ? \'warning\' : \'primary\'" track-color="grey-5" show-value font-size="8px">{{meter.percent}}</q-circular-progress>' +
                             '<q-tooltip>{{meter.tooltip}}</q-tooltip></div>' +
-                        '<q-btn v-for="action in pageActions" :key="action.source + action.agent" flat round dense :icon="action.icon || \'sym_o_bolt\'" :aria-label="action.label"' +
-                            ' :data-assist-page-action="action.agent" @click="runPageAction(action)"><q-tooltip>{{action.label}}</q-tooltip></q-btn>' +
+                        '<q-btn v-for="action in pageActions" :key="action.source + (action.agent || action.screen)" flat round dense :icon="action.icon || \'sym_o_bolt\'" :aria-label="action.label"' +
+                            ' :data-assist-page-action="action.agent || action.screen" @click="runPageAction(action)"><q-tooltip>{{action.label}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_edit_square" id="m-assist-new" :aria-label="labels.newConversation" @click="newConversation"><q-tooltip>{{labels.newConversation}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_history" id="m-assist-history" :class="{\'text-primary\': s.pane === \'history\'}" :aria-label="labels.history" @click="pane(\'history\')"><q-tooltip>{{labels.history}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_checklist" id="m-assist-tasks" :class="{\'text-primary\': s.pane === \'tasks\'}" :aria-label="labels.tasks" @click="pane(\'tasks\')">' +

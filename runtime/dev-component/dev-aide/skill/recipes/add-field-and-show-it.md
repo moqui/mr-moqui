@@ -21,4 +21,4 @@ Adds a field to an entity and shows it on a form, both as extensions in the site
    (`component://<site>/entity/<Site>Entities.xml`), and a `screen-extend` at
    `component://<site>/screen-extend/<component>/screen/<path of the screen>` with the form by its name and the
    `field` with `after` and a `default-field title`.
-4. Tell the user the entity change takes a restart (the banner's Restart) before the field holds data.
+4. Tell the user the save adds the column at once (the reload report lists the DDL), so the field holds data then.

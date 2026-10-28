@@ -532,5 +532,93 @@
       }
     ],
     "error": "no element at"
+  },
+  {
+    "name": "composer: a chip edit three levels down",
+    "input": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n",
+    "ops": [
+      {
+        "op": "set-attribute",
+        "at": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "name": "value",
+        "value": "done"
+      }
+    ],
+    "expected": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"done\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n"
+  },
+  {
+    "name": "composer: a block moved across three levels, out to the top",
+    "input": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n",
+    "ops": [
+      {
+        "op": "move",
+        "at": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "to": [
+          0,
+          0
+        ],
+        "position": "after"
+      }
+    ],
+    "expected": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <set field=\"item.state\" value=\"closed\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n"
+  },
+  {
+    "name": "composer: a palette insert after the selected block",
+    "input": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n",
+    "ops": [
+      {
+        "op": "insert",
+        "at": [
+          0,
+          0
+        ],
+        "position": "after",
+        "xml": "<check-errors/>"
+      }
+    ],
+    "expected": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <check-errors/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n"
+  },
+  {
+    "name": "composer: a script's text stays CDATA",
+    "input": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n",
+    "ops": [
+      {
+        "op": "set-text",
+        "at": [
+          0,
+          2
+        ],
+        "text": "if (a < b) ec.logger.info(\"less\")"
+      }
+    ],
+    "expected": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[if (a < b) ec.logger.info(\"less\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n"
+  },
+  {
+    "name": "composer: a service-call's in-parameter as a field-map",
+    "input": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\"/>\n    </actions>\n</service>\n",
+    "ops": [
+      {
+        "op": "insert",
+        "at": [
+          0,
+          3
+        ],
+        "position": "last",
+        "xml": "<field-map field-name=\"thingId\" from=\"thingId\"/>"
+      }
+    ],
+    "expected": "<service verb=\"update\" noun=\"Thing\">\n    <actions>\n        <!-- the thing -->\n        <entity-find-one entity-name=\"Thing\" value-field=\"thing\"/>\n        <if condition=\"thing\">\n            <iterate list=\"thing.items\" entry=\"item\">\n                <if condition=\"item.open\">\n                    <set field=\"item.state\" value=\"closed\"/>\n                </if>\n            </iterate>\n        </if>\n        <script><![CDATA[ec.logger.info(\"done\")]]></script>\n        <service-call name=\"mantle.Things.notify#Thing\">\n            <field-map field-name=\"thingId\" from=\"thingId\"/>\n        </service-call>\n    </actions>\n</service>\n"
   }
 ]

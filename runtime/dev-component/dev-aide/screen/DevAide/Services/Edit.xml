@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- A service in its view (plans/design-dev-aide.md 9, D18 guided): the artifact resolved to its file through the index
+    and opened in the Workspace's client with no tree or tabs; the Workspace's transitions answer it. Browser only. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edit" default-menu-include="false" render-modes="qvue">
+    <parameter name="artifact"/>
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://dev-aide/screen/DevAide/GuidedEdit.qvue" template="false"/>
+        </render-mode>
+    </widgets>
+</screen>

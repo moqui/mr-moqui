@@ -98,7 +98,7 @@ test("the bundle has what the widgets use, and a state for every language", () =
         "bracketMatching", "closeBrackets", "autocompletion", "rectangularSelection", "crosshairCursor", "highlightActiveLine",
         "highlightSelectionMatches", "indentationMarkers", "closeBracketsKeymap", "defaultKeymap", "searchKeymap", "historyKeymap",
         "foldKeymap", "completionKeymap", "lintKeymap", "indentWithTab", "linter", "lintGutter", "placeholder", "MergeView",
-        "unifiedMergeView", "HighlightStyle", "syntaxHighlighting", "defaultHighlightStyle", "tags"]) {
+        "unifiedMergeView", "HighlightStyle", "syntaxHighlighting", "defaultHighlightStyle", "tags", "undo", "redo"]) {
         assert.ok(CM[name], name);
     }
     const languages = new Set(Object.values(editor.extensions));
@@ -109,4 +109,17 @@ test("the bundle has what the widgets use, and a state for every language", () =
         const state = CM.EditorState.create({ doc: "x", extensions: [CM[factory]()] });
         assert.equal(state.doc.toString(), "x", language);
     }
+});
+
+test("kept editor states come back by key, the most recent 50", () => {
+    const state = CM.EditorState.create({ doc: "x", extensions: [CM.history()] });
+    editor.keepState("a", { state, compartments: {}, owner: { vm: null } });
+    assert.equal(editor.takeState("a").state, state);
+    assert.equal(editor.takeState("a"), null);
+    for (let i = 0; i < 55; i++) editor.keepState("k" + i, { state });
+    assert.equal(editor.takeState("k0"), null);
+    assert.ok(editor.takeState("k54"));
+    editor.keepState("gone", { state });
+    editor.dropState("gone");
+    assert.equal(editor.takeState("gone"), null);
 });

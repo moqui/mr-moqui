@@ -37,6 +37,7 @@ mod schema;
 mod screen_test;
 pub(crate) mod shell;
 pub(crate) mod sri;
+pub mod stamp;
 pub mod static_ast;
 pub mod static_files;
 pub mod statics;

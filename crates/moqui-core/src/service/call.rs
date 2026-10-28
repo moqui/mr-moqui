@@ -860,7 +860,7 @@ fn canonical(name: &str) -> String {
 /// definition per name keeps its expanded parameters (see `validate::declared_in`) from one call to the next.
 type ImplicitDefs = crate::entity::ByDefinition<Arc<ServiceDef>>;
 
-fn resolve(name: &str, facade: Option<&EntityFacade>) -> Result<Arc<ServiceDef>, Error> {
+pub(crate) fn resolve(name: &str, facade: Option<&EntityFacade>) -> Result<Arc<ServiceDef>, Error> {
     if let Some(def) = super::define::find(name) {
         return Ok(def);
     }

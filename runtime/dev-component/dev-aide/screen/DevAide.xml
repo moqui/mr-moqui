@@ -23,12 +23,20 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Home" menu-title="Home" menu-index="1" location="component://dev-aide/screen/DevAide/Home.xml"/>
         <subscreens-item name="Workspace" menu-title="Workspace" menu-index="2" location="component://dev-aide/screen/DevAide/Workspace.xml"/>
         <subscreens-item name="Artifacts" menu-title="Artifacts" menu-index="3" location="component://dev-aide/screen/DevAide/Artifacts.xml"/>
+        <subscreens-item name="Entities" menu-title="Entities" menu-index="4" location="component://dev-aide/screen/DevAide/Entities.xml"/>
+        <subscreens-item name="Services" menu-title="Services" menu-index="5" location="component://dev-aide/screen/DevAide/Services.xml"/>
+        <subscreens-item name="Screens" menu-title="Screens" menu-index="6" location="component://dev-aide/screen/DevAide/Screens.xml"/>
+        <subscreens-item name="Eca" menu-title="ECA Rules" menu-index="7" location="component://dev-aide/screen/DevAide/Eca.xml"/>
         <subscreens-item name="Settings" menu-title="Settings" menu-index="9" location="component://dev-aide/screen/DevAide/Settings.xml"/>
     </subscreens>
     <shell-providers>
         <palette-action label="Dev AIDE Workspace" icon="sym_o_code" screen="dev/Workspace" sequence="70"/>
         <palette-action label="Dev AIDE Home: publish site changes" icon="sym_o_publish" screen="dev/Home" sequence="71"/>
         <palette-action label="Dev AIDE Settings" icon="sym_o_settings" screen="dev/Settings" sequence="72"/>
+        <palette-action label="Dev AIDE Entities: the entity modeler" icon="sym_o_table" screen="dev/Entities" sequence="75"/>
+        <palette-action label="Dev AIDE Screens: the screen builder" icon="sym_o_dashboard_customize" screen="dev/Screens" sequence="76"/>
+        <palette-action label="Dev AIDE Services: the service writer" icon="sym_o_functions" screen="dev/Services" sequence="77"/>
+        <palette-action label="Dev AIDE ECA Rules" icon="sym_o_bolt" screen="dev/Eca" sequence="78"/>
         <palette-action label="Go to artifact" icon="sym_o_travel_explore" screen="dev/Artifacts/Search" sequence="73"/>
         <palette-action label="Dev AIDE Customizations: what the site extends" icon="sym_o_extension" screen="dev/Artifacts/Customizations" sequence="74"/>
         <!-- the artifact index: entities, services, screens and rules by name, each opening in the Workspace at its line -->
@@ -36,6 +44,8 @@ along with this software (see the LICENSE.md file). If not, see
                 service="org.moqui.devaide.ArtifactServices.search#Palette"/>
         <!-- on every app page of a Dev AIDE user: Dev Assist with the recipes for the page (plans/design-dev-aide.md 3.5) -->
         <page-action label="Customize this screen" icon="sym_o_design_services" agent="dev" sequence="10"/>
+        <!-- the screen builder on the page (11.2): its screen on the canvas with the page's parameters -->
+        <page-action label="Open in screen builder" icon="sym_o_dashboard_customize" screen="dev/Screens/Design" sequence="11"/>
         <!-- the dev agent's prompts on Dev AIDE's pages (13.4) -->
         <assist-prompt label="Explain this artifact" text="Explain the artifact I have open: what it is, what uses it and what it uses."/>
         <assist-prompt label="Where is this used?" text="Where is the artifact at my cursor used? List the screens, services and rules."/>

@@ -240,6 +240,11 @@ fn text_arg(value: &Opt<String>) -> &str {
 
 // ---- sri functions ----
 
+/// `sri.stamp(src)`: the source stamp of the next element written, in a render that writes stamps (F10).
+fn sri_stamp(text: JsValue<'_>) {
+    crate::screen::stamp::set_pending(text.as_string().and_then(|text| text.to_string().ok()));
+}
+
 fn sri_write(ctx: Ctx<'_>, text: JsValue<'_>) -> rquickjs::Result<()> {
     host_guard(&ctx, || {
         let text = match text.as_string() {
@@ -1203,6 +1208,7 @@ pub(super) fn sri_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     method!("uniqueId", sri_unique_id);
     method!("htmlText", sri_html_text);
     method!("write", sri_write);
+    method!("stamp", sri_stamp);
     method!("renderSection", sri_render_section);
     method!("renderSectionInclude", sri_render_section_include);
     method!("renderSubscreen", sri_render_subscreen);

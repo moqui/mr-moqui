@@ -15,22 +15,42 @@
 //! Share a loaded [`EntityModel`] across threads.
 //!
 //! The model holds no `MNode`, so it is `Send` and `Sync` on its own; the assertion below keeps
-//! it that way.
+//! it that way. On a dev instance the model is swapped when entity files change
+//! (plans/design-dev-aide.md F5): each facade call takes the model once, as an `Arc`, so a find in
+//! flight keeps the model it started with while a new one is linked and put in its place.
+
+use std::sync::{Arc, RwLock};
 
 use moqui_db::model::EntityModel;
 
-/// Loaded entity model. Immutable after `EntityModel::load`.
+/// Loaded entity model, immutable once loaded; [`Self::swap`] puts a newer one in its place.
 pub(crate) struct SharedModel {
-    model: EntityModel,
+    model: RwLock<Arc<EntityModel>>,
+    /// The configuration the model was loaded with, as text (an `MNode` is not `Send`), to load it again.
+    conf: String,
 }
 
 impl SharedModel {
-    pub(crate) fn new(model: EntityModel) -> Self {
-        Self { model }
+    pub(crate) fn new(model: EntityModel, conf: String) -> Self {
+        Self {
+            model: RwLock::new(Arc::new(model)),
+            conf,
+        }
     }
 
-    pub(crate) fn model(&self) -> &EntityModel {
-        &self.model
+    /// The current model.
+    pub(crate) fn model(&self) -> Arc<EntityModel> {
+        Arc::clone(&self.model.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Put `model` in place of the current one, which calls holding it keep until they finish.
+    pub(crate) fn swap(&self, model: EntityModel) -> Arc<EntityModel> {
+        let mut current = self.model.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::replace(&mut *current, Arc::new(model))
+    }
+
+    pub(crate) fn conf_text(&self) -> &str {
+        &self.conf
     }
 }
 

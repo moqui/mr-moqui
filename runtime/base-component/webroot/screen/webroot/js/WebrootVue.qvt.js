@@ -240,9 +240,11 @@
         addNotify(message, "negative");
     };
 
+    // a page that is leaving (a navigation, a frame given a new source) has its requests cut off: no error for those
+    if (root.addEventListener) root.addEventListener("pagehide", () => { moqui.pageLeaving = true; });
     // err is what moqui.request rejects with: { status, json, text, aborted, error }
     moqui.handleAjaxError = (err) => {
-        if (!err || err.aborted) return;
+        if (!err || err.aborted || (err.status === 0 && moqui.pageLeaving)) return;
         const respObj = err.json && moqui.isPlainObject(err.json) ? err.json : null;
         console.warn("request failed, status " + err.status + (err.statusText ? " " + err.statusText : ""));
         let notified = false;

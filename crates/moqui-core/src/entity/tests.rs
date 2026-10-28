@@ -3239,3 +3239,124 @@ fn a_data_document_name_is_its_view_with_its_conditions() {
         .with_entity(name, |entity, _, _| Ok(entity.has_field("enumCode")))
         .unwrap());
 }
+
+/// F5 (plans/design-dev-aide.md): a relink reads the entity files again and swaps the model in. A call that took the
+/// old model keeps it; finds on other threads during the relinks see one model or the other, whole; the changed
+/// entity's table is checked with its DDL answered; a file that does not parse keeps the model there was.
+#[test]
+fn a_relink_swaps_the_model_under_finds_in_flight() {
+    let dir = std::env::temp_dir().join(format!("moqui-relink-model-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("entity")).unwrap();
+    let file = dir.join("entity/RelinkEntities.xml");
+    let entities = |extra: &str| {
+        format!(
+            "<entities><entity entity-name=\"RelinkThing\" package=\"relink\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/>{extra}</entity></entities>"
+        )
+    };
+    std::fs::write(&file, entities("")).unwrap();
+    let tape = Arc::new(Mutex::new(Tape {
+        sql: Vec::new(),
+        password: None,
+    }));
+    let driver: Arc<dyn DbDriver> = Arc::new(RecDriver {
+        tape: Arc::clone(&tape),
+    });
+    let transactions = TransactionManager::new(
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let facade = EntityFacade::open_components(
+        &framework_dir(),
+        &[dir.join("entity")],
+        "transactional",
+        vec![EntityGroup::new("transactional", "postgres", transactions)],
+    )
+    .unwrap();
+    facade.set_disable_fk_create(true);
+    let fields = |facade: &EntityFacade| {
+        facade
+            .with_entity("relink.RelinkThing", |entity, _, _| Ok(entity.fields.len()))
+            .unwrap()
+    };
+    // the field and lastUpdatedStamp
+    let base = fields(&facade);
+    let held = facade.inner.model.model();
+
+    std::fs::write(&file, entities("<field name=\"dueDate\" type=\"date\"/>")).unwrap();
+    let report = facade.relink(&[file.clone()]).unwrap();
+    assert_eq!(report.changed, vec!["relink.RelinkThing".to_string()]);
+    assert!(
+        report
+            .ddl
+            .iter()
+            .any(|sql| sql.contains("relink_thing") && sql.contains("due_date")),
+        "{:?}",
+        report.ddl
+    );
+    assert_eq!(fields(&facade), base + 1);
+    assert_eq!(
+        held.entity("relink.RelinkThing").unwrap().fields.len(),
+        base,
+        "the call that took the old model keeps it"
+    );
+    drop(held);
+
+    // finds on other threads while the model is relinked back and forth
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let facade = facade.clone();
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut seen = 0usize;
+                let base = base;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let count = facade
+                        .with_entity("relink.RelinkThing", |entity, _, model| {
+                            // the definition and the model it came with are one model
+                            assert_eq!(
+                                model.entity("relink.RelinkThing").unwrap().fields.len(),
+                                entity.fields.len()
+                            );
+                            Ok(entity.fields.len())
+                        })
+                        .unwrap();
+                    assert!(count == base + 1 || count == base + 2, "{count}");
+                    seen += 1;
+                }
+                seen
+            })
+        })
+        .collect();
+    for round in 0..10 {
+        let extra = if round % 2 == 0 {
+            "<field name=\"dueDate\" type=\"date\"/><field name=\"note\" type=\"text-medium\"/>"
+        } else {
+            "<field name=\"dueDate\" type=\"date\"/>"
+        };
+        std::fs::write(&file, entities(extra)).unwrap();
+        facade.relink(&[file.clone()]).unwrap();
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for reader in readers {
+        assert!(reader.join().unwrap() > 0);
+    }
+    assert_eq!(fields(&facade), base + 1);
+
+    std::fs::write(&file, "<entities><entity entity-name=").unwrap();
+    assert!(facade.relink(&[file.clone()]).is_err());
+    assert_eq!(
+        fields(&facade),
+        base + 1,
+        "a file that does not parse keeps the model there was"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

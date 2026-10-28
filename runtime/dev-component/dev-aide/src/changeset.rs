@@ -47,8 +47,13 @@ fn owned(context: &Context, approval_id: &str) -> Result<approval::ApprovalView,
     Ok(view)
 }
 
-/// The overlay of a preview token: `approval:<approvalId>`, a pending or handed-off change set of the current user.
+/// The overlay of a preview token: `approval:<approvalId>`, a pending or handed-off change set of the current user, or
+/// `buffer:<id>`, a Design frame's canvas buffer.
 fn preview_overlay(factory: &Arc<ExecutionContextFactory>, token: &str) -> Option<Overlay> {
+    // the screen builder's Design frame: the user's unsaved texts (plans/design-dev-aide.md 11.2)
+    if let Some(id) = token.strip_prefix("buffer:") {
+        return crate::screens::buffer_overlay(factory, id);
+    }
     let approval_id = token.strip_prefix("approval:")?;
     ExecutionContext::with_current(|ec| {
         let context = Context::of(ec, Tier::View).ok()?;

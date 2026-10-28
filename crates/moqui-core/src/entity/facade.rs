@@ -85,7 +85,8 @@ pub(crate) struct Inner {
     pub(crate) model: SharedModel,
     pub(crate) framework_dir: std::path::PathBuf,
     /// The `entity` directories of the components, after the framework's: definitions and `*.eecas.xml`.
-    pub(crate) component_entity_dirs: Vec<std::path::PathBuf>,
+    /// Set again by [`EntityFacade::relink`] when a component's `entity` directory appears (a site's first entity file).
+    pub(crate) component_entity_dirs: RwLock<Vec<std::path::PathBuf>>,
     pub(crate) default_group: String,
     pub(crate) groups: HashMap<String, GroupRuntime>,
     /// The OTel `db.system.name` the groups share, for SQL spans and metrics; `None` when they differ.
@@ -289,9 +290,9 @@ impl EntityFacade {
         };
         Ok(Self {
             inner: Arc::new(Inner {
-                model: SharedModel::new(model),
+                model: SharedModel::new(model, conf.write_string()),
                 framework_dir: framework_dir.to_path_buf(),
-                component_entity_dirs: component_entity_dirs.to_vec(),
+                component_entity_dirs: RwLock::new(component_entity_dirs.to_vec()),
                 default_group: default_group.to_string(),
                 groups: runtimes,
                 db_system,
@@ -325,7 +326,7 @@ impl EntityFacade {
     /// Every `entity` directory of the model: the framework's, then each component's.
     pub fn entity_dirs(&self) -> Vec<std::path::PathBuf> {
         let mut out = vec![self.inner.framework_dir.join("entity")];
-        out.extend(self.inner.component_entity_dirs.iter().cloned());
+        out.extend(read(&self.inner.component_entity_dirs).iter().cloned());
         out
     }
 
@@ -339,8 +340,14 @@ impl EntityFacade {
     pub(crate) fn model_paths(&self) -> Vec<std::path::PathBuf> {
         let mut out = vec![self.inner.framework_dir.join("entity")];
         out.extend(self.inner.entity_files.iter().cloned());
-        out.extend(self.inner.component_entity_dirs.iter().cloned());
+        out.extend(read(&self.inner.component_entity_dirs).iter().cloned());
         out
+    }
+
+    /// Set the components' `entity` directories the model is read from, before a [`Self::relink`]: a component whose
+    /// directory appeared since the start (its first entity file) is read too.
+    pub fn set_component_entity_dirs(&self, dirs: Vec<std::path::PathBuf>) {
+        *write(&self.inner.component_entity_dirs) = dirs;
     }
 
     /// Whether the datasource of `group` (the default group's when it has none) says `sequence-primary-use-uuid`, as
@@ -363,6 +370,12 @@ impl EntityFacade {
         let entry = slots.entry(TypeId::of::<T>()).or_insert_with(|| Box::new(init()));
         let value = entry.downcast_mut::<T>().expect("slot type matches its TypeId");
         body(value)
+    }
+
+    /// Drop the slot of `T`, so its next use starts it again: a cache read from the entity model, when the model is
+    /// swapped (plans/design-dev-aide.md F5).
+    pub(crate) fn drop_slot<T: Any + Send + Sync + 'static>(&self) {
+        write(&self.inner.slots).remove(&TypeId::of::<T>());
     }
 
     /// [`Self::with_slot`] for a lookup: `body` reads the slot alongside other threads reading it. `init` runs once
@@ -606,7 +619,7 @@ impl EntityFacade {
     }
 
     pub(crate) fn with_model<T>(&self, body: impl FnOnce(&EntityModel) -> T) -> T {
-        body(self.inner.model.model())
+        body(&self.inner.model.model())
     }
 
     /// `body` with the definition of `name`, from the file model or else built at runtime ([`super::derived`]), the
@@ -617,14 +630,14 @@ impl EntityFacade {
         body: impl FnOnce(&EntityDefinition, &Dialect, &EntityModel) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let model = self.inner.model.model();
-        let entity = self.definition(name)?;
+        let entity = self.definition(&model, name)?;
         let runtime = self.group_runtime(entity.group.as_deref())?;
-        body(&entity, &runtime.dialect, model)
+        body(&entity, &runtime.dialect, &model)
     }
 
-    /// The file model's definition of `name`, or else one built at runtime. The overlay's lock is not held after this.
-    fn definition(&self, name: &str) -> Result<Definition<'_>, Error> {
-        match self.inner.model.model().entity(name) {
+    /// `model`'s definition of `name`, or else one built at runtime. The overlay's lock is not held after this.
+    fn definition<'a>(&self, model: &'a EntityModel, name: &str) -> Result<Definition<'a>, Error> {
+        match model.entity(name) {
             Ok(entity) => Ok(Definition::File(entity)),
             Err(err) => super::derived::lookup(self, name).map(Definition::Derived).ok_or(err),
         }
@@ -659,7 +672,7 @@ impl EntityFacade {
         body: impl FnOnce(&EntityDefinition, &Dialect, &EntityModel, &TransactionManager) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let model = self.inner.model.model();
-        let entity = self.definition(name)?;
+        let entity = self.definition(&model, name)?;
         let runtime = if use_clone {
             let group = entity.group.as_deref().unwrap_or(self.inner.default_group.as_str());
             let prefix = format!("{group}#clone");
@@ -677,7 +690,7 @@ impl EntityFacade {
         } else {
             self.group_runtime(entity.group.as_deref())?
         };
-        body(&entity, &runtime.dialect, model, &runtime.transactions)
+        body(&entity, &runtime.dialect, &model, &runtime.transactions)
     }
 
     /// `getDatabaseConfName`: the `database-list` name of the database an entity's group is on (`postgres` for the

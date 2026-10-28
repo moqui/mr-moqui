@@ -52,9 +52,12 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>
+            <parameter name="missingOk" type="Boolean"><description>A file that is not there answers missing (and
+                whether it may be made) rather than an error: a view's companion file, made on its first save.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="path"/>
+            <parameter name="missing" type="Boolean"/>
             <parameter name="text"/>
             <parameter name="hash"/>
             <parameter name="size" type="Long"/>

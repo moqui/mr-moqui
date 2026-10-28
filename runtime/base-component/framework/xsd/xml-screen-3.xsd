@@ -646,11 +646,14 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="page-action"><xs:annotation><xs:documentation>
         An action of the Assist drawer's header on every app page of a user who may open this app: it opens the drawer with
         the agent named, whose suggested prompts for the page follow (the dev-aide's "Customize this screen" on a dev
-        instance, plans/design-dev-aide.md 3.5). A user without the agent is not offered it.
+        instance, plans/design-dev-aide.md 3.5). A user without the agent is not offered it. With screen instead, it opens
+        that screen of this app (a path under its root) with the page's path and query as the page parameter (the
+        dev-aide's "Open in screen builder").
     </xs:documentation></xs:annotation><xs:complexType>
         <xs:attribute name="label" type="xs:string" use="required"/>
         <xs:attribute name="icon" type="xs:string"/>
-        <xs:attribute name="agent" type="xs:string" use="required"/>
+        <xs:attribute name="agent" type="xs:string"/>
+        <xs:attribute name="screen" type="xs:string"/>
         <xs:attribute name="sequence" type="xs:integer"/>
     </xs:complexType></xs:element>
 

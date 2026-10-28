@@ -138,6 +138,9 @@ fn build<'js>(
     node.with_text(|text| node_obj.set("text", text.unwrap_or_default()))
         .map_err(js_error)?;
     node_obj.set("attrs", attrs_object(ctx, node)?).map_err(js_error)?;
+    if let Some(stamp) = node.attribute(crate::screen::stamp::ATTRIBUTE) {
+        node_obj.set("src", stamp).map_err(js_error)?;
+    }
     node_obj.set("inert", inert).map_err(js_error)?;
     if let Some(parent) = parent {
         node_obj.set("parent", parent.clone()).map_err(js_error)?;
@@ -179,10 +182,17 @@ fn run<'js>(ctx: &Ctx<'js>, walk: &Walk<'_, 'js>, node_obj: &Object<'js>) -> Res
         macro_name = fallback;
     }
     let function: Function = walk.macros.get(macro_name).map_err(js_error)?;
-    let source: String = function
+    let mut source: String = function
         .call((node_obj.clone(), combined))
         .catch(ctx)
         .map_err(|caught| Error::new(caught.to_string()))?;
+    // a stamped widget names its source to the render before its macro writes (F10)
+    if let Ok(Some(stamp)) = node_obj.get::<_, Option<String>>("src") {
+        if crate::screen::stamp::STAMPED.contains(&name.as_str()) && !source.is_empty() {
+            let literal = serde_json::to_string(&stamp).unwrap_or_default();
+            source = format!("sri.stamp({literal});\n{source}sri.stamp(null);\n");
+        }
+    }
     node_obj.set("source", source.clone()).map_err(js_error)?;
     Ok(source)
 }
@@ -191,7 +201,8 @@ fn attrs_object<'js>(ctx: &Ctx<'js>, node: &MNode) -> Result<Object<'js>, Error>
     let attrs = Object::new(ctx.clone()).map_err(js_error)?;
     let mut set = Ok(());
     node.for_each_attribute(|key, value| {
-        if set.is_ok() {
+        // a source stamp is the node's `src`, not one of its attributes, so no widget writes it (F10)
+        if set.is_ok() && key != crate::screen::stamp::ATTRIBUTE {
             set = attrs.set(key, value);
         }
     });

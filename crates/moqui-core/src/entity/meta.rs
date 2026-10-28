@@ -26,7 +26,7 @@ use moqui_db::dialect::Dialect;
 use moqui_db::sql::{
     add_column, create_fk_index, create_foreign_key, create_index, create_table, drop_fts_index,
     foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name, is_mysql, is_sqlite,
-    legacy_name, physical_column_name, physical_name,
+    legacy_name, physical_column_name, physical_name, quote_ident,
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
@@ -90,6 +90,148 @@ impl EntityFacade {
 
     pub fn check_all_tables(&self) -> Result<(), Error> {
         self.meta().check_all()
+    }
+
+    /// Check the tables of `names` whatever their groups' `startup-add-missing` and `runtime-add-missing` say, and
+    /// answer the DDL statements that ran: the dev tools' check after an entity file changed (plans/design-dev-aide.md
+    /// 8.2). Additive only, as every check is: a missing table is created, missing columns, indexes and foreign keys
+    /// added.
+    pub fn check_tables_ddl(&self, names: &[&str]) -> Result<Vec<String>, Error> {
+        if self.inner.tables.model_only.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
+        DDL_LOG.with(|log| *log.borrow_mut() = Some(Vec::new()));
+        let result = self.meta().run(names, true, false);
+        let ran = DDL_LOG.with(|log| log.borrow_mut().take()).unwrap_or_default();
+        result.map(|()| ran)
+    }
+
+    /// The SQL of a change the table check never makes (plans/design-dev-aide.md 8.2), for a developer to run on a
+    /// dev database after reading it: `drop-column` (a `column` no field names), `change-type` (the column of `field`
+    /// to the field's type now), `copy-column` (the data of `column` into the column of `field`, then `column`
+    /// dropped: a renamed field keeping its data) and `recreate-table` (dropped and created again, its rows lost).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown action, a field the entity does not have, or a change the database cannot make
+    /// in place (a type change on SQLite).
+    pub fn plan_ddl(&self, entity_name: &str, action: &str, field: &str, column: &str) -> Result<Vec<String>, Error> {
+        self.with_entity(entity_name, |entity, dialect, model| {
+            if entity.is_view {
+                return Err(Error::new(format!("{entity_name} is a view entity and has no table")));
+            }
+            let table = quote_ident(dialect, &physical_name(dialect, &entity.table_name));
+            let field_of = |name: &str| {
+                entity
+                    .fields
+                    .iter()
+                    .find(|have| have.name == name)
+                    .ok_or_else(|| Error::new(format!("{entity_name} has no field {name}")))
+            };
+            let column_ident = |name: &str| quote_ident(dialect, &physical_column_name(dialect, name));
+            let raw_column = |name: &str| {
+                if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+                    return Err(Error::new(format!("{name:?} is not a column name")));
+                }
+                Ok(quote_ident(dialect, name))
+            };
+            match action {
+                "drop-column" => Ok(vec![format!("ALTER TABLE {table} DROP COLUMN {}", raw_column(column)?)]),
+                "change-type" => {
+                    let field = field_of(field)?;
+                    let sql_type = dialect.sql_type(&field.field_type).ok_or_else(|| {
+                        Error::new(format!("no SQL type for {} on {}", field.field_type, dialect.name))
+                    })?;
+                    let name = column_ident(&field.column_name);
+                    if is_sqlite(dialect) {
+                        return Err(Error::new(
+                            "SQLite cannot change a column's type in place; recreate the table",
+                        ));
+                    }
+                    Ok(vec![if is_mysql(dialect) {
+                        format!("ALTER TABLE {table} MODIFY {name} {sql_type}")
+                    } else if dialect.name.starts_with("postgres") {
+                        format!("ALTER TABLE {table} ALTER COLUMN {name} TYPE {sql_type} USING {name}::{sql_type}")
+                    } else {
+                        format!("ALTER TABLE {table} ALTER COLUMN {name} {sql_type}")
+                    }])
+                }
+                "copy-column" => {
+                    let field = field_of(field)?;
+                    let from = raw_column(column)?;
+                    Ok(vec![
+                        format!("UPDATE {table} SET {} = {from}", column_ident(&field.column_name)),
+                        format!("ALTER TABLE {table} DROP COLUMN {from}"),
+                    ])
+                }
+                "recreate-table" => Ok(vec![
+                    format!("DROP TABLE {table}"),
+                    create_table(entity, model, dialect)?,
+                ]),
+                other => Err(Error::new(format!("no DDL action {other}"))),
+            }
+        })
+    }
+
+    /// The table of an entity as its database names it (`example` on Postgres for `EXAMPLE`); `None` for an entity
+    /// not defined or a view.
+    #[must_use]
+    pub fn with_entity_table(&self, entity_name: &str) -> Option<String> {
+        self.with_entity(entity_name, |entity, dialect, _| {
+            Ok((!entity.is_view).then(|| physical_name(dialect, &entity.table_name)))
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// The entity group an entity is in: its own, or the default group.
+    #[must_use]
+    pub fn group_of(&self, entity_name: &str) -> Option<String> {
+        let default_group = self.inner.default_group.clone();
+        self.with_entity(entity_name, |entity, _, _| {
+            Ok(entity.group.clone().unwrap_or(default_group))
+        })
+        .ok()
+    }
+
+    /// The columns of an entity's table as the database has them, each with its SQL type, in their order; empty when
+    /// there is no table. For the entity view's compare of fields and columns.
+    pub fn table_columns(&self, entity_name: &str) -> Result<Vec<(String, String)>, Error> {
+        if self.inner.tables.model_only.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
+        let (dialect, table, tx) = self.with_group(entity_name, |entity, dialect, _, tx| {
+            Ok((dialect.clone(), entity.table_name.clone(), tx.clone()))
+        })?;
+        let table = physical_name(&dialect, &table);
+        let (sql, params) = if is_sqlite(&dialect) {
+            (
+                "SELECT name, type FROM pragma_table_info(?)".to_string(),
+                vec![Value::string(&table)],
+            )
+        } else {
+            (
+                format!(
+                    "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = {} AND {} ORDER BY ordinal_position",
+                    schema_expr(&dialect),
+                    table_predicate(&dialect)
+                ),
+                vec![Value::string(&table)],
+            )
+        };
+        let rows = query_tx(&tx, &sql, &params)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let text = |at: usize| {
+                    row.columns
+                        .get(at)
+                        .map(|(_, value)| moqui_lib::object::to_plain_string(value))
+                        .unwrap_or_default()
+                };
+                (text(0), text(1))
+            })
+            .collect())
     }
 
     /// Whether the entity's table is in the database, asked of the database. A view asks of its members: true when
@@ -498,6 +640,7 @@ fn apply(
             Ok(Some((sql, table, columns))) => match execute_script(conn, &sql) {
                 Ok(()) => {
                     catalog_note(&table, &columns);
+                    note_ddl(&sql);
                     counts.tables_created += 1;
                     created.insert(name.as_str());
                     tracing::info!("Created table {table} for entity {name} in group {group}");
@@ -895,11 +1038,23 @@ fn planned<T>(statements: Result<Vec<T>, Error>, what: &str, name: &str, counts:
     }
 }
 
+/// Keep `sql` for a [`EntityFacade::check_tables_ddl`] running on this thread.
+fn note_ddl(sql: &str) {
+    DDL_LOG.with(|log| {
+        if let Some(ran) = log.borrow_mut().as_mut() {
+            ran.push(sql.trim().to_string());
+        }
+    });
+}
+
 /// True when the statement ran. An object that already exists is false; a failed statement is logged,
 /// counted and false, as Java's `runSqlUpdate` does.
 fn run_statement(conn: &mut dyn DbConnection, sql: &str, what: &str, counts: &mut Counts) -> bool {
     match execute_conn(conn, sql, &[]) {
-        Ok(_) => true,
+        Ok(_) => {
+            note_ddl(sql);
+            true
+        }
         Err(err) if already_exists(&err) => false,
         Err(err) => {
             tracing::error!(error = %err, sql = %sql, "Could not create {what}");
@@ -910,6 +1065,8 @@ fn run_statement(conn: &mut dyn DbConnection, sql: &str, what: &str, counts: &mu
 }
 
 thread_local! {
+    /// The DDL statements a [`EntityFacade::check_tables_ddl`] ran, while it runs.
+    static DDL_LOG: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
     /// The schema's tables and their columns, read once for a check of many entities. See [`CatalogScope`].
     static CATALOG: std::cell::RefCell<Option<HashMap<String, Vec<String>>>> = const { std::cell::RefCell::new(None) };
 }

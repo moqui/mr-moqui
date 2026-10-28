@@ -120,6 +120,21 @@
         return { from: start, to: before.length - end, insert: after.slice(start, after.length - end) };
     };
 
+    // The editor states kept by buffer key (m-code-editor stateKey), the most recent 50: outside Vue's reactivity, as a
+    // CodeMirror state is not to be proxied.
+    const keptStates = new Map();
+    editor.keepState = (key, kept) => {
+        keptStates.delete(key);
+        keptStates.set(key, kept);
+        while (keptStates.size > 50) keptStates.delete(keptStates.keys().next().value);
+    };
+    editor.takeState = (key) => {
+        const kept = keptStates.get(key);
+        keptStates.delete(key);
+        return kept || null;
+    };
+    editor.dropState = (key) => { keptStates.delete(key); };
+
     // ---- the CodeMirror bundle ----
 
     let loading = null;
@@ -231,7 +246,10 @@
             name: String, form: String, minHeight: { type: String, default: "6rem" }, maxHeight: String, height: String,
             autofocus: Boolean, placeholder: String,
             // more extensions from the page (CM) => extension: a keymap, event handlers, completion sources
-            extensions: Function
+            extensions: Function,
+            // a key of the buffer (a file tab): the editor's state, with its undo history, is kept under it when the editor
+            // unmounts and taken back when one mounts again with the same key and text, so switching tabs keeps history
+            stateKey: String
         },
         emits: ["update:modelValue", "save", "cursor", "ready"],
         data() { return { failed: false, ready: false, text: this.modelValue || "" }; },
@@ -263,7 +281,11 @@
         },
         beforeUnmount() {
             this.unmounted = true;
-            if (this.view) this.view.destroy();
+            if (this.view) {
+                if (this.stateKey && this.owner) editor.keepState(this.stateKey, { state: this.view.state, compartments: this.compartments, owner: this.owner });
+                this.owner.vm = null;
+                this.view.destroy();
+            }
         },
         methods: {
             parts(CM) {
@@ -276,6 +298,21 @@
                 };
             },
             build(CM) {
+                // a kept state of this buffer: its extensions call the editor through its owner, which is now this one
+                const kept = this.stateKey ? editor.takeState(this.stateKey) : null;
+                if (kept && kept.state.doc.toString() === this.text) {
+                    this.cm = CM;
+                    this.compartments = kept.compartments;
+                    this.owner = kept.owner;
+                    this.owner.vm = this;
+                    this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
+                    ["language", "theme", "readOnly", "wrap", "highlight"].forEach((key) => this.reconfigure(key));
+                    if (this.autofocus) this.view.focus();
+                    this.ready = true;
+                    this.$emit("ready", this.view);
+                    return;
+                }
+                const owner = this.owner = { vm: this };
                 const parts = this.parts(CM);
                 this.compartments = {};
                 const configured = Object.keys(parts).map((key) => {
@@ -285,22 +322,24 @@
                 const extensions = [
                     this.lineNumbers ? CM.lineNumbers() : [],
                     basics(CM),
-                    keys(CM, [{ key: "Mod-s", preventDefault: true, run: (view) => { this.$emit("save", view.state.doc.toString()); return true; } }]),
+                    keys(CM, [{ key: "Mod-s", preventDefault: true, run: (view) => { if (owner.vm) owner.vm.$emit("save", view.state.doc.toString()); return true; } }]),
                     configured,
                     this.placeholder ? CM.placeholder(this.placeholder) : [],
                     this.extensions ? this.extensions(CM) : [],
-                    this.lint ? [CM.linter((view) => Promise.resolve(this.lint(view.state.doc.toString()))
+                    this.lint ? [CM.linter((view) => Promise.resolve(owner.vm && owner.vm.lint ? owner.vm.lint(view.state.doc.toString()) : [])
                         .then((problems) => editor.diagnostics(problems, view.state.doc.toString()))
                         .catch(() => []), { delay: 500 }), CM.lintGutter()] : [],
                     CM.EditorView.updateListener.of((update) => {
+                        const vm = owner.vm;
+                        if (!vm) return;
                         if (update.docChanged) {
-                            this.text = update.state.doc.toString();
-                            this.$emit("update:modelValue", this.text);
+                            vm.text = update.state.doc.toString();
+                            vm.$emit("update:modelValue", vm.text);
                         }
                         if (update.docChanged || update.selectionSet) {
                             const pos = update.state.selection.main.head;
                             const line = update.state.doc.lineAt(pos);
-                            this.$emit("cursor", { pos, line: line.number, column: pos - line.from + 1 });
+                            vm.$emit("cursor", { pos, line: line.number, column: pos - line.from + 1 });
                         }
                     })
                 ];

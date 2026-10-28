@@ -74,17 +74,56 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="xmlOp"><service-call name="org.moqui.impl.DevToolsServices.apply#XmlOps" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="outline" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#XmlOutline" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="schema" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#SchemaDigest" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="definition" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#Definition" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="refs" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#Refs" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="artifactDetail" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#ArtifactDetail" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="artifacts" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.search#Artifacts" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="changeSet" read-only="true"><service-call name="org.moqui.devaide.ChangeSetServices.get#ChangeSet" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="completeReview"><service-call name="org.moqui.devaide.ChangeSetServices.complete#Review" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <!-- the entity view (EntityServices) -->
+    <transition name="entityView" read-only="true"><service-call name="org.moqui.devaide.EntityServices.get#EntityView" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="planDdl" read-only="true"><service-call name="org.moqui.devaide.EntityServices.plan#EntityDdl" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="runDdl"><service-call name="org.moqui.devaide.EntityServices.run#EntityDdl" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="loadSeed"><service-call name="org.moqui.devaide.EntityServices.load#SeedFile" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <!-- the screen view (ScreenServices) -->
+    <transition name="screenChildren" read-only="true"><service-call name="org.moqui.devaide.ScreenServices.get#ScreenChildren" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="screenView" read-only="true"><service-call name="org.moqui.devaide.ScreenServices.get#ScreenView" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="canvasBuffer"><service-call name="org.moqui.devaide.ScreenServices.put#CanvasBuffer" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stamps"><service-call name="org.moqui.devaide.ScreenServices.resolve#Stamps" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="createSubscreen"><service-call name="org.moqui.devaide.ScreenServices.create#Subscreen" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <!-- the service view, the ECA view and the composer (ServiceWriterServices) -->
+    <transition name="serviceView" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.get#ServiceView" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="tryService"><service-call name="org.moqui.devaide.ServiceWriterServices.try#Service" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="trySnippet"><service-call name="org.moqui.devaide.ServiceWriterServices.try#Snippet" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="saveTrySpec"><service-call name="org.moqui.devaide.ServiceWriterServices.save#TrySpec" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="runSpec"><service-call name="org.moqui.devaide.ServiceWriterServices.run#Spec" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="generatedJs"><service-call name="org.moqui.devaide.ServiceWriterServices.get#GeneratedJs" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ecaRules" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
