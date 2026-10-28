@@ -150,6 +150,7 @@ pub(super) fn send_template(
         Ok(message_id) => message_id,
         Err(text) => return fail_with(text, &email_message_id),
     };
+    let thread = template_thread_fields(parameters);
     let mut letter = Letter {
         subject: headers.subject.clone(),
         from_address: headers.from_address.clone(),
@@ -157,15 +158,18 @@ pub(super) fn send_template(
         to: split_addresses(&param_text(parameters, "toAddresses")),
         cc: split_addresses(&cc),
         bcc: split_addresses(&bcc),
-        reply_to: split_addresses(&field_text(&template, "replyToAddresses")),
+        reply_to: thread
+            .reply_to
+            .clone()
+            .unwrap_or_else(|| split_addresses(&field_text(&template, "replyToAddresses"))),
         bounce: field_text(&template, "bounceAddress"),
         body,
         body_text,
         attachments: Vec::new(),
         inline: Vec::new(),
         message_id,
-        in_reply_to: String::new(),
-        references: String::new(),
+        in_reply_to: thread.in_reply_to.clone(),
+        references: thread.references.clone(),
         date: None,
         extra_headers: template_extra_headers(parameters),
     };
@@ -659,6 +663,14 @@ fn insert_draft(
         let extra = template_extra_headers(parameters);
         if !extra.is_empty() {
             set_text(&mut row, "headersString", &header_block(&extra));
+        }
+        // Kept on the message, so a send again of it threads the same way.
+        let thread = template_thread_fields(parameters);
+        if !thread.in_reply_to.is_empty() {
+            set_text(&mut row, "inReplyTo", &thread.in_reply_to);
+        }
+        if !thread.references.is_empty() {
+            set_text(&mut row, "referencesHeader", &thread.references);
         }
         row.create(facade)?;
         Ok(id)
@@ -1184,6 +1196,62 @@ pub(super) fn template_extra_headers(parameters: &BTreeMap<String, Value>) -> Ve
         out.push((name.to_string(), value));
     }
     out
+}
+
+/// The threading and reply fields a template send may set: `inReplyTo` (one message ID), `references` (message IDs
+/// separated by spaces, the oldest dropped first to fit one line) and `replyToAddresses` (replacing the template's).
+/// A value that is not a well-formed message ID or address list is logged and left out, like an unsafe extra header.
+pub(super) struct ThreadFields {
+    pub in_reply_to: String,
+    pub references: String,
+    pub reply_to: Option<Vec<String>>,
+}
+
+fn is_message_id(value: &str) -> bool {
+    value.len() > 4
+        && value.len() < 250
+        && value.starts_with('<')
+        && value.ends_with('>')
+        && value[1..value.len() - 1].contains('@')
+        && value[1..value.len() - 1]
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !b"<>\\\",:;[]".contains(&byte))
+}
+
+pub(super) fn template_thread_fields(parameters: &BTreeMap<String, Value>) -> ThreadFields {
+    let in_reply_to = param_text(parameters, "inReplyTo").trim().to_string();
+    let in_reply_to = if in_reply_to.is_empty() || is_message_id(&in_reply_to) {
+        in_reply_to
+    } else {
+        tracing::warn!("inReplyTo is not a message ID, left out");
+        String::new()
+    };
+    let given = param_text(parameters, "references");
+    let mut ids: Vec<&str> = given.split_whitespace().collect();
+    if ids.iter().any(|id| !is_message_id(id)) {
+        tracing::warn!("references has a value that is not a message ID, left out");
+        ids.clear();
+    }
+    while ids.iter().map(|id| id.len() + 1).sum::<usize>() > 900 {
+        ids.remove(0);
+    }
+    let reply = param_text(parameters, "replyToAddresses");
+    let reply_to = if reply.trim().is_empty() {
+        None
+    } else {
+        let list = split_addresses(&reply);
+        if reply.contains(['\r', '\n']) || list.iter().any(|address| !address.contains('@')) {
+            tracing::warn!("replyToAddresses is not an address list, left out");
+            None
+        } else {
+            Some(list)
+        }
+    };
+    ThreadFields {
+        in_reply_to,
+        references: ids.join(" "),
+        reply_to,
+    }
 }
 
 /// A header block of `headers` for `EmailMessage.headersString`, a line each.

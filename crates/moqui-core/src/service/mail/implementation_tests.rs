@@ -216,6 +216,67 @@ fn a_template_send_adds_the_list_headers_and_keeps_them() {
 }
 
 #[test]
+fn a_template_send_threads_and_replies_as_the_caller_says() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[("emailServerId", "TEST_THREAD"), ("smtpHost", "smtp.example.com")],
+    );
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailTemplate",
+        &[
+            ("emailTemplateId", "THREAD"),
+            ("emailServerId", "TEST_THREAD"),
+            ("fromAddress", "forum@example.com"),
+            ("replyToAddresses", "template@example.com"),
+            ("subject", "Reply"),
+        ],
+    );
+    let sink = SinkGuard::install();
+    let send = |in_reply_to: &str, references: &str, reply_to: &str| {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("emailTemplateId".into(), Value::string("THREAD"));
+        params.insert("toAddresses".into(), Value::string("member@example.com"));
+        params.insert("body".into(), Value::string("<p>Reply</p>"));
+        params.insert("inReplyTo".into(), Value::string(in_reply_to));
+        params.insert("references".into(), Value::string(references));
+        params.insert("replyToAddresses".into(), Value::string(reply_to));
+        crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send")
+    };
+    let out = send(
+        "<b@forum.example.com>",
+        "<a@forum.example.com> <b@forum.example.com>",
+        "reply+t1@forum.example.com",
+    );
+    send("not an id", "<a@x> bad", "");
+    let errors = context.message().errors().join("\n");
+    assert!(errors.is_empty(), "{errors}");
+    let sent = sink.messages();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].in_reply_to, "<b@forum.example.com>");
+    assert_eq!(sent[0].references, "<a@forum.example.com> <b@forum.example.com>");
+    assert_eq!(sent[0].reply_to, ["reply+t1@forum.example.com"]);
+    assert!(sent[1].in_reply_to.is_empty() && sent[1].references.is_empty());
+    assert_eq!(sent[1].reply_to, ["template@example.com"]);
+    let id = moqui_lib::object::to_plain_string(out.get("emailMessageId").expect("id"));
+    let row = facade
+        .find(MESSAGE)
+        .unwrap()
+        .eq("emailMessageId", Value::string(&id))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(field_text(&row, "inReplyTo"), "<b@forum.example.com>");
+}
+
+#[test]
 fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
     let _lock = lock_tests();
     let (facade, context) = entered_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);

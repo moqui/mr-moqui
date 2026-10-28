@@ -26,6 +26,12 @@ along with this software (see the LICENSE.md file). If not, see
                 List-Unsubscribe and List-Unsubscribe-Post (RFC 2369, RFC 8058). A name the message's own fields write
                 (From, To, Subject, Message-ID, Content-Type and the like) or a value with a line break is left out. They are
                 kept in the EmailMessage's headersString, so a send again keeps the List- headers.</description></parameter>
+            <parameter name="inReplyTo" allow-html="any"><description>The Message-ID this one replies to, with its angle brackets. A value
+                that is not a message ID is left out.</description></parameter>
+            <parameter name="references" allow-html="any"><description>Message IDs of the thread, oldest first, separated by spaces; the
+                oldest are dropped to keep the header to one line.</description></parameter>
+            <parameter name="replyToAddresses" allow-html="any"><description>Comma separated Reply-To addresses that replace the template's,
+                such as a scoped reply address. A value with a line break or without addresses is left out.</description></parameter>
             <parameter name="createEmailMessage" type="Boolean" default="true"/>
             <parameter name="emailTypeEnumId"/>
             <parameter name="fromUserId"/><parameter name="toUserId"/>

@@ -2002,7 +2002,10 @@ fn text_diff<'js>(
     to_name: String,
 ) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
-        host_to_js(&ctx, crate::resource::textdiff::diff(&old, &new, &from_name, &to_name).to_value())
+        host_to_js(
+            &ctx,
+            crate::resource::textdiff::diff(&old, &new, &from_name, &to_name).to_value(),
+        )
     })
 }
 
