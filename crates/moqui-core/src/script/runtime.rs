@@ -108,6 +108,9 @@ const MAX_CACHED_TEMPLATES: usize = 4096;
 const MAX_CACHED_TEMPLATE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CACHED_UNIT_BYTES: usize = 8 * 1024 * 1024;
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+// Leave room for a new render's transient values and compilation. Source-byte cache limits cannot predict bytecode
+// size, and a screen may catch an allocation error before with_context sees it and releases the caches.
+const CACHE_HEAP_PRESSURE: i64 = (MEMORY_LIMIT * 3 / 4) as i64;
 /// The stack the outermost script on a thread may use, below the 2 MiB of a service worker. QuickJS counts an engine's
 /// stack from where it is entered. Nested scripts share this budget plus [`NESTED_STACK`], capped at [`NESTED_STACK`]
 /// per engine except on larger request workers. Less than [`MIN_NESTED_STACK`] left fails before entering an engine.
@@ -388,6 +391,7 @@ fn stack_budget(depth: usize) -> Result<usize, Error> {
 
 /// Persistents drop before the context, and the context drops before the runtime.
 struct Engine {
+    cache_pressure_check: Cell<u8>,
     /// Lists, maps and decimals a running script read by bare name. The script mutates the lists and maps, so
     /// they are written back to the stack at the end of the run and before a host call, when changed.
     tracked: RefCell<HashMap<String, Persistent<JsValue<'static>>>>,
@@ -422,6 +426,24 @@ struct Engine {
 }
 
 impl Engine {
+    /// Reclaim cached code before the hard heap limit interrupts a valid script. Live user values remain rooted.
+    fn reclaim_cache_pressure(&self) -> bool {
+        let used = || {
+            let usage = self.runtime.memory_usage();
+            usage.malloc_size.max(usage.memory_used_size)
+        };
+        if used() < CACHE_HEAP_PRESSURE {
+            return false;
+        }
+        self.runtime.run_gc();
+        if used() < CACHE_HEAP_PRESSURE {
+            return false;
+        }
+        self.clear_caches();
+        self.runtime.run_gc();
+        true
+    }
+
     /// Drop the compiled code and the objects kept in this engine, to free its heap.
     fn clear_caches(&self) {
         self.templates.borrow_mut().clear();
@@ -767,6 +789,13 @@ fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
             started
         }
     };
+    // Computing heap usage walks the heap; do it periodically, not for every field expression. The soft limit leaves
+    // 16 MiB for code and values made between checks. The hard limit and its existing error recovery still apply.
+    let check = engine.cache_pressure_check.get();
+    engine.cache_pressure_check.set((check + 1) % 16);
+    if check == 0 {
+        engine.reclaim_cache_pressure();
+    }
     engine.runtime.set_max_stack_size(stack);
     let _limit = (depth == 0).then(ScriptLimit::arm);
     DEPTH.with(|current| current.set(depth + 1));
@@ -980,6 +1009,7 @@ impl Engine {
         let context = Context::full(&runtime).map_err(js_error)?;
         let helpers = context.with(|ctx| install_context(&ctx))?;
         Ok(Self {
+            cache_pressure_check: Cell::new(0),
             tracked: RefCell::new(HashMap::new()),
             released: RefCell::new(HashMap::new()),
             templates: RefCell::new(super::bounded::BoundedMap::with_bytes(
