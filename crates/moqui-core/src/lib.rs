@@ -27,8 +27,8 @@ pub mod entity;
 pub mod l10n;
 #[cfg(feature = "llm")]
 pub mod llm;
-pub mod native;
 pub mod monitor;
+pub mod native;
 pub mod notify;
 pub mod outbound;
 pub mod pim;
@@ -42,10 +42,10 @@ pub mod search;
 pub mod service;
 pub mod sftp;
 pub mod sso;
+pub mod telemetry;
 #[cfg(test)]
 mod testing;
 pub mod testkit;
-pub mod telemetry;
 pub mod transaction;
 pub mod typegen;
 pub mod user;

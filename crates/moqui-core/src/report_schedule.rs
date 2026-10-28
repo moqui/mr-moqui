@@ -695,7 +695,9 @@ fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], optio
                 String::from_utf8_lossy(&bytes).replace('<', "\\u003c")
             )),
             Ok(None) => tracing::error!(path = OUTLINE, "report map outline is missing; drawing maps without it"),
-            Err(error) => tracing::error!(path = OUTLINE, %error, "report map outline failed to load; drawing maps without it"),
+            Err(error) => {
+                tracing::error!(path = OUTLINE, %error, "report map outline failed to load; drawing maps without it")
+            }
         }
     }
     let renderer = resource

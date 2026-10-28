@@ -7,11 +7,10 @@ use moqui_core::{
     native::{NativeComponent, NativeRegistry, Parameters, ServiceInfo},
 };
 use moqui_lib::{error::Error, object::Value};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
-    mpsc,
+    mpsc, Arc, Mutex,
 };
 use std::time::Duration;
 
@@ -39,14 +38,13 @@ fn blocking_rows(
     if let Some((entered, release)) = block {
         // The data service itself is transaction=ignore, as is the report runner. A
         // blocked renderer must leave the lease connection available to other workers.
-        assert!(
-            !ec.factory()
-                .entity()
-                .unwrap()
-                .transactions_for("moqui.screen.ScreenScheduledLock")
-                .unwrap()
-                .in_transaction()
-        );
+        assert!(!ec
+            .factory()
+            .entity()
+            .unwrap()
+            .transactions_for("moqui.screen.ScreenScheduledLock")
+            .unwrap()
+            .in_transaction());
         entered.send(()).unwrap();
         release
             .recv_timeout(Duration::from_secs(15))
@@ -174,12 +172,10 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
             .expect("first worker entered render after claiming lease");
         assert!(!output.exists());
         let current = lock(factory, &id);
-        assert!(
-            current
-                .get("reportRunId")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.is_empty())
-        );
+        assert!(current
+            .get("reportRunId")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty()));
         let second = run(factory, &id).unwrap();
         assert_eq!(second["skipped"], true);
         assert_eq!(

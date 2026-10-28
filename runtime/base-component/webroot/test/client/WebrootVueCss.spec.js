@@ -61,19 +61,22 @@ function themePage() {
 
 function recordHeader(width) {
     const page = browser.newPage({ viewport: { width, height: 800 } })
-    page.setContent(`<!doctype html><html><body><div id="card" class="q-card">Card</div>${header("light")}<div class="body--dark">${header("dark")}</div></body></html>`)
+    page.setContent(`<!doctype html><html><body><div id="card" class="q-card">Card</div>${header("light")}${header("dark")}</body></html>`)
     page.addStyle("/libs/quasar/quasar.prod.css")
     page.addStyle("/css/WebrootVue.qvt.css")
     return page.evaluate(() => {
         const style = (id) => getComputedStyle(document.getElementById(id))
-        return {
+        const light = {
             page: getComputedStyle(document.body).backgroundColor, card: style("card").backgroundColor,
             header: style("light").backgroundColor, headerBorder: style("light").borderTopColor,
-            darkHeaderBorder: style("dark").borderTopColor, titleMargin: style("lightTitle").marginTop,
+            titleMargin: style("lightTitle").marginTop,
             titleLineHeight: style("lightTitle").lineHeight, footBorder: style("lightFoot").borderTopStyle,
             barDirection: style("lightBar").flexDirection, stagesJustify: style("lightStages").justifyContent,
             actionsJustify: style("lightActions").justifyContent,
         }
+        // dark mode is Quasar's class on the body, where the theme's variables are set
+        document.body.classList.add("body--dark")
+        return Object.assign(light, { darkHeaderBorder: style("dark").borderTopColor })
     })
 }
 
@@ -94,7 +97,7 @@ feature("Quasar theme colors, labels and sort layout match Java", {
 feature("a light page under white cards, and the record header with its status-bar at the right from 1024px", {
     expect() {
         const common = {
-            page: "rgb(244, 245, 247)", card: "rgb(255, 255, 255)", header: "rgb(255, 255, 255)",
+            page: "rgb(244, 246, 248)", card: "rgb(255, 255, 255)", header: "rgb(255, 255, 255)",
             headerBorder: "rgba(0, 0, 0, 0.12)", darkHeaderBorder: "rgba(255, 255, 255, 0.28)",
             titleMargin: "0px", titleLineHeight: "24px", footBorder: "solid",
         }

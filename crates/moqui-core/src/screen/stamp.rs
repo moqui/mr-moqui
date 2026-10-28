@@ -116,18 +116,20 @@ pub fn inject(text: &str) -> Cow<'_, str> {
             let name_end = text[start..]
                 .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == ':' || ch == '.'))
                 .map_or(text.len(), |end| start + end);
-            if start < bytes.len() && bytes[start].is_ascii_alphabetic() && name_end > start {
-                if &text[start..name_end] != "template" {
-                    let escaped = stamp.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
-                    let mut out = String::with_capacity(text.len() + escaped.len() + 14);
-                    out.push_str(&text[..name_end]);
-                    out.push_str(" data-m-src=\"");
-                    out.push_str(&escaped);
-                    out.push('"');
-                    out.push_str(&text[name_end..]);
-                    *pending = None;
-                    return Cow::Owned(out);
-                }
+            if start < bytes.len()
+                && bytes[start].is_ascii_alphabetic()
+                && name_end > start
+                && &text[start..name_end] != "template"
+            {
+                let escaped = stamp.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+                let mut out = String::with_capacity(text.len() + escaped.len() + 14);
+                out.push_str(&text[..name_end]);
+                out.push_str(" data-m-src=\"");
+                out.push_str(&escaped);
+                out.push('"');
+                out.push_str(&text[name_end..]);
+                *pending = None;
+                return Cow::Owned(out);
             }
             at = start;
         }

@@ -3291,7 +3291,7 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
     let held = facade.inner.model.model();
 
     std::fs::write(&file, entities("<field name=\"dueDate\" type=\"date\"/>")).unwrap();
-    let report = facade.relink(&[file.clone()]).unwrap();
+    let report = facade.relink(std::slice::from_ref(&file)).unwrap();
     assert_eq!(report.changed, vec!["relink.RelinkThing".to_string()]);
     assert!(
         report
@@ -3343,7 +3343,7 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
             "<field name=\"dueDate\" type=\"date\"/>"
         };
         std::fs::write(&file, entities(extra)).unwrap();
-        facade.relink(&[file.clone()]).unwrap();
+        facade.relink(std::slice::from_ref(&file)).unwrap();
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     for reader in readers {
@@ -3352,7 +3352,7 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
     assert_eq!(fields(&facade), base + 1);
 
     std::fs::write(&file, "<entities><entity entity-name=").unwrap();
-    assert!(facade.relink(&[file.clone()]).is_err());
+    assert!(facade.relink(std::slice::from_ref(&file)).is_err());
     assert_eq!(
         fields(&facade),
         base + 1,

@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::{Act, Component, ComponentState, Line, Span, fit, list, text_of};
+use super::{fit, list, text_of, Act, Component, ComponentState, Line, Span};
 use crate::keys::{Key, KeyPress};
 use crate::theme::Role;
 

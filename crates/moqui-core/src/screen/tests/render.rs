@@ -20,9 +20,9 @@ use std::time::{Duration, SystemTime};
 
 use moqui_lib::object::Value;
 
-use super::{World, fixture_root, request};
+use super::{fixture_root, request, World};
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
-use crate::screen::{RenderOutput, ScreenFacade, ScreenUrlInfo, make_render, serve_at};
+use crate::screen::{make_render, serve_at, RenderOutput, ScreenFacade, ScreenUrlInfo};
 
 /// Render `path` in text mode unless the path names a mode. The screens render the screens below
 /// them, and html has no macro module until a later slice.
@@ -187,11 +187,9 @@ fn make_render_without_a_socket_sends_status_content_type_and_an_empty_body() {
         "{}",
         print.body_text()
     );
-    assert!(
-        print
-            .body_text()
-            .ends_with("<body class=\"letter-portrait\">\n</body></html>\n")
-    );
+    assert!(print
+        .body_text()
+        .ends_with("<body class=\"letter-portrait\">\n</body></html>\n"));
     assert_eq!(as_mode("xsl-fo").body_text(), print.body_text());
     // The render mode can come from the builder or the renderMode parameter instead of the path.
     let by_builder = make_render(context.factory())
@@ -399,8 +397,8 @@ fn a_screen_that_requires_authentication_is_401_for_nobody_and_200_for_a_user() 
 /// The HTTP log reads the bound session after the screen runs: session id, visitor, and username.
 #[test]
 fn a_screen_request_records_the_session_the_visitor_and_the_user() {
-    use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
 
     struct ClearKey;
     impl Drop for ClearKey {
@@ -1226,12 +1224,10 @@ fn subscreens_item_rows_mount_screens_and_a_user_group_limits_them() {
     let denied = render_path("/Admins").unwrap_err();
     assert_eq!(denied.kind(), ErrorKind::Unauthorized, "{denied}");
     // Nor alone (lastStandalone), nor its transitions; the ALL_USERS item still renders alone and runs its transition.
-    assert!(
-        render_standalone("/Mounted")
-            .unwrap()
-            .body_text()
-            .contains("mounted app")
-    );
+    assert!(render_standalone("/Mounted")
+        .unwrap()
+        .body_text()
+        .contains("mounted app"));
     let denied = render_standalone("/Admins").unwrap_err();
     assert_eq!(denied.kind(), ErrorKind::Unauthorized, "{denied}");
     assert!(render_path("/Mounted/peek").unwrap().body_text().contains("peeked"));

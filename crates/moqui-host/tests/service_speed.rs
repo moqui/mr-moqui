@@ -52,7 +52,7 @@ use moqui_core::transaction::PoolConfig;
 use moqui_host::db::entity_facade::{attach, open_entity_facade};
 use moqui_lib::object::Value;
 
-use speed::{DirGuard, Rows, env_usize};
+use speed::{env_usize, DirGuard, Rows};
 
 const TEST: &str = "moqui.test.TestEntity";
 const ENUM: &str = "moqui.basic.Enumeration";

@@ -42,8 +42,13 @@ struct VectorSchema {
 }
 impl Drop for VectorSchema {
     fn drop(&mut self) {
-        assert!(self.schema.starts_with("report_vector_") && self.schema.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-        self.tx.with_reserve(|conn| conn.execute(&format!("DROP SCHEMA {} CASCADE",self.schema), &[])).unwrap();
+        assert!(
+            self.schema.starts_with("report_vector_")
+                && self.schema.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        );
+        self.tx
+            .with_reserve(|conn| conn.execute(&format!("DROP SCHEMA {} CASCADE", self.schema), &[]))
+            .unwrap();
     }
 }
 
@@ -130,20 +135,56 @@ fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
     };
     let factory = gate.server.factory();
     let _vector_schema = vector.then(|| {
-        use moqui_core::{driver::DbDriver, search::SearchBackend, transaction::{PoolConfig, TransactionManager}};
-        let variable = |name: &str| std::env::var(format!("MONITOR_VECTOR_PG_{name}")).unwrap_or_else(|_| panic!("set MONITOR_VECTOR_PG_{name}"));
-        let driver: Arc<dyn DbDriver> = Arc::new(moqui_host::db::postgres::PostgresDriver::tcp_no_tls(
-            variable("USER"), variable("DATABASE"), variable("HOST"), variable("PORT").parse().unwrap(),
-        ).password(variable("PASSWORD")));
-        let tx = TransactionManager::new(driver, PoolConfig { min:0,max:4,reserve:1,..Default::default() }).unwrap();
-        let schema = format!("report_vector_{}_{}", std::process::id(), jiff::Timestamp::now().as_microsecond());
-        let backend = search::postgres::PostgresBackend::open(tx.clone(),Some(&schema)).unwrap().with_semantic(&search::semantic::SemanticConf {
-            enabled:true,dimensions:64,representation:"vector".into(),max_chars:4000,embedder:Some("hash".into())
-        }).unwrap();
-        assert!(backend.capabilities().contains(&search::Capability::Semantic), "configured pgvector capability must actually be enabled");
+        use moqui_core::{
+            driver::DbDriver,
+            search::SearchBackend,
+            transaction::{PoolConfig, TransactionManager},
+        };
+        let variable = |name: &str| {
+            std::env::var(format!("MONITOR_VECTOR_PG_{name}"))
+                .unwrap_or_else(|_| panic!("set MONITOR_VECTOR_PG_{name}"))
+        };
+        let driver: Arc<dyn DbDriver> = Arc::new(
+            moqui_host::db::postgres::PostgresDriver::tcp_no_tls(
+                variable("USER"),
+                variable("DATABASE"),
+                variable("HOST"),
+                variable("PORT").parse().unwrap(),
+            )
+            .password(variable("PASSWORD")),
+        );
+        let tx = TransactionManager::new(
+            driver,
+            PoolConfig {
+                min: 0,
+                max: 4,
+                reserve: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let schema = format!(
+            "report_vector_{}_{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_microsecond()
+        );
+        let backend = search::postgres::PostgresBackend::open(tx.clone(), Some(&schema))
+            .unwrap()
+            .with_semantic(&search::semantic::SemanticConf {
+                enabled: true,
+                dimensions: 64,
+                representation: "vector".into(),
+                max_chars: 4000,
+                embedder: Some("hash".into()),
+            })
+            .unwrap();
+        assert!(
+            backend.capabilities().contains(&search::Capability::Semantic),
+            "configured pgvector capability must actually be enabled"
+        );
         let facade = search::SearchFacade::new(Arc::new(backend), factory.entity().unwrap());
         facade.set_embedder(Some(Arc::new(search::semantic::HashEmbedder::new(64))));
-        search::install(factory,facade);
+        search::install(factory, facade);
         VectorSchema { tx, schema }
     });
     let facade = search::installed(factory).unwrap();
@@ -184,11 +225,25 @@ fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
                 assert_eq!(facade.index_documents(&docs).unwrap(), ids.len());
             }
             if vector {
-                assert_eq!(facade.embed_pending(&search::Target::Index("report_mixed".into()),100,4000).unwrap(), 7);
+                assert_eq!(
+                    facade
+                        .embed_pending(&search::Target::Index("report_mixed".into()), 100, 4000)
+                        .unwrap(),
+                    7
+                );
                 let mut nearest = search::SearchRequest::new(search::Query::MatchAll);
-                nearest.retrieval = search::Retrieval::Semantic(search::hybrid::HybridOptions { text:"SECRET_OTHER_OWNER".into(),..Default::default() });
-                let raw = facade.search(&search::Target::Index("report_mixed".into()), &nearest).unwrap();
-                assert_eq!(raw.hits.first().unwrap().id,"PARTY_OTHER", "the unfiltered nearest result must be denied by the viewer's row policy");
+                nearest.retrieval = search::Retrieval::Semantic(search::hybrid::HybridOptions {
+                    text: "SECRET_OTHER_OWNER".into(),
+                    ..Default::default()
+                });
+                let raw = facade
+                    .search(&search::Target::Index("report_mixed".into()), &nearest)
+                    .unwrap();
+                assert_eq!(
+                    raw.hits.first().unwrap().id,
+                    "PARTY_OTHER",
+                    "the unfiltered nearest result must be denied by the viewer's row policy"
+                );
             }
         }
         let tx = entity.transactions_for("moqui.report.Definition").unwrap();
@@ -379,10 +434,16 @@ fn verify_documents(opensearch_url: Option<&str>, vector: bool) {
                 ranked["retrievalMode"] = json!(mode);
                 ranked["queryString"] = json!("SECRET_OTHER_OWNER");
                 ranked.as_object_mut().unwrap().remove("sort");
-                let page = report::documents(ec,&ranked).unwrap();
+                let page = report::documents(ec, &ranked).unwrap();
                 let hits = page["hits"].as_array().unwrap();
-                assert!(!hits.is_empty(), "{mode} must retrieve authorized candidates despite a denied nearest neighbor: {page}");
-                assert!(hits.iter().all(|hit| ids.contains(hit["id"].as_str().unwrap())), "{mode} row policy must constrain ranking, not only returned bodies: {page}");
+                assert!(
+                    !hits.is_empty(),
+                    "{mode} must retrieve authorized candidates despite a denied nearest neighbor: {page}"
+                );
+                assert!(
+                    hits.iter().all(|hit| ids.contains(hit["id"].as_str().unwrap())),
+                    "{mode} row policy must constrain ranking, not only returned bodies: {page}"
+                );
                 assert!(!page.to_string().contains("SECRET_OTHER_OWNER"));
             }
         }

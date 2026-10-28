@@ -267,7 +267,7 @@ fn resource_read_lines<'js>(
                 } else {
                     current.push(b);
                     // One line may not grow without bound: a file with no line breaks is refused, not read whole.
-                    if (current.len() as u64 > max_bytes) {
+                    if current.len() as u64 > max_bytes {
                         return Err(Exception::throw_message(
                             &ctx,
                             &format!("a line of {location} passes the {max_bytes}-byte limit"),

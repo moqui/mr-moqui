@@ -322,7 +322,11 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         "{ai}"
     );
     // Log patterns group the fixture's three lines into one template.
-    let patterns = open(&link, "/apps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y&queryString=body%3Atui-marker").screen_text(220, 120);
+    let patterns = open(
+        &link,
+        "/apps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y&queryString=body%3Atui-marker",
+    )
+    .screen_text(220, 120);
     assert!(patterns.contains("tui-marker line <*>"), "{patterns}");
     let mut dashboard = open(
         &link,

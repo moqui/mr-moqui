@@ -49,12 +49,12 @@ use std::time::Duration;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::driver::DbDriver;
 use moqui_core::entity::EntityFacade;
-use moqui_core::script::{self, EngineMemory, template};
+use moqui_core::script::{self, template, EngineMemory};
 use moqui_core::transaction::PoolConfig;
 use moqui_host::db::entity_facade::{attach, open_entity_facade};
 use moqui_lib::object::Value;
 
-use speed::{DirGuard, Rows, env_usize};
+use speed::{env_usize, DirGuard, Rows};
 
 const ENUM: &str = "moqui.basic.Enumeration";
 const SERVICES: &str = "jsspeed.JsSpeedServices";

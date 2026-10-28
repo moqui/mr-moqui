@@ -26,13 +26,13 @@ use std::time::{Duration, Instant};
 use crate::components::ComponentState;
 use crate::edit::{self, Edited, Limits};
 use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
-use crate::keys::{Action, Key, KeyMap, KeyPress, MergeSkip, merge_keys};
+use crate::keys::{merge_keys, Action, Key, KeyMap, KeyPress, MergeSkip};
 use crate::layout::PAGE_ROWS;
 use crate::link::{
-    LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo, TransitionOutcome, row_link, row_link_target,
+    row_link, row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo, TransitionOutcome,
 };
 use crate::model::{Choice, FormList, Node, ScreenModel, Widget};
-use crate::nav::{Location, Nav, level_path};
+use crate::nav::{level_path, Location, Nav};
 use crate::state::{Confirm, ConfirmKind, Edits, Finished, Lanes, Purpose, Request, Then};
 
 mod assist;
@@ -569,7 +569,11 @@ impl Session {
 
     /// The message line, empty once a success message has had its 3 seconds.
     pub fn message(&self) -> &str {
-        if self.message_expired() { "" } else { &self.message.text }
+        if self.message_expired() {
+            ""
+        } else {
+            &self.message.text
+        }
     }
 
     pub fn message_is_error(&self) -> bool {

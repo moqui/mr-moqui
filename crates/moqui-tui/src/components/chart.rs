@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{Act, Component, ComponentState, Line, Span, fit, list, prop, source_of, text_of, waiting};
+use super::{fit, list, prop, source_of, text_of, waiting, Act, Component, ComponentState, Line, Span};
 use crate::keys::{Key, KeyPress};
 use crate::theme::Role;
 

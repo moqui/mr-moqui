@@ -20,8 +20,8 @@
 use serde_json::Value;
 
 use super::*;
-use crate::assist::state::{Effect, Follow, is_ended, is_paused};
-use crate::assist::{Act, Area, Assist, Bootstrap, Card, Thread, answered_error, error_text};
+use crate::assist::state::{is_ended, is_paused, Effect, Follow};
+use crate::assist::{answered_error, error_text, Act, Area, Assist, Bootstrap, Card, Thread};
 use crate::state::AssistApproval;
 
 /// The events of a working run are read again this often.
@@ -877,5 +877,9 @@ impl Session {
 
 /// A value of an approval's line: empty shows as `(empty)`.
 fn show(value: &str) -> &str {
-    if value.is_empty() { "(empty)" } else { value }
+    if value.is_empty() {
+        "(empty)"
+    } else {
+        value
+    }
 }

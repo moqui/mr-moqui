@@ -1119,7 +1119,10 @@ fn report_embed_renders_the_dashboard_for_a_signed_in_viewer_only() {
     }
     assert!(!body.contains("is not shown"), "{body}");
     // The Home list's links run through Panels' own transitions (html mode shows a transition's target).
-    assert!(body.contains("href=\"/apps/dashboards/Definition?definitionType=panel\""), "{body}");
+    assert!(
+        body.contains("href=\"/apps/dashboards/Definition?definitionType=panel\""),
+        "{body}"
+    );
     // An unknown definition shows nothing, and the screen still renders.
     let (status, _, body) = common::exchange(
         address,
