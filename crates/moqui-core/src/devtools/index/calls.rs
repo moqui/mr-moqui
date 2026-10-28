@@ -170,39 +170,53 @@ pub fn flush(factory: &Arc<ExecutionContextFactory>) -> Result<usize, moqui_lib:
         .entity()
         .ok_or_else(|| moqui_lib::error::Error::new("no entity facade"))?;
     let tx = facade.transactions_for(CALL)?;
-    let written = taken.len();
-    tx.run(TransactionAttribute::ForceNew, None, || {
-        let now = crate::user::now_value();
-        for ((from, to), (count, _)) in &taken {
-            let found = facade
-                .find(CALL)?
-                .eq("fromArtifactId", Value::string(from))
-                .eq("toArtifactId", Value::string(to))
-                .one()?;
-            let count = i64::try_from(*count).unwrap_or(i64::MAX);
-            match found {
-                Some(mut row) => {
-                    let before = row
-                        .get("callCount")
-                        .map(moqui_lib::object::to_plain_string)
-                        .and_then(|text| text.parse::<i64>().ok())
-                        .unwrap_or(0);
-                    row.set("callCount", Value::I64(before.saturating_add(count)));
-                    row.set("lastCallDate", now.clone());
-                    row.update(&facade)?;
-                }
-                None => {
-                    let mut row = facade.make_value(CALL)?;
-                    row.set("fromArtifactId", Value::string(from));
-                    row.set("toArtifactId", Value::string(to));
-                    row.set("callCount", Value::I64(count));
-                    row.set("lastCallDate", now.clone());
-                    row.create(&facade)?;
-                }
+    let now = crate::user::now_value();
+    let write = |from: &str, to: &str, count: u64| -> Result<(), moqui_lib::error::Error> {
+        let found = facade
+            .find(CALL)?
+            .eq("fromArtifactId", Value::string(from))
+            .eq("toArtifactId", Value::string(to))
+            .one()?;
+        let count = i64::try_from(count).unwrap_or(i64::MAX);
+        match found {
+            Some(mut row) => {
+                let before = row
+                    .get("callCount")
+                    .map(moqui_lib::object::to_plain_string)
+                    .and_then(|text| text.parse::<i64>().ok())
+                    .unwrap_or(0);
+                row.set("callCount", Value::I64(before.saturating_add(count)));
+                row.set("lastCallDate", now.clone());
+                row.update(&facade)?;
+            }
+            None => {
+                let mut row = facade.make_value(CALL)?;
+                row.set("fromArtifactId", Value::string(from));
+                row.set("toArtifactId", Value::string(to));
+                row.set("callCount", Value::I64(count));
+                row.set("lastCallDate", now.clone());
+                row.create(&facade)?;
             }
         }
         Ok(())
-    })?;
+    };
+    let all = tx.run(TransactionAttribute::ForceNew, None, || {
+        for ((from, to), (count, _)) in &taken {
+            write(from, to, *count)?;
+        }
+        Ok(())
+    });
+    if all.is_ok() {
+        return Ok(taken.len());
+    }
+    // a row that fails is that call's alone: the others are written one by one
+    let mut written = 0;
+    for ((from, to), (count, _)) in &taken {
+        match tx.run(TransactionAttribute::ForceNew, None, || write(from, to, *count)) {
+            Ok(()) => written += 1,
+            Err(err) => tracing::error!("Artifact index: the observed calls of {from} to {to} were not written: {err}"),
+        }
+    }
     Ok(written)
 }
 

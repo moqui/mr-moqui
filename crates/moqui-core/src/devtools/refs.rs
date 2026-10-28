@@ -150,13 +150,7 @@ pub fn scan_file(path: &std::path::Path) -> Vec<Reference> {
     };
     let display = path.display().to_string();
     let file_artifact = format!("file:{display}");
-    let prefix = {
-        let text = display.replace('\\', "/");
-        text.rfind("/service/")
-            .map(|at| &text[at + "/service/".len()..])
-            .map(|rest| rest.strip_suffix(".xml").unwrap_or(rest).replace('/', "."))
-            .unwrap_or_default()
-    };
+    let prefix = crate::service::define::service_prefix(path);
     let mut found = Vec::new();
     let mut stack = vec![(root, file_artifact, String::new())];
     while let Some((node, from, parent)) = stack.pop() {

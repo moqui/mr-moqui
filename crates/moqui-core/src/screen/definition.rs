@@ -1122,8 +1122,10 @@ fn apply_screen_extends(
             }
         }
         if let Some(text) = overlaid(&found) {
-            let extend = MNode::parse_text(&found.to_string_lossy(), &text).map_err(Error::from)?;
-            merge_extend(screen, &extend, location, &mut extended);
+            match MNode::parse_text(&found.to_string_lossy(), &text) {
+                Ok(extend) => merge_extend(screen, &extend, location, &mut extended),
+                Err(err) => tracing::error!("screen-extend {} of {location} left out: {err}", found.display()),
+            }
             continue;
         }
         if !found.is_file() {
@@ -1149,8 +1151,11 @@ fn apply_screen_extends(
             location: path.clone(),
             modified,
         });
-        let extend = MNode::parse_file(Path::new(&path)).map_err(Error::from)?;
-        merge_extend(screen, &extend, location, &mut extended);
+        // one extension that does not parse is left out, not the screen: it stays a source, so its fix reloads it
+        match MNode::parse_file(Path::new(&path)) {
+            Ok(extend) => merge_extend(screen, &extend, location, &mut extended),
+            Err(err) => tracing::error!("screen-extend {path} of {location} left out: {err}"),
+        }
     }
     Ok(extended)
 }

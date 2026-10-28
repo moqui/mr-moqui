@@ -1175,6 +1175,10 @@ fn auto_parameters_are_expanded_once_per_entity_facade() {
     assert!(first.iter().any(|param| param.name == "testId"), "{first:?}");
     let again = super::validate::declared_in(&def, Some(&facade)).unwrap();
     assert!(Arc::ptr_eq(&first, &again), "kept on the definition");
+    // a relink swaps the model behind the same facade and drops what was read from it (plans/design-dev-aide.md F5)
+    crate::entity::derived::clear(&facade);
+    let relinked = super::validate::declared_in(&def, Some(&facade)).unwrap();
+    assert!(!Arc::ptr_eq(&first, &relinked), "expanded again from the new model");
     let other = crate::testing::open();
     let expanded = super::validate::declared_in(&def, Some(&other)).unwrap();
     assert!(!Arc::ptr_eq(&first, &expanded), "another facade expands again");

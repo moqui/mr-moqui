@@ -65,7 +65,7 @@ pub(crate) fn read_shape(facade: &EntityFacade, entity: &EntityDefinition, diale
         shapes
             .by_entity
             .get(&entity.full_name)
-            .filter(|shape| shape.dialect == dialect.name)
+            .filter(|shape| shape.dialect == dialect.name && shape.is_of(entity))
             .cloned()
     });
     if let Some(shape) = known {
@@ -90,6 +90,19 @@ pub(crate) fn read_shape(facade: &EntityFacade, entity: &EntityDefinition, diale
         shapes.by_entity.insert(entity.full_name.clone(), Arc::clone(&shape));
     });
     shape
+}
+
+impl ReadShape {
+    /// Whether this shape reads `entity`'s fields as they are: a find still on the model a relink replaced may put its
+    /// shape back after the relink dropped them (plans/design-dev-aide.md F5), and the next find builds it again.
+    fn is_of(&self, entity: &EntityDefinition) -> bool {
+        self.columns.len() == entity.fields.len()
+            && self
+                .columns
+                .iter()
+                .zip(&entity.fields)
+                .all(|((name, java_type), field)| **name == *field.name && *java_type == field.java_type)
+    }
 }
 
 /// Drop the shapes and the SQL rendered for them: the model was swapped (plans/design-dev-aide.md F5).

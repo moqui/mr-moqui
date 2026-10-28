@@ -155,6 +155,45 @@ fn a_changed_seca_file_rebuilds_the_rule_set() {
 }
 
 #[test]
+fn a_seca_rule_on_a_service_added_since_runs_after_the_service_file_reloads() {
+    let bed = bed("seca-new-service");
+    let rule = r#"<seca id="onNew" service="devtest.Things.add#Thing" when="post-service"><actions><log message="x"/></actions></seca>"#;
+    let path = bed.write("service/devtest/Things.xml", &services(&service("run", "first")));
+    bed.write("service/Things.secas.xml", &format!("<secas>{rule}</secas>"));
+    let _entered = bed.ctx.enter();
+    crate::service::reload_eca_rules(bed.factory());
+    // the rule names a service not defined yet: left out
+    assert!(crate::service::info::seca_rule_texts("devtest.Things.add#Thing").is_empty());
+    bed.write(
+        "service/devtest/Things.xml",
+        &services(&format!("{}{}", service("run", "first"), service("add", "first"))),
+    );
+    let report = reload_paths(bed.factory(), &[path]);
+    assert_eq!(report.files[0].added, ["devtest.Things.add#Thing"], "{report:?}");
+    assert_eq!(
+        crate::service::info::seca_rule_texts("devtest.Things.add#Thing").len(),
+        1
+    );
+}
+
+#[test]
+fn a_screen_extend_that_does_not_parse_leaves_its_screen_rendering() {
+    let bed = bed("extend-broken");
+    bed.write(
+        "screen/Base.xml",
+        r#"<screen><widgets><container id="Main"><label text="base"/></container></widgets></screen>"#,
+    );
+    bed.write(
+        "screen-extend/devtest/screen/Base.xml",
+        "<screen-extend><widgets-extend name=\"Main\">",
+    );
+    let _entered = bed.ctx.enter();
+    let facade = crate::screen::ScreenFacade::of(bed.factory());
+    let def = facade.screen_def(bed.factory(), "component://devtest/screen/Base.xml");
+    assert!(def.is_ok(), "{:?}", def.err());
+}
+
+#[test]
 fn files_are_classified_by_their_place_and_kinds_that_do_not_reload_say_why() {
     let bed = bed("kinds");
     let paths: Vec<PathBuf> = [

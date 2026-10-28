@@ -137,7 +137,7 @@ impl ReloadReport {
     }
 }
 
-type Listener = Box<dyn Fn(&Arc<ExecutionContextFactory>, &ReloadReport) + Send + Sync>;
+type Listener = Arc<dyn Fn(&Arc<ExecutionContextFactory>, &ReloadReport) + Send + Sync>;
 
 #[derive(Default)]
 struct Reloads {
@@ -172,7 +172,7 @@ pub fn on_reload(
     factory: &ExecutionContextFactory,
     listener: impl Fn(&Arc<ExecutionContextFactory>, &ReloadReport) + Send + Sync + 'static,
 ) {
-    lock(&reloads_of(factory).listeners).push(Box::new(listener));
+    lock(&reloads_of(factory).listeners).push(Arc::new(listener));
 }
 
 /// The last reports, newest first.
@@ -212,7 +212,9 @@ pub fn reload_paths(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -
         }
         reports.push_back(Arc::new(report.clone()));
     }
-    for listener in lock(&reloads.listeners).iter() {
+    // called on a copy, so a listener may add one
+    let listeners: Vec<Listener> = lock(&reloads.listeners).clone();
+    for listener in &listeners {
         listener(factory, &report);
     }
     report
@@ -232,9 +234,11 @@ fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadRepor
         }
     }
     files.sort_by_key(|file| file.kind.order());
-    reload_entities(factory, &mut files);
-    reload_services(&mut files);
-    reload_secas(factory, &mut files);
+    let relinked = reload_entities(factory, &mut files);
+    let services_changed = reload_services(factory, &mut files);
+    // a SECA rule naming a service not defined when the rules were read was left out: read them again when services
+    // came or went, an entity's own (entity-auto) among them
+    reload_secas(factory, &mut files, relinked || services_changed);
     reload_eecas(factory, &mut files);
     reload_rest(&mut files);
     reload_screens(factory, &mut files);
@@ -336,10 +340,11 @@ pub(crate) fn kind_of(component: &str, relative: &Path) -> ArtifactKind {
 /// The entity files: the model relinked once for all of them and swapped in, and their entities' tables checked
 /// (F5). A file that does not parse, or a model that does not link, keeps the old model, with the problem and "restart
 /// to apply" as the fallback.
-fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+/// Answers whether the model was relinked.
+fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool {
     let changed = indexes(files, &[ArtifactKind::Entity]);
     if changed.is_empty() {
-        return;
+        return false;
     }
     let mut failed = false;
     for &at in &changed {
@@ -387,6 +392,7 @@ fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileRelo
                         .push(Problem::file_error(&file.path, "reload.entity", problem.clone()));
                 }
             }
+            true
         }
         Err(err) => {
             for &at in &changed {
@@ -398,6 +404,7 @@ fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileRelo
                         .push(Problem::file_error(&file.path, "reload.entity", err.clone()));
                 }
             }
+            false
         }
     }
 }
@@ -415,17 +422,20 @@ fn entities_of(path: &str, changed: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn reload_services(files: &mut [FileReload]) {
+/// Answers whether services were added or removed.
+fn reload_services(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool {
     let changed: Vec<usize> = indexes(files, &[ArtifactKind::Service]);
     if changed.is_empty() {
-        return;
+        return false;
     }
     if !parse_all(files, &changed, "reload.service") {
-        return;
+        return false;
     }
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
     match crate::service::reload_definitions(&paths) {
         Ok(reload) => {
+            // forms built from a service's parameters (auto-fields-service) read the new ones on next use
+            crate::screen::ScreenFacade::of(factory).clear();
             for &at in &changed {
                 let file = &mut files[at];
                 let prefix = service_prefix(&file.path);
@@ -446,14 +456,24 @@ fn reload_services(files: &mut [FileReload]) {
                     }
                 }
             }
+            !reload.added.is_empty() || !reload.removed.is_empty()
         }
-        Err(err) => fail_all(files, &changed, "reload.service", &err.to_string()),
+        Err(err) => {
+            fail_all(files, &changed, "reload.service", &err.to_string());
+            false
+        }
     }
 }
 
-fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload], services_changed: bool) {
     let changed = indexes(files, &[ArtifactKind::Seca]);
-    if changed.is_empty() || !parse_all(files, &changed, "reload.eca") {
+    if changed.is_empty() {
+        if services_changed {
+            crate::service::reload_eca_rules(factory);
+        }
+        return;
+    }
+    if !parse_all(files, &changed, "reload.eca") {
         return;
     }
     let (seca, email, git) = crate::service::reload_eca_rules(factory);
@@ -511,6 +531,9 @@ fn reload_screens(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReloa
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
     let screens = crate::screen::ScreenFacade::of(factory).forget(factory, &paths);
     let scripts = crate::script::forget_scripts(&paths);
+    if changed.iter().any(|&at| files[at].kind == ArtifactKind::ScreenText) {
+        crate::script::template::TemplateRegistry::of(factory).forget_texts();
+    }
     for at in changed {
         let file = &mut files[at];
         if file.path.ends_with(".xml") {
@@ -624,11 +647,7 @@ fn parses(path: &str, rule: &str) -> Result<(), Problem> {
 
 /// `org.moqui.impl.UserServices` for `.../service/org/moqui/impl/UserServices.xml`, as service names begin.
 fn service_prefix(path: &str) -> String {
-    let text = path.replace('\\', "/");
-    text.rfind("/service/")
-        .map(|at| &text[at + "/service/".len()..])
-        .map(|rest| rest.strip_suffix(".xml").unwrap_or(rest).replace('/', "."))
-        .unwrap_or_default()
+    crate::service::define::service_prefix(Path::new(path))
 }
 
 fn has_extension(path: &Path, extension: &str) -> bool {

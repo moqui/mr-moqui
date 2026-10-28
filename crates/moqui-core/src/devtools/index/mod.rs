@@ -975,9 +975,15 @@ fn apply(
             if !known.contains(&path) {
                 continue;
             }
-            for old in old_artifacts(facade, &path)? {
-                resolver.remove(&old);
-                gone.insert(old.id);
+            // one file's old rows that cannot be read leave its names in the resolver, not the update undone
+            match old_artifacts(facade, &path) {
+                Ok(old_rows) => {
+                    for old in old_rows {
+                        resolver.remove(&old);
+                        gone.insert(old.id);
+                    }
+                }
+                Err(err) => tracing::error!("Artifact index: the old rows of {path} were not read: {err}"),
             }
         }
         for change in &changes {

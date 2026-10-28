@@ -70,20 +70,32 @@ thread_local! {
 
 /// Run `body` as a render that writes the stamps.
 pub fn with<T>(body: impl FnOnce() -> T) -> T {
-    let before = STAMPING.with(|on| on.replace(true));
-    let result = body();
-    STAMPING.with(|on| on.set(before));
-    PENDING.with(|pending| pending.borrow_mut().take());
-    result
+    let _restore = Restore(STAMPING.with(|on| on.replace(true)));
+    body()
+}
+
+/// Puts back the stamping held before, and drops a pending stamp, however the body ends: a render that panics on a
+/// pooled thread leaves no stamping on for the next request there.
+struct Restore(bool);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        STAMPING.with(|on| on.set(self.0));
+        PENDING.with(|pending| pending.borrow_mut().take());
+    }
 }
 
 /// Run `body` writing no stamps, in a stamped render: what it writes is kept for other renders (a server-static
 /// template).
 pub fn paused<T>(body: impl FnOnce() -> T) -> T {
-    let before = STAMPING.with(|on| on.replace(false));
-    let result = body();
-    STAMPING.with(|on| on.set(before));
-    result
+    struct Resume(bool);
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            STAMPING.with(|on| on.set(self.0));
+        }
+    }
+    let _resume = Resume(STAMPING.with(|on| on.replace(false)));
+    body()
 }
 
 /// Whether the render on this thread writes the stamps.
@@ -114,7 +126,7 @@ pub fn inject(text: &str) -> Cow<'_, str> {
         while let Some(found) = text[at..].find('<') {
             let start = at + found + 1;
             let name_end = text[start..]
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == ':' || ch == '.'))
+                .find(|ch: char| !is_tag_name_char(ch))
                 .map_or(text.len(), |end| start + end);
             if start < bytes.len()
                 && bytes[start].is_ascii_alphabetic()
@@ -153,13 +165,16 @@ pub fn stamp_tree(root: &MNode) {
 }
 
 /// The elements of a `.qvue` file's `<template>` block, each the byte offset just past its tag name and its line and
-/// column (from 1, the column in characters): what [`stamp_qvue`] stamps and the Design view of a `.qvue` edits. The
-/// outer `template` itself is not one, nor a `template` or `slot` inside, which render no element of their own. Comments,
-/// quoted attribute values and `{{ }}` interpolations are passed over, so a `<` inside them starts no element.
+/// column (from 1, the column in characters): what [`stamp_qvue`] stamps and the Design view of a `.qvue` edits
+/// (`pure.vueElements`, the same scan, held to it by `crates/moqui-lib/testdata/qvue-element-vectors.json`). The outer
+/// `template` itself is not one, nor a `template` or `slot` inside, which render no element of their own. Comments,
+/// quoted attribute values and `{{ }}` interpolations are passed over, so a `<` inside them starts no element; the block
+/// starts at the first `<template` tag outside a comment and ends at the last `</template>` before a `<script` or
+/// `<style` tag (not `<script-editor>`).
 #[must_use]
 pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
     let bytes = text.as_bytes();
-    let Some(open) = text.find("<template") else {
+    let Some(open) = qvue_tag(text, 0, "<template") else {
         return Vec::new();
     };
     let Some(body_start) = text[open..].find('>').map(|end| open + end + 1) else {
@@ -168,10 +183,24 @@ pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
     // the block's end: the last </template> before the <script> or <style> block, if any
     let tail = ["<script", "<style"]
         .iter()
-        .filter_map(|tag| text[body_start..].find(tag).map(|at| body_start + at))
+        .filter_map(|tag| qvue_tag(text, body_start, tag))
         .min()
         .unwrap_or(text.len());
     let body_end = text[..tail].rfind("</template>").unwrap_or(tail);
+    // the line and column of `at`, counted on from the last element's
+    let (mut line, mut column, mut counted) = (1_u32, 1_u32, 0_usize);
+    let mut position = |at: usize| {
+        for ch in text[counted..at].chars() {
+            if ch == '\n' {
+                line = line.saturating_add(1);
+                column = 1;
+            } else {
+                column = column.saturating_add(1);
+            }
+        }
+        counted = at;
+        (line, column)
+    };
     let mut out = Vec::new();
     let mut at = body_start;
     while at < body_end {
@@ -186,13 +215,11 @@ pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
         if bytes[at] == b'<' && at + 1 < body_end && bytes[at + 1].is_ascii_alphabetic() {
             let name_start = at + 1;
             let name_end = text[name_start..]
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == ':' || ch == '.' || ch == '_'))
+                .find(|ch: char| !is_tag_name_char(ch))
                 .map_or(body_end, |end| name_start + end);
             let name = &text[name_start..name_end];
             if name != "template" && name != "slot" {
-                let line = u32::try_from(text[..at].matches('\n').count() + 1).unwrap_or(u32::MAX);
-                let line_start = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
-                let column = u32::try_from(text[line_start..at].chars().count() + 1).unwrap_or(u32::MAX);
+                let (line, column) = position(at);
                 out.push((name_end, line, column));
             }
             // past the tag, its quoted values passed over
@@ -215,6 +242,32 @@ pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
         at += text[at..].chars().next().map_or(1, char::len_utf8);
     }
     out
+}
+
+/// The offset of the first `tag` (`<template`, `<script`) at or after `from` that is a tag of that name, followed by
+/// white space, `>` or `/`, and not inside a comment.
+fn qvue_tag(text: &str, from: usize, tag: &str) -> Option<usize> {
+    let mut at = from;
+    while at < text.len() {
+        let comment = text[at..].find("<!--").map(|found| at + found);
+        let found = text[at..].find(tag).map(|found| at + found)?;
+        if let Some(comment) = comment.filter(|comment| *comment < found) {
+            at = text[comment..].find("-->").map_or(text.len(), |end| comment + end + 3);
+            continue;
+        }
+        let next = text[found + tag.len()..].chars().next();
+        if next.is_none_or(|ch| ch.is_whitespace() || ch == '>' || ch == '/') {
+            return Some(found);
+        }
+        at = found + tag.len();
+    }
+    None
+}
+
+/// The characters of an element's name after its first, in a template or an HTML render: Vue's components take `-`,
+/// `.` and `:` (`q-btn`, `v-slot:x`), and `_`.
+pub(crate) fn is_tag_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == ':' || ch == '.' || ch == '_'
 }
 
 /// A `.qvue` file's text with each element of its template stamped `data-m-src="<file>:<line>:<column>"`, for a
@@ -240,6 +293,43 @@ pub fn stamp_qvue(text: &str, file: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_stamped_render_that_panics_leaves_its_thread_unstamped() {
+        let caught = std::panic::catch_unwind(|| {
+            super::with(|| {
+                super::set_pending(Some("component://a/screen/A.xml:1:1".into()));
+                panic!("in the render");
+            })
+        });
+        assert!(caught.is_err());
+        assert!(!super::active());
+        super::PENDING.with(|pending| assert!(pending.borrow().is_none()));
+    }
+
+    /// The vectors the Design view's `pure.vueElements` is held to as well (`DevAideQvue.page.js`).
+    #[test]
+    fn the_qvue_element_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../moqui-lib/testdata/qvue-element-vectors.json")).unwrap();
+        for vector in vectors.as_array().unwrap() {
+            let text = vector["text"].as_str().unwrap();
+            let found: Vec<String> = super::qvue_elements(text)
+                .into_iter()
+                .map(|(name_end, line, column)| {
+                    let open = text[..name_end].rfind('<').unwrap();
+                    format!("{}@{line}:{column}", &text[open + 1..name_end])
+                })
+                .collect();
+            let expected: Vec<&str> = vector["stamped"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item.as_str().unwrap())
+                .collect();
+            assert_eq!(found, expected, "{}", vector["name"]);
+        }
+    }
+
     #[test]
     fn a_qvue_template_is_stamped_by_its_lines() {
         let text = "<!-- a screen -->\n<template><div class=\"row\">\n  <q-btn label=\"a > b\" @click=\"go\"/>\n  \

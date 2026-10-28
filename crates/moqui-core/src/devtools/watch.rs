@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
@@ -147,13 +147,20 @@ fn run(
     debounce: Duration,
 ) {
     let mut changed: BTreeSet<PathBuf> = BTreeSet::new();
+    // when the changes are taken: `debounce` after the last change, however many other events (a file opened, as the
+    // index build or an editor does) come meanwhile
+    let mut due: Option<Instant> = None;
     loop {
-        let wait = if changed.is_empty() {
-            Duration::from_secs(5)
-        } else {
-            debounce
+        let wait = match due {
+            Some(at) => at.saturating_duration_since(Instant::now()),
+            None => Duration::from_secs(5),
         };
-        match events.recv_timeout(wait) {
+        let event = if wait.is_zero() {
+            Err(RecvTimeoutError::Timeout)
+        } else {
+            events.recv_timeout(wait)
+        };
+        match event {
             Ok(Ok(event)) => {
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
@@ -171,9 +178,13 @@ fn run(
                         changed.insert(path);
                     }
                 }
+                if !changed.is_empty() {
+                    due = Some(Instant::now() + debounce);
+                }
             }
             Ok(Err(err)) => tracing::warn!(error = %err, "Dev reload watch error"),
             Err(RecvTimeoutError::Timeout) => {
+                due = None;
                 let Some(factory) = factory.upgrade() else {
                     return;
                 };

@@ -260,6 +260,8 @@ pub(crate) struct ExpandedParams(Mutex<Option<Expanded>>);
 struct Expanded {
     /// The facade's model the parameters were expanded from, or None when no parameter reads one.
     facade: Option<Weak<dyn Any + Send + Sync>>,
+    /// The facade's definitions generation then: a relink swaps the model behind the same facade.
+    generation: u64,
     params: Arc<[ParamDef]>,
 }
 
@@ -289,6 +291,9 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         .iter()
         .any(|param| param.name.is_empty() && param.auto.is_some());
     let key = facade.filter(|_| reads_entity).map(facade_key);
+    let generation = facade
+        .filter(|_| reads_entity)
+        .map_or(0, crate::entity::derived::generation);
     {
         let cached = def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(cached) = cached.as_ref() {
@@ -297,7 +302,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
                 (Some(have), Some(want)) => Weak::ptr_eq(have, want),
                 _ => false,
             };
-            if same {
+            if same && cached.generation == generation {
                 return Ok(Arc::clone(&cached.params));
             }
         }
@@ -305,6 +310,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
     let params: Arc<[ParamDef]> = expand_params(def, &def.in_params, facade)?.into();
     *def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Expanded {
         facade: key,
+        generation,
         params: Arc::clone(&params),
     });
     Ok(params)
