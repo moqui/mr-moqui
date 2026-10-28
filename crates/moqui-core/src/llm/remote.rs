@@ -413,27 +413,32 @@ fn not_redirected(what: &str, status: u16) -> Result<(), String> {
 /// The call may not go out, the transport failed, a redirect, or a body past the cap.
 pub(crate) fn exchange(address: &Address, call: Call<'_>) -> Result<Answer, String> {
     check_call(address, &call)?;
+    let mut traced = crate::outbound::ClientCall::start(&call.method.to_string(), call.url);
+    let mut headers = call.headers;
+    traced.inject(&mut headers);
     let mut request = client(address.allow_private)
         .request(call.method, call.url)
         .timeout(call.timeout);
     let mut content_type = None;
-    for (name, value) in &call.headers {
+    for (name, value) in headers {
         if name.eq_ignore_ascii_case("content-type") {
-            content_type = Some(value.clone());
+            content_type = Some(value);
         } else {
-            request = request.header(name.clone(), value.clone());
+            request = request.header(name, value);
         }
     }
     if let Some(body) = call.body {
         request = request.text(content_type.as_deref().unwrap_or("application/json"), body);
     }
     let response = request.send(false).map_err(|error| {
+        traced.error(error.message());
         if error.to_string().contains("larger than the limit") {
             format!("{}'s answer is larger than {} bytes", call.what, call.cap.min(BODY_CAP))
         } else {
             transport_error(call.what, &error)
         }
     })?;
+    traced.status(response.status());
     not_redirected(call.what, response.status())?;
     if u64::try_from(response.bytes().len()).unwrap_or(u64::MAX) > call.cap.min(BODY_CAP) {
         return Err(format!("{}'s answer is larger than {} bytes", call.what, call.cap));
@@ -521,7 +526,9 @@ pub(crate) fn open(address: &Address, call: Call<'_>) -> Result<Opened, String> 
     {
         headers.push(("Content-Type".to_string(), "application/json".to_string()));
     }
-    let opened = client(address.allow_private)
+    let mut traced = crate::outbound::ClientCall::start(&call.method.to_string(), call.url);
+    traced.inject(&mut headers);
+    let mut opened = client(address.allow_private)
         .open(OpenRequest {
             method: call.method,
             url: call.url.to_string(),
@@ -529,7 +536,12 @@ pub(crate) fn open(address: &Address, call: Call<'_>) -> Result<Opened, String> 
             body: call.body.map(bytes::Bytes::from),
             timeout: Some(call.timeout),
         })
-        .map_err(|error| transport_error(call.what, &error))?;
+        .map_err(|error| {
+            traced.error(error.message());
+            transport_error(call.what, &error)
+        })?;
+    traced.status(opened.status);
+    opened.reader = traced.reader(opened.reader);
     not_redirected(call.what, opened.status)?;
     let events = opened.headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("content-type") && value.to_ascii_lowercase().starts_with("text/event-stream")

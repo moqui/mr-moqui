@@ -406,12 +406,19 @@ fn fetch(url: &str) -> Result<Page, String> {
             .truncate_body(true)
             .redirects(3, true)
     });
-    let response = client
+    let mut traced = crate::outbound::ClientCall::start("GET", url);
+    let mut request = client
         .get(url)
         .header("accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1")
-        .header("user-agent", "Mozilla/5.0 (compatible; MoquiLinkPreview/1.0)")
-        .send(false)
-        .map_err(|err| err.to_string())?;
+        .header("user-agent", "Mozilla/5.0 (compatible; MoquiLinkPreview/1.0)");
+    for (name, value) in traced.headers() {
+        request = request.header(name, value);
+    }
+    let response = request.send(false).map_err(|err| {
+        traced.error(err.message());
+        err.to_string()
+    })?;
+    traced.status(response.status());
     let content_type = response
         .response_headers()
         .iter()

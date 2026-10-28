@@ -102,6 +102,22 @@ fn decimal_methods_take_numbers_and_text_and_to_number_is_explicit() -> Result<(
     Ok(())
 }
 
+/// `JSON.stringify` writes a decimal as a JSON number, as Java's JSON writers write a `BigDecimal`: one a JavaScript
+/// number holds exactly as that number, any other with all its digits.
+#[test]
+fn json_stringify_writes_a_decimal_as_a_number() -> Result<(), Error> {
+    clear_context_stack();
+    set_context_name("price", decimal("10.25"))?;
+    set_context_name("big", decimal("12345678901234567.89"))?;
+    holds("JSON.stringify(price) === '10.25'");
+    holds("JSON.stringify({price, list: [toDecimal('0.1'), toDecimal(-3)]}) === '{\"price\":10.25,\"list\":[0.1,-3]}'");
+    holds("JSON.parse(JSON.stringify({price})).price === 10.25");
+    holds("JSON.stringify(big) === '12345678901234567.89'");
+    holds("JSON.stringify([big]) === '[12345678901234567.89]'");
+    holds("typeof JSON.parse(JSON.stringify(big)) === 'number'");
+    Ok(())
+}
+
 #[test]
 fn expand_substitutes_a_context_field() -> Result<(), Error> {
     clear_context_stack();
