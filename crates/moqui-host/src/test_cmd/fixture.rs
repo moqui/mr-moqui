@@ -43,6 +43,8 @@ pub struct TestFixture {
     /// has it; dropped after the facade.
     sim: Option<Arc<crate::db::sim::SimOverlay>>,
     _search: Option<crate::search::SearchStore>,
+    /// Keep the configured PDF engine alive for specs and background jobs, just as the server does.
+    pdf: Option<crate::PdfSlot>,
     db: Option<EntityDb>,
     /// The scratch runtime to remove, when there is one.
     scratch: Option<PathBuf>,
@@ -60,6 +62,7 @@ impl Drop for TestFixture {
 
         drop(self.facade.take());
         drop(self.sim.take());
+        drop(self.pdf.take());
         drop(self.db.take());
         if let Some(scratch) = self.scratch.take() {
             if let Err(err) = std::fs::remove_dir_all(&scratch) {
@@ -101,11 +104,12 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
     }
     let booted = boot(&run_runtime, &framework);
     match booted {
-        Ok((factory, facade, sim, search, db)) => Ok(TestFixture {
+        Ok((factory, facade, sim, search, pdf, db)) => Ok(TestFixture {
             factory,
             facade: Some(facade),
             sim: Some(sim),
             _search: search,
+            pdf: Some(pdf),
             db: Some(db),
             scratch,
             runtime_dir: run_runtime,
@@ -273,6 +277,7 @@ type Booted = (
     EntityFacade,
     Arc<crate::db::sim::SimOverlay>,
     Option<crate::search::SearchStore>,
+    crate::PdfSlot,
     EntityDb,
 );
 
@@ -307,6 +312,7 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
             None
         }
     };
+    let pdf = crate::install_pdf(&factory);
     factory.init_tools().map_err(Error::from)?;
-    Ok((factory, facade, sim, search, db))
+    Ok((factory, facade, sim, search, pdf, db))
 }

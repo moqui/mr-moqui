@@ -590,6 +590,7 @@ fn boot_test_factory(runtime: &Path, framework: &Path) -> Result<Arc<ExecutionCo
 /// Shuts the factory down when the run ends. There is no database to close.
 struct FactoryGuard {
     factory: Arc<ExecutionContextFactory>,
+    _pdf: crate::PdfSlot,
 }
 
 impl Drop for FactoryGuard {
@@ -615,6 +616,7 @@ fn run_without_database(
     };
     let _guard = FactoryGuard {
         factory: Arc::clone(&factory),
+        _pdf: crate::install_pdf(&factory),
     };
     for name in drop_unloaded(components, &factory) {
         if args.components.contains(&name) {
