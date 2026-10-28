@@ -43,7 +43,217 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(get_entity_view), get_entity_view)?;
     registry.service_function(moqui_core::service_location!(plan_entity_ddl), plan_entity_ddl)?;
     registry.service_function(moqui_core::service_location!(run_entity_ddl), run_entity_ddl)?;
-    registry.service_function(moqui_core::service_location!(load_seed_file), load_seed_file)
+    registry.service_function(moqui_core::service_location!(load_seed_file), load_seed_file)?;
+    registry.service_function(moqui_core::service_location!(check_data_file), check_data_file)?;
+    registry.service_function(moqui_core::service_location!(export_records), export_records)?;
+    registry.service_function(
+        moqui_core::service_location!(load_changed_records),
+        load_changed_records,
+    )?;
+    registry.service_function(moqui_core::service_location!(get_view_sql), get_view_sql)
+}
+
+/// The most records Export writes into a file.
+const MAX_EXPORT: i64 = 1000;
+
+/// `check#DataFile`: a data file's records (the buffer's `text`, or the file) against the database, as `checkData`
+/// reports them (12): each record not found and each field that differs.
+fn check_data_file(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let root = context.root(&text(parameters, "rootId"))?;
+    let resolved = context.resolve(root, &text(parameters, "path"))?;
+    let body = Some(text(parameters, "text"))
+        .filter(|body| !body.is_empty())
+        .map_or_else(|| std::fs::read_to_string(&resolved.path), Ok)
+        .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    let checked = moqui_core::entity::load_feed::check_entity_xml_text(
+        &context.facade,
+        &resolved.path.display().to_string(),
+        &body,
+        &moqui_core::entity::load_feed::LoadOptions::default(),
+    )?;
+    let diffs: Vec<Json> = checked
+        .diff_info
+        .into_iter()
+        .map(|row| moqui_json(&Value::Map(row)))
+        .collect();
+    let mut out = Parameters::new();
+    out.insert("messages".into(), json_value(&checked.messages));
+    out.insert("differences".into(), json_value(&diffs));
+    out.insert(
+        "fieldsChecked".into(),
+        Value::I64(i64::try_from(checked.fields_checked).unwrap_or(i64::MAX)),
+    );
+    Ok(out)
+}
+
+/// `export#Records`: the records of an entity (`filter`, a JSON object of field values, narrows) as the elements of a
+/// data file, for the view to insert into its buffer (12); at most a thousand.
+fn export_records(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let name = entity_name_in(parameters);
+    let filter: BTreeMap<String, Value> = match parameters.get("filter") {
+        Some(Value::String(raw)) if !raw.trim().is_empty() => {
+            serde_json::from_str::<serde_json::Map<String, Json>>(raw)
+                .map_err(|err| LibError::new(format!("filter: {err}")))?
+                .into_iter()
+                .map(|(key, value)| (key, moqui_lib::json::from_json(&value)))
+                .collect()
+        }
+        Some(Value::Map(map)) => map.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+        _ => BTreeMap::new(),
+    };
+    let mut find = context.facade.find(&name)?;
+    for (key, value) in &filter {
+        find = find.eq(key, value.clone());
+    }
+    let count = find.count()?;
+    if count > MAX_EXPORT {
+        return Err(LibError::new(format!(
+            "{name} has {count} records{}: narrow them to {MAX_EXPORT} or fewer",
+            if filter.is_empty() { "" } else { " that match" }
+        )));
+    }
+    let mut writer = moqui_core::entity::EntityDataWriter::new(&context.facade);
+    writer.entity_name(&name);
+    if !filter.is_empty() {
+        writer.filter_map(filter);
+    }
+    let (document, written) = writer.text()?;
+    // the records alone, without the document element
+    let records = document
+        .find("<entity-facade-xml")
+        .and_then(|start| document[start..].find('>').map(|end| start + end + 1))
+        .and_then(|from| {
+            document
+                .rfind("</entity-facade-xml>")
+                .map(|to| document[from..to].trim().to_string())
+        })
+        .unwrap_or_default();
+    // the writer names a record by its entity's short alias; the file's records go by the full name, as the views read them
+    let records = match info::definition_info(&context.facade, &name) {
+        Some(detail) => {
+            let text_of = |key: &str| {
+                detail
+                    .get(key)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            };
+            let (alias, full) = (text_of("shortAlias"), text_of("fullEntityName"));
+            if alias.is_empty() || full.is_empty() {
+                records
+            } else {
+                records
+                    .replace(&format!("<{alias} "), &format!("<{full} "))
+                    .replace(&format!("<{alias}>"), &format!("<{full}>"))
+                    .replace(&format!("<{alias}/>"), &format!("<{full}/>"))
+                    .replace(&format!("</{alias}>"), &format!("</{full}>"))
+            }
+        }
+        None => records,
+    };
+    let mut out = Parameters::new();
+    out.insert("records".into(), Value::string(records));
+    out.insert("count".into(), Value::I64(i64::try_from(written).unwrap_or(i64::MAX)));
+    Ok(out)
+}
+
+/// The top-level elements of a data file's text, each with its whitespace made one space, for comparing records.
+fn records_of(text: &str) -> Vec<String> {
+    let Ok(doc) = moqui_lib::xml_edit::Doc::parse(text) else {
+        return Vec::new();
+    };
+    let Some(root) = doc.root() else {
+        return Vec::new();
+    };
+    doc.elements(root)
+        .map(|element| {
+            doc.slice(&doc.nodes[element].span)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
+/// The records of `now` that `before` does not have as they are: those added or changed.
+fn changed_records(before: &str, now: &str) -> Vec<String> {
+    let had: std::collections::HashSet<String> = records_of(before).into_iter().collect();
+    records_of(now)
+        .into_iter()
+        .filter(|record| !had.contains(record))
+        .collect()
+}
+
+/// `load#ChangedRecords`: of a data file, only the records added or changed since its last commit, loaded (12).
+fn load_changed_records(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let root = context.root(&text(parameters, "rootId"))?;
+    let resolved = context.resolve(root, &text(parameters, "path"))?;
+    context.may_write(root, &resolved.relative)?;
+    let now = std::fs::read_to_string(&resolved.path)
+        .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    let committed = context
+        .git()
+        .read(&root.path, &["show", &format!("HEAD:{}", resolved.relative)])
+        .unwrap_or_default();
+    let changed = changed_records(&committed, &now);
+    let mut out = Parameters::new();
+    out.insert("changed".into(), Value::I64(i64::try_from(changed.len()).unwrap_or(0)));
+    if changed.is_empty() {
+        out.insert("records".into(), Value::I64(0));
+        return Ok(out);
+    }
+    let document = format!("<entity-facade-xml>\n{}\n</entity-facade-xml>\n", changed.join("\n"));
+    let loaded = moqui_core::entity::load_feed::load_entity_xml_text(
+        &context.facade,
+        &resolved.path.display().to_string(),
+        &document,
+        &moqui_core::entity::load_feed::LoadOptions::default(),
+    );
+    audit::record(
+        &context.facade,
+        &Write {
+            action: "DAA_LOAD",
+            root: &root.id,
+            path: &resolved.relative,
+            detail: Some(
+                json!({ "changed": changed.len(), "records": loaded.as_ref().map(|result| result.records).ok(),
+                "error": loaded.as_ref().err().map(ToString::to_string) }),
+            ),
+            ..Write::default()
+        },
+    );
+    out.insert(
+        "records".into(),
+        Value::I64(i64::try_from(loaded?.records).unwrap_or(i64::MAX)),
+    );
+    Ok(out)
+}
+
+/// `get#ViewSql`: the SQL of a view entity's find, as the view-entity editor's Run shows it with its first rows.
+fn get_view_sql(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let name = entity_name_in(parameters);
+    let mut out = Parameters::new();
+    out.insert("sql".into(), Value::string(info::view_sql(&context.facade, &name, 20)?));
+    Ok(out)
 }
 
 fn moqui_json(value: &Value) -> Json {
@@ -403,6 +613,17 @@ fn load_seed_file(
 #[cfg(test)]
 mod tests {
     use serde_json::Value as Json;
+
+    #[test]
+    fn the_changed_records_are_those_added_or_changed() {
+        let before = "<entity-facade-xml>\n    <a id=\"1\" x=\"one\"/>\n    <a id=\"2\"\n       x=\"two\"/>\n</entity-facade-xml>";
+        let now = "<entity-facade-xml>\n    <a id=\"1\" x=\"uno\"/>\n    <a id=\"2\" x=\"two\"/>\n    <!-- new -->\n    <a id=\"3\"/>\n</entity-facade-xml>";
+        assert_eq!(
+            super::changed_records(before, now),
+            ["<a id=\"1\" x=\"uno\"/>", "<a id=\"3\"/>"]
+        );
+        assert_eq!(super::changed_records("", "<x><a/></x>"), ["<a/>"]);
+    }
 
     /// The entity view's operations (test/vectors/entity-view-vectors.json): each vector's outline is the one this layer
     /// reads, and its operations, which test/client/pages/DevAideEntity.page.js makes from that outline with the view's

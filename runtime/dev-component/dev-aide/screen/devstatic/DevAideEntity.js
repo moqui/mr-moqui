@@ -269,6 +269,28 @@
     ops.camel = (words) => String(words || "").trim().split(/[^A-Za-z0-9]+/).filter((part) => part)
         .map((part, index) => index === 0 ? part.charAt(0).toLowerCase() + part.slice(1) : part.charAt(0).toUpperCase() + part.slice(1)).join("");
 
+    // A field's title as a form shows it with none given: its name in words (dueDate -> Due Date).
+    ops.titleOf = (name) => String(name || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (ch) => ch.toUpperCase());
+    // A label in another language: a LocalizedMessage record of the title (the component's L10n messages).
+    ops.localizedXml = (original, locale, localized) => ops.xml("moqui.basic.LocalizedMessage", [["original", original], ["locale", locale], ["localized", localized]]);
+    // A view entity's condition: an econdition into its entity-condition, made when it has none.
+    ops.addCondition = (view, condition) => {
+        const holder = children(view, ["entity-condition"])[0];
+        const text = ops.xml("econdition", [["entity-alias", condition.entityAlias], ["field-name", condition.fieldName],
+            ["operator", condition.operator && condition.operator !== "equals" ? condition.operator : ""], ["value", condition.value], ["to-field-name", condition.toFieldName]]);
+        if (holder) {
+            const first = children(holder, ["order-by"])[0];
+            return [first ? { op: "insert", at: first.path, position: "before", xml: text } : { op: "insert", at: holder.path, position: "last", xml: text }];
+        }
+        return [{ op: "insert", at: view.path, position: "last", xml: ops.xml("entity-condition", [], text) }];
+    };
+    ops.addOrderBy = (view, fieldName) => {
+        const holder = children(view, ["entity-condition"])[0];
+        const text = ops.xml("order-by", [["field-name", fieldName]]);
+        return holder ? [{ op: "insert", at: holder.path, position: "last", xml: text }]
+            : [{ op: "insert", at: view.path, position: "last", xml: ops.xml("entity-condition", [], text) }];
+    };
+
     const ENTITIES_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
         "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n</entities>\n";
     const SEED_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n</entity-facade-xml>\n";
@@ -286,7 +308,8 @@
             return {
                 entityName: "", view: null, loading: false, error: "", target: null, seed: null, section: "fields",
                 adding: null, relAdding: null, indexAdding: null, memberAdding: null, aliasAdding: null, uses: null,
-                ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false
+                ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false, schema: null, viewSql: "",
+                dataCheck: null, exporting: null
             };
         },
         computed: {
@@ -325,7 +348,21 @@
                 return "";
             },
             seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.recordTables(this.seed.outline) : []); },
-            full() { return this.ctx.tier === "full"; }
+            full() { return this.ctx.tier === "full"; },
+            // the attributes the schema gives the element edits go to (entity, view-entity or extend-entity), but its name
+            elementAttributes() {
+                const element = this.element;
+                const kind = element ? element.name : (this.target && !this.target.inPlace ? "extend-entity" : this.isView ? "view-entity" : "entity");
+                const spec = this.schema ? (this.schema.elements || []).find((item) => item.name === kind) : null;
+                return spec ? (spec.attributes || []).filter((attr) => ["entity-name", "package"].indexOf(attr.name) < 0) : [];
+            },
+            // a view entity's own definition in the buffer, whose condition may be edited
+            viewElement() { return this.isView && this.element && this.element.name === "view-entity" ? this.element : null; },
+            conditions() {
+                const holder = this.viewElement ? children(this.viewElement, ["entity-condition"])[0] : null;
+                return holder ? children(holder, ["econdition", "order-by", "date-filter", "econditions"]) : [];
+            },
+            dataEditUrl() { return this.entity ? "/qapps/tools/Entity/DataEdit/EntityDataFind?selectedEntity=" + encodeURIComponent(this.entity.fullEntityName) : ""; }
         },
         watch: {
             outline() { if (!this.entityName && !this.isData) this.pickEntity(); }
@@ -333,6 +370,7 @@
         mounted() {
             this.pickEntity();
             this.ctx.onSaved((reports) => this.afterSave(reports));
+            this.ctx.get("schema", { rootElement: this.isData ? "entity-facade-xml" : "entities" }).then((answer) => { this.schema = answer.digest || null; }, () => {});
         },
         methods: {
             pickEntity() {
@@ -399,7 +437,8 @@
             // ---- add a field ----
             startAdd(after) {
                 this.adding = { kind: "Text", words: "", name: "", type: "text-medium", after: after || "", isPk: false, notNull: false,
-                    description: "", related: "", relatedOptions: [], enumTypeId: "", values: "", statusTypeId: "", items: "", title: "", typeEdited: false };
+                    description: "", related: "", relatedOptions: [], enumTypeId: "", values: "", statusTypeId: "", items: "", title: "", typeEdited: false,
+                    locale: "", localized: "" };
             },
             kindChanged() { const add = this.adding; if (add.kind !== "Other") add.type = ops.typeOfKind(add.kind); this.nameFromWords(); },
             nameFromWords() {
@@ -429,7 +468,13 @@
                 const add = this.adding;
                 if (!add.name) { this.ctx.note("A field needs a name", "warning"); return; }
                 const field = { name: add.name, type: add.type, isPk: add.isPk, notNull: add.notNull, description: add.description };
-                const done = () => { this.adding = null; this.offerForm(field.name); };
+                const label = add.locale && add.localized ? ops.localizedXml(add.title || ops.titleOf(add.name), add.locale, add.localized) : "";
+                const done = () => {
+                    this.adding = null; this.offerForm(field.name);
+                    // a label in another language: the component's L10n message, with the seed data
+                    if (label) return this.seedBuffer().then((seed) => { this.seedPending = true; return this.ctx.apply(ops.insertRecords(seed.outline, [label]), seed); })
+                        .catch((error) => this.ctx.fail(error));
+                };
                 if (add.kind === "Picklist" || add.kind === "Status") {
                     const spec = add.kind === "Picklist"
                         ? ops.picklist({ fieldName: add.name, enumTypeId: add.enumTypeId, title: add.title || add.enumTypeId.replace(ops.shortName(this.entityName), "") || add.enumTypeId,
@@ -535,6 +580,41 @@
             },
             runView() {
                 this.ctx.get("entityView", { entityName: this.entityName }).then((answer) => { this.view = answer.view || this.view; }, (error) => this.ctx.fail(error));
+                this.ctx.get("viewSql", { entityName: this.entityName }).then((answer) => { this.viewSql = answer.sql || ""; }, (error) => { this.viewSql = pure.errorText(error); });
+            },
+            attrValue(name) { const element = this.element; return element ? pure.attr(element, name) || "" : ""; },
+            setEntityAttr(name, value) {
+                this.edit((element) => value === "" ? (pure.attr(element, name) === undefined ? [] : [{ op: "remove-attribute", at: element.path, name }])
+                    : [{ op: "set-attribute", at: element.path, name, value }]);
+            },
+            setConditionAttr(node, name, value) {
+                this.ctx.apply(value === "" ? (pure.attr(node, name) === undefined ? [] : [{ op: "remove-attribute", at: node.path, name }])
+                    : [{ op: "set-attribute", at: node.path, name, value }]).catch((error) => this.ctx.fail(error));
+            },
+            addCondition() { if (this.viewElement) this.ctx.apply(ops.addCondition(this.viewElement, { fieldName: "", value: "" })).catch((error) => this.ctx.fail(error)); },
+            addOrderBy() { if (this.viewElement) this.ctx.apply(ops.addOrderBy(this.viewElement, "")).catch((error) => this.ctx.fail(error)); },
+            removeCondition(node) { this.ctx.apply([{ op: "remove", at: node.path }]).catch((error) => this.ctx.fail(error)); },
+            // ---- a data file (12) ----
+            checkData() {
+                this.dataCheck = { running: true };
+                this.ctx.post("checkData", { rootId: this.ctx.rootId, path: this.tab.path, text: this.tab.text }).then((answer) => {
+                    this.dataCheck = { messages: answer.messages || [], differences: answer.differences || [], fields: answer.fieldsChecked };
+                }, (error) => { this.dataCheck = null; this.ctx.fail(error); });
+            },
+            loadChanged() {
+                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
+                    this.ctx.note(answer.changed ? "Loaded " + answer.records + " records of the " + answer.changed + " changed since the last commit" : "No record changed since the last commit");
+                }, (error) => this.ctx.fail(error));
+            },
+            startExport() { this.exporting = { entity: "", filter: "" }; },
+            exportRecords() {
+                const exp = this.exporting;
+                this.exporting = null;
+                this.ctx.get("exportRecords", { entityName: exp.entity, filter: exp.filter }).then((answer) => {
+                    if (!answer.records) { this.ctx.note("No " + exp.entity + " records", "warning"); return; }
+                    return this.ctx.apply([{ op: "insert", at: (this.outline && this.outline.path) || [], position: "last", xml: answer.records }])
+                        .then(() => this.ctx.note("Exported " + answer.count + " records into the file: Save keeps them"));
+                }).catch((error) => this.ctx.fail(error));
             },
             // ---- the table: what the check never does, for the full tier ----
             planDdl(action, fieldName, columnName) {
@@ -582,7 +662,10 @@
         template: `
 <div class="m-dev-entity-view q-pa-sm" id="DevEntityView">
   <div v-if="isData" id="DevSeedRows">
-    <div class="row items-center q-mb-sm"><span class="text-subtitle2">Records</span><q-space></q-space>
+    <div class="row items-center q-mb-sm q-gutter-x-xs"><span class="text-subtitle2">Records</span><q-space></q-space>
+      <q-btn dense flat no-caps icon="sym_o_fact_check" label="Check against the database" @click="checkData" id="DevCheckData"></q-btn>
+      <q-btn dense flat no-caps icon="sym_o_difference" label="Load the changed records" :disable="!ctx.canWrite || tab.text !== tab.saved" @click="loadChanged" id="DevLoadChanged"></q-btn>
+      <q-btn dense flat no-caps icon="sym_o_download" label="Export records…" :disable="!ctx.canWrite" @click="startExport" id="DevExportRecords"></q-btn>
       <q-btn dense flat no-caps icon="sym_o_upload" label="Load this file" :disable="!ctx.canWrite || tab.text !== tab.saved" @click="loadThis" id="DevLoadDataFile">
         <q-tooltip>Save first; loads its records into the database</q-tooltip></q-btn></div>
     <div v-for="table in seedTables" :key="table.entity" class="q-mb-md">
@@ -596,6 +679,13 @@
         </tr></tbody></table></div>
     </div>
     <div v-if="!seedTables.length" class="m-muted">No records yet.</div>
+    <div v-if="dataCheck" class="q-mt-md" id="DevDataCheck">
+      <div class="text-subtitle2">Against the database <q-spinner v-if="dataCheck.running" size="14px"></q-spinner></div>
+      <template v-if="!dataCheck.running">
+        <div v-if="!dataCheck.messages.length" class="text-positive text-caption">Every record matches ({{dataCheck.fields}} fields checked).</div>
+        <div v-for="(text, i) in dataCheck.messages" :key="i" class="text-caption">{{text}}</div>
+      </template>
+    </div>
   </div>
   <template v-else>
     <div class="row items-center q-gutter-x-sm no-wrap q-mb-xs">
@@ -614,6 +704,17 @@
           <q-chip v-for="(ext, i) in view.extensions" :key="i" dense square icon="sym_o_extension" :color="ext.site ? 'primary' : undefined" :text-color="ext.site ? 'white' : undefined"
               clickable @click="openOrigin(ext)">{{ext.component}}</q-chip>
         </div>
+        <q-expansion-item v-if="elementAttributes.length" dense dense-toggle label="Attributes" header-class="text-caption q-px-none" id="DevEntityAttributes">
+          <div class="row q-col-gutter-sm">
+            <div v-for="attribute in elementAttributes" :key="attribute.name" class="col-6 col-md-3">
+              <select v-if="attribute.values && attribute.values.length" class="m-dev-cell" style="width: 100%" :disabled="!canEdit || !target" :value="attrValue(attribute.name)"
+                  @change="setEntityAttr(attribute.name, $event.target.value)"><option value=""></option><option v-for="value in attribute.values" :key="value" :value="value">{{value}}</option></select>
+              <input v-else class="m-dev-cell" style="width: 100%" :disabled="!canEdit || !target" :value="attrValue(attribute.name)" :placeholder="attribute.default || ''"
+                  @change="setEntityAttr(attribute.name, $event.target.value)">
+              <div class="text-caption m-muted" :title="attribute.doc || ''">{{attribute.name}}</div>
+            </div>
+          </div>
+        </q-expansion-item>
         <div class="text-caption q-mt-xs" id="DevEntityTarget">
           <template v-if="target && target.inTab && target.inPlace">Editing {{tab.path.split('/').pop()}}{{view.upstream ? ' in place: upstream editing is on' : ''}}</template>
           <template v-else-if="target && target.inTab">Extending in {{tab.path.split('/').pop()}}</template>
@@ -628,7 +729,7 @@
         <q-tab name="incoming" :label="'Incoming ' + incoming.length"></q-tab>
         <q-tab name="indexes" :label="'Indexes ' + (entity.indexes || []).length"></q-tab>
         <q-tab name="rules" :label="'EECA rules ' + view.eecas.length"></q-tab>
-        <q-tab name="table" :label="isView ? 'Data' : 'Table'"></q-tab>
+        <q-tab name="table" :label="isView ? 'Data' : 'Table'" @click="isView && runView()"></q-tab>
         <q-tab v-if="seed || (view.seedFile && view.seedFile.exists)" name="seed" label="Seed data"></q-tab>
       </q-tabs>
       <q-separator class="q-mb-sm"></q-separator>
@@ -685,7 +786,26 @@
         <div class="text-subtitle2 q-mt-md">Aliases</div>
         <div class="text-caption" v-for="(all, i) in entity.aliasAlls" :key="'all' + i">alias-all {{all.entityAlias}}{{all.prefix ? ' prefix ' + all.prefix : ''}}{{all.exclude.length ? ' except ' + all.exclude.join(', ') : ''}}</div>
         <div class="text-caption m-dev-mono" v-for="alias in entity.aliases" :key="alias.name">{{alias.name}} = {{alias.function ? alias.function + '(' : ''}}{{alias.entityAlias}}.{{alias.field || alias.name}}{{alias.function ? ')' : ''}}</div>
-        <div v-if="entity.hasCondition" class="text-caption m-muted q-mt-xs">It has an entity-condition: edit it in Text.</div>
+        <div class="text-subtitle2 q-mt-md">Condition and order</div>
+        <template v-if="viewElement">
+          <div v-for="node in conditions" :key="node.path.join('.')" class="row items-center q-gutter-x-xs text-caption q-mb-xs">
+            <span class="m-dev-mono" style="width: 6rem">{{node.name}}</span>
+            <template v-if="node.name === 'econdition'">
+              <input class="m-dev-cell" placeholder="alias" style="width: 5rem" :value="pure.attr(node, 'entity-alias') || ''" @change="setConditionAttr(node, 'entity-alias', $event.target.value)">
+              <input class="m-dev-cell" placeholder="field" :value="pure.attr(node, 'field-name') || ''" @change="setConditionAttr(node, 'field-name', $event.target.value)">
+              <select class="m-dev-cell" :value="pure.attr(node, 'operator') || 'equals'" @change="setConditionAttr(node, 'operator', $event.target.value === 'equals' ? '' : $event.target.value)">
+                <option v-for="op in operators" :key="op">{{op}}</option></select>
+              <input class="m-dev-cell" placeholder="value" :value="pure.attr(node, 'value') || ''" @change="setConditionAttr(node, 'value', $event.target.value)">
+              <input class="m-dev-cell" placeholder="or to field" :value="pure.attr(node, 'to-field-name') || ''" @change="setConditionAttr(node, 'to-field-name', $event.target.value)">
+            </template>
+            <input v-else-if="node.name === 'order-by'" class="m-dev-cell" placeholder="field (-field descending)" :value="pure.attr(node, 'field-name') || ''" @change="setConditionAttr(node, 'field-name', $event.target.value)">
+            <span v-else class="m-muted">edit in Text</span>
+            <q-btn dense flat round size="xs" icon="delete" :disable="!canEdit" @click="removeCondition(node)"></q-btn>
+          </div>
+          <q-btn dense flat no-caps size="sm" icon="add" label="Condition" :disable="!canEdit" @click="addCondition" id="DevAddCondition"></q-btn>
+          <q-btn dense flat no-caps size="sm" icon="add" label="Order by" :disable="!canEdit" @click="addOrderBy"></q-btn>
+        </template>
+        <div v-else class="text-caption m-muted">{{entity.hasCondition ? 'It has a condition, in its definition.' : 'No condition.'}} An extension cannot change a view's condition.</div>
       </div>
 
       <div v-if="section === 'relationships'" id="DevEntityRelationships">
@@ -734,7 +854,9 @@
           <div class="m-dev-grid-wrap q-mt-sm" v-if="view.table.columns.length"><table class="m-dev-grid"><thead><tr><th>Column</th><th>SQL type</th></tr></thead>
             <tbody><tr v-for="column in view.table.columns" :key="column.name"><td class="m-dev-mono">{{column.name}}</td><td>{{column.sqlType}}</td></tr></tbody></table></div>
         </template>
-        <div class="text-subtitle2 q-mt-md">Data <span class="m-muted text-caption" v-if="view.data.count !== undefined">{{view.data.count}} rows</span></div>
+        <pre v-if="isView && viewSql" class="m-dev-mono q-pa-sm m-dev-sql" id="DevViewSql">{{viewSql}}</pre>
+        <div class="text-subtitle2 q-mt-md">Data <span class="m-muted text-caption" v-if="view.data.count !== undefined">{{view.data.count}} rows</span>
+          <a class="text-caption q-ml-sm" :href="dataEditUrl" id="DevDataEdit">Open in Data Edit</a></div>
         <div v-if="view.data.error" class="text-caption text-negative">{{view.data.error}}</div>
         <div class="m-dev-grid-wrap" v-if="(view.data.rows || []).length"><table class="m-dev-grid"><thead><tr><th v-for="name in Object.keys(view.data.rows[0])" :key="name">{{name}}</th></tr></thead>
           <tbody><tr v-for="(row, i) in view.data.rows" :key="i"><td v-for="name in Object.keys(view.data.rows[0])" :key="name" class="ellipsis" style="max-width: 14rem">{{row[name]}}</td></tr></tbody></table></div>
@@ -773,6 +895,10 @@
           <q-input dense outlined type="textarea" autogrow v-model="adding.items" label="Statuses in their order, one a line" hint="A flow from each to the next is written too"></q-input>
         </template>
         <q-input dense outlined v-model="adding.description" label="Description"></q-input>
+        <div class="row q-gutter-x-sm">
+          <q-input class="col-3" dense outlined v-model="adding.locale" label="Locale" placeholder="es"></q-input>
+          <q-input class="col" dense outlined v-model="adding.localized" :label="'Its label in that language (' + (adding.title || titleOf(adding.name)) + ')'"></q-input>
+        </div>
         <div class="row q-gutter-x-md"><q-checkbox dense v-model="adding.isPk" label="Primary key"></q-checkbox><q-checkbox dense v-model="adding.notNull" label="Not null"></q-checkbox></div>
       </q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn>
@@ -820,6 +946,14 @@
           <q-select dense outlined clearable v-model="aliasAdding.function" :options="['min', 'max', 'sum', 'avg', 'count', 'count-distinct', 'upper', 'lower']" label="Function"></q-select></template></q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="aliasAdding = null"></q-btn><q-btn unelevated no-caps color="primary" label="Add" @click="addAlias"></q-btn></q-card-actions></q-card>
   </q-dialog>
+  <q-dialog :model-value="!!exporting" @update:model-value="v => { if (!v) exporting = null; }">
+    <q-card v-if="exporting" style="width: 30rem"><q-card-section class="text-subtitle1">Export records into this file</q-card-section>
+      <q-card-section class="q-pt-none q-gutter-y-sm">
+        <q-select dense outlined use-input fill-input hide-selected v-model="exporting.entity" :options="entityOptions" @filter="searchEntities" @input-value="v => exporting.entity = v" label="Entity"></q-select>
+        <q-input dense outlined v-model="exporting.filter" label="Only those with these values (JSON)" placeholder='{"enumTypeId": "ExamplePriority"}' class="m-dev-mono"></q-input>
+      </q-card-section>
+      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="exporting = null"></q-btn><q-btn unelevated no-caps color="primary" label="Export" @click="exportRecords" id="DevExportDo"></q-btn></q-card-actions></q-card>
+  </q-dialog>
   <q-dialog :model-value="!!ddl" @update:model-value="v => { if (!v) ddl = null; }">
     <q-card v-if="ddl" style="width: 40rem; max-width: 95vw" id="DevDdlDialog"><q-card-section class="text-subtitle1 text-negative">This changes the dev database's table {{ddl.table}}</q-card-section>
       <q-card-section class="q-pt-none"><pre class="m-dev-mono q-ma-none" style="white-space: pre-wrap">{{ddl.statements.join(';\\n')}};</pre>
@@ -831,6 +965,9 @@
     };
     entityView.computed.kinds = () => KINDS;
     entityView.methods.kindOf = function (field) { return ops.kindOf(field, this.entity && this.entity.relationships); };
+    entityView.methods.titleOf = (name) => ops.titleOf(name);
+    entityView.computed.pure = () => pure;
+    entityView.computed.operators = () => ["equals", "not-equals", "less", "greater", "less-equals", "greater-equals", "in", "not-in", "between", "like", "not-like", "is-null", "is-not-null"];
 
 
     devAide.registerView({ name: "entity", label: "Entity", roots: ["entities", "entity-facade-xml"], component: "m-dev-entity-view",
@@ -847,7 +984,7 @@
             ".body--dark .m-dev-grid th{background:#2a2a2e}.m-dev-grid td{padding:1px 6px;border-top:1px solid var(--m-border,rgba(0,0,0,.08));white-space:nowrap}" +
             ".m-dev-cell{font:inherit;border:1px solid transparent;background:transparent;color:inherit;padding:1px 3px;border-radius:3px}" +
             ".m-dev-cell:hover,.m-dev-cell:focus{border-color:var(--m-border,rgba(0,0,0,.2))}.m-dev-drag{cursor:grab;opacity:.5}" +
-            ".m-dev-note{border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px}.m-dev-kinds{flex-wrap:wrap}";
+            ".m-dev-sql{white-space:pre-wrap;background:rgba(127,127,127,.08);border-radius:4px}.m-dev-note{border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px}.m-dev-kinds{flex-wrap:wrap}";
         root.document.head.appendChild(style);
     }
 })(typeof window !== "undefined" ? window : globalThis);

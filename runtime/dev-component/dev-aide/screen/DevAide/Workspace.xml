@@ -97,6 +97,14 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="runDdl"><service-call name="org.moqui.devaide.EntityServices.run#EntityDdl" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="checkData"><service-call name="org.moqui.devaide.EntityServices.check#DataFile" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="exportRecords" read-only="true"><service-call name="org.moqui.devaide.EntityServices.export#Records" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="loadChanged"><service-call name="org.moqui.devaide.EntityServices.load#ChangedRecords" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="viewSql" read-only="true"><service-call name="org.moqui.devaide.EntityServices.get#ViewSql" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="loadSeed"><service-call name="org.moqui.devaide.EntityServices.load#SeedFile" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <!-- the screen view (ScreenServices) -->

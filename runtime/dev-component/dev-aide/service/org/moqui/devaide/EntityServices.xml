@@ -71,4 +71,44 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="file"/>
         </out-parameters>
     </service>
+    <service verb="check" noun="DataFile" type="rust" location="dev_aide::entities::check_data_file" allow-remote="false" read-only="true">
+        <description>A data file's records (the buffer's text, or the file) against the database: each record not found and each field that differs.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="text" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messages" type="List"/>
+            <parameter name="differences" type="List"/>
+            <parameter name="fieldsChecked" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="export" noun="Records" type="rust" location="dev_aide::entities::export_records" allow-remote="false" read-only="true">
+        <description>An entity's records as the elements of a data file, at most a thousand; filter narrows by field values.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="filter" type="Object" allow-html="any"><description>A JSON object of field values.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="records"/>
+            <parameter name="count" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="load" noun="ChangedRecords" type="rust" location="dev_aide::entities::load_changed_records" allow-remote="false">
+        <description>Of a data file the user may write, only the records added or changed since its last commit, loaded; audited.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changed" type="Integer"/>
+            <parameter name="records" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="ViewSql" type="rust" location="dev_aide::entities::get_view_sql" allow-remote="false" read-only="true">
+        <description>The SQL of a find of a view entity's first rows.</description>
+        <in-parameters><parameter name="entityName" required="true"/></in-parameters>
+        <out-parameters><parameter name="sql"/></out-parameters>
+    </service>
 </services>

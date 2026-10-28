@@ -633,6 +633,33 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
     Some(map)
 }
 
+/// The SQL a find of all of a view entity's rows makes, at most `limit` of them, for the view-entity editor's Run
+/// (plans/design-dev-aide.md 8.3). Its parameters are the view's own condition values.
+///
+/// # Errors
+///
+/// Returns an error when the entity is not defined or not a view, or its SQL does not build.
+pub fn view_sql(facade: &EntityFacade, name: &str, limit: i64) -> Result<String, Error> {
+    facade.with_entity(name, |entity, dialect, model| {
+        if !entity.is_view {
+            return Err(Error::new(format!("{name} is not a view entity")));
+        }
+        let statement = moqui_db::sql::select_view(
+            entity,
+            model,
+            dialect,
+            &super::find::FindValues,
+            None,
+            &[],
+            moqui_db::sql::LimitOffset {
+                limit: Some(limit),
+                offset: None,
+            },
+        )?;
+        Ok(statement.sql)
+    })
+}
+
 /// The field types of the entity model's dictionary, each with its Java type and its SQL type in the database of
 /// `group` (the default group's when none), for an entity view's type picker.
 pub fn field_types(facade: &EntityFacade, group: Option<&str>) -> Vec<IndexMap<String, Value>> {

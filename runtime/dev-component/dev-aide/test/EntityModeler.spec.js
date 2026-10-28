@@ -84,3 +84,32 @@ feature("the extend tier never sees a destructive change", {
         view.tier == "extend"
     },
 })
+
+feature("a view entity's Run shows its SQL", {
+    expect() {
+        const sql = svc("get#ViewSql", { entityName: "moqui.basic.EnumerationAndType" }).sql
+        sql.startsWith("SELECT")
+        sql.includes("ENUMERATION") || sql.includes("enumeration")
+    },
+})
+
+feature("Export writes an entity's records as a data file's elements, and Check compares them with the database", {
+    when() {
+        login("john.doe")
+        const exported = svc("export#Records", { entityName: "moqui.basic.EnumerationType", filter: JSON.stringify({ enumTypeId: "ComparisonOperator" }) })
+        const roots = ec.service.sync().name("org.moqui.devaide.WorkspaceServices.get#Roots").call().roots
+        const root = roots.find((item) => item.components.some((component) => component.name == "example"))
+        const component = root.components.find((item) => item.name == "example")
+        const path = (component.path ? component.path + "/" : "") + "data/ExampleTypeData.xml"
+        const matching = svc("check#DataFile", { rootId: root.id, path, text: "<entity-facade-xml>" + exported.records + "</entity-facade-xml>" })
+        const differing = svc("check#DataFile", { rootId: root.id, path,
+            text: "<entity-facade-xml><moqui.basic.EnumerationType enumTypeId=\"ComparisonOperator\" description=\"Not this\"/></entity-facade-xml>" })
+        return { exported, matching, differing }
+    },
+    then({ exported, matching, differing }) {
+        exported.count == 1
+        exported.records.startsWith("<moqui.basic.EnumerationType")
+        matching.messages.length == 0
+        differing.messages.some((text) => text.includes("description"))
+    },
+})

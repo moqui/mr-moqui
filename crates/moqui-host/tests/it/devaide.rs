@@ -1173,4 +1173,52 @@ fn an_entity_save_relinks_and_adds_its_column() {
         .one()
         .unwrap()
         .is_some());
+
+    // Load the changed records: only those added or changed since the last commit
+    isolate_git(&gate.runtime);
+    let site = gate.runtime.join("component/my-site");
+    git(&site, &["init", "-q", "-b", "main"]);
+    git(&site, &["add", "-A"]);
+    git(&site, &["commit", "-q", "-m", "Start"]);
+    let base = text(
+        &call(
+            &factory,
+            "john.doe",
+            &format!("{WS}get#File"),
+            &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+        )
+        .unwrap(),
+        "hash",
+    );
+    let changed = seed.replace("description=\"High\"", "description=\"Highest\"").replace(
+        "</entity-facade-xml>",
+        "    <moqui.basic.Enumeration enumId=\"WpLow\" enumTypeId=\"WidgetPriority\" description=\"Low\"/>\n</entity-facade-xml>",
+    );
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}save#File"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "data/MySiteSeedData.xml"),
+            ("text", &changed),
+            ("baseHash", &base),
+        ],
+    )
+    .unwrap();
+    let loaded = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}load#ChangedRecords"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+    )
+    .unwrap();
+    assert_eq!(text(&loaded, "changed"), "2");
+    let low = facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumId", Value::string("WpLow"))
+        .one()
+        .unwrap();
+    assert!(low.is_some());
 }

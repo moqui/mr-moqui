@@ -1500,10 +1500,13 @@ are independent of P4 and may run beside it.
   drag. Picklist and Status write the field and its relationship as one operation list (one undo step) and the seed
   records into the site's seed data file, which Save loads (`load#SeedFile`, audited `DAA_LOAD`). "Show it on a form"
   lists the screens using the entity and opens them in the Workspace.
-- **Not built:** the header's panel of the entity's other attributes from the digest (edited in Text); a label in another
-  language to the L10n messages; the view entity's condition editor (Text) and its member diagram (P9, with the
-  pan-and-zoom layer); the SQL of a view entity's Run (its first rows show); a link to Tools' Data Edit; data files' Load
-  the changed records, Check and Export (§12; Load this file is built).
+- **Since built** (Oct 28, 2026): the header's Attributes from the digest; a field's label in another language as a
+  `LocalizedMessage` record in the site's seed data; a view entity's condition and order (econditions and order-bys of
+  its own definition; an extension cannot change a view's condition); its Run with the SQL a find makes
+  (`entity::info::view_sql`) and its first rows; a link to Tools' Data Edit; and a data file's Check against the database
+  (the data check's messages), Load the changed records (those added or changed since the last commit, compared with
+  `git show HEAD:`) and Export records (a find written as the file's elements, by full name, at most a thousand, into the
+  buffer). Still to come: the member diagram, with the pan-and-zoom layer (P9); the three-way data load (P10).
 
 **P6, the screen builder** (Oct 28, 2026), with these differences:
 
