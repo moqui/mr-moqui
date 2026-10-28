@@ -20,7 +20,10 @@
 
 pub mod artifact;
 pub mod check;
+pub mod propose;
 pub mod source;
+pub mod try_service;
+pub mod vcs;
 
 use std::path::{Path, PathBuf};
 

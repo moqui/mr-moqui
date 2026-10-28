@@ -455,8 +455,18 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
         {
             caps = caps.with([screen_cap]);
         }
-        // the development tools, and on the drawer the screen-xml dialect, for a dev-aide user on a dev instance
-        if crate::devtools::dev_aide_user(factory, &request.user_id) {
+        // the development tools, and on the drawer the screen-xml dialect, for a dev-aide user on a dev instance, to an
+        // agent whose tool policy pins one of them (the dev agent; another an admin opts in)
+        let dev_agent = || {
+            quietly(|| crate::llm::tools::ToolPolicy::load(&facade, &agent.agent_id))
+                .map(|policy| {
+                    ["artifact", "source", "check", "propose_edit"]
+                        .iter()
+                        .any(|tool| policy.pins(tool))
+                })
+                .unwrap_or(false)
+        };
+        if crate::devtools::dev_aide_user(factory, &request.user_id) && dev_agent() {
             caps = caps.with([crate::llm::tools::caps::DEV]);
             if caps.has(crate::llm::tools::caps::UI_OPENUI) {
                 caps = caps.with([crate::llm::tools::caps::UI_SCREEN_XML]);

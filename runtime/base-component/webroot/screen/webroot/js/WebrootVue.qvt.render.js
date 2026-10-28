@@ -405,8 +405,8 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-assist-card": { hash: "dfb695cf", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys } = Vue
+        "m-assist-card": { hash: "e602a6d9", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, renderList: _renderList, Fragment: _Fragment, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -485,37 +485,45 @@
                                   "data-assist-risk": ""
                                 }, _toDisplayString(_ctx.labels.risk) + ": " + _toDisplayString(_ctx.card.risk.risk) + " (" + _toDisplayString(_ctx.labels.riskFrom) + " " + _toDisplayString(_ctx.card.risk.skill) + ")", 3))
                               : _createCommentVNode("", true),
-                            ((_ctx.card.changes || []).length && (_ctx.pending || _ctx.status === 'conflict'))
-                              ? (_openBlock(), _createElementBlock("table", {
+                            (_ctx.renderer)
+                              ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.renderer), {
                                   key: 2,
-                                  class: "m-assist-changes q-mt-xs"
-                                }, [
-                                  _createElementVNode("tbody", null, [
-                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.card.changes, (change) => {
-                                      return (_openBlock(), _createElementBlock("tr", {
-                                        key: change.field,
-                                        "data-field": change.field
-                                      }, [
-                                        _createElementVNode("td", { class: "text-weight-medium" }, _toDisplayString(change.label || change.field), 1),
-                                        _createElementVNode("td", null, [
-                                          _createElementVNode("span", { class: "m-assist-current" }, _toDisplayString(change.current === null || change.current === undefined || change.current === '' ? '—' : change.current), 1),
-                                          _createTextVNode(" → "),
-                                          _createElementVNode("span", { class: "m-assist-proposed" }, _toDisplayString(change.proposed), 1)
-                                        ])
-                                      ], 8, ["data-field"]))
-                                    }), 128))
-                                  ])
-                                ]))
-                              : _createCommentVNode("", true),
+                                  card: _ctx.card,
+                                  pending: _ctx.pending,
+                                  class: "q-mt-xs",
+                                  onArguments: $event => (_ctx.customArgs = $event)
+                                }, null, 40, ["card", "pending", "onArguments"]))
+                              : ((_ctx.card.changes || []).length && (_ctx.pending || _ctx.status === 'conflict'))
+                                ? (_openBlock(), _createElementBlock("table", {
+                                    key: 3,
+                                    class: "m-assist-changes q-mt-xs"
+                                  }, [
+                                    _createElementVNode("tbody", null, [
+                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.card.changes, (change) => {
+                                        return (_openBlock(), _createElementBlock("tr", {
+                                          key: change.field,
+                                          "data-field": change.field
+                                        }, [
+                                          _createElementVNode("td", { class: "text-weight-medium" }, _toDisplayString(change.label || change.field), 1),
+                                          _createElementVNode("td", null, [
+                                            _createElementVNode("span", { class: "m-assist-current" }, _toDisplayString(change.current === null || change.current === undefined || change.current === '' ? '—' : change.current), 1),
+                                            _createTextVNode(" → "),
+                                            _createElementVNode("span", { class: "m-assist-proposed" }, _toDisplayString(change.proposed), 1)
+                                          ])
+                                        ], 8, ["data-field"]))
+                                      }), 128))
+                                    ])
+                                  ]))
+                                : _createCommentVNode("", true),
                             (_ctx.status === 'conflict')
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 3,
+                                  key: 4,
                                   class: "text-caption text-negative q-mt-xs"
                                 }, _toDisplayString(_ctx.card.targetName) + " " + _toDisplayString(_ctx.labels.conflict), 1))
                               : _createCommentVNode("", true),
                             (_ctx.previewRows.length)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 4,
+                                  key: 5,
                                   class: "m-assist-preview text-caption q-mt-xs",
                                   "data-assist-preview": ""
                                 }, [
@@ -533,13 +541,13 @@
                               : _createCommentVNode("", true),
                             (_ctx.card.preview && _ctx.card.preview.ok === false)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 5,
+                                  key: 6,
                                   class: "text-caption text-negative q-mt-xs"
                                 }, _toDisplayString(_ctx.card.preview.error || _ctx.card.preview.message), 1))
                               : _createCommentVNode("", true),
                             (_ctx.editing)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 6,
+                                  key: 7,
                                   class: "q-mt-xs"
                                 }, [
                                   _createVNode(_component_q_input, {
@@ -558,7 +566,7 @@
                               : _createCommentVNode("", true),
                             (_ctx.rejecting)
                               ? (_openBlock(), _createElementBlock("div", {
-                                  key: 7,
+                                  key: 8,
                                   class: "q-mt-xs"
                                 }, [
                                   _createVNode(_component_q_input, {
@@ -612,7 +620,7 @@
                                         "no-caps": "",
                                         dense: "",
                                         color: "primary",
-                                        label: _ctx.editing ? _ctx.labels.approveEdited : _ctx.labels.approve,
+                                        label: _ctx.approveLabel,
                                         loading: _ctx.busy,
                                         "data-assist-action": "approve",
                                         onClick: _ctx.approve
@@ -624,7 +632,7 @@
                                             "no-caps": "",
                                             dense: "",
                                             class: "m-btn-tonal",
-                                            label: _ctx.labels.editInScreen,
+                                            label: _ctx.editLabel,
                                             disable: _ctx.busy,
                                             "data-assist-action": "edit",
                                             onClick: _ctx.edit
@@ -868,6 +876,106 @@
                 ]),
                 _: 1
               }, 8, ["data-assist-card", "data-status", "data-approval-id", "data-question-id", "data-handoff-id"]))
+            }
+        } },
+        "m-assist-change-set": { hash: "f84fa101", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_btn = _resolveComponent("q-btn")
+
+              return (_openBlock(), _createElementBlock("div", {
+                class: "m-assist-change-set",
+                "data-assist-change-set": ""
+              }, [
+                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rows, (row, index) => {
+                  return (_openBlock(), _createElementBlock("div", {
+                    key: index,
+                    class: "text-caption",
+                    "data-assist-change-row": ""
+                  }, [
+                    _createElementVNode("span", { class: "text-weight-medium" }, _toDisplayString(row.artifact), 1),
+                    _createTextVNode(": " + _toDisplayString(row.change), 1)
+                  ]))
+                }), 128)),
+                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.editable, (item, index) => {
+                  return (_openBlock(), _createElementBlock("div", {
+                    key: 'v' + index,
+                    class: "q-mt-xs"
+                  }, [
+                    (_ctx.pending)
+                      ? (_openBlock(), _createBlock(_component_q_input, {
+                          key: 0,
+                          dense: "",
+                          outlined: "",
+                          "stack-label": "",
+                          label: item.label,
+                          "model-value": _ctx.values[index] === undefined ? item.value : _ctx.values[index],
+                          "onUpdate:modelValue": $event => (_ctx.changed(index, $event)),
+                          "data-assist-change-value": index
+                        }, null, 8, ["label", "model-value", "onUpdate:modelValue", "data-assist-change-value"]))
+                      : _createCommentVNode("", true)
+                  ]))
+                }), 128)),
+                _createElementVNode("div", { class: "q-mt-xs" }, [
+                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.files, (file) => {
+                    return (_openBlock(), _createElementBlock("div", {
+                      key: file.file,
+                      class: "text-caption m-muted",
+                      "data-assist-change-file": ""
+                    }, [
+                      _createVNode(_component_q_icon, {
+                        name: file.side === 'site' ? 'sym_o_extension' : 'sym_o_lock',
+                        size: "xs"
+                      }, null, 8, ["name"]),
+                      _createTextVNode(" " + _toDisplayString(file.file.split('/').slice(-3).join('/')) + " ", 1),
+                      _createElementVNode("span", { class: "text-positive" }, "+" + _toDisplayString(file.added), 1),
+                      _createTextVNode(),
+                      _createElementVNode("span", { class: "text-negative" }, "−" + _toDisplayString(file.removed), 1),
+                      (file.new)
+                        ? (_openBlock(), _createElementBlock("span", { key: 0 }, " (new)"))
+                        : _createCommentVNode("", true)
+                    ]))
+                  }), 128))
+                ]),
+                (_ctx.pending && _ctx.previewSrc)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 0,
+                      class: "q-mt-xs"
+                    }, [
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        "no-caps": "",
+                        dense: "",
+                        icon: "sym_o_visibility",
+                        label: "Preview",
+                        "data-assist-action": "preview-change-set",
+                        onClick: $event => (_ctx.previewing = !_ctx.previewing)
+                      }, null, 8, ["onClick"]),
+                      (_ctx.previewing)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "q-mt-xs"
+                          }, [
+                            (_ctx.entityChange)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 0,
+                                  class: "text-caption m-muted"
+                                }, "The new field's data appears after Accept, when its column is added."))
+                              : _createCommentVNode("", true),
+                            _createElementVNode("iframe", {
+                              src: _ctx.previewSrc,
+                              title: "Preview",
+                              style: {"width":"100%","min-height":"24rem","border":"1px solid var(--m-border,rgba(0,0,0,.12))","border-radius":"4px"},
+                              "data-assist-change-preview": ""
+                            }, null, 8, ["src"])
+                          ]))
+                        : _createCommentVNode("", true)
+                    ]))
+                  : _createCommentVNode("", true)
+              ]))
             }
         } },
         "m-assist-composer": { hash: "dc3df590", make: function (Vue) {
@@ -1869,7 +1977,7 @@
               ]))
             }
         } },
-        "m-assist-thread": { hash: "6ba88647", make: function (Vue) {
+        "m-assist-thread": { hash: "e838e650", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
@@ -2098,7 +2206,22 @@
                                       ]),
                                       _: 2
                                     }, 1032, ["icon", "aria-label", "data-assist-response-action", "onClick"]))
-                                  }), 128))
+                                  }), 128)),
+                                  (_ctx.codeOf(row))
+                                    ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.codeActions, (action) => {
+                                        return (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: action.key,
+                                          flat: "",
+                                          "no-caps": "",
+                                          dense: "",
+                                          size: "xs",
+                                          icon: action.icon || 'sym_o_code',
+                                          label: action.label,
+                                          "data-assist-code-action": action.key,
+                                          onClick: $event => (_ctx.runCode(action, row))
+                                        }, null, 8, ["icon", "label", "data-assist-code-action", "onClick"]))
+                                      }), 128))
+                                    : _createCommentVNode("", true)
                                 ]))
                               : _createCommentVNode("", true)
                           ], 8, ["data-message-id"]))
@@ -7234,8 +7357,8 @@
               ], 8, ["type"]))
             }
         } },
-        "m-shell-assist": { hash: "e5a3a37", make: function (Vue) {
-            const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment } = Vue
+        "m-shell-assist": { hash: "e6640d96", make: function (Vue) {
+            const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -7366,6 +7489,28 @@
                                 })
                               ], 8, ["data-assist-context-level", "data-percent", "aria-label"]))
                             : _createCommentVNode("", true),
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.pageActions, (action) => {
+                            return (_openBlock(), _createBlock(_component_q_btn, {
+                              key: action.source + action.agent,
+                              flat: "",
+                              round: "",
+                              dense: "",
+                              icon: action.icon || 'sym_o_bolt',
+                              "aria-label": action.label,
+                              "data-assist-page-action": action.agent,
+                              onClick: $event => (_ctx.runPageAction(action))
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_tooltip, null, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(action.label), 1)
+                                  ]),
+                                  _: 2
+                                }, 1024)
+                              ]),
+                              _: 2
+                            }, 1032, ["icon", "aria-label", "data-assist-page-action", "onClick"]))
+                          }), 128)),
                           _createVNode(_component_q_btn, {
                             flat: "",
                             round: "",

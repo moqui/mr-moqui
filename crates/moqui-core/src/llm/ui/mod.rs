@@ -26,6 +26,7 @@
 
 pub mod openui;
 pub mod proxy;
+pub mod screen_xml;
 pub mod vue_sfc;
 pub mod write;
 
@@ -82,7 +83,7 @@ pub trait Dialect: Send + Sync {
     fn label(&self) -> &'static str;
     /// The skill that holds the language, which gates `write_ui` for this dialect.
     fn skill(&self) -> &'static str;
-    /// Offered only on a development instance (the planned `screen-xml`).
+    /// Offered only on a development instance, to a user of the development tools (`screen-xml`).
     fn dev_only(&self) -> bool {
         false
     }

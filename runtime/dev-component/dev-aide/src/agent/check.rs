@@ -138,3 +138,19 @@ pub(crate) fn upstream_problem(
     })
 }
 moqui_core::submit_tool!(CheckTool);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The upstream rule's sentence is in its skill section word for word (plans/design-dev-aide.md 13.1).
+    #[test]
+    fn the_upstream_rule_is_in_its_skill_section() {
+        let skill = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/skill/site-customizing.md")).unwrap();
+        let (_, section) = UPSTREAM_SKILL.split_once('#').unwrap();
+        let start = skill.find(&format!("\n## {section}\n")).expect("the section");
+        let body = &skill[start + 1..];
+        let body = &body[..body[3..].find("\n## ").map_or(body.len(), |end| end + 3)];
+        assert!(body.contains("An edit to an upstream component is a fork that every upgrade fights."));
+    }
+}

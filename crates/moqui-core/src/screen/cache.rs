@@ -446,6 +446,10 @@ impl ScreenFacade {
         location: &str,
         depth: usize,
     ) -> Result<Arc<ScreenDef>, Error> {
+        // a render from overlaid text (a preview) neither reads nor writes the cache
+        if super::overlay::active() {
+            return ScreenDef::load(self, factory, location, depth).map(Arc::new);
+        }
         let key = location.to_string();
         if let Some(cached) = self.definitions.get(&key)? {
             if self.is_current(factory, &cached) {

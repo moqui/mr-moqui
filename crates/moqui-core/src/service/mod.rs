@@ -73,7 +73,7 @@ mod validate;
 #[cfg(all(test, feature = "git"))]
 mod wiki_tests;
 
-pub(crate) use call::is_service_defined;
+pub use call::is_service_defined;
 pub use call::{
     async_call, call, call_future, register_callback, register_on_end, start_future, sync, ServiceCallback,
     ServiceFuture,

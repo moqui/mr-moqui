@@ -82,6 +82,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="artifacts" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.search#Artifacts" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="changeSet" read-only="true"><service-call name="org.moqui.devaide.ChangeSetServices.get#ChangeSet" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="completeReview"><service-call name="org.moqui.devaide.ChangeSetServices.complete#Review" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 

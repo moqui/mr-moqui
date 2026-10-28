@@ -204,6 +204,7 @@ fn full_tail(headless: bool) -> TailSpec {
             })
             .collect(),
         canvas: Some(("Logins by day".to_string(), 3)),
+        editor: None,
         skills: vec!["create-user-account".to_string()],
         headless,
     }
@@ -621,4 +622,31 @@ fn no_mantle_names_in_the_framework_prompts_skills_tools_or_agent() {
     // the check itself sees a Mantle name
     assert_eq!(mantle_words("Use the partyId of Mantle"), ["mantle", "partyid"]);
     assert!(found.is_empty(), "{found:#?}");
+}
+
+#[test]
+fn the_tail_gives_a_dev_aide_editor_in_one_line() {
+    let tail = build_tail(&TailSpec {
+        editor: Some(crate::llm::prompt::TailEditor {
+            root: "my-site".to_string(),
+            path: "entity/SiteEntities.xml".to_string(),
+            language: "xml".to_string(),
+            view: "text".to_string(),
+            unsaved: true,
+            element: "<extend-entity entity-name=\"Example\">".to_string(),
+            line: 12,
+            selection: String::new(),
+            problems: 2,
+            artifact: "entity:moqui.example.Example".to_string(),
+        }),
+        ..TailSpec::default()
+    });
+    assert!(
+        tail.contains("editor my-site:entity/SiteEntities.xml (xml, text) unsaved line 12 at <extend-entity"),
+        "{tail}"
+    );
+    assert!(
+        tail.contains("artifact entity:moqui.example.Example; 2 problems"),
+        "{tail}"
+    );
 }

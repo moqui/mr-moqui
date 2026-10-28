@@ -149,6 +149,9 @@ pub enum TargetKind {
     Service,
     /// Any other tool call (another system's tool, an add-on tool): the arguments are the call's.
     Tool,
+    /// A change set of files (plans/design-dev-aide.md 13.3): the arguments are the files with their base hashes and
+    /// texts; the snapshot's `changeSet` is what the card shows. Review hands it to the editor.
+    File,
 }
 
 impl TargetKind {
@@ -157,13 +160,19 @@ impl TargetKind {
             TargetKind::Screen => "screen",
             TargetKind::Service => "service",
             TargetKind::Tool => "tool",
+            TargetKind::File => "file",
         }
     }
 
     pub fn parse(text: &str) -> Option<Self> {
-        [TargetKind::Screen, TargetKind::Service, TargetKind::Tool]
-            .into_iter()
-            .find(|kind| kind.as_str() == text.trim())
+        [
+            TargetKind::Screen,
+            TargetKind::Service,
+            TargetKind::Tool,
+            TargetKind::File,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == text.trim())
     }
 }
 
@@ -371,6 +380,9 @@ impl ApprovalView {
             "canEdit": self.snapshot.get("handoff").is_some_and(|target| !target.is_null()),
             "preview": self.preview,
             "result": self.result,
+            // a change set's card: the artifacts it changes, its files with their counts, and its editable values
+            "changeSet": self.snapshot.get("changeSet").cloned().unwrap_or(Json::Null),
+            "arguments": if self.target_kind == TargetKind::File { self.args.clone() } else { Json::Null },
         })
     }
 }
@@ -496,7 +508,12 @@ pub fn request(ctx: &mut TurnContext<'_>, request: &ApprovalRequest) -> Requeste
         &request.target_name,
         &request.args,
     );
-    let mut snapshot = json!({"summary": what, "changes": request.changes, "record": request.snapshot});
+    // a change set's snapshot is what its card shows: the artifacts, the files and their counts
+    let mut snapshot = if request.target_kind == TargetKind::File {
+        json!({"summary": what, "changes": request.changes, "changeSet": request.snapshot})
+    } else {
+        json!({"summary": what, "changes": request.changes, "record": request.snapshot})
+    };
     if let Some(target) = &request.handoff {
         snapshot["handoff"] = serde_json::to_value(target).unwrap_or(Json::Null);
     }
@@ -597,7 +614,9 @@ pub fn request(ctx: &mut TurnContext<'_>, request: &ApprovalRequest) -> Requeste
         card["risk"] = json!({"skill": skill, "risk": risk.as_str()});
     }
     // a tool call's write (another system's, a canvas Mutation) has no sim preview
-    card["canPreview"] = json!(request.target_kind != TargetKind::Tool && preview::available(&facade));
+    // a change set previews on the canvas, not in the sim
+    card["canPreview"] =
+        json!(!matches!(request.target_kind, TargetKind::Tool | TargetKind::File) && preview::available(&facade));
     ctx.events
         .signal(json!({"runId": run.run_id, "conversationId": run.conversation_id,
         "approvalId": approval_id, "event": "approval.requested", "summary": what}));
@@ -1258,7 +1277,7 @@ fn propose_lesson_of(
             .and_then(Json::as_str)
             .and_then(crate::llm::memory::Anchor::parse),
         TargetKind::Service => crate::llm::memory::Anchor::parse(&view.target_name),
-        TargetKind::Tool => None,
+        TargetKind::Tool | TargetKind::File => None,
     };
     let Some(anchor) = anchor else {
         return;

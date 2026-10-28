@@ -332,6 +332,16 @@ The tools component's suite (`test/agent/`): `assist.agent.js` (21 tasks in the 
 the `a2a` surface, run through the run engine; the spec lets the assist agent serve that surface while it runs). The
 surface of a spec is `drawer`, `chat`, `tui`, `job`, `a2a` or `mcp`; a headless one sends only the time in the tail.
 
+
+The dev agent's tasks are in `runtime/dev-component/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
+field added to an upstream entity and shown on its form from the site component, a list column, where a service is used,
+and a spec written from a Try in the sim. A dev component's agents run on a dev instance; the example component stands in
+for the site component for the run, and the files a task writes are put back after it. With the hand-authored replies:
+`moqui test dev-aide --agents --replay runtime/dev-component/dev-aide/test/agent/replay`. With a model (a key from the
+environment, nightly and before a phase closes; the design's `--live` is `--llm-profile`):
+`moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
+files proposed and written are the expected ones and check clean. Copy a passing run's transcript into the replay set to
+keep it.
 ## Pitfalls
 
 - Outside a `then` or `expect` block, a line that starts with `[`, `(`, `/` or a template literal continues the line

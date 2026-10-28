@@ -669,7 +669,8 @@
             if (chat.backFromIdle(Math.max(chat.lastBeatIdle, wasIdle), chat.autoAwayMinutes)) chat.beat();
         },
         beat() {
-            if (!chat.vm) return;
+            // a page in a preview frame is a picture of a page: it is not the user being there
+            if (!chat.vm || moqui.previewToken) return;
             const idle = chat.idleSeconds(chat.lastInput, Date.now());
             chat.lastBeatIdle = idle;
             chat.request("/userStatusHeartbeat", { idleSeconds: idle }, "POST").then((json) => { if (json && json.myStatus) chat.setMe(json.myStatus); });

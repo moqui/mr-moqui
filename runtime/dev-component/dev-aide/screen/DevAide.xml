@@ -34,6 +34,13 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- the artifact index: entities, services, screens and rules by name, each opening in the Workspace at its line -->
         <palette-source group="DevArtifacts" label="Artifacts" icon="sym_o_data_object" sequence="60"
                 service="org.moqui.devaide.ArtifactServices.search#Palette"/>
+        <!-- on every app page of a Dev AIDE user: Dev Assist with the recipes for the page (plans/design-dev-aide.md 3.5) -->
+        <page-action label="Customize this screen" icon="sym_o_design_services" agent="dev" sequence="10"/>
+        <!-- the dev agent's prompts on Dev AIDE's pages (13.4) -->
+        <assist-prompt label="Explain this artifact" text="Explain the artifact I have open: what it is, what uses it and what it uses."/>
+        <assist-prompt label="Where is this used?" text="Where is the artifact at my cursor used? List the screens, services and rules."/>
+        <assist-prompt label="What does my site customize here?" text="What does the site component extend of the artifact I have open, and is any extension broken?"/>
+        <assist-prompt label="Fix the problems in this file" text="Fix the problems in the file I have open, as a change set."/>
     </shell-providers>
     <widgets>
         <subscreens-panel id="dev-aide-app" type="popup"/>

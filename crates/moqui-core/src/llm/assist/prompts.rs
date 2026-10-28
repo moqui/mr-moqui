@@ -141,6 +141,8 @@ pub fn from_providers(facade: &EntityFacade, query: &PromptQuery) -> Vec<(String
 pub struct ShellAssist {
     pub prompts: Vec<(String, serde_json::Value)>,
     pub actions: Vec<(String, serde_json::Value)>,
+    /// The page actions of the drawer (`page-action`): an agent opened on the page, such as Customize this screen.
+    pub page_actions: Vec<(String, serde_json::Value)>,
 }
 
 /// [`ShellAssist`] of the render in progress (the drawer's calls run in one); empty outside a render or when the
@@ -179,6 +181,8 @@ pub fn shell_providers() -> ShellAssist {
             .extend(list("assistPrompts").into_iter().map(|prompt| (name.clone(), prompt)));
         out.actions
             .extend(list("responseActions").into_iter().map(|action| (name.clone(), action)));
+        out.page_actions
+            .extend(list("pageActions").into_iter().map(|action| (name.clone(), action)));
     }
     out
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The dev agent (plans/design-dev-aide.md 13.1): Dev Assist in the drawer of Dev AIDE's pages (its startPath) and in the
+    agent picker of a Dev AIDE user elsewhere, with the dev tools (artifact, source, check, propose_edit, try_service; vcs
+    from the lazy catalog), the screen-xml canvas, and writes only through the user's approval. Seed of the dev-aide,
+    so it exists only where the component loads (a dev instance). -->
+<entity-facade-xml type="seed">
+    <moqui.agent.AgentDefinition agentId="dev" agentName="Dev Assist" featureId="assist" reasoningLevel="medium"
+            surfaces="drawer,chat,tui" startPath="/apps/dev" canvasDialects="openui,screen-xml"
+            instructionsLocation="component://dev-aide/prompt/dev.md"
+            description="Changes and extends Moqui components on this dev instance: finds artifacts, reads and checks files, proposes change sets you accept or review, tries services in the sim."/>
+    <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="10" toolPattern="artifact" classificationEnumId="AgclRead" approvalModeEnumId="AgamAsk"/>
+    <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="20" toolPattern="source" classificationEnumId="AgclRead" approvalModeEnumId="AgamAsk"/>
+    <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="30" toolPattern="check" classificationEnumId="AgclRead" approvalModeEnumId="AgamAsk"/>
+    <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="40" toolPattern="propose_edit" classificationEnumId="AgclWrite" approvalModeEnumId="AgamAsk"/>
+    <!-- try_service is an add-on tool of the lazy catalog; the dev agent pins it, its recipes run it; vcs stays in the catalog -->
+    <moqui.agent.AgentToolPolicy agentId="dev" sequenceNum="50" toolPattern="try_service" classificationEnumId="AgclWrite" approvalModeEnumId="AgamAsk"/>
+</entity-facade-xml>

@@ -93,6 +93,30 @@
         return text.slice(from, to);
     };
 
+    // The changed regions between two texts, by lines: a common prefix and suffix taken off, the rest by the longest common
+    // subsequence of lines (a review's hunks: plans/design-dev-aide.md 13.3).
+    pure.hunks = (a, b) => {
+        const x = String(a || "").split("\n");
+        const y = String(b || "").split("\n");
+        let start = 0;
+        while (start < x.length && start < y.length && x[start] === y[start]) start++;
+        let endX = x.length, endY = y.length;
+        while (endX > start && endY > start && x[endX - 1] === y[endY - 1]) { endX--; endY--; }
+        const m = x.slice(start, endX), n = y.slice(start, endY);
+        if (!m.length && !n.length) return 0;
+        if (m.length * n.length > 4000000) return 1;
+        const table = Array.from({ length: m.length + 1 }, () => new Array(n.length + 1).fill(0));
+        for (let i = m.length - 1; i >= 0; i--) for (let j = n.length - 1; j >= 0; j--)
+            table[i][j] = m[i] === n[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+        let i = 0, j = 0, count = 0, inHunk = false;
+        while (i < m.length || j < n.length) {
+            if (i < m.length && j < n.length && m[i] === n[j]) { i++; j++; inHunk = false; continue; }
+            if (!inHunk) { count++; inHunk = true; }
+            if (j >= n.length || (i < m.length && table[i + 1][j] >= table[i][j + 1])) i++; else j++;
+        }
+        return count;
+    };
+
     // ---- the browser ----
 
     const store = {
@@ -113,6 +137,8 @@
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [] }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [] },
+                // an agent's change set under review (?review=<approvalId>): its files with their texts on disk and as proposed
+                review: null, editorView: null,
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null
             };
         },
@@ -136,10 +162,26 @@
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
             this.loadRoots();
+            const assist = moqui.assist;
+            if (assist) {
+                // the editor in the Assist drawer's page state, and the actions on the code blocks of its answers
+                assist.editorState = () => this.editorState();
+                if (assist.codeActions) {
+                    assist.codeActions.register({ key: "dev.insert", label: "Insert at cursor", icon: "sym_o_input", run: (code) => this.insertCode(code, false) });
+                    assist.codeActions.register({ key: "dev.replace", label: "Replace selection", icon: "sym_o_find_replace", run: (code) => this.insertCode(code, true) });
+                    assist.codeActions.register({ key: "dev.propose", label: "Propose as change", icon: "sym_o_approval", run: (code, language) => this.proposeCode(code, language) });
+                }
+            }
+            if (this.query && this.query.review) this.openReview(this.query.review);
         },
         beforeUnmount() {
             if (this.offReload) this.offReload();
             root.removeEventListener("resize", this.onResize);
+            const assist = moqui.assist;
+            if (assist) {
+                if (assist.editorState) assist.editorState = null;
+                if (assist.codeActions) ["dev.insert", "dev.replace", "dev.propose"].forEach((key) => assist.codeActions.remove(key));
+            }
         },
         watch: {
             tabs: { deep: true, handler() { this.remember(); } },
@@ -350,6 +392,69 @@
                 this.get("files", { rootId: this.rootId }).then((answer) => { this.goto.files = answer.files || []; }, this.fail);
             },
             gotoFile(path) { this.goto.open = false; if (path) this.openFile(path); },
+            // ---- Assist on this page (plans/design-dev-aide.md 13.4) ----
+            editorState() {
+                const tab = this.current;
+                if (!tab) return null;
+                const view = this.editorView;
+                let element = "", selection = "";
+                if (view && view.state) {
+                    const range = view.state.selection.main;
+                    selection = view.state.sliceDoc(range.from, range.to).slice(0, 2000);
+                    const line = view.state.doc.lineAt(range.head).text.trim();
+                    const tag = /^<[A-Za-z][^>]*>?/.exec(line);
+                    element = tag ? tag[0].slice(0, 200) : "";
+                }
+                return { root: this.rootId, path: tab.path, language: (tab.path.split(".").pop() || ""), view: "text",
+                    unsaved: pure.isDirty(tab), element, line: this.cursor.line, selection, problems: (tab.problems || []).length };
+            },
+            insertCode(code, replace) {
+                const view = this.editorView;
+                if (!view || !this.current || this.current.readOnly) { this.note("Open a file you may edit first", "warning"); return; }
+                const range = view.state.selection.main;
+                view.dispatch({ changes: { from: replace ? range.from : range.head, to: replace ? range.to : range.head, insert: code } });
+            },
+            proposeCode(code, language) {
+                const tab = this.current;
+                const where = tab ? " in " + this.rootId + ":" + tab.path : "";
+                const fence = "```" + (language || "") + "\n" + code + "\n```";
+                if (moqui.assist && moqui.assist.ask) moqui.assist.ask("Propose this as a change" + where + " with propose_edit:\n" + fence);
+            },
+            // ---- Review: an agent's change set, each file a merge of the disk's text and the proposal ----
+            openReview(approvalId) {
+                this.get("changeSet", { approvalId }).then((answer) => {
+                    const files = (answer.files || []).map((file) => Object.assign({}, file, { text: file.proposedText, open: true }));
+                    this.review = { approvalId, summary: answer.summary || "", status: answer.status, files, saving: false };
+                    this.tab = "review";
+                }, this.fail);
+            },
+            leaveReview() { this.review = null; this.tab = "code"; },
+            saveReview() {
+                const review = this.review;
+                if (!review) return;
+                review.saving = true;
+                let total = 0, accepted = 0;
+                const edited = [], saved = [];
+                const writable = review.files.filter((file) => !file.conflict);
+                const saveOne = (file) => {
+                    const proposed = pure.hunks(file.diskText || "", file.proposedText);
+                    const kept = pure.hunks(file.text, file.proposedText);
+                    total += proposed;
+                    accepted += Math.max(0, proposed - kept);
+                    if (file.text !== file.proposedText) edited.push(file.path);
+                    if (file.text === (file.diskText || "")) return Promise.resolve();
+                    return this.post("save", { rootId: file.rootId, path: file.path, text: file.text, baseHash: file.diskHash || "" }).then((answer) => {
+                        if (answer.conflict) throw { errors: file.path + " changed on disk while you reviewed it" };
+                        saved.push(file.path);
+                    });
+                };
+                writable.reduce((chain, file) => chain.then(() => saveOne(file)), Promise.resolve())
+                    .then(() => this.post("completeReview", { approvalId: review.approvalId, accepted, total, edited: edited.join(","), saved: saved.join(",") }))
+                    .then((answer) => {
+                        this.note("Saved: " + (answer.review || saved.length + " files"));
+                        this.review = null; this.tab = "code"; this.treeKey++; this.refreshStatus();
+                    }, (error) => { review.saving = false; this.fail(error); });
+            },
             // ---- the artifact index: go to definition (F12, Mod+click), references (Shift+F12), go to artifact ----
             editorExtensions() {
                 return (CM) => [
@@ -538,6 +643,7 @@
     <q-tab name="code" label="Code"></q-tab>
     <q-tab name="changes" :label="'Changes' + (changeCount ? ' ' + changeCount : '')" :disable="!isGit"></q-tab>
     <q-tab name="commits" label="Commits" :disable="!isGit" @click="loadLog"></q-tab>
+    <q-tab v-if="review" name="review" :label="'Review ' + review.files.length" id="DevReviewTab"></q-tab>
   </q-tabs>
   <q-separator></q-separator>
   <div class="col row no-wrap m-dev-body" v-show="tab === 'code'">
@@ -616,7 +722,7 @@
         <m-code-editor v-else-if="!current.loading" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
             :read-only="current.readOnly" :schema="current.schema" :lint="lintOf(current)" height="100%"
             :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
-            :extensions="editorExtensions()"></m-code-editor>
+            :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
         <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
             <q-space></q-space><q-btn dense flat round size="sm" icon="sym_o_close" @click="refs.title = ''"></q-btn></div>
@@ -644,6 +750,23 @@
         <span v-if="problems.length" class="q-ml-md">{{problems.length}} problems</span>
         <q-space></q-space><span class="ellipsis" id="DevLastReload">{{lastReload}}</span>
       </div>
+    </div>
+  </div>
+  <div class="col column no-wrap m-dev-body scroll q-pa-sm" v-if="tab === 'review' && review" id="DevReview">
+    <div class="row items-center no-wrap q-gutter-x-sm q-mb-sm">
+      <div class="text-subtitle2 ellipsis">Review: {{review.summary}}</div><q-space></q-space>
+      <q-btn unelevated no-caps dense color="primary" label="Save accepted" :loading="review.saving" :disable="!canWrite" @click="saveReview" id="DevReviewSave"></q-btn>
+      <q-btn flat no-caps dense label="Leave review" @click="leaveReview"></q-btn>
+    </div>
+    <div class="text-caption m-muted q-mb-sm">Accept or reject each change, edit the text as you like, then Save accepted: the files save as any save does, and Assist reads what you did.</div>
+    <div v-for="file in review.files" :key="file.file" class="q-mb-md" :data-review-file="file.path">
+      <div class="row items-center no-wrap text-caption text-weight-medium q-mb-xs">
+        <span class="ellipsis">{{file.rootId}}:{{file.path}}</span><span v-if="file.new" class="q-ml-xs m-muted">(new)</span>
+        <span v-if="file.changedOnDisk && !file.conflict" class="q-ml-xs text-warning">changed on disk since the proposal: merged onto it</span>
+      </div>
+      <div v-if="file.conflict" class="text-negative text-caption">{{file.conflict}}</div>
+      <m-diff-view v-else :original="file.diskText || ''" :modified="file.proposedText" :file-name="file.path" unified editable merge-controls
+          @update:modified="file.text = $event"></m-diff-view>
     </div>
   </div>
   <div class="col row no-wrap m-dev-body" v-if="tab === 'changes' && status">

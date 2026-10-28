@@ -130,6 +130,8 @@ impl ScreenUrlInfo {
         cache: bool,
     ) -> Result<Arc<Self>, Error> {
         let facade = ScreenFacade::of(factory);
+        // a render from overlaid text resolves its own path, with the overlaid definitions
+        let cache = cache && !super::overlay::active();
         // A path that took no conditional default resolves the same way every time, as Java's `screen.url` cache.
         let key = format!("{root_location}\u{1}{}\u{1}{last_standalone}", segments.join("/"));
         if cache {

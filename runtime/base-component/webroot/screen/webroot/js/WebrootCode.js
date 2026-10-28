@@ -343,7 +343,9 @@
         props: {
             original: { type: String, default: "" }, modified: { type: String, default: "" }, language: String,
             fileName: String, unified: Boolean, editable: Boolean, collapseUnchanged: { type: Boolean, default: true },
-            height: String
+            height: String,
+            // unified and editable: Accept and Reject on each chunk (a reviewed proposal; plans/design-dev-aide.md 13.3)
+            mergeControls: Boolean
         },
         emits: ["update:modified", "ready"],
         data() { return { failed: false }; },
@@ -389,7 +391,7 @@
                     this.view = new CM.EditorView({
                         parent: this.$refs.host,
                         state: CM.EditorState.create({ doc: this.modified, extensions: [modifiedExtensions,
-                            CM.unifiedMergeView({ original: this.original, mergeControls: false, gutter: true,
+                            CM.unifiedMergeView({ original: this.original, mergeControls: !!(this.mergeControls && this.editable), gutter: true,
                                 collapseUnchanged: this.collapseUnchanged ? {} : undefined })] })
                     });
                 } else {

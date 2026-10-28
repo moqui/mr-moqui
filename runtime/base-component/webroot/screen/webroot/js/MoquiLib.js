@@ -300,6 +300,10 @@
         appRootPath: "",
         // the trace id of the page's own request: each later request is a trace of its own that names it
         pageTraceId: "",
+        // the preview token of a page that previews proposed screen text (a dev instance's change set or canvas)
+        previewToken: (() => {
+            try { return new URL(root.location.href).searchParams.get("moquiPreview") || ""; } catch (_) { return ""; }
+        })(),
 
         // fetch with the session cookie and token. params is an object (a FormData, a string or a plain object). Resolves to
         // { ok, status, headers, text, json } and rejects with the same shape plus error on a network failure.
@@ -314,6 +318,9 @@
                 } catch (_) { /* the ordinary fetch path reports malformed URLs */ }
             }
             if (method !== "GET" && moqui.sessionToken && !headers["X-CSRF-Token"]) headers["X-CSRF-Token"] = moqui.sessionToken;
+            // a page opened as a preview of proposed screen text (moquiPreview in its URL, a dev instance) asks for every
+            // part of itself the same way (plans/design-dev-aide.md F14)
+            if (moqui.previewToken) headers["X-Moqui-Preview"] = moqui.previewToken;
             const init = { method, headers, credentials: "same-origin", signal: opts.signal };
             let target = url;
             const data = opts.params;

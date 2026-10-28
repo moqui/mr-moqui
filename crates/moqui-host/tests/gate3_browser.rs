@@ -4530,3 +4530,260 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
         "{problems:#?}"
     );
 }
+
+/// A change set of the dev agent (plans/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
+/// opens Dev Assist, whose scripted `propose_edit` proposes a `screen-extend` of the page's form and an edit of a site
+/// service; the card reads the change as artifacts and its Preview frames the page with the proposal in place (the new
+/// field shows, nothing saved); Review takes it to the Workspace, where one of the service's two changes is rejected and
+/// the rest saved; the approval resolves with what the user did, which the run reads.
+#[test]
+fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
+    use moqui_core::llm::provider::fake::{self, Reply, Step};
+    let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n\n    <service verb=\"get\" noun=\"Other\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"other\"/></actions>\n    </service>\n</services>\n";
+    let files = [
+        ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
+        ("component/my-site/service/mysite/Things.xml", site_services),
+        ("component/upapp/component.xml", r#"<component name="upapp"/>"#),
+        (
+            "component/upapp/MoquiConf.xml",
+            r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+    <subscreens-item name="upapp" menu-title="Up App" location="component://upapp/screen/UpApp.xml"/>
+</screen></screen-facade></moqui-conf>"#,
+        ),
+        (
+            "component/upapp/screen/UpApp.xml",
+            r#"<screen require-authentication="true" default-menu-title="Up App">
+    <subscreens default-item="Edit"/>
+    <widgets><subscreens-active/></widgets>
+</screen>"#,
+        ),
+        (
+            "component/upapp/screen/UpApp/Edit.xml",
+            r#"<screen require-authentication="true" default-menu-title="Edit">
+    <actions><entity-find-one entity-name="moqui.basic.EnumerationType" value-field="enumType">
+        <field-map field-name="enumTypeId" value="UP_GATE"/></entity-find-one></actions>
+    <widgets>
+        <form-single name="EditEnumType" map="enumType">
+            <field name="enumTypeId"><default-field><hidden/></default-field></field>
+            <field name="description"><default-field title="Description"><text-line/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>"#,
+        ),
+    ];
+    let records = |text: &str| -> String {
+        text.split_once("<entity-facade-xml type=\"seed\">")
+            .map_or("", |(_, rest)| rest)
+            .replace("</entity-facade-xml>", "")
+    };
+    let data = format!(
+        r#"<entity-facade-xml type="seed">
+        <moqui.llm.LlmEndpoint endpointId="gate-dev" protocol="fake" description="Gate dev fake" isLocal="Y"/>
+        <moqui.llm.LlmModel modelId="gate-dev-fast" endpointId="gate-dev" providerModel="fake-fast" tier="fast" contextWindow="32768"/>
+        <moqui.llm.LlmFeatureBinding featureId="assist" modelId="gate-dev-fast" reasoningLevel="none"/>
+        <moqui.basic.EnumerationType enumTypeId="UP_GATE" description="The gate type"/>
+        <moqui.security.ArtifactGroup artifactGroupId="UP_GATE" description="Up app screens"/>
+        <moqui.security.ArtifactGroupMember artifactGroupId="UP_GATE" artifactName="component://upapp/.*"
+            nameIsPattern="Y" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <moqui.security.ArtifactAuthz artifactAuthzId="UP_GATE_ADMIN" userGroupId="ADMIN" artifactGroupId="UP_GATE"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        {}{}</entity-facade-xml>"#,
+        records(include_str!(
+            "../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        records(include_str!(
+            "../../../runtime/dev-component/dev-aide/data/DevAideAgentData.xml"
+        )),
+    );
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-change-set",
+        Some(&data),
+        &[("instance_purpose", "dev"), ("dev_aide_site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    fake::clear("gate-dev");
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!("{base}/qapps/upapp/Edit"));
+    browser.wait_for(
+        "the page and the Assist bootstrap",
+        "!!document.getElementById('m-assist-button') && !!moqui.assist.state.bootstrap && !!moqui.webrootVue && !moqui.webrootVue.loading",
+        WAIT,
+    );
+    browser.eval("moqui.assist.openDrawer(true), moqui.assist.loadPrompts(true), true");
+    // Customize this screen: Dev Assist on this page
+    browser.wait_for(
+        "Customize this screen",
+        "!!document.querySelector('[data-assist-page-action=dev]')",
+        WAIT,
+    );
+    browser.click(
+        "Customize this screen",
+        "document.querySelector('[data-assist-page-action=dev]')",
+    );
+    browser.wait_for("the dev agent", "moqui.assist.state.agentId === 'dev'", WAIT);
+
+    let call = |id: &str, name: &str, arguments: serde_json::Value| {
+        Reply::steps(vec![
+            Step::Tool {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+                pieces: 2,
+            },
+            Step::Finish("tool_calls".to_string()),
+        ])
+    };
+    let extend = "<screen-extend>\n    <form-single name=\"EditEnumType\">\n        <field name=\"extraNote\" after=\"description\"><default-field title=\"Extra Note\"><text-line/></default-field></field>\n    </form-single>\n</screen-extend>\n";
+    fake::script(
+        "gate-dev",
+        vec![
+            call("s1", "skill", serde_json::json!({"name": "moqui-dev"})),
+            call(
+                "p1",
+                "propose_edit",
+                serde_json::json!({"summary": "Add Extra Note to the form, and change the site's two results",
+                "files": [
+                    {"file": "component://my-site/screen-extend/upapp/screen/UpApp/Edit.xml", "text": extend},
+                    {"file": "component://my-site/service/mysite/Things.xml", "edits": [
+                        {"old": "value=\"first\"", "new": "value=\"second\""},
+                        {"old": "value=\"other\"", "new": "value=\"another\""}]}
+                ]}),
+            ),
+            Reply::text("Done: you reviewed and saved the change set."),
+        ],
+    );
+    browser.eval(
+        "(() => { const input = document.querySelector('#m-assist-composer textarea'); input.focus(); return true; })()",
+    );
+    browser.type_text("Add an Extra Note field to this form");
+    browser.press("Enter");
+    // the card reads the change as artifacts and files
+    browser.wait_for(
+        "the change set's card",
+        "(() => { const el = document.querySelector('[data-assist-change-set]'); return !!el && el.innerText.indexOf('Extra Note') >= 0 \
+         && el.innerText.indexOf('Things.xml') >= 0 && !!document.querySelector('[data-assist-action=approve]'); })()",
+        WAIT,
+    );
+    assert_eq!(
+        browser.eval("document.querySelector('[data-assist-action=approve]').innerText.trim()"),
+        "Accept all"
+    );
+    // Preview: the page in a frame with the proposal in place; nothing saved
+    browser.click(
+        "Preview",
+        "document.querySelector('[data-assist-action=preview-change-set]')",
+    );
+    browser.wait_for(
+        "the preview with the new field",
+        "(() => { const frame = document.querySelector('[data-assist-change-preview]'); const doc = frame && frame.contentDocument; \
+         return !!doc && !!doc.body && doc.body.innerText.indexOf('Extra Note') >= 0; })()",
+        WAIT,
+    );
+    assert!(!gate
+        .runtime
+        .join("component/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
+        .exists());
+    // Review: the Workspace with each file as a merge, one change of the service rejected, the rest saved
+    browser.click("Review", "document.querySelector('[data-assist-action=edit]')");
+    browser.wait_for(
+        "the review in the Workspace",
+        "!!document.getElementById('DevReview') && document.querySelectorAll('#DevReview [data-review-file] .cm-editor').length === 2",
+        WAIT,
+    );
+    browser.wait_for(
+        "the service's two changes",
+        "document.querySelectorAll('[data-review-file=\"service/mysite/Things.xml\"] .cm-chunkButtons button[name=reject]').length === 2",
+        WAIT,
+    );
+    // the merge view's buttons act on mousedown
+    browser.eval(
+        "(() => { const button = document.querySelector('[data-review-file=\"service/mysite/Things.xml\"] .cm-chunkButtons button[name=reject]'); \
+         button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, button: 0})); return true; })()",
+    );
+    browser.wait_for(
+        "one change left in the service",
+        "document.querySelectorAll('[data-review-file=\"service/mysite/Things.xml\"] .cm-chunkButtons button[name=reject]').length === 1",
+        WAIT,
+    );
+    if let Some(dir) = std::env::var_os("MOQUI_DEV_SHOTS") {
+        use base64::Engine as _;
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |browser: &mut Browser, name: &str| {
+            browser.pump(Duration::from_millis(600));
+            let shot = browser.call("Page.captureScreenshot", serde_json::json!({"format": "png"}));
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(shot["data"].as_str().unwrap())
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+        };
+        save(&mut browser, "review-light");
+        browser.eval("Quasar.Dark.set(true)");
+        save(&mut browser, "review-dark");
+        browser.eval("Quasar.Dark.set(false)");
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            serde_json::json!({"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true}),
+        );
+        save(&mut browser, "review-390");
+        browser.call("Emulation.clearDeviceMetricsOverride", serde_json::json!({}));
+    }
+    // the button is below the merge views, out of the window: pressed from the page
+    browser.eval("document.getElementById('DevReviewSave').click(), true");
+    browser.wait_for(
+        "the review saved and closed",
+        "!document.getElementById('DevReview')",
+        WAIT,
+    );
+    let things = gate.runtime.join("component/my-site/service/mysite/Things.xml");
+    let deadline = std::time::Instant::now() + WAIT;
+    while std::time::Instant::now() < deadline
+        && !std::fs::read_to_string(&things).unwrap_or_default().contains("another")
+    {
+        browser.pump(Duration::from_millis(200));
+    }
+    let saved = std::fs::read_to_string(&things).unwrap();
+    assert!(
+        saved.contains("value=\"first\"") && saved.contains("value=\"another\""),
+        "{saved}"
+    );
+    assert!(gate
+        .runtime
+        .join("component/my-site/screen-extend/upapp/screen/UpApp/Edit.xml")
+        .exists());
+    // the approval resolved with what the user did
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let result = loop {
+        let found = {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            factory
+                .entity()
+                .unwrap()
+                .find("moqui.agent.AgentApproval")
+                .unwrap()
+                .eq("targetKind", moqui_lib::object::Value::string("file"))
+                .list()
+                .unwrap()
+                .values()
+                .first()
+                .and_then(|row| row.get("resultJson").map(moqui_lib::object::to_plain_string))
+                .unwrap_or_default()
+        };
+        if found.contains("accepted") || std::time::Instant::now() > deadline {
+            break found;
+        }
+        browser.pump(Duration::from_millis(200));
+    };
+    assert!(result.contains("accepted 2 of 3 hunks"), "{result}");
+    assert!(result.contains("service/mysite/Things.xml"), "{result}");
+}

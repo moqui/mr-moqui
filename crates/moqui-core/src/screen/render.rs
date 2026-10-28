@@ -32,14 +32,14 @@ use std::time::Instant;
 use moqui_lib::codec::constant_time_eq;
 use moqui_lib::object::Value;
 
-use super::cache::{OutputKind, ScreenFacade, canonical_render_mode};
+use super::cache::{canonical_render_mode, OutputKind, ScreenFacade};
 use super::definition::{
-    Actions, Authentication, CONDITION_FIELD, Condition, ParameterDef, ResponseDef, ResponseKind, ScreenDef,
-    TransitionDef,
+    Actions, Authentication, Condition, ParameterDef, ResponseDef, ResponseKind, ScreenDef, TransitionDef,
+    CONDITION_FIELD,
 };
 use super::dispatch;
 use super::gate::{self, HeldWrite, RenderOptions, RenderOrigin, TransitionGate, TransitionOutcome};
-use super::url::{ScreenUrlInfo, encode_path, parse_last_standalone, resolve_screen_path};
+use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
 use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
 use crate::script::{self, ContextFrame};
 use crate::user;
@@ -639,7 +639,26 @@ fn plain_request_parameters() -> BTreeMap<String, String> {
 }
 
 /// Resolve and run one job. Anything written is in the thread's web slot.
+///
+/// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
+/// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
+    let mut token = text_of(job.parameters.get("moquiPreview"));
+    if token.is_empty() {
+        token = job.request.header("x-moqui-preview").unwrap_or_default().to_string();
+    }
+    if let Some(overlay) = super::overlay::for_token(factory, &token) {
+        web::set_header(
+            "Content-Security-Policy",
+            Some("frame-ancestors 'self'; form-action 'self';"),
+        );
+        let _fence = crate::entity::fence::enter("a preview of proposed screen text");
+        return super::overlay::with(overlay, || run_job_now(factory, job));
+    }
+    run_job_now(factory, job)
+}
+
+fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
     let _origin = gate::OriginGuard::install(job.options.origin.clone(), job.header_authenticated);
     let facade = ScreenFacade::of(factory);
     // An always-standalone JSON mode (`tui`) renders only the last level. Without a `lastStandalone` the walk would

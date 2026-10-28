@@ -23,6 +23,7 @@
 pub mod agent;
 mod artifacts;
 pub mod audit;
+mod changeset;
 pub mod confine;
 pub mod git;
 mod notify;
@@ -42,5 +43,6 @@ submit_component! {
 fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
     artifacts::register(registry)?;
+    changeset::register(registry)?;
     vcs::register(registry)
 }

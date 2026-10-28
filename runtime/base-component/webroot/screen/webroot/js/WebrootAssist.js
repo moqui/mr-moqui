@@ -59,7 +59,7 @@
     const assist = {
         labels: { assist: "Assist", askAssist: "Ask Assist", newConversation: "New conversation", history: "History", tasks: "Tasks",
             send: "Send", stop: "Stop", close: "Close", placeholder: "Ask Assist — / for commands, @ for records", approve: "Approve",
-            editInScreen: "Edit in screen", reject: "Reject", rejectWith: "Reject with feedback", feedback: "What should Assist do instead?",
+            editInScreen: "Edit in screen", acceptAll: "Accept all", reviewInEditor: "Review", reject: "Reject", rejectWith: "Reject with feedback", feedback: "What should Assist do instead?",
             preview: "Preview effects", previewNote: "a slower simulation", risk: "Risk", riskFrom: "says skill", previewHidden: "(hidden)", arguments: "Arguments",
             editArguments: "Edit arguments", approveEdited: "Approve as edited", queued: "Queued", sending: "Sending", notSent: "Not sent",
             retry: "Retry", followHere: "Follow here", followingElsewhere: "Following in another tab", followOn: "Follow on this page",
@@ -1053,6 +1053,9 @@
                 return info;
             });
             if (more.canvas) state.canvas = more.canvas;
+            if (typeof assist.editorState === "function") {
+                try { const editor = assist.editorState(); if (editor && editor.path) state.editor = editor; } catch (err) { console.info("the editor state was not read", err); }
+            }
             return state;
         },
         // Whether an answered form (moqui.onFormAnswer's form: {name, id, action}) is the hand-off's: its name or id, or a name
@@ -1372,6 +1375,34 @@
         register(name, def) { assist.dialects.list[name] = Object.assign({ name }, def); return assist.dialects.list[name]; },
         get(name) { return assist.dialects.list[name || "openui"] || null; },
     };
+    // An approval kind's own card body (plans/design-dev-aide.md 13.3): a component name by targetKind, given the card; it
+    // may emit "arguments" with the edited arguments that Approve then sends (the dev-aide registers "file").
+    assist.approvalRenderers = {};
+    // Actions on the code blocks of an answer (plans/design-dev-aide.md 13.4): { key, label, icon, run(code, language) },
+    // registered by a page such as the dev-aide's Workspace (Insert at cursor, Replace selection, Propose as change).
+    assist.codeActions = {
+        list: [],
+        register(action) { assist.codeActions.remove(action.key); assist.codeActions.list.push(action); if (assist.state) assist.state.codeActionCount++; },
+        remove(key) { const at = assist.codeActions.list.findIndex((item) => item.key === key); if (at >= 0) assist.codeActions.list.splice(at, 1); if (assist.state) assist.state.codeActionCount++; },
+        // the fenced code blocks of a Markdown text, in order: [{ code, language }]
+        blocks(text) {
+            const out = [];
+            const fence = /```([A-Za-z0-9_+-]*)[^\n]*\n([\s\S]*?)```/g;
+            let found;
+            while ((found = fence.exec(String(text || "")))) out.push({ language: found[1] || "", code: found[2] });
+            return out;
+        },
+    };
+    // A page's editor for the page state (plans/design-dev-aide.md 13.4): a function answering { root, path, language, view,
+    // unsaved, element, line, selection, problems, artifact }, set by the dev-aide's Workspace while it is the page.
+    assist.editorState = null;
+    // The agent whose startPath (other than /apps) the page is under, the longest first: the dev agent on Dev AIDE's pages.
+    assist.agentForPath = (agents, path) => {
+        const page = String(path || "").replace(/^\/qapps(\/|$)/, "/apps$1");
+        const found = (agents || []).filter((agent) => agent.startPath && agent.startPath !== "/apps" && agent.startPath !== "/"
+            && (page === agent.startPath || page.indexOf(agent.startPath + "/") === 0)).sort((a, b) => b.startPath.length - a.startPath.length);
+        return found.length ? found[0].agentId : null;
+    };
     moqui.assist = assist;
 
     // ---- the drawer in the page (assist.start; nothing below runs under Node) ----
@@ -1382,7 +1413,7 @@
         streaming: false, polling: false, error: "", announce: "", busy: {}, canvasLoaded: false, canvasError: "",
         // 13.14: the files of the draft, the suggested prompts and response actions of the page, dictation, the panes' lists, the
         // skill editor, and the features a call the server does not have (501, 404) turned off
-        attachments: [], prompts: { list: [], actions: null, key: "" }, dictation: { recording: false, busy: false }, off: {},
+        attachments: [], prompts: { list: [], actions: null, pageActions: [], key: "" }, codeActionCount: 0, dictation: { recording: false, busy: false }, off: {},
         memoryPane: { memories: [], lessons: [], loading: false, error: "" }, skillsPane: { list: [], loading: false, error: "" }, skillEditor: null });
 
     const S = () => assist.state;
@@ -1449,6 +1480,8 @@
         start(vm) {
             // the page's settings say whether the user may use Assist (qapps.xml: the llm feature on and AgentUse)
             if (assist.vm || !(moqui.config && moqui.config.assist)) return;
+            // a page in a preview frame (a proposed change's Preview) is a picture of the page, not a place to talk to Assist
+            if (moqui.previewToken) return;
             assist.vm = vm;
             assist.clientId = assist.clientIdOf(storage("sessionStorage"));
             if (vm.labels) Object.assign(assist.labels, pick(vm.labels));
@@ -1478,7 +1511,10 @@
                 const features = json.features || {};
                 S().available = features.enabled !== false && Array.isArray(json.agents) && json.agents.length > 0;
                 if (!S().available) return;
-                S().agentId = json.defaultAgentId || json.agents[0].agentId;
+                // an agent picked already (the picker, a page action) stays; else the page's (its startPath), else the default
+                const page = assist.vm && assist.vm.screenContext ? assist.vm.screenContext.path : (root.location ? root.location.pathname : "");
+                const picked = S().agentId && json.agents.some((agent) => agent.agentId === S().agentId) ? S().agentId : null;
+                S().agentId = picked || assist.agentForPath(json.agents, page) || json.defaultAgentId || json.agents[0].agentId;
                 const wanted = assist.wantedConversation();
                 if (wanted.id) {
                     assist.load(wanted.id).catch(() => {});
@@ -2259,6 +2295,7 @@
                 if (S().prompts.key !== key) return;
                 S().prompts.list = Array.isArray(json.prompts) ? json.prompts.slice(0, 8) : [];
                 S().prompts.actions = Array.isArray(json.responseActions) ? json.responseActions : null;
+                S().prompts.pageActions = Array.isArray(json.pageActions) ? json.pageActions : [];
             }, (err) => { if (!assist.turnOff("prompts", err)) S().prompts.key = ""; });
         },
         // a chip: sent at once, or into the composer
@@ -2599,6 +2636,8 @@
             tiers() { return this.agent.tierFixed ? [] : (this.agent.tiers && this.agent.tiers.length ? this.agent.tiers : this.boot.tiers || []); },
             tierOptions() { return this.tiers.map((tier) => ({ label: tier.charAt(0).toUpperCase() + tier.slice(1), value: tier })); },
             agentOptions() { return this.agents.map((agent) => ({ label: agent.name || agent.agentId, value: agent.agentId })); },
+            // the page actions of the apps (page-action) whose agent this user has
+            pageActions() { const ids = this.agents.map((agent) => agent.agentId); return (st().prompts.pageActions || []).filter((action) => ids.indexOf(action.agent) >= 0); },
             paused() { const run = this.convo.activeRunId ? this.convo.runs[this.convo.activeRunId] : null; return !!run && assist.isPaused(run.state); },
             elsewhere() { const follow = this.convo.follow; return !!(this.convo.conversationId && follow.clientId && follow.clientId !== assist.clientId); },
             approvals() { return Object.keys(this.convo.approvals).map((key) => this.convo.approvals[key]); },
@@ -2620,6 +2659,8 @@
             showCanvas() { assist.showCanvas(); },
             setTier(tier) { st().tier = tier; },
             setAgent(agentId) { if (agentId !== st().agentId) { st().agentId = agentId; assist.newConversation(); } },
+            // a page action: its agent in a new conversation on this page, with its suggested prompts
+            runPageAction(action) { this.setAgent(action.agent); assist.loadPrompts(true); assist.openDrawer(true); },
             newConversation() { assist.newConversation(); },
             pane(name) {
                 st().pane = st().pane === name ? "chat" : name;
@@ -2674,6 +2715,8 @@
                         '<div v-if="meter" class="m-assist-context q-mx-xs" id="m-assist-context" tabindex="0" :data-assist-context-level="meter.level" :data-percent="meter.percent" :aria-label="meter.tooltip">' +
                             '<q-circular-progress :value="meter.value" size="24px" :thickness="0.2" :color="meter.level === \'warning\' ? \'warning\' : \'primary\'" track-color="grey-5" show-value font-size="8px">{{meter.percent}}</q-circular-progress>' +
                             '<q-tooltip>{{meter.tooltip}}</q-tooltip></div>' +
+                        '<q-btn v-for="action in pageActions" :key="action.source + action.agent" flat round dense :icon="action.icon || \'sym_o_bolt\'" :aria-label="action.label"' +
+                            ' :data-assist-page-action="action.agent" @click="runPageAction(action)"><q-tooltip>{{action.label}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_edit_square" id="m-assist-new" :aria-label="labels.newConversation" @click="newConversation"><q-tooltip>{{labels.newConversation}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_history" id="m-assist-history" :class="{\'text-primary\': s.pane === \'history\'}" :aria-label="labels.history" @click="pane(\'history\')"><q-tooltip>{{labels.history}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_checklist" id="m-assist-tasks" :class="{\'text-primary\': s.pane === \'tasks\'}" :aria-label="labels.tasks" @click="pane(\'tasks\')">' +
@@ -2779,6 +2822,7 @@
             rows() { return assist.threadRows(this.convo); },
             prompts() { return st().prompts.list; },
             responseActions() { return assist.responseActions(); },
+            codeActions() { return st().codeActionCount >= 0 ? assist.codeActions.list.slice() : []; },
             saveSkillOn() { return assist.featureOn("saveSkill"); },
             queuedOn() { return !st().off.queued; },
             streaming() { return !!this.convo.activeRunId; },
@@ -2814,6 +2858,9 @@
             attachmentUrl(id) { return assist.attachmentUrl(id); },
             sizeText(size) { return assist.sizeText(size); },
             respond(action, row) { assist.runResponseAction(action, row.text); },
+            // the last code block of an answer, for the page's code actions
+            codeOf(row) { if (!this.codeActions.length) return null; const blocks = assist.codeActions.blocks(row.text); return blocks.length ? blocks[blocks.length - 1] : null; },
+            runCode(action, row) { const block = this.codeOf(row); if (block) action.run(block.code, block.language, row); },
             saveSkill(row) { assist.draftSkill(row.runId); },
             busyQueued(row) { return !!st().busy["queued:" + row.inputId]; },
             editQueued(row) { this.editing = row.key; this.editText = row.text; },
@@ -2853,6 +2900,8 @@
                             '<q-btn flat round dense size="xs" icon="sym_o_thumb_down" :color="row.feedback && row.feedback.rating === \'down\' ? \'negative\' : undefined" :aria-label="labels.down" @click="rate(row, \'down\')"></q-btn>' +
                             '<q-btn v-for="action in responseActions" :key="action.key" flat round dense size="xs" :icon="action.icon || \'sym_o_bolt\'" :aria-label="action.label"' +
                                 ' :data-assist-response-action="action.key" @click="respond(action, row)"><q-tooltip>{{action.label}}</q-tooltip></q-btn>' +
+                            '<template v-if="codeOf(row)"><q-btn v-for="action in codeActions" :key="action.key" flat no-caps dense size="xs" :icon="action.icon || \'sym_o_code\'" :label="action.label"' +
+                                ' :data-assist-code-action="action.key" @click="runCode(action, row)"></q-btn></template>' +
                         '</div>' +
                     '</div>' +
                     '<div v-else-if="row.kind === \'reasoning\' || row.kind === \'thinking\'" class="m-assist-thought text-caption m-muted q-mb-xs" data-assist-item="reasoning">' +
@@ -2941,10 +2990,72 @@
     // A card: an approval (current → proposed, Approve, Edit in screen, Reject with feedback, Preview effects; collapsed once
     // decided, a conflict with Review again), a question or form (options with the recommended one marked, typed fields, free
     // text; the budget question's Continue and Stop) or a hand-off (the values Assist filled, Skip). No keyboard accelerators.
+    // A change set's card body (approval kind "file", plans/design-dev-aide.md 13.3): what it changes as artifacts, its files
+    // with their counts and side (site or upstream), the titles a business user may word (emitted as edited arguments), and
+    // Preview: this page rendered with the proposed text in place (a dev instance's preview token), nothing saved.
+    components["m-assist-change-set"] = {
+        name: "mAssistChangeSet",
+        props: { card: Object, pending: Boolean },
+        emits: ["arguments"],
+        data() { return { values: {}, previewing: false }; },
+        computed: {
+            set() { return this.card.changeSet || {}; },
+            rows() { return this.set.rows || []; },
+            files() { return this.set.files || []; },
+            editable() { return this.set.values || []; },
+            entityChange() { return this.files.some((file) => /\/entity\//.test(file.file)); },
+            // this page with the proposal in place; none on the Workspace, whose review shows the files
+            previewSrc() {
+                const path = (root.location && root.location.pathname) || "";
+                if (!path || /\/dev\/Workspace/.test(path)) return "";
+                const query = (root.location.search || "").replace(/^\?/, "");
+                return path + "?" + (query ? query + "&" : "") + "moquiPreview=" + encodeURIComponent("approval:" + this.card.approvalId);
+            }
+        },
+        methods: {
+            changed(index, value) {
+                this.values[index] = value;
+                // the edited titles written into the change set's arguments: the first title="old" of the file's changes
+                const args = JSON.parse(JSON.stringify(this.card.arguments || {}));
+                this.editable.forEach((item, at) => {
+                    const now = this.values[at];
+                    if (now === undefined || now === item.value) return;
+                    const file = (args.files || [])[item.file];
+                    if (!file) return;
+                    const from = 'title="' + item.value + '"';
+                    const to = 'title="' + String(now).replace(/"/g, "&quot;") + '"';
+                    const swap = (text) => (typeof text === "string" && text.indexOf(from) >= 0 ? text.replace(from, to) : text);
+                    if (file.text) file.text = swap(file.text);
+                    (file.ops || []).forEach((op) => { if (op.xml) op.xml = swap(op.xml); if (op.value === item.value) op.value = now; });
+                    (file.edits || []).forEach((edit) => { edit.new = swap(edit.new); });
+                });
+                this.$emit("arguments", args);
+            }
+        },
+        template:
+            '<div class="m-assist-change-set" data-assist-change-set>' +
+                '<div v-for="(row, index) in rows" :key="index" class="text-caption" data-assist-change-row><span class="text-weight-medium">{{row.artifact}}</span>: {{row.change}}</div>' +
+                '<div v-for="(item, index) in editable" :key="\'v\' + index" class="q-mt-xs">' +
+                    '<q-input v-if="pending" dense outlined stack-label :label="item.label" :model-value="values[index] === undefined ? item.value : values[index]"' +
+                        ' @update:model-value="changed(index, $event)" :data-assist-change-value="index"></q-input></div>' +
+                '<div class="q-mt-xs">' +
+                    '<div v-for="file in files" :key="file.file" class="text-caption m-muted" data-assist-change-file>' +
+                        '<q-icon :name="file.side === \'site\' ? \'sym_o_extension\' : \'sym_o_lock\'" size="xs"></q-icon> {{file.file.split(\'/\').slice(-3).join(\'/\')}}' +
+                        ' <span class="text-positive">+{{file.added}}</span> <span class="text-negative">−{{file.removed}}</span><span v-if="file.new"> (new)</span></div></div>' +
+                '<div v-if="pending && previewSrc" class="q-mt-xs">' +
+                    '<q-btn flat no-caps dense icon="sym_o_visibility" label="Preview" data-assist-action="preview-change-set" @click="previewing = !previewing"></q-btn>' +
+                    '<div v-if="previewing" class="q-mt-xs">' +
+                        '<div v-if="entityChange" class="text-caption m-muted">The new field\'s data appears after Accept, when its column is added.</div>' +
+                        '<iframe :src="previewSrc" title="Preview" style="width:100%;min-height:24rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px" data-assist-change-preview></iframe>' +
+                    '</div></div>' +
+            '</div>'
+    };
+    assist.approvalRenderers.file = "m-assist-change-set";
+
     components["m-assist-card"] = {
         name: "mAssistCard",
         props: { kind: String, card: Object },
-        data() { return { rejecting: false, feedback: "", editing: false, argsText: "", argsError: "", picked: [], values: {}, free: "" }; },
+        data() { return { rejecting: false, feedback: "", editing: false, argsText: "", argsError: "", picked: [], values: {}, free: "", customArgs: null }; },
         computed: {
             labels() { return labelsOf(this); },
             busy() { const b = st().busy; return !!(b["approval:" + this.card.approvalId] || b["question:" + this.card.questionId]); },
@@ -2952,7 +3063,11 @@
             status() { return this.card.status || "pending"; },
             pending() { return this.status === "pending"; },
             canPreview() { const features = (st().bootstrap && st().bootstrap.features) || {}; return this.card.canPreview !== false && features.preview !== false; },
-            editableArgs() { return this.card.targetKind && this.card.targetKind !== "screen" && (this.card.arguments || (this.card.tool && this.card.tool.arguments)); },
+            editableArgs() { return this.card.targetKind && this.card.targetKind !== "screen" && !this.renderer && (this.card.arguments || (this.card.tool && this.card.tool.arguments)); },
+            // a kind's own card body (a change set's artifacts and files)
+            renderer() { return assist.approvalRenderers[this.card.targetKind] || null; },
+            approveLabel() { return this.card.targetKind === "file" ? this.labels.acceptAll : this.editing ? this.labels.approveEdited : this.labels.approve; },
+            editLabel() { return this.card.targetKind === "file" ? this.labels.reviewInEditor : this.labels.editInScreen; },
             statusLabel() {
                 const map = { approved: "approved", executing: "executing", executed: "executed", failed: "errorTitle", rejected: "rejected", expired: "expired",
                     conflict: "conflict", "handed-off": "handedOff" };
@@ -2970,7 +3085,8 @@
                     let args = null;
                     try { args = JSON.parse(this.argsText); } catch (err) { this.argsError = String(err.message || err); return; }
                     assist.decide(this.card, "approve", { arguments: args });
-                } else assist.decide(this.card, "approve");
+                } else if (this.customArgs) assist.decide(this.card, "approve", { arguments: this.customArgs });
+                else assist.decide(this.card, "approve");
             },
             edit() { assist.decide(this.card, "edit"); },
             startReject() { this.rejecting = true; },
@@ -3010,7 +3126,8 @@
                             '<q-badge v-if="!pending" outline :color="status === \'executed\' || status === \'approved\' ? \'positive\' : status === \'rejected\' || status === \'failed\' || status === \'conflict\' ? \'negative\' : \'grey\'" data-assist-card-status>{{statusLabel}}</q-badge></div>' +
                         '<div v-if="card.record && card.record.label" class="q-mt-xs"><q-chip dense square size="sm" icon="sym_o_link">{{card.record.label}}</q-chip></div>' +
                         '<div v-if="card.risk && card.risk.risk" class="text-caption q-mt-xs" :class="card.risk.risk === \'irreversible\' ? \'text-negative\' : \'m-muted\'" data-assist-risk>{{labels.risk}}: {{card.risk.risk}} ({{labels.riskFrom}} {{card.risk.skill}})</div>' +
-                        '<table v-if="(card.changes || []).length && (pending || status === \'conflict\')" class="m-assist-changes q-mt-xs"><tbody>' +
+                        '<component v-if="renderer" :is="renderer" :card="card" :pending="pending" class="q-mt-xs" @arguments="customArgs = $event"></component>' +
+                        '<table v-else-if="(card.changes || []).length && (pending || status === \'conflict\')" class="m-assist-changes q-mt-xs"><tbody>' +
                             '<tr v-for="change in card.changes" :key="change.field" :data-field="change.field"><td class="text-weight-medium">{{change.label || change.field}}</td>' +
                                 '<td><span class="m-assist-current">{{change.current === null || change.current === undefined || change.current === \'\' ? \'—\' : change.current}}</span> → <span class="m-assist-proposed">{{change.proposed}}</span></td></tr>' +
                         '</tbody></table>' +
@@ -3024,8 +3141,8 @@
                     '</q-card-section>' +
                     '<q-card-actions v-if="pending" align="left" class="q-pt-none q-px-sm q-pb-sm q-gutter-xs">' +
                         '<template v-if="!rejecting">' +
-                            '<q-btn unelevated no-caps dense color="primary" :label="editing ? labels.approveEdited : labels.approve" :loading="busy" data-assist-action="approve" @click="approve"></q-btn>' +
-                            '<q-btn v-if="card.canEdit" unelevated no-caps dense class="m-btn-tonal" :label="labels.editInScreen" :disable="busy" data-assist-action="edit" @click="edit"></q-btn>' +
+                            '<q-btn unelevated no-caps dense color="primary" :label="approveLabel" :loading="busy" data-assist-action="approve" @click="approve"></q-btn>' +
+                            '<q-btn v-if="card.canEdit" unelevated no-caps dense class="m-btn-tonal" :label="editLabel" :disable="busy" data-assist-action="edit" @click="edit"></q-btn>' +
                             '<q-btn v-if="editableArgs && !editing" flat no-caps dense :label="labels.editArguments" data-assist-action="edit-arguments" @click="startEdit"></q-btn>' +
                             '<q-btn flat no-caps dense color="negative" :label="labels.reject" :disable="busy" data-assist-action="reject" @click="startReject"></q-btn>' +
                             '<q-btn v-if="canPreview" flat no-caps dense icon="sym_o_science" :label="labels.preview" :loading="previewing" data-assist-action="preview" @click="preview"><q-tooltip>{{labels.previewNote}}</q-tooltip></q-btn>' +

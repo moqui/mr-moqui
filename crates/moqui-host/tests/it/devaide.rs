@@ -704,3 +704,47 @@ fn the_index_scales() {
     let synthetic = index::synthetic(&corpus, &gate.runtime.join("synthetic"), 10).unwrap();
     measure("synthetic x10", synthetic);
 }
+
+/// F14 (plans/design-dev-aide.md 13.3, 13.5): a screen renders with proposed text standing at a location for the renders
+/// in the overlay, a new `screen-extend` file merged into its base screen; outside the overlay the screen is as saved,
+/// and the cached definition is not the overlaid one.
+#[test]
+fn a_screen_renders_with_proposed_text_in_an_overlay() {
+    let screen = r#"<screen require-authentication="false">
+    <widgets>
+        <form-single name="Facts"><field name="upId"><default-field title="Up Id"><display/></default-field></field></form-single>
+    </widgets>
+</screen>
+"#;
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/screen/UpApp/Detail.xml", screen),
+    ];
+    let gate = start_with_files_and_links("dev-aide-overlay", None, &[("instance_purpose", "dev")], &files, &[]);
+    let factory = Arc::clone(gate.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let render = || {
+        moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://upstream-app/screen/UpApp/Detail.xml")
+            .render("", BTreeMap::new())
+            .unwrap()
+    };
+    let before = render();
+    let text = |render: &moqui_core::screen::TestRender| render.text();
+    assert!(!text(&before).contains("Extra Note"), "{}", text(&before));
+    let mut overlay = moqui_core::screen::overlay::Overlay::new();
+    overlay.insert_location(
+        &factory,
+        "component://my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+        "<screen-extend><form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single></screen-extend>",
+    );
+    let previewed = moqui_core::screen::overlay::with(overlay, render);
+    assert!(text(&previewed).contains("Extra Note"), "{}", text(&previewed));
+    // nothing was written, and the next render is as saved
+    assert!(!gate.runtime.join("component/my-site/screen-extend").exists());
+    assert!(!text(&render()).contains("Extra Note"));
+}

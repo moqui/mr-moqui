@@ -802,7 +802,9 @@ impl ScreenDef {
             )));
         }
         let resource = factory.resource().get(location)?;
-        if !resource.exists() {
+        // the overlay's text stands at its location for this render, whether a file is there or not (F14)
+        let overlaid = super::overlay::text_of(location);
+        if overlaid.is_none() && !resource.exists() {
             return Err(Error::of_kind(
                 crate::context::ErrorKind::NotFound,
                 format!("screen not found: {location}"),
@@ -812,7 +814,11 @@ impl ScreenDef {
             location: location.to_string(),
             modified: resource.last_modified(),
         }];
-        let node = MNode::parse_text(location, &resource.read_text()?).map_err(Error::from)?;
+        let node = match overlaid {
+            Some(text) => MNode::parse_text(location, &text),
+            None => MNode::parse_text(location, &resource.read_text()?),
+        }
+        .map_err(Error::from)?;
         if !node.has_name("screen") {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
@@ -1076,15 +1082,26 @@ fn apply_screen_extends(
     let mut extended = Extended::default();
     for component in factory.components() {
         let directory = component.location.join("screen-extend");
-        if !directory.is_dir() {
+        let full = directory.join(after_scheme.trim_start_matches('/'));
+        // an overlaid screen-extend file (a proposal's or a draft's) stands at its path whether one is there or not,
+        // its directory too
+        let overlaid = |path: &Path| super::overlay::text_of(&path.to_string_lossy());
+        let overlaid_here = super::overlay::active()
+            && (overlaid(&full).is_some()
+                || after_screen.is_some_and(|after| overlaid(&directory.join(after)).is_some()));
+        if !directory.is_dir() && !overlaid_here {
             continue;
         }
-        let full = directory.join(after_scheme.trim_start_matches('/'));
         let mut found = full.clone();
-        if !found.is_file() {
+        if !found.is_file() && overlaid(&found).is_none() {
             if let Some(after) = after_screen {
                 found = directory.join(after);
             }
+        }
+        if let Some(text) = overlaid(&found) {
+            let extend = MNode::parse_text(&found.to_string_lossy(), &text).map_err(Error::from)?;
+            merge_extend(screen, &extend, location, &mut extended);
+            continue;
         }
         if !found.is_file() {
             // Not there: the deepest directory of each place it could go is a source, so a file added there later

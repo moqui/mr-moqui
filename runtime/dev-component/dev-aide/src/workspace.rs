@@ -488,15 +488,39 @@ fn save_file(
     let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
+    save_text(
+        &context,
+        root,
+        &resolved,
+        &text(parameters, "text"),
+        &text(parameters, "baseHash"),
+        None,
+    )
+}
+
+/// The save pipeline (plans/design-dev-aide.md 5.7), for an editor's Save and an accepted change set alike: the user
+/// may write the file; a file there is still at `base_hash`, else the answer is the conflict with the disk's text; its line endings and byte order mark are kept; a temporary file is renamed over it;
+/// the write is audited (with `detail`, such as the agent run and approval); and what it defines is reloaded and
+/// checked, the answer carrying the report, the problems and the git status.
+///
+/// # Errors
+///
+/// Returns an error when the user may not write the file, the text is too long, or the file cannot be written.
+pub(crate) fn save_text(
+    context: &Context,
+    root: &Root,
+    resolved: &confine::Resolved,
+    content: &str,
+    base_hash: &str,
+    detail: Option<serde_json::Value>,
+) -> Result<Parameters, LibError> {
     context.may_write(root, &resolved.relative)?;
-    let content = text(parameters, "text");
     if content.len() as u64 > context.settings.max_edit_bytes {
         return Err(LibError::new(format!(
             "the text is over {} bytes",
             context.settings.max_edit_bytes
         )));
     }
-    let base_hash = text(parameters, "baseHash");
     let mut out = Parameters::new();
     let existing = std::fs::read(&resolved.path).ok();
     let (crlf_file, bom) = match &existing {
@@ -527,6 +551,9 @@ fn save_file(
         bytes.extend_from_slice(BOM);
     }
     bytes.extend_from_slice(body.as_bytes());
+    if let Some(parent) = resolved.path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    }
     write_atomic(&resolved.path, &bytes)?;
     let hash = sha256(&bytes);
     audit::record(
@@ -535,14 +562,14 @@ fn save_file(
             action: if existing.is_some() { "DAA_SAVE" } else { "DAA_CREATE" },
             root: &root.id,
             path: &resolved.relative,
-            hash_before: existing.as_ref().map(|_| base_hash.as_str()),
+            hash_before: existing.as_ref().map(|_| base_hash),
             hash_after: Some(&hash),
-            detail: None,
+            detail,
         },
     );
     out.insert("conflict".into(), Value::Bool(false));
     out.insert("hash".into(), Value::string(&hash));
-    after_write(&context, root, &resolved, Some(&content), &mut out);
+    after_write(context, root, resolved, Some(content), &mut out);
     Ok(out)
 }
 

@@ -732,6 +732,24 @@ pub struct TailForm {
     pub rows: Option<usize>,
 }
 
+/// The editor of a dev-aide page, as the tail gives it in one line.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TailEditor {
+    pub root: String,
+    pub path: String,
+    pub language: String,
+    /// `text`, or the file kind's visual view.
+    pub view: String,
+    pub unsaved: bool,
+    /// The element at the cursor, as `<service verb="place" noun="Order">`.
+    pub element: String,
+    pub line: u32,
+    /// At most 2,000 characters.
+    pub selection: String,
+    pub problems: u32,
+    pub artifact: String,
+}
+
 /// What the tail of a user message says.
 #[derive(Clone, Debug, Default)]
 pub struct TailSpec {
@@ -746,6 +764,9 @@ pub struct TailSpec {
     pub forms: Vec<TailForm>,
     /// A canvas open in the drawer: its title and version.
     pub canvas: Option<(String, u32)>,
+    /// A dev-aide page's editor (plans/design-dev-aide.md 13.4): the file open, the element at the cursor and the
+    /// selection.
+    pub editor: Option<TailEditor>,
     /// Skills that strongly match the message and the frozen catalog does not list ([`crate::llm::skills::tail_skills`]).
     pub skills: Vec<String>,
     /// No page beside the conversation: only the time and the skills.
@@ -842,6 +863,36 @@ pub fn build_tail(spec: &TailSpec) -> String {
         }
         if let Some((title, version)) = &spec.canvas {
             lines.push((format!("canvas {} v{version}", quoted(title)), 4));
+        }
+        if let Some(editor) = &spec.editor {
+            let mut line = format!("editor {}:{}", value(&editor.root), value(&editor.path));
+            let kind: Vec<String> = [&editor.language, &editor.view]
+                .iter()
+                .filter(|part| !part.is_empty())
+                .map(|part| value(part))
+                .collect();
+            if !kind.is_empty() {
+                line.push_str(&format!(" ({})", kind.join(", ")));
+            }
+            if editor.unsaved {
+                line.push_str(" unsaved");
+            }
+            if editor.line > 0 {
+                line.push_str(&format!(" line {}", editor.line));
+            }
+            if !editor.element.is_empty() {
+                line.push_str(&format!(" at {}", value(&editor.element)));
+            }
+            if !editor.artifact.is_empty() {
+                line.push_str(&format!("; artifact {}", value(&editor.artifact)));
+            }
+            if editor.problems > 0 {
+                line.push_str(&format!("; {} problems", editor.problems));
+            }
+            if !editor.selection.is_empty() {
+                line.push_str(&format!("; selection {}", quoted(&editor.selection)));
+            }
+            lines.push((line, 6));
         }
     }
     if !spec.skills.is_empty() {

@@ -28,6 +28,7 @@ pub(crate) mod generate;
 pub(crate) mod html_text;
 pub mod info;
 pub(crate) mod menu;
+pub mod overlay;
 mod pdf;
 mod public_site;
 mod render;

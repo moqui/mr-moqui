@@ -75,19 +75,60 @@ pub(crate) fn run_target(factory: &Arc<ExecutionContextFactory>, target: &Previe
 }
 
 fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) -> Result<Json, Error> {
+    let label = format!("the preview of approval {}", target.approval_id);
+    let run = sim_body(factory, target.username, &label, || run_write(factory, target))?;
+    Ok(json!({"ok": true, "rows": run.rows, "more": run.more}))
+}
+
+/// What a body run in the sim came to: its value, and the rows it would write against production (at most
+/// [`MAX_ROWS`], `more` when there were more).
+#[derive(Debug)]
+pub struct SimRun<T> {
+    pub value: T,
+    pub rows: Vec<Json>,
+    pub more: bool,
+}
+
+/// Run `body` in the sim overlay on a thread of its own, logged in as `username`, as an approval's preview runs a write
+/// (the dev-aide's Try in sim, plans/design-dev-aide.md 9.4): entity writes go into the overlay and are answered as rows
+/// against production, and an outside effect (a resource write, mail, a notification, a remote call) is refused.
+///
+/// # Errors
+///
+/// Returns the body's error, an outside effect it tried, or why the sim could not run.
+pub fn run_in_sim<T: Send>(
+    factory: &Arc<ExecutionContextFactory>,
+    username: &str,
+    label: &str,
+    body: impl FnOnce() -> Result<T, Error> + Send,
+) -> Result<SimRun<T>, Error> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| sim_body(factory, username, label, body))
+            .join()
+            .unwrap_or_else(|_| Err(Error::new("the sim run failed unexpectedly")))
+    })
+}
+
+fn sim_body<T>(
+    factory: &Arc<ExecutionContextFactory>,
+    username: &str,
+    label: &str,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<SimRun<T>, Error> {
     let context = factory.new_context();
     let _entered = context.enter();
     {
         let _authz = context.disable_authz();
-        crate::user::internal_login_user(target.username).map_err(|error| Error::new(error.to_string()))?;
+        crate::user::internal_login_user(username).map_err(|error| Error::new(error.to_string()))?;
     }
     let facade = run::facade_of(factory)?;
     cache::enter_sim(&facade)?;
     // entity writes go into the overlay; a resource write, a notification, mail, a remote call or a print would be
     // real, so they are refused, and so is a lift of them by the approved transition's render
     let (ran, effects) = {
-        let fence = fence::enter_sim(format!("the preview of approval {}", target.approval_id));
-        let ran = run_write(factory, target);
+        let fence = fence::enter_sim(label.to_string());
+        let ran = body();
         let effects: Vec<String> = fence.violations().iter().map(fence::Violation::describe).collect();
         (ran, effects)
     };
@@ -108,10 +149,7 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
     };
     let poisoned = cache::sim_poisoned();
     if let Err(error) = cache::exit_sim(&facade) {
-        tracing::error!(
-            "the sim of the preview of approval {} was not dropped: {error}",
-            target.approval_id
-        );
+        tracing::error!("the sim of {label} was not dropped: {error}");
     }
     if !effects.is_empty() {
         return Err(Error::new(format!(
@@ -119,7 +157,7 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
             effects.join(", ")
         )));
     }
-    ran?;
+    let value = ran?;
     if let Some(reason) = poisoned {
         return Err(Error::new(reason));
     }
@@ -137,10 +175,9 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) ->
             }
         })
         .collect();
-    Ok(json!({"ok": true, "rows": rows, "more": more}))
+    Ok(SimRun { value, rows, more })
 }
 
-/// Run the write itself, in the sim entered on this thread.
 fn run_write(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>) -> Result<(), Error> {
     match target.kind {
         TargetKind::Screen => {
@@ -198,7 +235,7 @@ fn run_write(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>)
                 .map(|_| ())
                 .map_err(|error| Error::new(error.to_string()))
         }
-        TargetKind::Tool => Err(Error::new("this kind of write has no preview")),
+        TargetKind::Tool | TargetKind::File => Err(Error::new("this kind of write has no preview")),
     }
 }
 

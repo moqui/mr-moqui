@@ -158,6 +158,10 @@ impl HandoffView {
 /// What the model reads of the user's own save: the values saved, each marked when it is not the one proposed, and the
 /// messages.
 fn saved_text(outcome: &Json, approval: &ApprovalView) -> String {
+    // a change set the user reviewed in the editor and saved (plans/design-dev-aide.md 13.3)
+    if let Some(review) = outcome.get("review").and_then(Json::as_str) {
+        return format!("The user reviewed your change set in the editor and saved it: {review}.");
+    }
     let changes = approval.changes();
     let mut values: Vec<String> = Vec::new();
     if let Some(saved) = outcome.get("values").and_then(Json::as_object) {
@@ -257,9 +261,15 @@ pub(super) fn start(
     run: &RunRow,
     decider: &Decider,
 ) -> Result<Decided, DecideError> {
-    let target = view.handoff_target().ok_or_else(|| {
+    let mut target = view.handoff_target().ok_or_else(|| {
         DecideError::Refused("this write cannot be edited in a screen; approve or reject it".to_string())
     })?;
+    // a parameter written {approvalId} names this approval (the editor's Review opens the change set by it)
+    for value in target.parameters.values_mut() {
+        if value == "{approvalId}" {
+            value.clone_from(&view.approval_id);
+        }
+    }
     let now = run::now_millis();
     let ttl = i64::from(crate::llm::facade(factory).conf().limits.approval_ttl_minutes.max(1)) * 60_000;
     let expires = now + ttl;
@@ -331,7 +341,8 @@ pub(super) fn start(
                 "handoffId": handoff_id}),
             ),
         );
-        for change in &changes {
+        // a hand-off to the editor (a change set's Review) fills no form
+        for change in changes.iter().filter(|_| !target.form.is_empty()) {
             sink.emit(
                 "ui.fill",
                 stamped(
@@ -547,6 +558,33 @@ pub fn observe(factory: &Arc<ExecutionContextFactory>, outcome: &TransitionOutco
         return Ok(Some(watch.handoff_id));
     }
     Ok(None)
+}
+
+/// A hand-off to the editor ended by the user's own save (a change set's Review, plans/design-dev-aide.md 13.3): the
+/// approval Executed with what the user did, and the run resumes with it. `review` is that, in words ("accepted 3 of 4
+/// hunks; edited OrderServices.xml lines 120 to 131"). `false` when `user_id` has no open watch of the approval.
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be read or written.
+pub fn complete(
+    factory: &Arc<ExecutionContextFactory>,
+    approval_id: &str,
+    user_id: &str,
+    review: &str,
+    detail: &Json,
+) -> Result<bool, Error> {
+    let facade = run::facade_of(factory)?;
+    let Some(watch) = of_approval(&facade, approval_id)?.filter(|watch| {
+        watch.user_id == user_id && matches!(watch.status, HandoffStatus::Watching | HandoffStatus::Failed)
+    }) else {
+        return Ok(false);
+    };
+    let Some(approval) = quietly(|| load(&facade, approval_id))? else {
+        return Ok(false);
+    };
+    let recorded = json!({"saved": true, "review": review, "detail": detail, "messages": [review]});
+    finish(factory, &facade, &watch, &approval, HandoffStatus::Saved, &recorded)
 }
 
 /// Whether a save is of the record the write was for: the screen's parameters the save posts are the write's, and so

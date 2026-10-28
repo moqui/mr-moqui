@@ -100,11 +100,13 @@ pub(super) fn bootstrap(caller: &Caller) -> Answer {
     let llm = crate::llm::facade(&caller.factory);
     let registry = quietly(|| llm.registry(&caller.facade));
     let agents = drawer_agents(&caller.facade)?;
-    // no development-only dialect is built yet (screen-xml is planned separately)
-    let drawer_dialects = crate::llm::ui::offered(
-        &crate::llm::tools::ClientCaps::for_surface(crate::llm::prompt::Surface::Drawer),
-        false,
-    );
+    // the development-only dialects (screen-xml) for a user of the development tools on a dev instance
+    let dev = crate::devtools::dev_aide_user(&caller.factory, &caller.user_id);
+    let mut drawer_caps = crate::llm::tools::ClientCaps::for_surface(crate::llm::prompt::Surface::Drawer);
+    if dev {
+        drawer_caps = drawer_caps.with([crate::llm::tools::caps::UI_SCREEN_XML]);
+    }
+    let drawer_dialects = crate::llm::ui::offered(&drawer_caps, dev);
     let dialects_of = |agent: &crate::llm::run::AgentDef| -> Json {
         drawer_dialects
             .iter()
@@ -405,7 +407,13 @@ pub(super) fn approval_card(row: &EntityValue, tool: Option<String>, can_preview
     let mut card = view.to_json();
     card["tool"] = json!(tool);
     // a tool call's write (another system's, a canvas Mutation) has no sim preview
-    card["canPreview"] = json!(can_preview && view.target_kind != approval::TargetKind::Tool);
+    card["canPreview"] = json!(
+        can_preview
+            && !matches!(
+                view.target_kind,
+                approval::TargetKind::Tool | approval::TargetKind::File
+            )
+    );
     card
 }
 
@@ -1152,7 +1160,16 @@ pub(super) fn prompts(caller: &Caller, params: &Params) -> Answer {
         action["source"] = json!(source);
         actions.push(action);
     }
-    Ok(json!({"prompts": out, "responseActions": actions}))
+    let page_actions: Vec<Json> = shell
+        .page_actions
+        .iter()
+        .map(|(source, action)| {
+            let mut action = action.clone();
+            action["source"] = json!(source);
+            action
+        })
+        .collect();
+    Ok(json!({"prompts": out, "responseActions": actions, "pageActions": page_actions}))
 }
 
 /// Whether an app's assist prompt applies on `path` (an `/apps` path) for a record of `entity`: its page is the path or

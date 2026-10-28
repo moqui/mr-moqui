@@ -39,6 +39,9 @@ pub struct TestFixture {
     // Field order is drop order: the factory and facade go before the database they use.
     pub factory: Arc<ExecutionContextFactory>,
     facade: Option<EntityFacade>,
+    /// The sim overlay cluster, started at a test's first `enter_sim` (Try in sim, an approval's preview), as a server
+    /// has it; dropped after the facade.
+    sim: Option<Arc<crate::db::sim::SimOverlay>>,
     _search: Option<crate::search::SearchStore>,
     db: Option<EntityDb>,
     /// The scratch runtime to remove, when there is one.
@@ -56,6 +59,7 @@ impl Drop for TestFixture {
         self.factory.shutdown();
 
         drop(self.facade.take());
+        drop(self.sim.take());
         drop(self.db.take());
         if let Some(scratch) = self.scratch.take() {
             if let Err(err) = std::fs::remove_dir_all(&scratch) {
@@ -97,9 +101,10 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
     }
     let booted = boot(&run_runtime, &framework);
     match booted {
-        Ok((factory, facade, search, db)) => Ok(TestFixture {
+        Ok((factory, facade, sim, search, db)) => Ok(TestFixture {
             factory,
             facade: Some(facade),
+            sim: Some(sim),
             _search: search,
             db: Some(db),
             scratch,
@@ -266,6 +271,7 @@ fn hash_tree(dir: &Path, hasher: &mut DefaultHasher) {
 type Booted = (
     Arc<ExecutionContextFactory>,
     EntityFacade,
+    Arc<crate::db::sim::SimOverlay>,
     Option<crate::search::SearchStore>,
     EntityDb,
 );
@@ -292,6 +298,8 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
         &db.conf.dialect,
     )?;
     crate::db::entity_facade::attach(&factory, facade.clone());
+    // the sim overlay starts at the first enter_sim, on the same install, as a server's does
+    let sim = crate::db::sim::SimOverlay::install(&facade, &cluster, Some(install));
     let search = match crate::search::attach_search(&factory, &facade, db.is_postgres()) {
         Ok(store) => Some(store),
         Err(err) => {
@@ -300,5 +308,5 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
         }
     };
     factory.init_tools().map_err(Error::from)?;
-    Ok((factory, facade, search, db))
+    Ok((factory, facade, sim, search, db))
 }

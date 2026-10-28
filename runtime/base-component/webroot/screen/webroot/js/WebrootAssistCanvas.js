@@ -1353,5 +1353,37 @@
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-vue-sfc", component);
         if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("vue-sfc", { label: "Vue SFC", component: "m-assist-vue-sfc", streaming: false });
     }
+    // ---- screen-xml (plans/design-dev-aide.md 13.5): on a dev instance, a screen or screen-extend as it would be saved,
+    // previewed as the page that shows it with the program standing at its location (the canvas's preview token),
+    // under the server's read fence. The program's first line names both: <!-- screen-xml at="component://..." path="/qapps/..." -->.
+    {
+        canvas.screenXmlHeader = (program) => {
+            const found = /<!--\s*screen-xml([^>]*)-->/.exec(program || "");
+            if (!found) return null;
+            const attr = (name) => { const m = new RegExp(name + '="([^"]*)"').exec(found[1]); return m ? m[1] : ""; };
+            return { location: attr("at"), path: attr("path") };
+        };
+        canvas.previewUrl = (path, token) => path ? path + (path.indexOf("?") >= 0 ? "&" : "?") + "moquiPreview=" + encodeURIComponent(token) : "";
+        const screenXml = {
+            name: "mAssistScreenXml",
+            props: { program: String, streaming: Boolean, artifactId: String, version: Number, initialState: Object, readOnly: Boolean },
+            computed: {
+                header() { return canvas.screenXmlHeader(this.program) || { location: "", path: "" }; },
+                src() { return this.header.path ? canvas.previewUrl(this.header.path, "canvas:" + this.artifactId) + "&v=" + (this.version || 0) : ""; }
+            },
+            render() {
+                const kids = [h("div", { class: "text-caption m-muted q-mb-xs", "data-assist-screen-xml-location": this.header.location },
+                    "Preview of " + (this.header.location || "a screen") + " · not saved")];
+                if (this.src) kids.push(h("iframe", { src: this.src, title: "Screen preview", class: "m-assist-screen-xml-frame",
+                    style: "width:100%;min-height:28rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px", "data-assist-screen-xml": "" }));
+                else kids.push(h("div", { class: "q-pa-sm m-muted" }, "The program names no page path to show it on."));
+                return h("div", { class: "m-assist-screen-xml" }, kids);
+            }
+        };
+        canvas.screenXmlComponent = screenXml;
+        const qvt = moqui.qvt;
+        if (qvt && qvt.registerLate) qvt.registerLate("m-assist-screen-xml", screenXml);
+        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("screen-xml", { label: "Moqui screen (dev)", component: "m-assist-screen-xml", streaming: false });
+    }
     if (moqui.assist) moqui.assist.canvas = canvas;
 })(globalThis);

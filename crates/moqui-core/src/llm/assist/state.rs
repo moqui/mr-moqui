@@ -66,6 +66,8 @@ pub struct DrawerState {
     pub form_info: Vec<TailForm>,
     /// A canvas open in the drawer: its title and version.
     pub canvas: Option<(String, u32)>,
+    /// A dev-aide page's editor: the file open and where the cursor is (plans/design-dev-aide.md 13.4).
+    pub editor: Option<crate::llm::prompt::TailEditor>,
 }
 
 /// A JSON value as one line of text: a string as it is, a number or boolean written, anything else empty.
@@ -238,6 +240,32 @@ impl DrawerState {
                     .unwrap_or(1);
                 (!title.is_empty()).then_some((title, version))
             });
+        let editor = value
+            .get("editor")
+            .filter(|editor| editor.is_object())
+            .and_then(|editor| {
+                let path = text_at(editor, "path", 300);
+                (!path.is_empty()).then(|| crate::llm::prompt::TailEditor {
+                    root: text_at(editor, "root", 100),
+                    path,
+                    language: text_at(editor, "language", 40),
+                    view: text_at(editor, "view", 40),
+                    unsaved: editor.get("unsaved").and_then(Json::as_bool).unwrap_or(false),
+                    element: text_at(editor, "element", 300),
+                    line: editor
+                        .get("line")
+                        .and_then(Json::as_u64)
+                        .and_then(|line| u32::try_from(line).ok())
+                        .unwrap_or(0),
+                    selection: text_at(editor, "selection", 2000),
+                    problems: editor
+                        .get("problems")
+                        .and_then(Json::as_u64)
+                        .and_then(|count| u32::try_from(count).ok())
+                        .unwrap_or(0),
+                    artifact: text_at(editor, "artifact", 300),
+                })
+            });
         Self {
             path: session_path(path_text).unwrap_or_default(),
             parameters: string_map(value.get("parameters"), MAX_PARAMETERS, MAX_PARAMETER_CHARS, extra),
@@ -249,6 +277,7 @@ impl DrawerState {
             filters,
             form_info,
             canvas,
+            editor,
         }
     }
 
@@ -305,6 +334,7 @@ impl DrawerState {
             filters: self.filters.clone(),
             forms: self.form_info.clone(),
             canvas: self.canvas.clone(),
+            editor: self.editor.clone(),
             skills: Vec::new(),
             headless: false,
         }

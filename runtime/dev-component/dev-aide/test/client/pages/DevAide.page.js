@@ -59,3 +59,13 @@ test("go to definition takes the attribute value under the cursor", () => {
     assert.equal(pure.valueAt(line, line.indexOf("list") + 1), "list");
     assert.equal(pure.valueAt("ec.entity.find(x) place#Order y", 22), "place#Order");
 });
+
+test("a review counts the hunks of a proposal and those kept", () => {
+    const disk = "a\nb\nc\nd\ne\n";
+    const proposed = "a\nB\nc\nd\nE\n";
+    assert.equal(pure.hunks(disk, proposed), 2);
+    assert.equal(pure.hunks(proposed, proposed), 0);
+    // one hunk rejected: the text has the disk's line there, one hunk short of the proposal
+    assert.equal(pure.hunks("a\nb\nc\nd\nE\n", proposed), 1);
+    assert.equal(pure.hunks("", "x\n"), 1);
+});

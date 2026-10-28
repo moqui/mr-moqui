@@ -1,7 +1,7 @@
 # Dev AIDE: the assisted IDE
 
-Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18), with what is not built yet listed in "Built so far" at
-the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
+Oct 24, 2026 · Design. Built the same day: P1a, P1b and P2 (§18); P3 and P4 on Oct 28, 2026; what is not built yet is listed
+in "Built so far" at the end of §18. The first questions were answered the same day (§20: 1, 4 and 5, and the
 Projects point of 13), and D1, D7, D15 and D16 record what they decided. A review the same day, for users from
 experienced coders to technical business users (who mostly extend entities and screens and let the agent do the
 typing), added D17 to D19, amended D10 and D11, and re-phased the work around them (§18); its findings are recorded
@@ -1437,6 +1437,39 @@ are independent of P4 and may run beside it.
 - **MCP.** `artifact`, `source` and `check` are tools of the dev-aide's crate with the `dev.aide` capability and
   `ToolSpec.mcp`; the MCP server lists them for a caller with a Dev AIDE permission (`it::mcp::the_dev_tools_over_mcp`,
   over HTTP rather than the Python SDK script).
+
+**P4, agents** (Oct 28, 2026), with these differences:
+
+- **The dev agent** (`DevAideAgentData.xml`): Dev Assist, `startPath` `/apps/dev`, `canvasDialects` `openui,screen-xml`,
+  its policy pinning `artifact`, `source`, `check`, `propose_edit` and `try_service` (`vcs` stays in the lazy catalog).
+  The `dev.aide` capability goes to a run of an agent whose policy pins a dev tool, for a Dev AIDE user on a dev instance,
+  so the general Assist does not carry the dev tools. No role group: the user's own permissions bound it. The skills and
+  the nine recipes (`skill/`, `skill/recipes/`) are for the dev agent only (`agents: [dev]`); the recipes reach the drawer
+  through the prompts the skill index already offers for a page (`screens`), so the crate has no prompt provider of its
+  own.
+- **Change sets.** `propose_edit` takes files by XML operations, exact replacements or a whole text; every file is
+  checked first, and an error (an upstream edit while the lock is on among them, rule `upstream.edit`, skill
+  `site-customizing#Extend, do not fork`) comes back with nothing proposed. The approval is target kind `file`; Accept
+  writes through the save pipeline (`workspace::save_text`, audited with the run and approval) after reapplying the
+  change to the file as it is now, which is the three-way merge: the change's own operations or replacements on the new
+  text, refused when they no longer apply. The card's editable values are the titles the proposal adds.
+- **Preview** frames the app page with the proposal standing at its files' locations: a `moquiPreview` token
+  (`approval:<id>` or `canvas:<artifactId>`), carried as `X-Moqui-Preview` by the frame's later requests, answered by
+  F14's overlay under the read fence; the frame runs no drawer or heartbeat. The fence refuses a write (a 500 for that
+  request) rather than showing "would post"; there is no separate time limit or tarpit count.
+- **Review** opens the Workspace on the change set: each file in CodeMirror's unified merge view with Accept and Reject
+  on each chunk; Save accepted saves the files, then `complete#Review` ends the hand-off, on a thread of its own so its
+  decision commits before the run resumes.
+- **`screen-xml`** is a dialect whose program's first line names its location and the page that shows it; the canvas is
+  that page framed with the program in place. Open in the builder waits for P6.
+- **Customize this screen** is a `page-action` shell provider in the drawer's header on every app page, opening Dev
+  Assist with the recipes for the page; the shell's page menu has none (it has no page menu yet).
+- **Try in sim** is the agents' `try_service` on `approval::preview::run_in_sim`; `moqui test` now starts the sim overlay
+  as a server does. The Try panel and Save as spec are P7.
+- **Evaluation**: four tasks in `test/agent/dev.agent.js` with hand-authored recordings, all passing on replay; a live
+  run is `--llm-profile` (there is no `--live` flag), not yet run against a model. The Chromium smoke
+  `a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium` covers the card, Preview, Review with a rejected
+  chunk, and the approval's outcome.
 
 ---
 

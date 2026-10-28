@@ -77,10 +77,19 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
     }
     if components.is_empty() {
         return Err(Error::new(format!(
-            "no test/agent/*.agent.js files under {}/component or {}/base-component",
+            "no test/agent/*.agent.js files under {}/component, {}/base-component or {}/dev-component",
+            runtime.display(),
             runtime.display(),
             runtime.display()
         )));
+    }
+    // a dev component's agents run on a dev instance, where it loads (plans/design-dev-aide.md 3.1)
+    if components
+        .iter()
+        .any(|component| component.dir.starts_with(runtime.join("dev-component")))
+        && moqui_lib::env::get_prop_or_env("instance_purpose").is_empty()
+    {
+        moqui_lib::env::set_property("instance_purpose", "dev");
     }
     let started = Instant::now();
     let fixture = fixture::open(runtime, framework, args.db, args.keep)?;
@@ -249,11 +258,11 @@ fn file_safe(text: &str) -> String {
         .collect()
 }
 
-/// The components under `runtime/base-component` and `runtime/component` with `test/agent/*.agent.js` files, their
-/// specs by file name.
+/// The components under `runtime/base-component`, `runtime/component` and `runtime/dev-component` with
+/// `test/agent/*.agent.js` files, their specs by file name.
 fn discover(runtime: &Path) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
-    for parent in ["base-component", "component"] {
+    for parent in ["base-component", "component", "dev-component"] {
         let Ok(entries) = std::fs::read_dir(runtime.join(parent)) else {
             continue;
         };

@@ -946,7 +946,7 @@ pub(crate) fn service_form_info(name: &str) -> Option<FormService> {
 /// definition of its own.
 /// Java's `isServiceDefined`: a registered service, or an entity-auto name (`create`, `update`, `store`, `delete`)
 /// of a defined entity. With no entity facade an entity-auto name counts as defined.
-pub(crate) fn is_service_defined(name: &str, facade: Option<&EntityFacade>) -> bool {
+pub fn is_service_defined(name: &str, facade: Option<&EntityFacade>) -> bool {
     let name = canonical(name);
     if super::define::find(&name).is_some() {
         return true;

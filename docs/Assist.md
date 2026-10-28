@@ -76,7 +76,9 @@ password widgets.
   "selections": [{"form": "UserAccountList", "ids": ["EX_JOHN_DOE", "EX_JANE"], "total": 5}],
   "filters": [{"form": "UserAccountList", "values": {"username": "john"}}],
   "formInfo": [{"name": "UserAccountList", "kind": "list", "fields": ["Username", "Email"], "rows": 25}],
-  "canvas": {"title": "Logins by day", "version": 3}
+  "canvas": {"title": "Logins by day", "version": 3},
+  "editor": {"root": "my-site", "path": "entity/SiteEntities.xml", "language": "xml", "view": "text", "unsaved": true,
+             "element": "<extend-entity entity-name=\"Example\">", "line": 12, "selection": "", "problems": 0}
 }
 ```
 
@@ -86,8 +88,11 @@ password widgets.
   `domId`, with the values the user changed (`moqui.fieldChanged`) and their names in `dirty` (at most 20 forms of
   100 values of 4000 characters); `dialogs` are the open container dialogs' ids.
 - The sync-in (below) takes `path`, `parameters`, the dirty values and `dialogs`. The tail of the message (plan 7.1)
-  takes `now` (the user's time zone), `page` (path, query and title), `record`, `selections`, `filters`, `formInfo`
-  and `canvas`. All of it is optional.
+  takes `now` (the user's time zone), `page` (path, query and title), `record`, `selections`, `filters`, `formInfo`,
+  `canvas` and `editor`. All of it is optional.
+- `editor` is a dev-aide page's file (plans/design-dev-aide.md 13.4): its root and path, language and view, whether it
+  has unsaved edits, the element at the cursor and its line, the selection (at most 2,000 characters), its problem count
+  and artifact. The Workspace sets `moqui.assist.editorState` while it is the page; the tail gives it one line.
 
 ## The calls
 
@@ -346,7 +351,10 @@ pauseKind, submittedDate, endedDate, errorCode, errorText}`. `failed` covers the
 ### `GET prompts`
 
 Suggested prompts for the page: `path` (the page path), `entityName`, `recordId`, `agentId` (`assist` by default).
-`{"prompts": [{"promptId", "label", "text", "send", "source"}]}` (at most 8): the admin's `AgentSuggestedPrompt` rows
+`{"prompts": [{"promptId", "label", "text", "send", "source"}], "responseActions": [...], "pageActions": [{"label",
+"icon", "agent", "source"}]}` (at most 8 prompts). `pageActions` are the apps' `page-action` shell providers, which the
+drawer's header shows on every app page for an agent the user has (the dev-aide's "Customize this screen" opens Dev
+Assist on the page). The prompts are the admin's `AgentSuggestedPrompt` rows
 for the agent or any agent whose `screenPathPattern` (a regular expression over the whole `/apps/…` path) and
 `entityName` fit, then the registered providers' (`source` is the provider's name). With `send` the chip sends at once,
 else it fills the composer. Components register a provider in Rust:
@@ -1071,6 +1079,34 @@ navigates its frame is closed and recorded as a `vue-sfc#sandbox` problem (`MOQU
 the link targets, the watchdog, the submit gate and the read limits; `crates/moqui-core/src/llm/ui/vue_sfc_tests.rs` the
 checks and their sections, the merge, the actions' request, the skill, and the policy; `crates/moqui-host/src/llm/
 sandbox.rs` the route's headers.
+
+## Development tools
+
+On a dev instance with the dev-aide component loaded (plans/design-dev-aide.md 13), a user with a Dev AIDE permission
+(`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) gets the `dev.aide` capability in a run of an agent whose tool policy
+pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen-xml` dialect
+(`ui.write:screen-xml`, `Dialect::dev_only`). The dev tools are the dev-aide crate's: `artifact`, `source` and `check`
+(READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval) and `vcs`
+(lazy).
+
+- **A change set** is an approval of target kind `file`: its arguments are the files with their base hashes and changes
+  (XML operations, exact replacements or a whole text), which the hash binds; its snapshot's `changeSet` is what the card
+  shows (`rows` as artifacts, `files` with counts and side, `values` a business user may word, `preview`). The card's
+  body is `m-assist-change-set`, registered as `moqui.assist.approvalRenderers.file` (a component name by target kind;
+  it may emit `arguments`, which Approve sends as edited arguments). Approve reads **Accept all**; Edit reads **Review**.
+- **Preview** frames the page with the proposal standing at its files' locations: `?moquiPreview=approval:<id>` (or a
+  `screen-xml` canvas's `canvas:<artifactId>`), which a page's later requests send as `X-Moqui-Preview`
+  (`moqui.previewToken`). The screen overlay (`moqui_core::screen::overlay`, F14) holds the texts for that render, the
+  screen caches passed over, under the read fence; the frame runs no Assist drawer and no presence heartbeat.
+- **Review** hands the change set to the Workspace (`/apps/dev/Workspace?review=<approvalId>`; a hand-off parameter
+  written `{approvalId}` is filled in): each file a merge of the disk's text and the proposal with Accept and Reject on
+  each chunk; Save accepted saves the files as any save does, then `complete#Review` ends the hand-off
+  (`approval::handoff::complete`) with "accepted n of m hunks; edited …", which the run reads.
+- **Code actions**: `moqui.assist.codeActions.register({key, label, icon, run(code, language)})` adds a button under an
+  answer that has a fenced code block, run on its last block (the Workspace's Insert at cursor, Replace selection,
+  Propose as change); `remove(key)` takes it away.
+- **The agent picker** keeps an agent the user picked; else the drawer starts with the agent whose `startPath` the page
+  is under (other than `/apps`), else the default.
 
 ## On the server
 

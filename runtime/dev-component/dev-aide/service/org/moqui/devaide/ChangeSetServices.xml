@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- An agent's change set (plans/design-dev-aide.md 13.3) as its owner reviews it in the Workspace: each file's text on
+    disk and as proposed for the inline merge, and the end of the review, which resolves the hand-off with what the user
+    did. The extend tier and above; only the change set's owner. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="ChangeSet" type="rust" location="dev_aide::changeset::get_change_set" allow-remote="false" read-only="true">
+        <description>A change set of the current user: each file's text on disk and as proposed, whether it changed on
+            disk since, and the card's rows.</description>
+        <in-parameters><parameter name="approvalId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="approvalId"/>
+            <parameter name="status"/>
+            <parameter name="summary"/>
+            <parameter name="changeSet" type="Map"/>
+            <parameter name="files" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="complete" noun="Review" type="rust" location="dev_aide::changeset::complete_review" allow-remote="false">
+        <description>The user saved a change set from the editor's Review: its hand-off resolves as executed with what
+            they did (hunks accepted of the total, files edited and saved), which the agent's run reads.</description>
+        <in-parameters>
+            <parameter name="approvalId" required="true"/>
+            <parameter name="accepted" type="Integer"/>
+            <parameter name="total" type="Integer"/>
+            <parameter name="edited"/>
+            <parameter name="saved"/>
+        </in-parameters>
+        <out-parameters><parameter name="completed" type="Boolean"/><parameter name="review"/></out-parameters>
+    </service>
+</services>

@@ -149,6 +149,16 @@ pub struct ResponseAction {
     pub sequence: Option<i64>,
 }
 
+/// A `page-action`: an action the Assist drawer offers on every app page of a user who may open the app (the dev-aide's
+/// "Customize this screen", plans/design-dev-aide.md 3.5): it opens the drawer with `agent` and its prompts for the page.
+#[derive(Clone, Debug, Default)]
+pub struct PageAction {
+    pub label: String,
+    pub icon: String,
+    pub agent: String,
+    pub sequence: Option<i64>,
+}
+
 /// The `shell-providers` element of an app root, read with the screen definition. Each list is in `sequence` order (one
 /// without a sequence counts as 0, and ties keep the order written). Labels are localized and links made when the shell
 /// data is.
@@ -164,6 +174,7 @@ pub struct ShellProviders {
     pub account_menu_items: Vec<ShellLink>,
     pub assist_prompts: Vec<AssistPrompt>,
     pub response_actions: Vec<ResponseAction>,
+    pub page_actions: Vec<PageAction>,
 }
 
 fn attr(node: &MNode, name: &str) -> String {
@@ -288,6 +299,19 @@ impl ShellProviders {
                         out.response_actions.push(action);
                     }
                 }
+                "page-action" => {
+                    let action = PageAction {
+                        label: attr(&child, "label"),
+                        icon: attr(&child, "icon"),
+                        agent: attr(&child, "agent"),
+                        sequence: sequence_of(&child),
+                    };
+                    if action.label.is_empty() || action.agent.is_empty() {
+                        tracing::error!("{location}: a page-action needs a label and an agent; skipped");
+                    } else {
+                        out.page_actions.push(action);
+                    }
+                }
                 other => tracing::error!("{location}: shell-providers has no element {other}; skipped"),
             }
         }
@@ -297,6 +321,7 @@ impl ShellProviders {
         by_sequence(&mut out.account_menu_items, |link| link.sequence);
         by_sequence(&mut out.assist_prompts, |prompt| prompt.sequence);
         by_sequence(&mut out.response_actions, |action| action.sequence);
+        by_sequence(&mut out.page_actions, |action| action.sequence);
         Some(out)
     }
 }
@@ -807,6 +832,16 @@ impl<'a> Shell<'a> {
             actions.push(Value::Map(entry));
         }
         out.insert("responseActions".to_string(), Value::List(actions));
+        let mut page_actions = Vec::new();
+        for action in &providers.page_actions {
+            let mut entry = Item::new();
+            entry.insert("label".to_string(), Value::string(l10n::localize(&action.label)?));
+            entry.insert("icon".to_string(), text_or_null(&action.icon));
+            entry.insert("agent".to_string(), Value::string(&action.agent));
+            entry.insert("sequence".to_string(), number_or_null(action.sequence));
+            page_actions.push(Value::Map(entry));
+        }
+        out.insert("pageActions".to_string(), Value::List(page_actions));
         Ok(Value::Map(out))
     }
 }
@@ -956,7 +991,7 @@ fn flag_preference(key: &str) -> Value {
 }
 
 /// The provider kinds of [`shell_providers`]: the keys of an app's `providers` in the shell data.
-pub const PROVIDER_KINDS: [&str; 10] = [
+pub const PROVIDER_KINDS: [&str; 11] = [
     "quickCreate",
     "todaySources",
     "paletteActions",
@@ -967,6 +1002,7 @@ pub const PROVIDER_KINDS: [&str; 10] = [
     "accountMenuItems",
     "assistPrompts",
     "responseActions",
+    "pageActions",
 ];
 
 /// `sri.getShellProviders(kind)`: the providers of the apps the user may open, as `getShellData` gives them but without

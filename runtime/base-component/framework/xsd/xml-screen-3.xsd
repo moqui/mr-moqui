@@ -528,6 +528,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="account-menu-item"/>
             <xs:element ref="assist-prompt"/>
             <xs:element ref="response-action"/>
+            <xs:element ref="page-action"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="shell-link-attributes">
@@ -639,6 +640,17 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="screen" type="xs:string" use="required"/>
         <xs:attribute name="text-parameter" type="xs:string" use="required"/>
         <xs:attribute name="requires-record" type="boolean" default="false"/>
+        <xs:attribute name="sequence" type="xs:integer"/>
+    </xs:complexType></xs:element>
+
+    <xs:element name="page-action"><xs:annotation><xs:documentation>
+        An action of the Assist drawer's header on every app page of a user who may open this app: it opens the drawer with
+        the agent named, whose suggested prompts for the page follow (the dev-aide's "Customize this screen" on a dev
+        instance, plans/design-dev-aide.md 3.5). A user without the agent is not offered it.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:attribute name="label" type="xs:string" use="required"/>
+        <xs:attribute name="icon" type="xs:string"/>
+        <xs:attribute name="agent" type="xs:string" use="required"/>
         <xs:attribute name="sequence" type="xs:integer"/>
     </xs:complexType></xs:element>
 
