@@ -30,9 +30,41 @@ function recordAttempt(p) {
         })
     return { allowed: count <= Number(p.limit) }
 }
+/* Compare digests so the comparison time does not depend on how much of a secret matched. */
+const secretMatches = (given, expected) =>
+    !!given && !!expected && digest(given) === digest(expected)
+function clientRegistered(clientId, clientSecret, siteId) {
+    const sites = String(
+        System.getProperty('pass_client_' + clientId + '_sites') || '',
+    ).split(',')
+    return (
+        !!clientId &&
+        secretMatches(
+            clientSecret,
+            System.getProperty('pass_client_' + clientId + '_secret'),
+        ) &&
+        (siteId == null || sites.includes(siteId))
+    )
+}
+/* A registered PASS deployment forwards its browser's address; everyone else is limited by their own. */
+function requesterKey() {
+    const request = ec.web?.request
+    if (!request) return 'service'
+    const clientId = request.getHeader('x-pass-client') || '',
+        forwarded = request.getHeader('x-pass-client-ip') || ''
+    if (
+        forwarded &&
+        clientRegistered(
+            clientId,
+            request.getHeader('x-pass-client-secret') || '',
+            null,
+        )
+    )
+        return 'client:' + clientId + ':' + forwarded.slice(0, 64)
+    return request.remoteAddr || 'service'
+}
 function throttle(action, address) {
-    const ip = ec.web?.request?.remoteAddr || 'service',
-        key = action + ':ip:' + ip
+    const key = action + ':ip:' + requesterKey()
     const attempt = (key, limit, windowMillis) =>
         ec.service
             .sync()
@@ -62,6 +94,24 @@ function verified() {
         }).one()
     )
 }
+/* Placeholder until verification: nobody, including whoever asked for the mail, knows it. */
+function unusablePassword() {
+    const rules = ec.user.passwordRules
+    return (
+        ec.user.randomString(48) +
+        '7'.repeat(Number(rules.minDigits) || 0) +
+        '!'.repeat(Number(rules.minOthers) || 0)
+    )
+}
+function passwordAllowed(password) {
+    const rules = ec.user.passwordRules
+    return !(
+        password.length < Number(rules.minLength) ||
+        (password.match(/\p{Nd}/gu) || []).length < Number(rules.minDigits) ||
+        (password.match(/[^\p{Nd}\p{L}]/gu) || []).length <
+            Number(rules.minOthers)
+    )
+}
 function beginRegistration(p) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.emailAddress || ''))
         fail('Unprocessable', 'A valid email address is required')
@@ -73,42 +123,54 @@ function beginRegistration(p) {
         .condition('emailAddress', email)
         .one()
     const own = old && old.userId === ec.user.userId
-    const password = String(p.password || ''),
-        rules = ec.user.passwordRules
-    if (
+    if (ec.user.userId && !own)
+        fail('Unprocessable', 'Sign out before registering another address')
+    // A disabled account that never verified its address belongs to nobody yet; a later request replaces its challenge.
+    const unclaimed =
+        old &&
         !own &&
-        (password.length < Number(rules.minLength) ||
-            (password.match(/\p{Nd}/gu) || []).length <
-                Number(rules.minDigits) ||
-            (password.match(/[^\p{Nd}\p{L}]/gu) || []).length <
-                Number(rules.minOthers))
-    )
-        fail('Unprocessable', 'Password does not satisfy account policy')
-    if (!old || own) {
-        const out = old
-            ? { userId: old.userId }
-            : ec.service
-                  .sync()
-                  .name('org.moqui.impl.UserServices.create#UserAccount')
-                  .parameters({
-                      username: email,
-                      emailAddress: email,
-                      newPassword: p.password,
-                      newPasswordVerify: p.password,
-                      disabled: 'Y',
-                      deferIdentityLink: true,
-                  })
-                  .call()
-        if (ec.message.hasError())
-            fail('Unprocessable', 'Password does not satisfy account policy')
+        old.disabled === 'Y' &&
+        !find('VerifiedAddress', { userId: old.userId }).one() &&
+        !!find('RegistrationChallenge', {
+            userId: old.userId,
+            newAccount: 'Y',
+        }).one()
+    if (!old || own || unclaimed) {
+        let userId = old?.userId
+        if (!old) {
+            const placeholder = unusablePassword()
+            userId = ec.service
+                .sync()
+                .name('org.moqui.impl.UserServices.create#UserAccount')
+                .parameters({
+                    username: email,
+                    emailAddress: email,
+                    newPassword: placeholder,
+                    newPasswordVerify: placeholder,
+                    disabled: 'Y',
+                    deferIdentityLink: true,
+                })
+                .call().userId
+            if (ec.message.hasError() || !userId) {
+                ec.message.clearErrors()
+                fail('Unavailable', 'Registration is temporarily unavailable')
+            }
+        }
+        for (const earlier of find('RegistrationChallenge', { userId })
+            .forUpdate(true)
+            .list())
+            if (!earlier.consumedAt) {
+                earlier.set('consumedAt', ec.user.nowTimestamp)
+                earlier.update()
+            }
         const token = ec.user.randomString(64)
         create('RegistrationChallenge', {
             challengeId: ec.user.randomString(32),
-            userId: out.userId,
+            userId,
             emailAddress: email,
             tokenHash: digest(token),
             expiresAt: now() + 3600000,
-            newAccount: old ? 'N' : 'Y',
+            newAccount: own ? 'N' : 'Y',
         })
         ec.service
             .sync()
@@ -119,7 +181,12 @@ function beginRegistration(p) {
                 bodyParameters: { verificationToken: token },
             })
             .call()
-    } else ec.user.hashPassword(password)
+        // The answer stays the same either way; the challenge remains, so asking again resends.
+        if (ec.message.hasError()) {
+            ec.message.clearErrors()
+            ec.logger.error('Registration verification mail failed for user ' + userId)
+        }
+    }
     return {
         message:
             'If eligible, verification instructions will be sent to the address.',
@@ -133,6 +200,8 @@ function verifyRegistration(p) {
         .one()
     if (!c || c.consumedAt || ec.user.timestampMillis(c.expiresAt) <= now())
         fail('NotFound', 'Verification link expired or not found')
+    if (c.newAccount === 'Y' && !p.newPassword)
+        return { passwordRequired: true }
     const ua = ec.entity
         .find('moqui.security.UserAccount')
         .condition('userId', c.userId)
@@ -152,8 +221,23 @@ function verifyRegistration(p) {
             verifiedAt: ec.user.nowTimestamp,
         })
     if (c.newAccount === 'Y') {
-        ua.set('disabled', 'N')
-        ua.update()
+        const password = String(p.newPassword || '')
+        if (!passwordAllowed(password))
+            fail('Unprocessable', 'Password does not satisfy account policy')
+        const out = ec.service
+            .sync()
+            .name('org.moqui.impl.UserServices.update#PasswordInternal')
+            .parameters({
+                userId: ua.userId,
+                newPassword: password,
+                newPasswordVerify: password,
+                disabled: 'N',
+            })
+            .call()
+        if (ec.message.hasError() || !out.updateSuccessful) {
+            ec.message.clearErrors()
+            fail('Unprocessable', 'Password does not satisfy account policy')
+        }
     }
     c.set('consumedAt', ec.user.nowTimestamp)
     c.update()
@@ -184,11 +268,7 @@ function startSession(p) {
     return { authenticated: true, verified: verified() }
 }
 function registeredClient(p) {
-    const secret = System.getProperty('pass_client_' + p.clientId + '_secret'),
-        sites = String(
-            System.getProperty('pass_client_' + p.clientId + '_sites') || '',
-        ).split(',')
-    if (!secret || p.clientSecret !== secret || !sites.includes(p.siteId))
+    if (!clientRegistered(p.clientId, p.clientSecret, p.siteId))
         fail('Unauthorized', 'Unregistered deployment or site')
 }
 function issueDelegation(p) {
@@ -215,6 +295,7 @@ function issueDelegation(p) {
                 String(ua.passwordSalt || ''),
         ),
         tokenHash: digest(token),
+        issuedAt: ec.user.nowTimestamp,
         expiresAt,
     })
     return {
@@ -266,6 +347,20 @@ function authenticateDelegation(token, clientId, siteId) {
             )
             fail('AuthenticationRequired', 'Session expired')
         }
+    }
+    // Activity in the last third of the lifetime slides the expiry, never past twelve hours from issue.
+    const expires = ec.user.timestampMillis(v.expiresAt),
+        cap = v.issuedAt
+            ? ec.user.timestampMillis(v.issuedAt) + 12 * 3600000
+            : expires
+    if (expires - now() < 5 * 60000 && expires < cap) {
+        const renewed = ec.entity
+            .find(prefix + 'DelegatedSession')
+            .condition('delegationId', v.delegationId)
+            .forUpdate(true)
+            .one()
+        renewed.set('expiresAt', Math.min(now() + 15 * 60000, cap))
+        renewed.update()
     }
     // Token issuance followed password/second factor; this request cannot supply a different subject.
     ec.user.internalLoginUser(ua.username)
@@ -465,4 +560,4 @@ function execute(op, p) {
         if (!was) ec.artifactExecution.enableAuthz()
     }
 }
-;({ execute, authenticateDelegation })
+;({ execute, authenticateDelegation, clientRegistered })

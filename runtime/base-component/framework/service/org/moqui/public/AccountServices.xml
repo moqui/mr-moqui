@@ -146,15 +146,28 @@
   <service verb="cleanup" noun="ExpiredChallenges" authenticate="false" allow-remote="false">
     <actions>
       <script><![CDATA[
+            // One bulk delete per table, each on its own: a failing table is named and the rest still clean up.
             const old=ec.artifactExecution.disableAuthz()
             try{for(const name of ['AccountAttempt','RegistrationChallenge','SsoHandoff','DelegatedSession']){
-                const entity='moqui.security.public.'+name
-                const keys={AccountAttempt:'bucketId',RegistrationChallenge:'challengeId',SsoHandoff:'handoffId',DelegatedSession:'delegationId'}
-                for(const row of ec.entity.find(entity).condition('expiresAt','less',ec.user.nowTimestamp).limit(100).list()){
-                    try{ec.service.sync().throwOnError(true).name('delete#'+entity).parameters({[keys[name]]:row[keys[name]]}).requireNewTransaction(true).call()}
-                    catch(error){ec.message.clearErrors();ec.logger.error('Public account cleanup failed for '+name+' '+row[keys[name]])}
-                }
+                try{ec.service.sync().throwOnError(true).name('org.moqui.public.AccountServices.cleanup#ExpiredRows')
+                        .parameters({entityName:'moqui.security.public.'+name}).requireNewTransaction(true).call()}
+                catch(error){ec.message.clearErrors();ec.logger.error('Public account cleanup failed for '+name+': '+String(error?.message || error).split('\n')[0])}
             }}finally{if(!old)ec.artifactExecution.enableAuthz()}
+        ]]></script>
+    </actions>
+  </service>
+  <service verb="cleanup" noun="ExpiredRows" authenticate="false" allow-remote="false">
+    <in-parameters><parameter name="entityName" required="true"/></in-parameters>
+    <actions>
+      <script><![CDATA[
+            if(!entityName.startsWith('moqui.security.public.'))throw new Error('Not a public account table: '+entityName)
+            let find=ec.entity.find(entityName).condition('expiresAt','less',ec.user.nowTimestamp)
+            // An unverified registration keeps its open challenge: it marks the account as unclaimed, so asking again resends.
+            if(entityName==='moqui.security.public.RegistrationChallenge'){
+                const cf=ec.entity.conditionFactory
+                find=find.condition(cf.makeCondition([cf.makeCondition('newAccount','not-equals','Y',true),cf.makeCondition('consumedAt','not-equals',null)],'or'))
+            }
+            find.deleteAll()
         ]]></script>
     </actions>
   </service>
