@@ -70,7 +70,7 @@ fn encode(text: &str) -> String {
 }
 
 /// The Workspace link of a file and line.
-fn workspace_url(root: &str, path: &str, line: u32) -> String {
+pub(crate) fn workspace_url(root: &str, path: &str, line: u32) -> String {
     format!(
         "/qapps/dev/Workspace?rootId={}&path={}&line={line}",
         encode(root),

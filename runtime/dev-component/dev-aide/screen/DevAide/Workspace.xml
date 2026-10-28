@@ -42,6 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="check"><service-call name="org.moqui.devaide.WorkspaceServices.check#File" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="presence"><service-call name="org.moqui.devaide.WorkspaceServices.set#Presence" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="setUpstreamEdits"><service-call name="org.moqui.devaide.WorkspaceServices.set#UpstreamEdits" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="status" read-only="true"><service-call name="org.moqui.devaide.VcsServices.get#Status" in-map="true" web-send-json-response="true"/>

@@ -29,6 +29,11 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setNetworkGit"><service-call name="org.moqui.devaide.WorkspaceServices.set#Setting"
             in-map="{settingName: 'networkGit', settingValue: networkGit == 'Y' ? 'Y' : 'N'}"/>
         <default-response url="."/></transition>
+    <transition name="storeCredential"><service-call name="org.moqui.devaide.WorkspaceServices.store#Credential"/>
+        <actions><message type="success">Token saved</message></actions>
+        <default-response url="."/></transition>
+    <transition name="deleteCredential"><service-call name="org.moqui.devaide.WorkspaceServices.delete#Credential"/>
+        <default-response url="."/></transition>
     <transition name="storeRoot"><service-call name="org.moqui.devaide.WorkspaceServices.store#Root"/>
         <actions><message type="success">Saved</message></actions>
         <default-response url="."/></transition>
@@ -44,6 +49,12 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="full" from="info.tier == 'full'" type="Boolean"/>
         <set field="siteComponents" from="(info.siteComponents || []).join(', ')"/>
         <set field="upstreamEdits" from="info.upstreamEdits ? 'true' : 'false'"/>
+        <set field="admin" from="ec.user.isInGroup('ADMIN')" type="Boolean"/>
+        <if condition="info.shared &amp;&amp; admin &amp;&amp; full">
+            <service-call name="org.moqui.devaide.WorkspaceServices.get#Credentials" out-map="stored"/>
+            <set field="credentials" from="stored.credentials || []"/>
+            <set field="rootOptions" from="roots.map((root) => ({key: root.id, text: root.label}))"/>
+        </if>
     </actions>
     <widgets>
         <container-box id="DevAideSiteBox"><box-header title="Site components"/><box-body>
@@ -98,6 +109,27 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="networkGit"><default-field title="Network git commands">
                         <radio><option key="N" text="Off"/><option key="Y" text="On"/></radio></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="TokensSection" condition="info.shared &amp;&amp; admin &amp;&amp; full"><widgets>
+            <container-box id="DevAideTokensBox"><box-header title="Git tokens"/><box-body>
+                <label type="p" text="With a token stored, fetch, pull and push on that root use it in place of the server's own credentials: a user's own token when they have one, else the root's deploy token. Tokens are kept encrypted and never shown again."/>
+                <form-list name="CredentialList" list="credentials" skip-form="true">
+                    <field name="rootLabel"><default-field title="Root"><display/></default-field></field>
+                    <field name="userId"><default-field title="User"><display text="${userId || 'Deploy token (everyone)'}"/></default-field></field>
+                    <field name="username"><default-field title="User name"><display/></default-field></field>
+                    <field name="remove"><default-field title="">
+                        <link url="deleteCredential" text="Remove" parameter-map="{credentialId: credentialId}" link-type="hidden-form" confirmation="Remove this token?"/>
+                    </default-field></field>
+                </form-list>
+                <form-single name="StoreCredentialForm" transition="storeCredential">
+                    <field name="rootId"><default-field title="Root"><drop-down><list-options list="rootOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="userId"><default-field title="For user (empty: the root's deploy token)"><text-line size="20"/></default-field></field>
+                    <field name="username"><default-field title="User name on the remote"><text-line size="20"/></default-field></field>
+                    <field name="token"><default-field title="Token"><password size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save token"><submit/></default-field></field>
                 </form-single>
             </box-body></container-box>
         </widgets></section>

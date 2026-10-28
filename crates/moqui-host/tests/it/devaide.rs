@@ -460,8 +460,57 @@ fn the_workspace_saves_checks_commits_and_publishes() {
         &[("rootId", "my-site")],
     )
     .unwrap_err();
-    moqui_lib::env::set_property("dev_aide_shared", "false");
     assert!(shared.contains("off on this shared dev server"), "{shared}");
+
+    // shared mode: who has which files open, told to the others; an admin's stored tokens, never answered back
+    call(
+        &factory,
+        "ext.user",
+        &format!("{WS}set#Presence"),
+        &[("rootId", "my-site"), ("paths", "service/mysite/Things.xml")],
+    )
+    .unwrap();
+    let present = call(
+        &factory,
+        "john.doe",
+        &format!("{WS}set#Presence"),
+        &[("rootId", "my-site"), ("paths", "")],
+    )
+    .unwrap();
+    let editors = moqui_lib::json::to_json(&present["editors"]);
+    assert_eq!(editors[0]["username"], "ext.user", "{editors}");
+    assert_eq!(editors[0]["paths"][0], "service/mysite/Things.xml");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}store#Credential"),
+        &[("rootId", "my-site"), ("username", "deploy"), ("token", "s3cret")],
+    )
+    .unwrap();
+    let stored = call(&factory, "john.doe", &format!("{WS}get#Credentials"), &[]).unwrap();
+    let stored = moqui_lib::json::to_json(&stored["credentials"]);
+    assert_eq!(stored[0]["username"], "deploy", "{stored}");
+    assert!(!stored.to_string().contains("s3cret"), "{stored}");
+    let refused = call(&factory, "ext.user", &format!("{WS}get#Credentials"), &[]).unwrap_err();
+    assert!(refused.contains("Dev AIDE") || refused.contains("admin"), "{refused}");
+    moqui_lib::env::set_property("dev_aide_shared", "false");
+
+    // the data files by component and type
+    let data = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.EntityServices.list#DataFiles",
+        &[("component", "dev-aide"), ("type", "seed")],
+    )
+    .unwrap();
+    let data = moqui_lib::json::to_json(&data["files"]);
+    assert!(
+        data.as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["fileName"] == "DevAideAgentData.xml"),
+        "{data}"
+    );
 }
 
 const UPSTREAM_SCREEN: &str = r#"<screen>

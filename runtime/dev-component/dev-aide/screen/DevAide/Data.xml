@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+<!-- Data (plans/design-dev-aide.md 12): the data files of the loaded components by component and type; a file opens in
+    the Workspace, whose data file view has Load, Load the changed records, Check against the database and Export. A
+    list, so the terminal reaches it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Data" default-menu-index="8">
+    <parameter name="filter"/>
+    <parameter name="type"/>
+    <parameter name="component"/>
+
+    <actions>
+        <service-call name="org.moqui.devaide.EntityServices.list#DataFiles" out-map="found"
+                in-map="{filter: filter, type: type, component: component}"/>
+        <set field="files" from="(found.files || []).slice(0, 1000)"/>
+        <set field="fileCount" from="(found.files || []).length"/>
+    </actions>
+    <widgets>
+        <form-single name="DataFilter" transition="." focus-field="filter">
+            <field name="filter"><default-field title="Path"><text-line size="30"/></default-field></field>
+            <field name="type"><default-field title="Type"><drop-down allow-empty="true">
+                <option key="seed"/><option key="seed-initial"/><option key="install"/><option key="demo"/><option key="test"/>
+            </drop-down></default-field></field>
+            <field name="component"><default-field title="Component"><text-line size="16"/></default-field></field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+        </form-single>
+        <label text="${fileCount} data files${fileCount > 1000 ? ', the first 1000 shown' : ''}" type="p"/>
+        <form-list name="DataFileList" list="files" skip-form="true">
+            <field name="fileName"><default-field title="File">
+                <link url="${url || ''}" url-type="plain" text="${relativePath || fileName}" link-type="anchor" condition="url"/>
+            </default-field></field>
+            <field name="type"><default-field title="Type"><display/></default-field></field>
+            <field name="component"><default-field title="Component"><display text="${component}${site ? ' · site' : ''}"/></default-field></field>
+            <field name="size"><default-field title="Size"><display text="${size &lt; 1024 ? size + ' B' : Math.round(size / 1024) + ' KB'}"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

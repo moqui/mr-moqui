@@ -1071,8 +1071,8 @@ such a proposal on the drawer's canvas, and the agent's `screen` session sees a 
 ### 13.1 The dev agent
 
 - An `AgentDefinition` `dev` ("Dev Assist") seeded by the dev-aide: its addendum `component://dev-aide/prompt/dev.md`
-  (`instructionsLocation`), a role group that permits the dev-aide's screens and services, a tool policy with the dev
-  tools and writes by approval only, `canvasDialects` `openui,screen-xml,qvue-screen`, `startPath` `/apps/dev`. The
+  (`instructionsLocation`), no role group of its own (the user's permissions bound it, as built in P4), a tool policy
+  with the dev tools and writes by approval only, `canvasDialects` `openui,screen-xml,qvue-screen`, `startPath` `/apps/dev`. The
   drawer starts with it on dev-aide pages; elsewhere the agent picker offers it to `DEV_AIDE` users.
 - **Skills** in `DA/skill/`, in sections, with the front matter the skill index reads (`unlocks`, `surfaces`,
   `sections`, `screens`). Reference skills: `moqui-dev` (components, artifact kinds, conventions, how a save reloads; it
@@ -1401,8 +1401,7 @@ are independent of P4 and may run beside it.
 - **XML edits.** The lossless layer is reached through `apply#XmlOps` only; the WASM module is not built.
 - **Settings.** The site components and network git are stored in `DevAideSetting` rows.
 - **Not built yet:**
-  - `moqui check --server`;
-  - shared mode's presence, save announcements and `DevAideCredential` tokens;
+  - `moqui check --server` (planned with `moqui lsp` in P9);
   - the System User screen field for `DEV_AIDE_PUBLISH_BRANCH`, which is a preference an admin can set;
   - opening a merge request on a hosted origin: Publish names the branch to merge;
   - keeping the app drawer closed on the Workspace, which takes the window's height by CSS;
@@ -1584,6 +1583,28 @@ are independent of P4 and may run beside it.
   its service's last Try (its parameters and out-parameters, which the service view keeps in the browser), or any JSON
   object such as a record of an EECA's entity. Still to come: a gitECA rule against a push from the push log.
 
+**Catch-up before P8** (Oct 28, 2026): what P1 to P7 left, with these differences:
+
+- **Data.** `dev/Data` lists the data files of the loaded components' `data` directories by component and type (the
+  root's `type`, read from the file's head; `list#DataFiles`), each opening in the Workspace's data file view, which has
+  Check, Load the changed records and Export. A list, so the terminal reaches it.
+- **The archetypes' gallery preview** is a strip under the screen tree's New subscreen: each archetype a live render of
+  the gallery's screen at 390 px, scaled to half, stamped (`moquiAide=source`) so it may be framed.
+- **Shared mode** (D19). An admin stores a root's deploy token or a user's HTTPS token in Settings
+  (`store#Credential`, encrypted, never answered back); fetch, pull, push and Publish then replace git's credential
+  helpers with one that answers the token from the git process's environment (`-c credential.helper=` and a `!` helper,
+  which git runs in its own shell on Windows too), so the token is in no argv. Presence: the Workspace tells
+  `set#Presence` its open files of the root (on a change and each minute; an entry lasts two minutes), the others get
+  `DevPresence` and show "being edited by" on the tab and the file status; a save sends `DevSaved` to the others, whose
+  clean tabs take the text through the reload report as before, with a note naming who saved.
+
+**Review before P8** (Oct 28, 2026). The menu of §1 had Repositories and Tasks with no screen; Repositories (§4.7) was
+assigned to no phase and goes with P8. The Workspace has no Settings tab (§4.3; a root's publish branch is in
+`dev/Settings`), the file status strip no menu (§4.8), the git layer no progress or Cancel and a fixed 120 s write
+timeout (§4.2), the Commits tab one page of 100, and the current task's preference is read but never written (§14):
+P8 takes them up. F14 overlays screen definitions only, not the text a `<text location>` reads, which a `.qvue`'s
+design mode needs (P9).
+
 ---
 
 ## 19. Tests
@@ -1603,7 +1624,7 @@ are independent of P4 and may run beside it.
 - **Chromium smokes** in the `gate3_browser.rs` style: per phase, as §18 names them, with light, dark and 390 px
   screenshots for the reading views.
 - **Agents**: the evaluation tasks of P4 on recordings (`moqui test dev-aide --agents`); the same with a live model
-  (`--live`, a key from the environment; nightly and before P4 closes; scored by `moqui check` clean, the spec passed
+  (`--llm-profile`, a key from the environment; nightly and before P4 closes; scored by `moqui check` clean, the spec passed
   and the diff confined to the expected files, against a pass rate; passing runs recorded into the replay set), since
   the Assist runtime has only ever run against hand-authored recordings; and the MCP SDK client.
 - **Platforms**: the path confinement and the git layer's specs run on Windows in CI from P1a.

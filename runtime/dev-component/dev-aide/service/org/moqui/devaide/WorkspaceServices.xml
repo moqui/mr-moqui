@@ -193,6 +193,30 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restart" type="Boolean"/>
         </out-parameters>
     </service>
+    <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">
+        <description>The files of a root this user has open, on a shared dev server told to the other users; answers the root's other editors.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="paths" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="editors" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Credentials" type="rust" location="dev_aide::workspace::get_credentials" allow-remote="false" read-only="true">
+        <description>The shared server's stored git tokens, without the tokens. An admin's.</description>
+        <out-parameters><parameter name="credentials" type="List"/></out-parameters>
+    </service>
+    <service verb="store" noun="Credential" type="rust" location="dev_aide::workspace::store_credential" allow-remote="false">
+        <description>A root's deploy token (no userId) or a user's HTTPS token for it, kept encrypted; replaces the one stored before. An admin's.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="userId"/>
+            <parameter name="username"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="delete" noun="Credential" type="rust" location="dev_aide::workspace::delete_credential" allow-remote="false">
+        <in-parameters><parameter name="credentialId" required="true"/></in-parameters>
+    </service>
     <service verb="set" noun="Setting" type="rust" location="dev_aide::workspace::set_setting" allow-remote="false">
         <description>An instance-wide setting of Settings over the conf: siteComponents (a comma list), or networkGit (Y,
             an admin's, on a shared dev server). The full tier.</description>
