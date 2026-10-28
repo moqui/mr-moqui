@@ -17,6 +17,9 @@ From a script, on `ec.resource.getLocationReference(location)`:
 | `getText(versionName)` | The text of that version, or null |
 | `getVersionDiff(lhs, rhs)` | The line diff from version `lhs` to `rhs` (an empty name is the current text): `{fromName, toName, unifiedDiff, html, stats: {insertions, deletions, hunks}, hunks}`. A version that is not there throws |
 
+`ec.resource.textDiff(oldText, newText, fromName, toName)` returns the same diff shape for two texts that are kept
+outside resource versioning, such as forum post revisions. The names default to `old` and `new`.
+
 A version's `note` is what was written with it (below, "Version notes").
 
 `ec.resource.getLocationText("dbresource://wiki/page.md#02")`, and a `render-mode` `text location` with a `#version`

@@ -594,6 +594,10 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.resource.isTextFilename = (filename) => host.isTextFilename(filename == null ? "" : String(filename));
     globalThis.ResourceReference = { isTextFilename: ec.resource.isTextFilename };
     ec.resource.getLocationReference = (location) => makeRef(String(location));
+    // the line diff between two texts, as getVersionDiff returns it: {fromName, toName, unifiedDiff, html, stats, hunks}
+    ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
+        newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
+        toName == null ? "new" : String(toName));
     // a second argument that is a charset name (a Rust-port extension; Java's is the cache flag) decodes the bytes in it
     ec.resource.getLocationText = (location, cacheOrCharset) => typeof cacheOrCharset === "string" && cacheOrCharset.trim()
         ? host.resourceTextIn(String(location), cacheOrCharset) : host.resourceText(String(location));
@@ -1988,6 +1992,20 @@ fn resource_version_diff<'js>(
     })
 }
 
+/// `ec.resource.textDiff(oldText, newText, fromName, toName)`: the line diff between two texts, in the same shape as
+/// `getVersionDiff`, for callers that keep their revisions outside resource versioning.
+fn text_diff<'js>(
+    ctx: Ctx<'js>,
+    old: String,
+    new: String,
+    from_name: String,
+    to_name: String,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        host_to_js(&ctx, crate::resource::textdiff::diff(&old, &new, &from_name, &to_name).to_value())
+    })
+}
+
 // ---- SQL on a database named by a conf map (InstanceServices) ----
 
 /// The `entity_ds_*` entries of a conf map, as Java's `getConfConnection` reads them.
@@ -2672,6 +2690,7 @@ pub(super) fn install<'js>(
     method!("resourceNextVersions", resource_next_versions);
     method!("resourceVersionText", resource_version_text);
     method!("resourceVersionDiff", resource_version_diff);
+    method!("textDiff", text_diff);
     method!("restSend", rest_send);
     super::web_host::methods(ctx, &host)?;
     method!("runTokenCommand", run_token_command);
