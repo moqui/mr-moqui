@@ -1967,6 +1967,7 @@
                     ancestorUrl: ancestors ? ancestors.path : null, listName: at(n, "list") || null,
                     transition: url ? url.path : null, parameters: url ? Object.assign({}, url.getParameterMap(), hidden) : null
                 };
+                if (atr("confirm-move") === "true") treeCfg.confirmMove = true;
             }
             // peek-url: a row's detail, with its key and peek=true, in a pane beside the list
             let peekCfg = null;

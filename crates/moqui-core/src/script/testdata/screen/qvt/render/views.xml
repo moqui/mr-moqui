@@ -45,7 +45,7 @@
         </form-list>
         <!-- a tree: a row per page row with its cells in a form of the row, the roll-up a column of its own -->
         <form-list name="Outline" list="outlineList" views="tree,list" transition="open" paginate="false">
-            <view-tree parent-field="parentId" rollup-fields="totalPoints" child-count-field="kids" children-transition="planTask" transition="moveTask"/>
+            <view-tree parent-field="parentId" rollup-fields="totalPoints" child-count-field="kids" children-transition="planTask" transition="moveTask" confirm-move="true"/>
             <field name="nodeId"><default-field><hidden/></default-field></field>
             <field name="label"><default-field title="Item"><link url="open" text="${label}" parameter-map="{nodeId: nodeId}"/></default-field></field>
             <field name="points" align="right"><default-field title="Points"><text-line size="4"/></default-field></field>

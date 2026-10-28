@@ -140,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
         </box-body></container-box>
         <form-list name="WorkTree" list="workItemList" views="tree,list" skip-form="true" paginate="false">
             <view-tree parent-field="parentItemId" rollup-fields="totalEstimate,totalActual,doneOfTotal" child-count-field="childCount"
-                    ancestor-transition="workItemAncestors" transition="moveWorkItem"/>
+                    ancestor-transition="workItemAncestors" transition="moveWorkItem" confirm-move="true"/>
             <field name="itemId"><default-field><hidden/></default-field></field>
             <field name="itemName"><header-field title="Item"><text-find size="16" hide-options="true"/></header-field>
                 <default-field title="Item"><display/></default-field></field>

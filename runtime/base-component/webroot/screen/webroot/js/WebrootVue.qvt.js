@@ -6481,6 +6481,14 @@
                 const now = lt.place(this.known, this.children, key);
                 if (now.parent === target.parent && now.previous === target.previous) return;
                 const tree = this.tree;
+                if (tree.confirmMove) {
+                    const column = (tree.columns || [])[0];
+                    const label = (at) => !at ? lvLocalize("Top level") : this.known[at] && column
+                        ? column.fields.map((field) => moqui.listViews.text(this.known[at].row, field)).filter(Boolean).join(" / ") || at : at;
+                    const message = lvLocalize("Move") + ' "' + label(key) + '" ' + lvLocalize("from") + ' "' + label(now.parent)
+                        + '" ' + lvLocalize("to") + ' "' + label(target.parent) + '"?';
+                    if (!root.confirm(message)) return;
+                }
                 const params = Object.assign({}, tree.parameters || {}, moqui.listViews.keyParams(this.known[key].row, tree.keyFields),
                     { [tree.parentField]: target.parent || "", previousSiblingId: target.previous || "" });
                 // the new parent open when the list loads again
