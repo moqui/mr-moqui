@@ -116,16 +116,12 @@ pub fn parse_dotenv(text: &str) -> Vec<(String, String)> {
         if key.is_empty() {
             continue;
         }
-        let mut value = value.trim().to_string();
-        if value.len() >= 2 {
-            let bytes = value.as_bytes();
-            if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
-                || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
-            {
-                value = value[1..value.len() - 1].to_string();
-            }
-        }
-        pairs.push((key.to_string(), value));
+        let value = value.trim();
+        let value = ['"', '\'']
+            .into_iter()
+            .find_map(|quote| value.strip_prefix(quote)?.strip_suffix(quote))
+            .unwrap_or(value);
+        pairs.push((key.to_string(), value.to_string()));
     }
     pairs
 }
@@ -178,22 +174,22 @@ pub fn expand(value: &str) -> Result<String, Error> {
         return Ok(value.to_string());
     }
     let mut out = String::with_capacity(value.len());
-    let chars: Vec<char> = value.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
-            if let Some(end) = chars[i + 2..].iter().position(|ch| *ch == '}') {
-                let body: String = chars[i + 2..i + 2 + end].iter().collect();
-                if let Some(expanded) = expand_body(&body) {
-                    out.push_str(&expanded);
-                    i += end + 3;
-                    continue;
-                }
-            }
+    let mut rest = value;
+    while let Some((head, tail)) = rest.split_once("${") {
+        out.push_str(head);
+        let expanded = tail
+            .split_once('}')
+            .and_then(|(body, after)| Some((expand_body(body)?, after)));
+        if let Some((expanded, after)) = expanded {
+            out.push_str(&expanded);
+            rest = after;
+        } else {
+            // Not a body it expands: the text stays as it is.
+            out.push_str("${");
+            rest = tail;
         }
-        out.push(chars[i]);
-        i += 1;
     }
+    out.push_str(rest);
     Ok(out)
 }
 
@@ -256,6 +252,27 @@ mod tests {
     fn environment_is_visible_when_no_property_is_set() {
         let path = get_prop_or_env("PATH");
         assert!(!path.is_empty());
+    }
+
+    #[test]
+    fn dotenv_strips_one_pair_of_matching_quotes() {
+        let pairs = parse_dotenv("A=\"x y\"\nB='q'\nC=\"\"\nD=\"\nE='mixed\"\nF= plain \nG=\"'in'\"");
+        let pairs: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("A", "x y"),
+                ("B", "q"),
+                ("C", ""),
+                ("D", "\""),
+                ("E", "'mixed\""),
+                ("F", "plain"),
+                ("G", "'in'")
+            ]
+        );
     }
 
     #[test]

@@ -168,16 +168,12 @@ pub fn encode_for_xml_attribute(original: &str, add_zero_width_spaces: bool) -> 
 /// True when `URLDecoder` would leave the text unchanged: letters, digits,
 /// `._-*+`, and well-formed `%HH` escapes.
 fn is_url_decoder_safe(text: &str) -> bool {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let ch = chars[i];
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
         if ch.is_alphanumeric() || matches!(ch, '.' | '_' | '-' | '*' | '+') {
-            i += 1;
             continue;
         }
-        if ch == '%' && i + 2 < chars.len() && is_hex(chars[i + 1]) && is_hex(chars[i + 2]) {
-            i += 3;
+        if ch == '%' && chars.next().is_some_and(is_hex) && chars.next().is_some_and(is_hex) {
             continue;
         }
         return false;
@@ -215,10 +211,9 @@ pub fn camel_case_to_pretty(camel: &str) -> String {
     if camel.is_empty() {
         return String::new();
     }
-    let chars: Vec<char> = camel.chars().collect();
     let mut raw_parts = Vec::new();
     let mut current = String::new();
-    for (index, ch) in chars.iter().copied().enumerate() {
+    for (index, ch) in camel.chars().enumerate() {
         if index > 0
             && (ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '.' || ch == '#')
             && !current.is_empty()
@@ -240,11 +235,10 @@ pub fn camel_case_to_pretty(camel: &str) -> String {
         if part.is_empty() {
             continue;
         }
-        let mut part_chars: Vec<char> = part.chars().collect();
-        if part_chars[0].is_lowercase() {
-            part_chars[0] = part_chars[0].to_ascii_uppercase();
+        let mut chars = part.chars();
+        if let Some(first) = chars.next().filter(|first| first.is_lowercase()) {
+            part = format!("{}{}", first.to_ascii_uppercase(), chars.as_str());
         }
-        part = part_chars.into_iter().collect();
         if part.eq_ignore_ascii_case("id") {
             part = "ID".to_string();
         }
@@ -289,6 +283,18 @@ pub fn to_string_clean_bom(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_decoder_safe_needs_whole_escapes() {
+        assert!(is_url_decoder_safe("a%2Fb.c_d-e*f+g"));
+        assert!(is_url_decoder_safe("é"));
+        assert!(!is_url_decoder_safe("a%2"));
+        assert!(!is_url_decoder_safe("%"));
+        assert!(!is_url_decoder_safe("%zz"));
+        assert!(!is_url_decoder_safe("a b"));
+        assert_eq!(url_encode_if_needed("a%2Fb"), "a%2Fb");
+        assert_eq!(url_encode_if_needed("a b%2"), "a+b%252");
+    }
 
     #[test]
     fn xml_attribute_encoding_and_decoding() {

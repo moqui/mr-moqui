@@ -39,16 +39,27 @@ Choose by where the value comes from:
 - **Truly infallible** (`write!` into a `String`): match the file's existing form.
 
 ### 1a. Check, then unwrap
-`crates/moqui-lib/src/context_stack.rs:329`
+Ask first why the value might be missing. Often the check exists because of state the type does not need. `ContextStack` (`crates/moqui-lib/src/context_stack.rs`) kept `frames: Vec<Option<Frame>>` and an `index` that was always `frames.len() - 1`. Every method indexed with `frames[self.index]` or `frames[..=self.index]`, and `top_frame` checked and then unwrapped. Swapping in `get_or_insert_with` only moved the unwrap; the fix was to drop the redundant state.
 ```rust
 // before
-if self.frames[self.index].is_none() {
-    self.frames[self.index] = Some(Rc::new(RefCell::new(IndexMap::new())));
+struct ContextStack { frames: Vec<Option<Frame>>, index: usize, .. }
+fn top_frame(&mut self) -> Frame {
+    if self.frames[self.index].is_none() {
+        self.frames[self.index] = Some(Rc::new(RefCell::new(IndexMap::new())));
+    }
+    Rc::clone(self.frames[self.index].as_ref().unwrap())
 }
-Rc::clone(self.frames[self.index].as_ref().unwrap())
-// after
-Rc::clone(self.frames[self.index].get_or_insert_with(|| Rc::new(RefCell::new(IndexMap::new()))))
+// after: the top frame is a field, so "one frame is always present" holds by type
+struct ContextStack { top: Option<Frame>, below: Vec<Option<Frame>>, .. }
+fn top_frame(&mut self) -> &Frame {
+    self.top.get_or_insert_with(Frame::default)
+}
+pub fn pop(&mut self) -> Result<Option<Frame>, Error> {
+    let Some(next) = self.below.pop() else { return Err(..) };
+    Ok(std::mem::replace(&mut self.top, next))
+}
 ```
+The same applies to an `expect` that names its invariant. `alts.pop().expect("one regex alternative")` after `if alts.len() == 1` is better written by returning the first alternative before the vec is built. An `expect` message is the fallback when no restructure is clear, not a reason to keep the site.
 
 ### 1b. JSON shape checked by unwrap
 `crates/moqui-core/src/report/mod.rs:1504`. `range` comes from a request, so a missing or non-string `from` panics the request.
@@ -89,7 +100,9 @@ let (Some(&first), Some(&last)) = (buckets.keys().next(), buckets.keys().next_ba
 
 ### 1e. Slices and strings
 - `if v.len() > 0 { v[0] }` → `if let [first, ..] = v.as_slice()` or `v.first()`.
-- `&s[..n]` on a `str` panics when `n` is not on a char boundary (the `object.rs` case in the earlier review). Use `s.get(..n)`, `split_once`, `strip_prefix` or `char_indices`. `clippy::string_slice` finds these sites, for example `crates/moqui-lib/src/xml_edit/outline.rs:250`. Where the index came from a `find` on ASCII text, it is safe; leave that site and say why in the report.
+- `&s[..n]` on a `str` panics when `n` is not on a char boundary (the `object.rs` case in the earlier review). `clippy::string_slice` finds these sites. A `find` or `rfind` followed by `&s[..i]` and `&s[i + 1..]` is `split_once` or `rsplit_once`. Checking the first char and then taking `&s[1..]` is `strip_prefix`. Taking `n` bytes is `split_at_checked(n)` or `s.get(..n)`. Rewrite these even when the index is provably on a boundary: the new form says what the code means, and it needs no argument. Leave a slice only in a real scanner that keeps a byte position (`node/parse.rs`, `xml_edit/tokenize.rs`).
+- A loop over an index into `text` (`while at < text.len() { .. text[at..] .. }`) is often clearer as a `rest: &str` cursor that `strip_prefix`, `split_once` and `split_at_checked` advance (`barcode.rs` `parse_gs1`).
+- `let chars: Vec<char> = s.chars().collect()` built only to index `chars[i]` is a `Chars` iterator (`chars.next()`) or a `&str` cursor (`env.rs` `expand`, `string.rs` `is_url_decoder_safe`).
 
 ### 1f. Already right; leave
 - `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-core/src/entity/facade.rs:371`) states its invariant. This is the model for `expect` messages: say why the value is there, not "failed to …".
@@ -172,3 +185,21 @@ Do not "fix" these:
 ## Results
 
 Fill this in as the work is done. For each pass, list the sites changed, and the sites left and why.
+
+### moqui-lib, section 1 and the section 3 tuples
+
+Commit 76c54836 did a first pass. It changed `top_frame` to `get_or_insert_with` and argued the other sites away. That pass was redone:
+
+- `context_stack.rs`: `top: Option<Frame>` and `below: Vec<Option<Frame>>` in place of the vec and its redundant `index` (1a). Lookups use `top_down()`, and the combined maps use `root_first()`. `top_frame` returns `&Frame`, and new frames are `Frame::default()`.
+- `regex_match.rs` `parse_alt` and `collapse`, `etl.rs` `flat_xml` (it handles a closing text field before taking the entry), and `object.rs` `time_epoch_millis` (`duration_since(Time::midnight())`): no `expect` is left.
+- String slices became `split_once`, `rsplit_once`, `strip_prefix` or `split_at_checked` in `resource.rs`, `markdown.rs`, `env.rs`, `object.rs` (`take_n_digits`, `take_hms_frac`, `parse_offset`) and `barcode.rs` (`parse_gs1` cursor, `ai_shape` byte pattern). The `Vec<char>` loops in `env.rs` `expand` and `string.rs` were replaced, and `node/mod.rs` `replace_child` uses `get_mut`. New tests cover dotenv quotes, URL-decoder-safe text, the path helpers, offsets and GS1. They pass on the code from before the change too. `parse_offset` now rejects hours or minutes that are not two digits, such as `+1:+2`, which `str::parse` used to take.
+- Section 3: `xml_edit` edits are a `Splice { range, text }`, and `ai_shape` returns `AiShape { fixed, max, numeric }`.
+
+Left, with `-W clippy::indexing_slicing -W clippy::string_slice`:
+
+- Byte scanners that keep a position: `node/parse.rs`, `xml_edit/tokenize.rs`, `xml_edit/outline.rs`, and `xml_edit/mod.rs` (`doc.nodes[element]`, whose ids come from `locate`). Also the Code 128 and EAN encoders in `barcode.rs`, over digits checked on entry.
+- Fixed tables indexed by a value already in range: `HEX[b >> 4]` (`codec.rs`, `string.rs`), `SUBTWENTY`, `DECADES` and `SCALES` (`string.rs`), `MONTHS[month - 1]` (`datefmt.rs`), and `CODE128`, `PATTERNS` and `EAN_L` (`barcode.rs`).
+- The regex VM (`code[pc]`, `seen[pc]` and the backpatching in `regex_match.rs`) and the LIKE matcher in `object.rs`, which backtracks over two `Vec<char>`s. Both need random access.
+- The pattern tokenizers in `datefmt.rs` and `format.rs` (`chars[index]` with lookahead over a format pattern). They could become `Peekable<Chars>`. This is not clearly better, so they were left.
+- `unwrap_or`, `unwrap_or_else` and `unwrap_or_default`, including `sync.rs`, which recovers a poisoned lock (section 4).
+- Test code, including `outline.rs:250` and `cache_tests.rs:191`. `allow-indexing-slicing-in-tests` does not silence `clippy::string_slice`.

@@ -111,16 +111,16 @@ impl Parser {
     }
 
     fn parse_alt(&mut self) -> Result<Re, Error> {
-        let mut alts = vec![self.parse_seq()?];
+        let first = self.parse_seq()?;
+        if self.peek() != Some('|') {
+            return Ok(first);
+        }
+        let mut alts = vec![first];
         while self.peek() == Some('|') {
             self.i += 1;
             alts.push(self.parse_seq()?);
         }
-        if alts.len() == 1 {
-            Ok(alts.pop().expect("one regex alternative"))
-        } else {
-            Ok(Re::Alt(alts))
-        }
+        Ok(Re::Alt(alts))
     }
 
     fn parse_seq(&mut self) -> Result<Re, Error> {
@@ -343,12 +343,10 @@ enum ClassItem {
 }
 
 fn collapse(mut items: Vec<Re>) -> Re {
-    if items.is_empty() {
-        Re::Empty
-    } else if items.len() == 1 {
-        items.pop().expect("one regex item")
-    } else {
+    if items.len() > 1 {
         Re::Seq(items)
+    } else {
+        items.pop().unwrap_or(Re::Empty)
     }
 }
 

@@ -289,3 +289,15 @@ fn gs1_128_places_fnc1_at_the_start_and_between_variable_fields() {
         .contains("(01)04006381333931"));
     assert!(barcode_svg("unknown", "123", &SvgOptions::default()).is_err());
 }
+
+#[test]
+fn gs1_weight_identifiers_and_errors_name_the_problem() {
+    let parsed = parse_gs1("3103001250").unwrap();
+    assert_eq!(parsed.elements[0].application_identifier, "3103");
+    assert_eq!(parsed.human_readable, "(3103)001250");
+    assert!(parse_gs1("(3206)001250").is_err());
+    let error = |input: &str| parse_gs1(input).unwrap_err().to_string();
+    assert!(error("0100012345").contains("truncated"), "{}", error("0100012345"));
+    assert!(error("9999").contains("at byte 0"), "{}", error("9999"));
+    assert!(error("(01").contains("unclosed"), "{}", error("(01"));
+}

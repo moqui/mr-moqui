@@ -85,11 +85,11 @@ pub fn resolve_link(base: &str, dest: &str) -> Option<String> {
         return None;
     }
     // The base without its query or fragment, split into origin (`https://host`) and path.
-    let base = &base[..base.find(['?', '#']).unwrap_or(base.len())];
-    let (origin, base_path) = match base.find("://") {
-        Some(at) if has_scheme(base) => {
-            let path_at = base[at + 3..].find('/').map_or(base.len(), |slash| at + 3 + slash);
-            base.split_at(path_at)
+    let base = base.split_once(['?', '#']).map_or(base, |(base, _)| base);
+    let (origin, base_path) = match base.split_once("://") {
+        Some((_, after)) if has_scheme(base) => {
+            let host = after.find('/').unwrap_or(after.len());
+            base.split_at(base.len() - after.len() + host)
         }
         _ => ("", base),
     };
@@ -128,8 +128,9 @@ pub fn resolve_link(base: &str, dest: &str) -> Option<String> {
 
 /// Whether `url` starts with a scheme: `[A-Za-z][A-Za-z0-9+.-]*:` before any `/`, `?` or `#`.
 fn has_scheme(url: &str) -> bool {
-    let Some(colon) = url.find(':') else { return false };
-    let scheme = &url[..colon];
+    let Some((scheme, _)) = url.split_once(':') else {
+        return false;
+    };
     scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
         && scheme
             .chars()
