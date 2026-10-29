@@ -177,13 +177,13 @@ ammonia = "4"
 html5ever = "0.40"
 # The xlsx render mode (the moqui-poi port). Defaults are empty; dates are written as Excel serial numbers, so the
 # chrono and jiff features stay off. Its zip dependency is `deflate` (zopfli and flate2 on zlib-rs).
-rust_xlsxwriter = { version = "0.99", default-features = false }
+rust_xlsxwriter = { version = "0.101", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
 # Excel serial numbers. Shares zip with rust_xlsxwriter.
-calamine = { version = "0.36", default-features = false }
+calamine = { version = "0.37", default-features = false }
 # Zip data files for the entity data loader and writer. The zip and deflate (flate2 on zlib-rs) that calamine and
 # rust_xlsxwriter already build; zip64 is part of the crate.
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.1", default-features = false, features = ["deflate"] }
 # The moqui-image port. Defaults (rayon, and every format including avif and exr) stay off; these are the formats the
 # Java component read and wrote through ImageIO and TwelveMonkeys, less wbmp and SVG.
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }

@@ -1910,7 +1910,7 @@ fn move_copy_rename_favorites_tags_zip_and_find() {
     assert_eq!(out_text(&zip, "zipFilename"), "papers.zip");
     let zip_path = out_text(&zip, "zipLocation").replace("runtime://", "./");
     let archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
-    let mut entries: Vec<String> = archive.file_names().map(str::to_string).collect();
+    let mut entries: Vec<String> = archive.file_names().map(|name| name.unwrap().into_owned()).collect();
     entries.sort();
     assert_eq!(entries, ["budget.xlsx", "plan.md"]);
     let _ = std::fs::remove_file(&zip_path);

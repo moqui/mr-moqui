@@ -41,6 +41,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::dav::get_sync_addresses",
         "moqui_core::service::dav::serve_request",
         "moqui_core::service::elfinder::run_command",
+        "moqui_core::service::external_agent::request",
         "moqui_core::service::images::convert_image",
         "moqui_core::service::images::get_rich_text_image",
         "moqui_core::service::images::image_reader_file_suffixes",
