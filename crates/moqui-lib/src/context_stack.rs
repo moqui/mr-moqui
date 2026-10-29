@@ -327,10 +327,7 @@ impl ContextStack {
     }
 
     fn top_frame(&mut self) -> Frame {
-        if self.frames[self.index].is_none() {
-            self.frames[self.index] = Some(Rc::new(RefCell::new(IndexMap::new())));
-        }
-        Rc::clone(self.frames[self.index].as_ref().unwrap())
+        Rc::clone(self.frames[self.index].get_or_insert_with(|| Rc::new(RefCell::new(IndexMap::new()))))
     }
 }
 

@@ -89,7 +89,7 @@ let (Some(&first), Some(&last)) = (buckets.keys().next(), buckets.keys().next_ba
 
 ### 1e. Slices and strings
 - `if v.len() > 0 { v[0] }` → `if let [first, ..] = v.as_slice()` or `v.first()`.
-- `&s[..n]` on a `str` panics when `n` is not on a char boundary (the `object.rs` case in the earlier review). Use `s.get(..n)`, `split_once`, `strip_prefix` or `char_indices`. `clippy::string_slice` finds these sites, for example `crates/moqui-lib/src/xml_edit/outline.rs:250`. Where the index came from a `find` on ASCII text, it is safe; leave that site and say why in the report.
+- `&s[..n]` on a `str` panics when `n` is not on a char boundary (the `object.rs` case in the earlier review). Use `s.get(..n)`, `split_once`, `strip_prefix` or `char_indices`. `clippy::string_slice` finds these sites, for example `crates/moqui-lib/src/xml_edit/outline.rs:160` (`rest.find('&')`). Line 250 of that file is the same shape inside the test module and is skipped. Where the index came from a `find` on ASCII text, it is safe; leave that site and say why in the report.
 
 ### 1f. Already right; leave
 - `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-core/src/entity/facade.rs:371`) states its invariant. This is the model for `expect` messages: say why the value is there, not "failed to …".
@@ -172,3 +172,17 @@ Do not "fix" these:
 ## Results
 
 Fill this in as the work is done. For each pass, list the sites changed, and the sites left and why.
+
+### moqui-lib, section 1
+
+Changed `ContextStack::top_frame` (`crates/moqui-lib/src/context_stack.rs`) from a check and then `unwrap` to `get_or_insert_with`. The caller still receives a clone of the top frame's `Rc`. `frames[self.index]` stays: push and pop keep `index` inside the vec.
+
+Left:
+
+- `regex_match.rs` `alts.pop().expect("one regex alternative")` and `items.pop().expect("one regex item")`. The length was just checked, and the message says why. Turning the vec into `[Re; 1]` is not clearer in the parser.
+- `etl.rs` `cur_entry.take().expect("entry is open")`. The arm already borrowed that `Option` with `as_mut`. Taking it earlier would mean putting the entry back on the text-field `continue`. The message states the invariant.
+- `object.rs` `Date::new(1970, 1, 1).expect("epoch date")`. A fixed valid date, and the message says why.
+- `unwrap_or`, `unwrap_or_else`, and `unwrap_or_default`, including `sync.rs`, which recovers a poisoned lock. Section 4 keeps that policy.
+- `clippy::string_slice` on production code. The index comes from `find`, `rfind`, or `split` of an ASCII delimiter (`/`, `.`, `?`, `#`, `:`, `[`, `&`, `=`), from a slice of ASCII digits or an English month or weekday name (`datefmt.rs`, `format.rs`, `object.rs`), from a quote byte checked at both ends (`env.rs`), or from a scanner that advances one byte on ASCII and `char::len_utf8` otherwise (`node/parse.rs`, `xml_edit`). `tokenize.rs` `position` clamps with `at.min(text.len())`, which only stops an index past the end; its callers pass those scanner offsets.
+- `outline.rs:250` and `cache_tests.rs:191`. Test code. `allow-indexing-slicing-in-tests` does not silence `clippy::string_slice`, so the recipe still prints these. Skip them by hand.
+- `frames[..=self.index]`. The same stack invariant as the index in `top_frame`.
