@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Assist in the /qapps shell (plans/LLM-A2A-Assist.md 4.11; the server's contract is docs/Assist.md): moqui.assist, the
+ * Assist in the /qapps shell (plans/LLM-A2A-Assist.md 4.11; the server's contract is docs/ai/Assist.md): moqui.assist, the
  * drawer of the agent that works the user's own screens. It holds
  *   - the store: a pure reducer of a conversation (assist.snapshot from GET conversation, assist.apply for each run event:
  *     text deltas and chunks by (messageId, part, offset), sequence gaps that ask for a catch-up, idempotence, the card
@@ -428,7 +428,7 @@
             return null;
         },
 
-        // A conversation as GET conversation answers it (docs/Assist.md), merged into the state: the server's items, runs,
+        // A conversation as GET conversation answers it (docs/ai/Assist.md), merged into the state: the server's items, runs,
         // cards and follow owner, the messages of this tab not answered yet kept at the end. ctx {clientId}. A run first seen
         // here replays from its start (the reducer is idempotent) with its ui.* events at or below its lastEventSeq never applied
         // (a reload never replays a page action); a run the tab streams keeps its place.
@@ -991,7 +991,7 @@
                 if (Array.isArray(found.fields) && found.fields.length && found.fields.indexOf(field) < 0) return { ok: false, reason: "field" };
                 return { ok: true, form: found, index: found.index, field };
             },
-            // The forms part of the page state (docs/Assist.md): for each form the values the user changed (compared with the
+            // The forms part of the page state (docs/ai/Assist.md): for each form the values the user changed (compared with the
             // values it came with) and their names in dirty. A secret name is never read; a hidden, password or file field, a
             // transition parameter and a value that is not text, a number, a boolean or a list of them are left out. Capped at
             // limits {maxForms, maxFormValues, maxValueChars}; a form with nothing changed is not listed.
@@ -1029,7 +1029,7 @@
             if (Array.isArray(value)) return value.every((item) => item === null || ["string", "number", "boolean"].indexOf(typeof item) >= 0) ? value.join(",") : null;
             return null;
         },
-        // The page state a turn and context carry (docs/Assist.md "The page state"), from the root's screenContext and what the
+        // The page state a turn and context carry (docs/ai/Assist.md "The page state"), from the root's screenContext and what the
         // page adds: {title, forms (follow.unsaved), dialogs, canvas}.
         pageState(context, extra) {
             const ctx = context || {};
@@ -1445,7 +1445,7 @@
         ctx() { return { clientId: assist.clientId, followOn: S().followOn }; },
         paths() { return (S().bootstrap && S().bootstrap.paths) || { calls: "/assist", events: "/assist/runs/{runId}/events", catchUp: "/assist/runs/{runId}/events.json" }; },
         base() { return (assist.vm && assist.vm.appRootPath) || moqui.appRootPath || ""; },
-        // a call of /assist (docs/Assist.md): resolves to its JSON, rejects with {status, json, errors}
+        // a call of /assist (docs/ai/Assist.md): resolves to its JSON, rejects with {status, json, errors}
         call(name, params, method) {
             const verb = method || "GET";
             return moqui.request(assist.base() + assist.paths().calls + "/" + name, { method: verb, params: assist.callParams(params) }).then((result) => result.json || {}, (err) => {
@@ -1618,7 +1618,7 @@
             });
         },
 
-        // ---- the canvas (docs/Assist.md "The canvas"; the dialects are js/WebrootAssistCanvas.js) ----
+        // ---- the canvas (docs/ai/Assist.md "The canvas"; the dialects are js/WebrootAssistCanvas.js) ----
 
         // whether the canvas covers the page now: the drawer open on a conversation with a canvas the user has not hidden
         canvasShown() {
@@ -2061,7 +2061,7 @@
 
         // ---- the page ----
 
-        // the page state of now (docs/Assist.md "The page state")
+        // the page state of now (docs/ai/Assist.md "The page state")
         currentPageState() {
             const vm = assist.vm;
             if (!vm) return {};

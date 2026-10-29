@@ -13,7 +13,7 @@
  */
 
 //! The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (the `inbound-smtp` feature;
-//! docs/Mail-Inbound.md). Off unless `smtp_listen_port` is set; it listens on `smtp_listen_host` (default `127.0.0.1`).
+//! docs/interfaces/Mail-Inbound.md). Off unless `smtp_listen_port` is set; it listens on `smtp_listen_host` (default `127.0.0.1`).
 //!
 //! It is the last hop of a gateway (Postfix with Rspamd, or another MTA) that does the internet side: SPF, DKIM, DMARC,
 //! spam and virus filtering, queueing and retries. So it is a small RFC 5321 server for that one client: EHLO or HELO,

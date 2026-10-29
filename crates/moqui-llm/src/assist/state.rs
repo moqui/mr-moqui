@@ -50,7 +50,7 @@ pub struct DrawerRecord {
     pub label: String,
 }
 
-/// The browser state of a drawer call (docs/Assist.md, "The page state").
+/// The browser state of a drawer call (docs/ai/Assist.md, "The page state").
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DrawerState {
     /// The screen path, `/qapps` written as `/apps` (the screen sessions' tree); empty when the client sent none or

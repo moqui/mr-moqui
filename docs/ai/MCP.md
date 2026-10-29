@@ -5,7 +5,7 @@ read tools `screen`, `search`, `data` and `skill`, and the services an admin exp
 that user's permissions. A read runs at once under the read fence; every write waits for its human owner, who approves
 or rejects it in Moqui through a link the MCP client shows (a URL elicitation in a multi round-trip request, MRTR),
 and the client's retry runs it once. The MCP client can never approve. The design is
-[plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.16, D10, 4.3, 4.6, 4.8, 9 "Approvals"). As of Oct 22, 2026
+[plans/LLM-A2A-Assist.md](../../plans/LLM-A2A-Assist.md) (4.16, D10, 4.3, 4.6, 4.8, 9 "Approvals"). As of Oct 22, 2026
 (13.11 built; the client, [Calling remote MCP servers](#calling-remote-mcp-servers), 13.12).
 
 The code: `crates/moqui-llm/src/mcp/` (`mod.rs` the codes, conf and identity, `server.rs` the transport, its checks,

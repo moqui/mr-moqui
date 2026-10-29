@@ -56,7 +56,7 @@ others for dialogs, keys, downloads and the saved-find popup). A full screen is 
 The client of the `qvt` render mode and of the `/qapps` shell: Vue 3.5 (the build with the template compiler) and
 Quasar 2.35 from `../libs`, with no build step and no other library. The `html` mode pages load `moqui-html.js`
 instead; the two never share a page (both define `window.moqui`). The full reference is
-[docs/Qvt-Client.md](../../../../../../docs/Qvt-Client.md).
+[docs/ui/Qvt-Client.md](../../../../../../docs/ui/Qvt-Client.md).
 
 | File | What |
 |---|---|
@@ -65,7 +65,7 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootVue.qvt.js` | the `m-*` components and the `/qapps` application |
 | `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`) |
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence, and the account menu's status components |
-| `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../docs/Assist.md)) |
+| `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../docs/ai/Assist.md)) |
 | `MoquiQzComponent.js` | QZ Tray printing, loaded only when the user preference `qz.print.enabled` is `true` |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |
 

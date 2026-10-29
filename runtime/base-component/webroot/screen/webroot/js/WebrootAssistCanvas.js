@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The canvas of Assist (plans/LLM-A2A-Assist.md 4.10 and 4.11; the server's contract is docs/Assist.md "The canvas"):
+ * The canvas of Assist (plans/LLM-A2A-Assist.md 4.10 and 4.11; the server's contract is docs/ai/Assist.md "The canvas"):
  * moqui.assist.canvas, loaded on the first canvas with the vendored OpenUI Lang core (libs/openui/lang-core.min.js, the
  * global OpenUILang). It holds
  *   - the component library of the OpenUI Lang dialect: each component's declaration (its positional parameters, their
@@ -22,7 +22,7 @@
  * a Button the framework drew is the approval, so no card is asked for it; a Mutation the agent proposes without a click
  * is an approval card in the drawer (write_ui run). The dialect registers itself: moqui.assist.dialects.register("openui").
  *
- * The Vue SFC dialect (m-assist-vue-sfc, docs/Assist.md "Vue SFC canvases") is the parent's half of a sandboxed frame:
+ * The Vue SFC dialect (m-assist-vue-sfc, docs/ai/Assist.md "Vue SFC canvases") is the parent's half of a sandboxed frame:
  * canvas.sfc holds its pure parts (the blocks and actions of a program, the validator of every frame message, read paths,
  * link targets, the watchdog, the submit gate), and the component owns the frame (GET /assist/sandbox, an opaque origin),
  * its MessageChannel, the reads through the proxy, the confirm of a submit drawn outside the frame and the kills. The frame

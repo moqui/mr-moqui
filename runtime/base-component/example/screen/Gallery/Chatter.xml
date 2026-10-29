@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
         <default-response type="none"/>
     </transition>
-    <!-- the card of the record for m-record-card (docs/Qvt-Client.md, Record cards); BOSS answers it from lookup#ById -->
+    <!-- the card of the record for m-record-card (docs/ui/Qvt-Client.md, Record cards); BOSS answers it from lookup#ById -->
     <transition name="recordCard" read-only="true">
         <actions>
             <entity-find-one entity-name="moqui.basic.Enumeration" value-field="enumeration">

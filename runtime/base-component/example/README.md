@@ -49,4 +49,4 @@ tracing = "0.1"
 
 `./moq build` finds the crate (a `Cargo.toml` beside a `component.xml`) and links it into the binary with the
 framework. How the crate's code is selected, the tool and service lifecycles, and calling tools from scripts are in
-`docs/Native-Components.md`.
+`docs/dev/Native-Components.md`.

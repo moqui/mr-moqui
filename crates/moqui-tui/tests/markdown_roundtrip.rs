@@ -36,7 +36,7 @@ fn samples() -> Vec<(String, String)> {
         let page = part.split("]]>").next().unwrap_or("");
         out.push((format!("wiki page {at}"), page.to_string()));
     }
-    for doc in ["docs/TUI.md", "plans/README.md"] {
+    for doc in ["docs/ui/TUI.md", "plans/README.md"] {
         out.push((doc.to_string(), std::fs::read_to_string(repo.join(doc)).unwrap()));
     }
     out
@@ -52,7 +52,7 @@ fn rich_text_editor_round_trip() {
     let round = |text: &str| RichTextEditor::new().from_markdown(text.to_string()).to_markdown();
     for (name, text) in samples() {
         let back = round(&text);
-        if name == "docs/TUI.md" {
+        if name == "docs/ui/TUI.md" {
             continue;
         }
         assert_eq!(back.trim_end(), text.trim_end(), "{name}");

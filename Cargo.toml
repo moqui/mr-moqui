@@ -56,7 +56,7 @@ moqui-db = { path = "crates/moqui-db" }
 moqui-core = { path = "crates/moqui-core", default-features = false }
 # The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.
 moqui-llm = { path = "crates/moqui-llm" }
-# default-features off so the binary crate picks the package (crates/moqui, docs/Packaging.md).
+# default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # Component crates kept in runtime/base-component, linked by crates/moqui.
 example = { path = "runtime/base-component/example" }

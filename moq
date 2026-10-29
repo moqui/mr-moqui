@@ -402,7 +402,7 @@ PACKAGE_OPTIONS_HELP='      --lite           The Lite package, target/lite/moqui
       --release        The Maximal package, target/release/moqui (every feature, Postgres embedded)
       --enterprise     The Enterprise package, target/enterprise/moqui (every feature, databases external)
                        With none of these: the Dev package, target/develop/moqui (Lite with git, SSH and
-                       the dev tools). docs/Packaging.md lists the features of each'
+                       the dev tools). docs/Build-Test.md lists the features of each'
 
 RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
@@ -416,7 +416,7 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
 
 help_build() {
     cat <<EOF
-Builds a moqui package with cargo in this repo (docs/Packaging.md): the Dev package by default,
+Builds a moqui package with cargo in this repo (docs/Build-Test.md): the Dev package by default,
 or Lite, Debug, Maximal or Enterprise. Each has its own cargo profile, features and binary:
   Dev         cargo build --profile develop --no-default-features -F dev -p moqui      target/develop/moqui
   Lite        cargo build --profile lite --no-default-features -F lite -p moqui        target/lite/moqui
@@ -994,7 +994,7 @@ parse_run_opts() {
     done
 }
 
-# The packages (docs/Packaging.md): default (the Dev package), and lite, debug, release and enterprise from --lite,
+# The packages (docs/Build-Test.md): default (the Dev package), and lite, debug, release and enterprise from --lite,
 # --debug, --release and --enterprise. Each builds with its own cargo profile, so their artifacts and binaries stay
 # apart, and with the package feature of crates/moqui (or of the generated crate in target/moqui-app). The Dev
 # package's profile is develop, since dev is cargo's own debug profile, which the Debug package uses.
@@ -1172,7 +1172,7 @@ publish = false
 name = \"moqui\"
 path = \"src/main.rs\"
 
-# The packages, as crates/moqui has them (docs/Packaging.md). ./moq build picks one with --no-default-features.
+# The packages, as crates/moqui has them (docs/Build-Test.md). ./moq build picks one with --no-default-features.
 [features]
 default = [\"maximal\", \"devtools\"]
 dev = [\"moqui-host/dev\", \"tui\", \"devtools\"]

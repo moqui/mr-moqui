@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The shipped `ProxyServlet.js` as a conf servlet on a real server (docs/Web-Scripts.md): the request's method, path,
+//! The shipped `ProxyServlet.js` as a conf servlet on a real server (docs/interfaces/Web-Scripts.md): the request's method, path,
 //! query and body go to a local upstream, and an answer larger than a script's 64 MiB heap, sent in chunks, streams back
 //! whole, so it never passed through the script.
 

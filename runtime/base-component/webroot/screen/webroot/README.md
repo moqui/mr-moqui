@@ -12,7 +12,7 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 |---|---|
 | `css/moqui-html.css` | style sheet of the `html` mode (light and dark, responsive, print) |
 | `js/moqui-html.js` | client of the `html` mode; `js/README.md` lists the data attributes |
-| `js/*.js` (`MoquiLib.js`, `WebrootVue.qvt.js` and the rest) | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35); `js/README.md` lists the files, [docs/Qvt-Client.md](../../../../../docs/Qvt-Client.md) is the reference |
+| `js/*.js` (`MoquiLib.js`, `WebrootVue.qvt.js` and the rest) | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35); `js/README.md` lists the files, [docs/ui/Qvt-Client.md](../../../../../docs/ui/Qvt-Client.md) is the reference |
 | `css/WebrootVue.qvt.css` | style sheet of the `qvt` shell and widgets: only what Quasar 2.35 has no prop for (tonal buttons, the div-table rules, the container-box accents, print) |
 | `images/`, `MoquiLogo100.png`, `favicon.ico` | logo and icon |
 

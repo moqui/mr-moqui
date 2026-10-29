@@ -77,7 +77,7 @@ tar = { workspace = true }
 rquickjs = { workspace = true, features = ["bindgen"] }
 
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
-# socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Packaging.md) pick them through moqui-host.
+# socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.
 # A service of a feature left out is still registered and reports that the feature is not built into this host.
 [features]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-proto", "dep:prost"]

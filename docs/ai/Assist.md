@@ -3,7 +3,7 @@
 The Assist drawer is the agent of the `/qapps` shell: the user asks in a side panel, the agent works the user's own
 screens through a server-side screen session as the user, the user's page follows it, and every write waits for the
 user's approval. This page is the contract between the drawer (`js/WebrootAssist.js`, phase 13.5 part B) and the server
-(part A), and how the server side works. The design is [plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.4 runs,
+(part A), and how the server side works. The design is [plans/LLM-A2A-Assist.md](../../plans/LLM-A2A-Assist.md) (4.4 runs,
 4.5 events and the drawer's calls, 4.7 screens, 4.8 approvals, 4.11 the drawer, 4.18 the admin screens, 7.1 the tail).
 As of Oct 22, 2026 (13.5 built: the server, the drawer and their Chromium smokes; 13.6: the OpenUI canvas, "The canvas" below;
 13.9: chat members, triggers and AI tasks, "Chat members, triggers and AI tasks" below; 13.14: memory, lessons, Save as
@@ -263,7 +263,7 @@ fixes its tier), `contextVersion` (the tab's page version), `state` (the page).
   `file` part of the message (of a queued one too), the model reads a line naming it, `[attached F12: stock.csv
   (text/csv, 28 bytes); read it with data artifact=F12]`, and `data artifact=F12` reads a text file's lines wrapped as
   `<untrusted from="attachment">` (an image or a PDF is named, not read). `surface` is `drawer` (the default) or `tui`: the terminal's Assist pane
-  (docs/TUI.md "Assist") makes its conversations the terminal's, whose runs follow on the terminal's own screen and
+  (docs/ui/TUI.md "Assist") makes its conversations the terminal's, whose runs follow on the terminal's own screen and
   ask inline; a retry keeps the conversation's surface. A first message's tail names the user's learned skills that
   strongly match it (`skills that may fit`), as they never enter the catalog its prefix is built with.
 

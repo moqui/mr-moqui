@@ -216,7 +216,7 @@ along with this software (see the LICENSE.md file). If not, see
             managers a records drive's record folders, FileServices.check#RecordPaths), logged once. A service that fails or
             answers no recordVisible: false, logged once. Adds no error. The hook runs in the caller's transaction, so it
             sees records the caller made; with checkOnly it must answer without an error, which would mark that
-            transaction rollback-only (docs/Services.md). userId asks for another user, only with authorization disabled
+            transaction rollback-only (docs/logic/Services.md). userId asks for another user, only with authorization disabled
             (else false, logged): the hook of that user's theme runs as that user, with authorization on, in the caller's
             transaction. An external user (EXTERNAL_USER), current or asked for: false, no hook asked.</description>
         <in-parameters>

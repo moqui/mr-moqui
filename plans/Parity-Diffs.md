@@ -171,8 +171,8 @@ rest are the rows the review found deliberate or a harmless superset (recorded 2
 | P6-04 | print | The default print document puts "- N -" at the foot of every page, and the `documentTitle` at its head when set (`@page` in `ScreenHtmlPrint.js`); Java's FOP header has both commented out | Decided 2026-10-21: a printed page carries its number |
 | P8-05 | CORS | A request whose `Origin` CORS does not allow is answered 401 "Origin not allowed" before it runs (`refused_origin`, `web/mod.rs`; `serve_at`), the script servlets included; Java's `MoquiAuthFilter` checks only an `OPTIONS` request, so a proxied request ran. The request's own site is the `Host`, the `X-Forwarded-Host` of a proxy whose forwarding headers are believed (`client-ip-header`, `trusted-proxies`), or the conf webapp's `http-host` or `https-host`; Jetty's `ForwardedRequestCustomizer` trusted `X-Forwarded-Host` from any peer | A superset: one check for every path. Behind a proxy that rewrites `Host`, a browser's own POST still passes |
 | P8-08 | URLs | `ec.web.getWebappRootUrl` with a full URL is the render's base URL or the conf webapp's host and port (`web::webapp_root_url`), never the request's `Host`; Java falls back to the request's host name. The link base of an email is the template's `webHostName`, then the new `EmailServer.webBaseUrl`, then the conf webapp (`RenderEnv::new`, `service/mail/implementation.rs`); `send#ContactListEmail` refuses a `localhost` base | Decided 2026-10-21: a link in an email, often sent from a job, uses the configured address, not the one a request came through. Store emails keep `ProductStore.storeDomain` |
-| P9-02 | lifecycle actions | `first-hit-in-visit` runs when a request starts a visit (`ensure_visit`, `user/session.rs`); Java defines `runFirstHitInVisitActions` and never calls it. A `before-request` failure fails the request with a 500, as Java's; a failure of the others is logged and the rest goes on, where Java's would fail the request, login or startup. The actions run in a context frame of their own, where Java's share the request's | The failure-tolerance rule (`AGENTS.md`) for all but the one that may be a check. [Web-Scripts](../docs/Web-Scripts.md) |
-| P9-03 | servlets, filters, listeners | A `servlet`, `filter` or `listener` is a script whose value is a handler object with the Servlet API's method names (`location`); `class` names only the Java classes the port has natively (`MoquiServlet`, `MoquiFopServlet`, `MoquiAuthFilter` as `AuthFilter.js`, `ElasticRequestLogFilter`, `MoquiSessionListener`), and any other is logged and left out (`web/servlet.rs`). Only the `REQUEST` dispatcher; no async servlets, no `load-on-startup`, no WebSocket proxying. A handler object has no state across requests. `sessionDestroyed` fires for a session that expires in memory, not one only in the database. `servlet` takes `max-body`, which Java does not have | Decided 2026-10-21: scripts in place of Java classes, borrowing the Servlet API so a Java servlet or filter ports by method. [Web-Scripts](../docs/Web-Scripts.md) |
+| P9-02 | lifecycle actions | `first-hit-in-visit` runs when a request starts a visit (`ensure_visit`, `user/session.rs`); Java defines `runFirstHitInVisitActions` and never calls it. A `before-request` failure fails the request with a 500, as Java's; a failure of the others is logged and the rest goes on, where Java's would fail the request, login or startup. The actions run in a context frame of their own, where Java's share the request's | The failure-tolerance rule (`AGENTS.md`) for all but the one that may be a check. [Web-Scripts](../docs/interfaces/Web-Scripts.md) |
+| P9-03 | servlets, filters, listeners | A `servlet`, `filter` or `listener` is a script whose value is a handler object with the Servlet API's method names (`location`); `class` names only the Java classes the port has natively (`MoquiServlet`, `MoquiFopServlet`, `MoquiAuthFilter` as `AuthFilter.js`, `ElasticRequestLogFilter`, `MoquiSessionListener`), and any other is logged and left out (`web/servlet.rs`). Only the `REQUEST` dispatcher; no async servlets, no `load-on-startup`, no WebSocket proxying. A handler object has no state across requests. `sessionDestroyed` fires for a session that expires in memory, not one only in the database. `servlet` takes `max-body`, which Java does not have | Decided 2026-10-21: scripts in place of Java classes, borrowing the Servlet API so a Java servlet or filter ports by method. [Web-Scripts](../docs/interfaces/Web-Scripts.md) |
 | P9-03 | search proxy | The proxies are on `/search` and `/dashboard` (Java `/elastic` and `/kibana`), as conf servlets on `ProxyServlet.js` behind `AuthFilter.js`, with the permissions `SearchRemote` and `DashboardRemote` (Java `ElasticRemote`, `KibanaRemote`). The bodies stream through on the request pool. `MoquiDevConf.xml` has no `H2Console`, and the conf no longer declares the LLM and A2A servlets, which the port does not have | Decided 2026-10-21. A database loaded before keeps the old permission rows until the seed data is loaded again |
 
 ## Code quality review (2026-10-15)
@@ -229,7 +229,7 @@ Where the fixes of the open entity and service findings (P1-14, P1-15, P3-20, P3
 
 ## Revision management (2026-10-18)
 
-Text diffs of resource versions and the `git://` scheme ([Revision-Management](../docs/Revision-Management.md)). Java had the first as TODOs in `DbResourceReference` and has no git scheme.
+Text diffs of resource versions and the `git://` scheme ([Revision-Management](../docs/data/Revision-Management.md)). Java had the first as TODOs in `DbResourceReference` and has no git scheme.
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -254,7 +254,7 @@ Timestamp text without an offset is read in the session time zone wherever text 
 ## Rich text (2026-10-19)
 
 IronStone impl-drawers-commons M3: what the safe HTML cleaning keeps for the qvt rich-text editor. The `chatter` and
-`record-files` screen elements and the editor are new (docs/Qvt-Client.md, "Record panels, rich text, avatars and record cards").
+`record-files` screen elements and the editor are new (docs/ui/Qvt-Client.md, "Record panels, rich text, avatars and record cards").
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -264,7 +264,7 @@ IronStone impl-drawers-commons M3: what the safe HTML cleaning keeps for the qvt
 ## Layout panels and the calendar and contact tools (2026-10-19)
 
 IronStone impl-drawers-commons M4 and M7 (framework). `container-split` and the `VCard` and `ICalendar` tools are new
-(docs/Qvt-Client.md, "Layout panels: split, wizard and stack"; module doc of `moqui-core/src/pim/mod.rs`).
+(docs/ui/Qvt-Client.md, "Layout panels: split, wizard and stack"; module doc of `moqui-core/src/pim/mod.rs`).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -281,16 +281,16 @@ Fixes of the gaps the BOSS screens found; where a fix differs from Java on purpo
 | date patterns | The week fields `Y`, `w`, `W` and `F` follow the `en_US` calendar (weeks from Sunday, week 1 holds January 1) whatever the locale; `u` is the year (`DateTimeFormatter`), not `SimpleDateFormat`'s day of the week | The formatter has no locale calendar data; module doc of `moqui-lib/src/datefmt.rs` |
 | cache facade | `ec.cache.getCache(name)` with no conf entry makes the cache with the default settings on first use, as Java; `clear()` of a name also clears the screen or entity list cache of that name | Java parity; doc comment at `CacheFacade::get_or_create` |
 | in-memory test db | Numbers of two types (an `I32` condition value, an `I64` column, a decimal) compare by value | As the database compares them; `numeric` in `testing.rs` |
-| spec rewrite | In a `then` or `expect` block a line that starts with `/`, `` ` ``, `(` or `[` after a line that ended an expression is its own condition (a `;` is put before it), as each line is in Spock; JavaScript would join it to the line before | Module doc of `testkit/lines.rs`; docs/Testing.md, Pitfalls |
+| spec rewrite | In a `then` or `expect` block a line that starts with `/`, `` ` ``, `(` or `[` after a line that ended an expression is its own condition (a `;` is put before it), as each line is in Spock; JavaScript would join it to the line before | Module doc of `testkit/lines.rs`; docs/Build-Test.md, Pitfalls |
 | notifications | `mark#NotificationsViewed` of all of an inbox leaves the approvals waiting, and an approve or refuse marks every recipient's row viewed | No Java counterpart (no approvals in Java); the service file's top comment |
-| `link` | `background-submit`, `background-reload-id`, `background-hide-id` and `background-message` on a link that posts through a hidden form, as on a `form-single`; Java's `link` has none | xml-form-3.xsd; docs/Qvt-Client.md |
-| `container-dialog` | `tooltip`; the qvt `m-container-dialog` registers as a container of the root by its id, so `background-hide-id` closes it; Java's did not register | xml-screen-3.xsd; docs/Qvt-Client.md |
-| `messageInfos` | A message info may carry `link` and `linkText`, a button of its notification | docs/Qvt-Client.md, "Shell data and providers" |
-| preferences | A response to a request that set user preferences has `X-Moqui-Preferences` (the JSON of what it set), which the qvt client applies (`moqui.applyPreference`) | docs/Qvt-Client.md, "Preferences"; `preferences_header` in `web/mod.rs` |
+| `link` | `background-submit`, `background-reload-id`, `background-hide-id` and `background-message` on a link that posts through a hidden form, as on a `form-single`; Java's `link` has none | xml-form-3.xsd; docs/ui/Qvt-Client.md |
+| `container-dialog` | `tooltip`; the qvt `m-container-dialog` registers as a container of the root by its id, so `background-hide-id` closes it; Java's did not register | xml-screen-3.xsd; docs/ui/Qvt-Client.md |
+| `messageInfos` | A message info may carry `link` and `linkText`, a button of its notification | docs/ui/Qvt-Client.md, "Shell data and providers" |
+| preferences | A response to a request that set user preferences has `X-Moqui-Preferences` (the JSON of what it set), which the qvt client applies (`moqui.applyPreference`) | docs/ui/Qvt-Client.md, "Preferences"; `preferences_header` in `web/mod.rs` |
 | Visit | `sessionId` is the web session id at the visit's start (it changes at a password login's rotation; the `HttpSession` row keeps the visit), and `clientHostName` is the client address (no name lookup) | Java's `request.getRemoteHost()` without lookups gives the address; `create_visit` in `user/session.rs` |
 | sessions | `org.moqui.impl.UserServices.end#UserVisit` and `ec.user.endVisit(visitId)` end another session of the user; `ec.user.visitId` and `ec.user.visit` as Java's `getVisitId` and `getVisit` | No Java counterpart for ending another session; doc comment at `end_user_visit` |
-| mail | With `mail_capture_sends=true`, or the `MailCapture` tool enabled by a spec, `send#EmailMessage` keeps the message in memory (`ec.factory.getTool('MailCapture')`) instead of connecting | docs/Testing.md, "Mail"; module doc of `service/mail_capture.rs` |
-| shell | `sri.getShellProviders(kind)`, the providers of `getShellData` alone, kept per session | docs/Qvt-Client.md, "Shell data and providers"; doc comment at `shell_providers` |
+| mail | With `mail_capture_sends=true`, or the `MailCapture` tool enabled by a spec, `send#EmailMessage` keeps the message in memory (`ec.factory.getTool('MailCapture')`) instead of connecting | docs/Build-Test.md, "Mail"; module doc of `service/mail_capture.rs` |
+| shell | `sri.getShellProviders(kind)`, the providers of `getShellData` alone, kept per session | docs/ui/Qvt-Client.md, "Shell data and providers"; doc comment at `shell_providers` |
 
 ## Modified fields (2026-10-19)
 
@@ -339,7 +339,7 @@ What the framework's client specs (`runtime/base-component/framework/test/client
 
 ## Monitoring (2026-10-27)
 
-[Monitoring](Monitoring.md) replaced the artifact hit records and the log shipping with OpenTelemetry. Its "Retired and replaced" section maps each old function to its replacement; the user guide is [docs/Monitoring.md](../docs/Monitoring.md).
+[Monitoring](Monitoring.md) replaced the artifact hit records and the log shipping with OpenTelemetry. Its "Retired and replaced" section maps each old function to its replacement; the user guide is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|

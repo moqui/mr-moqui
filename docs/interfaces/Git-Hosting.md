@@ -1,6 +1,6 @@
 # Git hosting
 
-MR Moqui hosts the `moqui.resource.GitRepository` repositories of [Revision-Management](Revision-Management.md) for the
+MR Moqui hosts the `moqui.resource.GitRepository` repositories of [Revision-Management](../data/Revision-Management.md) for the
 git command line and any git client: clone, fetch and push over HTTPS (smart HTTP) and over the built-in SSH server,
 shallow clones for CI, branches and tags, and Git LFS. A push or a mirror fetch runs **gitECA rules**, the git
 counterpart of email ECA rules, and Mantle uses them to tie commits, branches and tags to projects and tasks. gitoxide
@@ -32,7 +32,7 @@ first branch pushed) its default branch.
 
 ## Logging in
 
-- **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/Sync.md)
+- **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/interfaces/Sync.md)
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
   an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp_https_listen_port` listener, or
   `X-Forwarded-Proto: https` behind the proxy that `webapp_client_ip_header` names), from loopback, or with
@@ -172,7 +172,7 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 | `find#GitRepositories` | the repositories the user may view, paged, by id list, text and kind; archived ones only with `includeArchived` or `archivedOnly`; each with its open merge requests |
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
-| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](Revision-Management.md)) |
+| `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)) |
 
 ### Refs, compare and merge
 

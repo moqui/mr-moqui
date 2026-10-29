@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A and MCP clients (plans/LLM-A2A-Assist.md 13.12; docs/A2A.md and docs/MCP.md) against a second server over
+//! The A2A and MCP clients (plans/LLM-A2A-Assist.md 13.12; docs/ai/A2A.md and docs/ai/MCP.md) against a second server over
 //! loopback, each on embedded Postgres with the scripted fake provider: the remote is this repository's own A2A server
 //! and MCP server. A run on the local server delegates to `a2a__assist` (the remote's `assist` agent answers over the
 //! streaming binding), runs the remote's READ tool `mcp__remote__find_enums` at once, and calls its write

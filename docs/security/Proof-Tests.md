@@ -2,11 +2,11 @@
 
 Named HTTP proofs for this repository. They record what is tested. They are not a pentest report and not a WAF claim.
 
-- **Where:** [SECURITY_SURFACE.md](SECURITY_SURFACE.md)
+- **Where:** [Attack-Surface.md](Attack-Surface.md)
 - **What:** [OWASP Top 10:2025](https://owasp.org/Top10/) (plus WSTG / ASVS L1 ideas, and API Top 10 for `/rest`)
 - **Public tests** are the client specs under `runtime/base-component/framework/test/client/`. Each feature name starts with the OWASP id, and a comment names the Moqui Java pytest it ports.
 
-The line-by-line map of all 143 Java HTTP tests is [Java-Port-Catalog.md](../runtime/base-component/framework/test/client/Java-Port-Catalog.md): 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
+The line-by-line map of all 143 Java HTTP tests is [Java-Port-Catalog.md](../../runtime/base-component/framework/test/client/Java-Port-Catalog.md): 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
 
 Java's Spock suite (`Security*.groovy`) was not ported. A row below that names only a Spock class is not a claim that a Rust unit test covers it.
 
@@ -91,7 +91,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | Multipart upload: `MZ` and a `#!` script are rejected; a ZIP is accepted | A02 | `SecurityMisc` |
 | Screen tarpit and the `sec.tap.user` transition tarpit are 429 | A01 | `SecurityTarpit` (production conf; skips under `--serve`) |
 
-HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([Client-Testing](Client-Testing.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
+HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([Client-Testing](../dev/Client-Testing.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
 
 ### Not applicable
 
@@ -117,7 +117,7 @@ Java's Spock classes check these without an HTTP client. This pass did not look 
 
 ## Recorded differences
 
-Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](../plans/Parity-Diffs.md) (P9-06 and the client-test-harness table).
+Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](../../plans/Parity-Diffs.md) (P9-06 and the client-test-harness table).
 
 - A preflight is 204 with an empty body.
 - The session cookie is `moqui.session`.

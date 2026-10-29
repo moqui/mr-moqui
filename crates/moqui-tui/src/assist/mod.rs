@@ -15,7 +15,7 @@
 //! The Assist pane (plans/LLM-A2A-Assist.md 4.12): the drawer of the browser shell in the terminal. [`state`] is the
 //! reducer, this module the pane's own state (open, focus, the composer, follow), and `draw` (with the `ui` feature) the
 //! column or overlay. The session's side (keys, the `/assist/*` calls, follow on the screen) is
-//! `crate::session::assist`; docs/TUI.md "Assist" says what the user sees.
+//! `crate::session::assist`; docs/ui/TUI.md "Assist" says what the user sees.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

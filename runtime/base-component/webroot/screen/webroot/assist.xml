@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Assist drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/Assist.md): /assist/<call>,
+<!-- The Assist drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/ai/Assist.md): /assist/<call>,
     for js/WebrootAssist.js. Each transition hands its call to org.moqui.agent.AssistServices.call#Drawer, which reads the
     request's parameters (query, form or JSON body), acts as the current user only (AgentUse; anything of another user's is
     not found) and sends the response itself: 200 with JSON, or the error status with {errorCode, errors, code}. The reads

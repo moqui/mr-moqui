@@ -15,7 +15,7 @@
 //! Large content in the database: a `moqui.resource.ContentBlob` per content, by its SHA-256 (so the same bytes are
 //! stored once), its bytes `ContentBlobChunk` rows of `resource-facade` `blob-chunk-size` (1 MiB). Git LFS objects, the large objects
 //! of `db` git repositories and the binary files of `dbresource://` are blobs; a row refers to one by its `blobId`.
-//! No Java counterpart. Guide: `docs/Git-Hosting.md`, Storage.
+//! No Java counterpart. Guide: `docs/interfaces/Git-Hosting.md`, Storage.
 //!
 //! A blob is written as a stream, each chunk in a transaction of its own (so a large file is not one transaction),
 //! under an upload's own `storageKey` (`ContentBlobUpload`): inserting the `ContentBlob` row publishes it. Two

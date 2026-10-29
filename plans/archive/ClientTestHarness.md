@@ -1,12 +1,12 @@
 # Client test harness: `moqui test-client`
 
-> Archived 2026-10-27: the client test harness and HTTP security-test migration are complete (125 Java proofs ported, 18 not applicable, none pending). Current usage is in [Client-Testing](../../docs/Client-Testing.md); coverage is catalogued in [Security proof tests](../../docs/SECURITY_TESTS.md). Optional extensions are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
+> Archived 2026-10-27: the client test harness and HTTP security-test migration are complete (125 Java proofs ported, 18 not applicable, none pending). Current usage is in [Client-Testing](../../docs/dev/Client-Testing.md); coverage is catalogued in [Security proof tests](../../docs/security/Proof-Tests.md). Optional extensions are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
 
 Oct 24, 2026 · Built the same day: P1 to P6 (§11), with the implementation notes in "Built so far" at the end of §11.
-The guide is [docs/Client-Testing.md](../../docs/Client-Testing.md). The user answered the first questions the same day: the server a suite needs comes from a `--serve` child process (D9), the command is in every
+The guide is [docs/dev/Client-Testing.md](../../docs/dev/Client-Testing.md). The user answered the first questions the same day: the server a suite needs comes from a `--serve` child process (D9), the command is in every
 package (D12), and all of mr-marble's Node and Python tests move to Moqui (§9).
 
-`moqui test` ([docs/Testing.md](../../docs/Testing.md), [TestHarness](TestHarness.md)) runs a component's specs
+`moqui test` ([docs/Build-Test.md](../../docs/Build-Test.md#component-specs), [TestHarness](TestHarness.md)) runs a component's specs
 inside the framework: the services' engine, a scratch database, `ec`. Tests from outside, over HTTP and in a browser,
 have no place there, so they were written on other stacks. mr-marble has a Playwright test with npm and a lock
 file, and two Node scripts that drive Chromium over CDP. Moqui Java's security proofs over HTTP are a pytest suite (143
@@ -414,7 +414,7 @@ From Playwright:
 | `duration` or `iterations` | Seconds, or iterations per user |
 | `rampUp` | Seconds over which the users start, evenly |
 | `think` | Milliseconds between a user's iterations, or `[min, max]` for a random pause; not timed |
-| `setup(user, args)`, `scenario(user, args, iteration)`, `teardown(user, args)` | Each runs from its source text, so it cannot use the spec's variables, as with `parallel` (Testing.md Pitfalls) |
+| `setup(user, args)`, `scenario(user, args, iteration)`, `teardown(user, args)` | Each runs from its source text, so it cannot use the spec's variables, as with `parallel` (Build-Test.md Pitfalls) |
 | `args` | Copied as JSON |
 | `timeout` | Seconds before the users are stopped (`duration + rampUp + 120` by default) |
 
@@ -603,7 +603,7 @@ The Marble page smoke is `test/client/BrowserSmoke.spec.js`.
 | `host/lib.rs`, `host/usage.rs` | The `test-client` command arm and its usage text |
 | `crates/moqui-host/Cargo.toml` | Feature `test-client` (tungstenite, webpki-roots), in `lite` and `enterprise` |
 | `moq` | Task `test-client` (`-p` gives `--server`; `--serve` passes through), its help, and component completion from `*/test/client/*.spec.js` |
-| `docs/Client-Testing.md` (new), `docs/Testing.md`, `docs/Packaging.md`, `README.md` | The guide; a pointer from Testing; the feature |
+| `docs/dev/Client-Testing.md` (new), `docs/Build-Test.md`, `docs/Build-Test.md`, `README.md` | The guide; a pointer from Testing; the feature |
 
 ## 11. Phases
 
@@ -614,7 +614,7 @@ The Marble page smoke is `test/client/BrowserSmoke.spec.js`.
 | P3 Security portion | `ClientFixtures`, the six specs of §7, the catalog README, the Parity-Diffs lines | `moqui test-client framework --serve` passes the six Security specs; `SecurityCors` fails clearly against `./moq run` (the dev conf) |
 | P4 Load | `load`, client `parallel`, statistics, the table and JSON; `LoadBasic` | It passes in `--serve`; a 50-user run against `./moq run` in the same runtime directory completes with numbers |
 | P5 Browser and mr-marble | The driver moved (with `gate3_browser` still passing on it), pages, locators, settle, problems, artifacts; §9 | `moqui test-client mr-marble --serve` passes with screenshots; the npm, Playwright and Python files are gone; `OrderRoleFilters` and `ScreenReport` run in `moqui test` |
-| P6 Docs | `docs/Client-Testing.md`, the pointers, `plans/README.md`, this plan's "Built so far" | Written from what was built |
+| P6 Docs | `docs/dev/Client-Testing.md`, the pointers, `plans/README.md`, this plan's "Built so far" | Written from what was built |
 
 P1 to P4 need no browser, so the security and load users arrive before the largest piece.
 
@@ -643,7 +643,7 @@ P1 to P4 need no browser, so the security and load users arrive before the large
   Node or Python: `FindScreens`, `BrowserSmoke`, `OrderRoleFilters`, `ScreenReport`, and `ClientAccess`, the test-only
   grant of §9. `moqui test-client mr-marble --serve` passes 40 of 40, and FindScreens passed 20 runs in a row
   (§14, 1).
-- **P6, the docs.** [Client-Testing](../../docs/Client-Testing.md), pointers from Testing, Packaging and the READMEs.
+- **P6, the docs.** [Client-Testing](../../docs/dev/Client-Testing.md), pointers from Testing, Packaging and the READMEs.
 - **Differences.**
   - `--spec` takes exact names, comma-separated, as `moqui test` does; there are no patterns.
   - Timeouts are seconds throughout: `waitUntil`'s `timeout`, a request's, a WebSocket `receive({ timeout })`, and the
@@ -667,7 +667,7 @@ P1 to P4 need no browser, so the security and load users arrive before the large
   (`ec.artifactExecution.disableTarpit()` for scripts too), and a refusal under a template render keeps its kind and
   `Retry-After`. The mr-marble suite's server runs the dev conf, with the screen tarpits off, so it is not
   affected.
-- **Follow-up complete (2026-10-27):** the HTTP security catalog now records 125 ported proofs and 18 not applicable, with none pending. Screen and transition tarpit counting is implemented; `SecurityTarpit` runs against the production conf. See [Security proof tests](../../docs/SECURITY_TESTS.md). Optional extensions from §15 are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
+- **Follow-up complete (2026-10-27):** the HTTP security catalog now records 125 ported proofs and 18 not applicable, with none pending. Screen and transition tarpit counting is implemented; `SecurityTarpit` runs against the production conf. See [Security proof tests](../../docs/security/Proof-Tests.md). Optional extensions from §15 are tracked in [Remaining-Work, Tests](../Remaining-Work.md#tests).
 
 ## 12. Tests of the harness
 

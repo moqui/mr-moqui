@@ -65,7 +65,7 @@
 
     <!--
         Sign-in with Google or Microsoft for mail accounts (OAuth 2.0 with PKCE, XOAUTH2 for IMAP and SMTP;
-        docs/Mail-OAuth.md). Each provider (moqui.basic.email.EmailOAuthProvider) needs the deployment's own OAuth client,
+        docs/interfaces/Mail-OAuth.md). Each provider (moqui.basic.email.EmailOAuthProvider) needs the deployment's own OAuth client,
         registered at the provider with the redirect URI below: its client id and secret here or in the environment
         (EMAIL_OAUTH_GOOGLE_CLIENT_ID and so on); a provider without both is not offered. The secret is never written to
         a log or answered by a service. email_oauth_microsoft_tenant: common (the default; work, school and personal
@@ -233,7 +233,7 @@
         <tool-factory class="moqui_core::pim::VCardToolFactory" init-priority="5"/>
         <tool-factory class="moqui_core::pim::ICalendarToolFactory" init-priority="5"/>
         <!-- The mail capture for specs: with mail_capture_sends=true, or ec.factory.getTool('MailCapture').enable() in a
-             spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Testing.md) -->
+             spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
         <tool-factory class="moqui_core::service::mail_capture::MailCaptureToolFactory" init-priority="5"/>
         <!-- The notification capture for specs: ec.factory.getTool('NotificationCapture').enable() listens on the
              notification topic as the host's socket does, so the shell counts are sent, and keeps the messages -->
@@ -330,7 +330,7 @@
             <error-screen error="not-found" screen-path="error/NotFound"/>
             <error-screen error="too-many" screen-path="error/TooMany"/>
             <error-screen error="internal-error" screen-path="error/InternalError"/>
-            <!-- Lifecycle actions, none by default. Each runs as Java's does (docs/Web-Scripts.md): before-request once the
+            <!-- Lifecycle actions, none by default. Each runs as Java's does (docs/interfaces/Web-Scripts.md): before-request once the
                 user is known, after-request however the request ended, after-login and before-logout for a web sign in and
                 sign out, first-hit-in-visit when a request starts a visit, after-startup and before-shutdown with the server.
             <first-hit-in-visit><actions><log level="info" message="========================== first-hit-in-visit actions"/></actions></first-hit-in-visit>
@@ -342,7 +342,7 @@
             <before-shutdown><actions><log level="info" message="========================== before-shutdown actions"/></actions></before-shutdown>
             -->
 
-            <!-- Servlets, filters and listeners (docs/Web-Scripts.md): a script at location whose value is a handler object
+            <!-- Servlets, filters and listeners (docs/interfaces/Web-Scripts.md): a script at location whose value is a handler object
                 with the Servlet API's methods, or one of the Java classes this server has natively: MoquiServlet (the
                 screens), MoquiFopServlet (a screen as PDF), MoquiAuthFilter (webroot/script/AuthFilter.js),
                 MoquiSessionListener (the server's session expiry). Another class is logged and left out. A url-pattern maps as the Servlet spec
@@ -683,7 +683,7 @@
             <push allow-http="false" allow-hosts="" timeout="15" max-attempts="6"/>
             <security api-key="true" bearer="true" oidc-issuer="${a2a_oidc_issuer}" oidc-audience="${a2a_oidc_audience}"/>
         </a2a>
-        <!-- The MCP server (docs/MCP.md): agent names the AgentDefinition whose tool policy and role group bound its
+        <!-- The MCP server (docs/ai/MCP.md): agent names the AgentDefinition whose tool policy and role group bound its
             tools; request-state-key (standard base64, 32 bytes or more) signs the requestState of a write waiting for
             its approval, else a key derived from session_cookie_key does; approval-wait is the seconds a retry waits
             for the owner's decision. -->
@@ -691,14 +691,14 @@
                 client-enabled="true" max-result-bytes="1000000" agent="mcp" public-url="${mcp_public_url}"
                 trust-forwarded-headers="false" request-state-key="${mcp_request_state_key}" approval-wait="20"
                 max-direct-tools="40"/>
-        <!-- the OpenAI-compatible gateway at /llm/v1 (docs/Gateway.md): each alias names a model or a feature; callers
+        <!-- the OpenAI-compatible gateway at /llm/v1 (docs/ai/Gateway.md): each alias names a model or a feature; callers
             use a login key or app password that an LlmApiClient with the gateway scope names
         <gateway enabled="true" require-client="true" timeout="300">
             <alias name="fast" model="local-qwen"/>
             <alias name="default" feature="assist"/>
         </gateway> -->
         <gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300"/>
-        <!-- The Assist drawer's composer extras and memory (docs/Assist.md "The calls of 13.14"): the files a message may
+        <!-- The Assist drawer's composer extras and memory (docs/ai/Assist.md "The calls of 13.14"): the files a message may
             carry, the audio of a dictation (through a model bound to the transcribe feature), the browser's speech API
             when no model is bound (off: it sends the audio to the browser's vendor), the longest inline text action, and
             whether a user who never chose lets the agent make memories. -->
@@ -750,8 +750,9 @@
         -->
         <!-- Qwen 3.8 in LM Studio: high is xhigh, the top of low, medium, xhigh; low also turns thinking off. LM Studio MLX
             may drop these fields on /v1/chat/completions. One request at a time keeps its prompt cache slot. It is the
-            profile the agent evaluation of moqui test runs on with the llm-profile option local-qwen (docs/Testing.md,
-            Agent evaluation); the evaluation is skipped while nothing answers at the endpoint's URL.
+            profile the agent evaluation of moqui test runs on with the llm-profile option local-qwen
+            (docs/Build-Test.md, Agent evaluation); the evaluation is skipped while nothing answers at the endpoint's
+            URL.
         <endpoint id="lmstudio" protocol="chat-completions" url="http://127.0.0.1:1234" local="true" max-concurrent="1"/>
         <model id="local-qwen" endpoint="lmstudio" name="qwen3.8-27b" tier="balanced" context-window="32768"
                 max-output="6144" tool-mode="native" prompt-variant="small" result-cap-chars="4000" list-limit="10"
@@ -832,7 +833,7 @@
 
     <!--
         The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git
-        (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/Git-Hosting.md).
+        (smart HTTP) and over the SSH server (SSH_GIT), checked against AT_GIT_REPOSITORY (docs/interfaces/Git-Hosting.md).
         public-url, lfs-token-key and lfs-token-key-previous: see the git_ properties.
         max-concurrent clones and pushes run at once, on threads of their own, with max-queued waiting. max-request
         bytes of an upload-pack request, max-push-size bytes of a push, max-object-size bytes of one pushed object;
@@ -841,7 +842,7 @@
         object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true".
-        The storage of db kind repositories (docs/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
+        The storage of db kind repositories (docs/interfaces/Git-Hosting.md, Storage): objects are rows of zlib streams, or of
         deltas against another object, as a pack has them: db-delta-depth deltas at most from an object to a whole
         one, and objects up to db-delta-max-size bytes as deltas; an object over db-large-object bytes is a content
         blob, read and sent a window at a time. db-write-format="raw" writes new rows uncompressed, as versions before
@@ -860,7 +861,7 @@
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
-        inbound-smtp feature; docs/Mail-Inbound.md). listen-port, listen-host, allowed-addresses, hostname and
+        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). listen-port, listen-host, allowed-addresses, hostname and
         authserv-id: see the smtp_ properties. proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none

@@ -5,7 +5,7 @@ components the macros write, shell data, preferences, the record and list views,
 editing, server-static screens and the `tui` screen model. For screen and widget authors and for work on the client
 files in `runtime/base-component/webroot/screen/webroot/js/`; relative paths below (`../libs`, `../css/...`,
 `test/client/...`) are from that directory. The `html` mode client, `moqui-html.js`, is in that directory's
-[README](../runtime/base-component/webroot/screen/webroot/js/README.md).
+[README](../../runtime/base-component/webroot/screen/webroot/js/README.md).
 
 The client of the `qvt` render mode and of the `/qapps` shell: Vue 3.5 (the build with the template compiler) and Quasar 2.35 from
 `../libs`. There is no build step and no other library: no jQuery, Moment, Select2, Bootstrap Notify, jQuery Validate or
@@ -16,9 +16,9 @@ The client of the `qvt` render mode and of the `/qapps` shell: Vue 3.5 (the buil
 | `MoquiLib.js` | the `moqui` object: type checks, `deepCopy`, field comparison, `objToSearch` / `searchToObj` / `parseHref` / `makeHref`, `request` (fetch with the session token; it hands a response's `X-CSRF-Token` to `moqui.onSessionToken` and its `X-Moqui-Preferences` to `moqui.onPreferences`), `loadScript` / `loadStylesheet`, `parseVue` and `evalComponentJs` (the `qvue` and `qjs` text), `NotificationClient` (with `send`, below, Notification listeners), `LruMap`. Its page spec is `test/client/MoquiLib.spec.js`. `loadScript(src, callback, validate)` loads a script once (`moqui.scriptLoads`, one promise per src): a call while it loads waits for it; when it fails every waiter is rejected (and the callback gets the error) and the element is removed, so a later call loads it again; a `validate` that never sees its library rejects after its retries (about 20 s). |
 | `MoquiL10n.js` | `moqui.l10n`: `format`, `formatCurrency`, `formatCurrencyNoSymbol` and `localize`. A copy of `crates/moqui-lib` `format.rs` and `datefmt.rs`: Java `DecimalFormat` and date pattern subset, HALF_EVEN on decimal text. `test/client/pages/MoquiL10n.page.js` runs `crates/moqui-lib/testdata/format-vectors.json`. |
 | `WebrootVue.qvt.js` | the `m-*` components and the application. `moqui.qvt.components` holds the definitions. |
-| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`; `docs/Revision-Management.md`, Token routes): on the page `webroot/PublicShell.xml` makes, with its own settings block `moqui-public-config` (`route {name, basePath, title, renderModes}`, `context`, the locale and the theme's Quasar configuration), it mounts the route's screen (loaded as `basePath.qvt`, `.qvue` or `.qjs`) with the `m-*` components of `WebrootVue.qvt.js`, which loads before it and starts nothing there. The root offers the parts of `m-qapps-root` the components call; a link under the route stays on the page, any other leaves it. |
+| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`; `docs/data/Revision-Management.md`, Token routes): on the page `webroot/PublicShell.xml` makes, with its own settings block `moqui-public-config` (`route {name, basePath, title, renderModes}`, `context`, the locale and the theme's Quasar configuration), it mounts the route's screen (loaded as `basePath.qvt`, `.qvue` or `.qjs`) with the `m-*` components of `WebrootVue.qvt.js`, which loads before it and starts nothing there. The root offers the parts of `m-qapps-root` the components call; a link under the route stays on the page, any other leaves it. |
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence of the shell (below, Chat store and presence), and the account menu's status components, in `moqui.qvtComponents`, which `WebrootVue.qvt.js` registers. Loads before it. `test/client/pages/WebrootChat.page.js` runs the store. |
-| `WebrootAssist.js` | `moqui.assist`: the Assist drawer (`m-assist-button`, `m-shell-assist` and its parts, in `moqui.qvtComponents`), its store, transport and follow; the contract with the server is `docs/Assist.md`. Loads after `WebrootChat.js` and before `WebrootVue.qvt.js`; `qvt.registerLate` takes components that load after it. `test/client/pages/WebrootAssist.page.js` runs the store. |
+| `WebrootAssist.js` | `moqui.assist`: the Assist drawer (`m-assist-button`, `m-shell-assist` and its parts, in `moqui.qvtComponents`), its store, transport and follow; the contract with the server is `docs/ai/Assist.md`. Loads after `WebrootChat.js` and before `WebrootVue.qvt.js`; `qvt.registerLate` takes components that load after it. `test/client/pages/WebrootAssist.page.js` runs the store. |
 | `MoquiQzComponent.js` | QZ Tray 2.3 printing, loaded after `/libs/qz-tray/qz-tray.js` and only when the user preference `qz.print.enabled` is `true`. |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |
 
@@ -701,7 +701,7 @@ notification socket, started by the shell root once mounted for a signed-in user
 (`framework/service/org/moqui/impl/ChatServices.xml`, which describes the rooms, the access rules and the pushes); BOSS's Chat screens use
 the store for the live parts and their own transitions over those services for the rest.
 
-**Agent cards** (plans/LLM-A2A-Assist.md 4.13, docs/Assist.md "Chat members, triggers and AI tasks"): a message of an agent member may
+**Agent cards** (plans/LLM-A2A-Assist.md 4.13, docs/ai/Assist.md "Chat members, triggers and AI tasks"): a message of an agent member may
 carry `event.assist`, an approval, a question or a reply of an agent's run. `chat.assistCard(event, me)` says who may act (any member
 decides an approval, as the server checks; the requester answers a question and opens the run), `chat.decideCard(roomId, eventSeq,
 {decision | choice})` posts the button to `/chatAssistCard`, and `<m-assist-card :event :chat-room-id>` draws it; the card changes
@@ -843,7 +843,7 @@ and the Y doc.
 
 ## Mail sign-in popup
 
-`moqui.oauthPopup(start, status, options)` (`MoquiLib.js`; `docs/Mail-OAuth.md`) runs a mail account's sign-in with Google or Microsoft in a
+`moqui.oauthPopup(start, status, options)` (`MoquiLib.js`; `docs/interfaces/Mail-OAuth.md`) runs a mail account's sign-in with Google or Microsoft in a
 popup. Call it in the click handler, so the window opens before any request and no popup blocker stops it; `start()` is the app's request
 to `EmailClientServices.start#OAuthSignIn` (a promise of `{authUrl, signInId}`), `status(signInId)` its request to `get#OAuthStatus`. The
 callback page (`/emailOAuth/callback`) posts `{type: 'moqui-email-oauth', signInId, status, errorCode, message, emailAccountId, emailAddress,
@@ -925,7 +925,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   (`url`, `openPath`, `parameters`: the roots are asked for with `treeNodeId=#`, a node's children with its id and `treeNodeName`, and the
   answer is `m-tree-item`'s list of `{id, text, a_attr: {urlText}, li_attr: {treeNodeName}, children: true | false | [...]}`),
   `buttonMenu` (`text`, its items as links in `c`), `placeholder` (`text`, the browser `url`), `error`. A `fragment` holds the nodes of a
-  `text type="tui"`, and a `component` (`name`, `props`, `base`: the screen path the server sets) names a client component (docs/TUI.md). A
+  `text type="tui"`, and a `component` (`name`, `props`, `base`: the screen path the server sets) names a client component (docs/ui/TUI.md). A
   client draws a `t` it does not know as a placeholder.
 - **Actions.** `link`: `text`, `url` with its parameters, `kind` (the `link-type`), `method`, `confirm`, `btnType`, `icon` (a Material Symbols
   name), `badge`, `tooltip`, `disabled`. A hidden-form link posts.

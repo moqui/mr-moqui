@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `agent-apps` over SSH (plans/archive/Screen-TUI-Impl.md Phase 3c, docs/TUI.md "For agents"): the apps for a program, one
+//! `agent-apps` over SSH (plans/archive/Screen-TUI-Impl.md Phase 3c, docs/ui/TUI.md "For agents"): the apps for a program, one
 //! command line at a time (`moqui_tui::Agent`), on an `exec` channel with no pty.
 //!
 //! - `agent-apps open [path] [--size CxR] [--json]` starts a session the server keeps, and answers its id and the

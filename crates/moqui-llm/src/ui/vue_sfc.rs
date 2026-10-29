@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Vue SFC dialect (plans/LLM-A2A-Assist.md 4.10, J11, J12; docs/Assist.md "Vue SFC canvases"): a Vue 3
+//! The Vue SFC dialect (plans/LLM-A2A-Assist.md 4.10, J11, J12; docs/ai/Assist.md "Vue SFC canvases"): a Vue 3
 //! single-file component the agent writes when OpenUI Lang cannot express a layout, run in a sandboxed frame.
 //!
 //! The program is the component's blocks: `<template>`, `<script>` (`module.exports = {...}`, the Options API), an

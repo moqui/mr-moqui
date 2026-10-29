@@ -250,4 +250,4 @@ in a context frame of its own.
 </actions></before-request>
 ```
 
-Differences from Java are in [Parity-Diffs](../plans/Parity-Diffs.md#screen-and-web-review-2026-10-20) (P9-02, P9-03).
+Differences from Java are in [Parity-Diffs](../../plans/Parity-Diffs.md#screen-and-web-review-2026-10-20) (P9-02, P9-03).

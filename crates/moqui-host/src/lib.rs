@@ -1602,7 +1602,7 @@ fn install_pdf(_factory: &moqui_core::context::ExecutionContextFactory) -> PdfSl
     moqui_core::screen::install_pdf_unavailable("PDF is not available: this build leaves out the pdf feature");
 }
 
-/// The package this host was built as (docs/Packaging.md): the largest of `maximal`, `enterprise` and `lite` its
+/// The package this host was built as (docs/Build-Test.md): the largest of `maximal`, `enterprise` and `lite` its
 /// features include, else `custom`; `debug` for an unoptimized `maximal` with the dev tools, and `dev` for `lite` with
 /// them.
 #[must_use]

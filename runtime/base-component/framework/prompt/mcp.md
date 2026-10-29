@@ -1,4 +1,4 @@
-<!-- The connect-time instructions of the MCP server (server/discover; crates/moqui-core/src/llm/mcp, docs/MCP.md).
+<!-- The connect-time instructions of the MCP server (server/discover; crates/moqui-core/src/llm/mcp, docs/ai/MCP.md).
      About 1.2k characters: the order to discover in, how results read, paging, dates and writes. -->
 This server is a Moqui instance: its apps (screens), records and services, as the signed-in user with that user's permissions.
 

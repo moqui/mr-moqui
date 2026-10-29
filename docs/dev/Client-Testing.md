@@ -1,7 +1,7 @@
 # Testing a server from outside with `moqui test-client`
 
 `moqui test-client` runs the JavaScript spec files in a component's `test/client/` directory against a server that is
-already running. The specs have the format of `moqui test` ([Testing](Testing.md)): `spec`, `feature`, the blocks,
+already running. The specs have the format of `moqui test` ([Testing](../Build-Test.md#component-specs)): `spec`, `feature`, the blocks,
 `where` rows, conditions that fail with the values of their parts, `suite.js`, the console report and JUnit. They reach
 the server only from outside: HTTP sessions with cookies and the session token, raw requests over TCP or TLS,
 WebSocket, headless Chromium, and a load runner of virtual users.
@@ -12,9 +12,9 @@ DevTools, with a temporary profile removed after each spec. It writes only under
 beside `./moq run` in the same runtime directory, or on another machine against any server. `ec`, `call`, `checkData`,
 `screenTest` and `uploadedFile` are not there: each throws an error that names the client equivalent.
 
-It is in every package (the `test-client` feature, [Packaging](Packaging.md)). `--serve`, which starts a server for the
+It is in every package (the `test-client` feature, [Packaging](../Build-Test.md#packages)). `--serve`, which starts a server for the
 suite, needs `moqui test` and so the `embedded-postgres` build (not Enterprise). The design record is
-[ClientTestHarness](../plans/archive/ClientTestHarness.md).
+[ClientTestHarness](../../plans/archive/ClientTestHarness.md).
 
 ## Running
 
@@ -561,5 +561,5 @@ The output directory has what the specs wrote and what failures left:
 - `test/MoquiConf.xml` merges only in `moqui test` runs (and so in `--serve`); a spec that needs it skips or fails
   against `./moq run`.
 - A spec that needs Chromium passes as skipped on a machine without one. Use `--fail-on-skip` in CI.
-- The rules of [Testing](Testing.md#pitfalls) apply: a line outside `then` and `expect` that starts with `[`, `(`, `/`
+- The rules of [Testing](../Build-Test.md#pitfalls) apply: a line outside `then` and `expect` that starts with `[`, `(`, `/`
   or a template literal continues the line before it.

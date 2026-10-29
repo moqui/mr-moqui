@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The composer's files (plans/LLM-A2A-Assist.md 4.11; docs/Assist.md `POST attachments`): a file the user attaches is
+//! The composer's files (plans/LLM-A2A-Assist.md 4.11; docs/ai/Assist.md `POST attachments`): a file the user attaches is
 //! checked (the conf's `assist` size, count and media types; never a program) and stored as a DbResource file at
 //! `dbresource://agent/files/<userId>/<artifactId>/<name>` (the system property `agent_attachment_root` names another
 //! root), with an `AgentArtifact` of kind `file` whose part keeps its name, type, size, location and owner. A turn

@@ -3,7 +3,7 @@
 Moqui passes model calls of internal tools and scripts through to its configured models at `/llm/v1`, an
 OpenAI-compatible API: the callers use their own keys, Moqui adds the central key, checks the quotas and logs the usage
 as it does for its agents. The same configured models make embeddings for semantic search and the skill retrieval (the
-LLM embedder). The design is [plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.17, 4.2, D10, 4.19). As of Oct
+LLM embedder). The design is [plans/LLM-A2A-Assist.md](../../plans/LLM-A2A-Assist.md) (4.17, 4.2, D10, 4.19). As of Oct
 22, 2026 (13.13 built).
 
 The code: `crates/moqui-llm/src/gateway.rs` (routes, auth, the allowlists, aliases, admission, the pass-through),

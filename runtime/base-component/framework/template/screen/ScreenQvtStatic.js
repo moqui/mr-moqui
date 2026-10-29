@@ -21,7 +21,7 @@
 // What the template does with the scope chain:
 //  - a bare name in an expression is a name of the chain (the compiler writes _ctx.name, and an m-scope or the row slot of
 //    an m-static-form-list declares its own _ctx, so the innermost scope wins as the context stack does on the server);
-//  - ec is the restricted browser host (docs/Qvt-Client.md): localize, format, formatCurrency, formatCurrencyNoSymbol, a snapshot
+//  - ec is the restricted browser host (docs/ui/Qvt-Client.md): localize, format, formatCurrency, formatCurrencyNoSymbol, a snapshot
 //    of the user, and resource.expand, which takes the table of the expressions of its text so no eval is needed;
 //  - $scope is the chain itself, for a name that is not an identifier, and $mq holds the few helpers the template calls.
 //

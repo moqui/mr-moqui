@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Files in drives (moqui.resource.ResourceDrive and the entities beside it in ResourceEntities.xml) over the resource
     facade, so every storage takes the same calls: a personal or folder drive on the database tree (dbresource://), a
     version-controlled drive on a git:// repository kept in the database or on disk, a read-only mirror of a git URL, and
-    a records drive over record attachment folders. No Java counterpart. Guide: docs/Revision-Management.md, "Drives".
+    a records drive over record attachment folders. No Java counterpart. Guide: docs/data/Revision-Management.md, "Drives".
 
     Access. These are moqui.* entities, which entity filters never apply to, so every service here checks the drive: a
     user reaches a drive they own or are a current ResourceDriveMember of (as a user or through a user group), with that

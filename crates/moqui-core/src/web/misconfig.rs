@@ -103,7 +103,7 @@ fn default_conf_upload_executable_allow_is_false() {
 }
 
 /// `moqui.security.hmac.replay` is `type="distributed"`. The live cache stays local unless a distributed
-/// cache is configured (`docs/SECURITY_TESTS.md`).
+/// cache is configured (`docs/security/Proof-Tests.md`).
 #[test]
 fn default_conf_declares_the_hmac_replay_cache_distributed() {
     let conf = default_conf();
@@ -183,7 +183,7 @@ fn loopback_forms_canonicalize_to_one_address() {
 }
 
 /// Empty `Origin` is allowed. The same host counts only with the same scheme and port.
-/// Java's `webSocketOriginAllowed` matched the host only; this does not assert that (`docs/SECURITY_TESTS.md`).
+/// Java's `webSocketOriginAllowed` matched the host only; this does not assert that (`docs/security/Proof-Tests.md`).
 #[test]
 fn an_empty_origin_is_allowed_and_the_same_site_matches_scheme_host_and_port() {
     let _lock = crate::user::session::cookie_property_lock();

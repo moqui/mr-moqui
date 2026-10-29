@@ -15,7 +15,7 @@
 //! The storage of `db` git repositories on the seeded embedded Postgres, measured: the history of this repository
 //! imported, the bytes the rows take against the pack git writes of the same objects, before and after
 //! `gc#GitRepositories` repacks them, and a clone. `cargo test -p moqui-host --test it -- --ignored
-//! git_storage --nocapture` prints the numbers (docs/Git-Hosting.md, Storage).
+//! git_storage --nocapture` prints the numbers (docs/interfaces/Git-Hosting.md, Storage).
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "git"))]
 

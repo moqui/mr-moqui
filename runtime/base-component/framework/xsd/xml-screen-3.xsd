@@ -619,7 +619,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="screen" type="xs:string" use="required"/>
     </xs:complexType></xs:element>
     <xs:element name="assist-prompt"><xs:annotation><xs:documentation>
-        A suggested prompt of the Assist drawer (docs/Assist.md GET prompts): a chip on the app's pages, or on screen and
+        A suggested prompt of the Assist drawer (docs/ai/Assist.md GET prompts): a chip on the app's pages, or on screen and
         the screens below it, for a record of entity when it is set. send="true" sends it at once; otherwise it fills
         the composer. A prompt whose screen the user may not view is left out.
     </xs:documentation></xs:annotation><xs:complexType>
@@ -631,7 +631,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="sequence" type="xs:integer"/>
     </xs:complexType></xs:element>
     <xs:element name="response-action"><xs:annotation><xs:documentation>
-        An action on an Assist answer (docs/Assist.md GET prompts): the screen opens in the quick-create frame with the
+        An action on an Assist answer (docs/ai/Assist.md GET prompts): the screen opens in the quick-create frame with the
         answer's text in text-parameter, and with the page's record (entityName, recordId) when there is one; with
         requires-record="true" it is offered only when the page has a record ("Send as message", "Log as note").
     </xs:documentation></xs:annotation><xs:complexType>
@@ -1434,7 +1434,7 @@ along with this software (see the LICENSE.md file). If not, see
                         a text of type qvt (or a qvue screen) gets a text of type tui beside it for the terminal client, whose
                         content is the JSON of one node or an array of nodes of the tui screen model, every value through
                         JSON.stringify. Without one the terminal shows a placeholder with the browser address
-                        (docs/TUI.md; moqui lint --screens lists them).
+                        (docs/ui/TUI.md; moqui lint --screens lists them).
                     </xs:documentation></xs:annotation>
                 </xs:attribute>
                 <xs:attribute name="location" type="xs:string">

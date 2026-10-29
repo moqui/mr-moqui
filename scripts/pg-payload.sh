@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The theseus Postgres archive that the embedded-postgres feature embeds (plans/archive/License-Review.md,
-# plans/archive/EmbeddedPostgres.md, docs/Packaging.md).
+# plans/archive/EmbeddedPostgres.md, docs/Build-Test.md).
 #   scripts/pg-payload.sh strip [target]    download the archive into ~/.theseus/postgresql when it is not there (sha256
 #                                           checked), and repack it without bin/psql (the original stays as .orig)
 #   scripts/pg-payload.sh check [archive...] fail on bin/psql, a readline library, or an ELF that NEEDs readline

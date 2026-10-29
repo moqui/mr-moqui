@@ -3,7 +3,7 @@
 This guide covers running MR Moqui on your machine and deploying it on a server, in a container or as a cluster. It
 also covers connecting instances to each other: PASS servers to a BOSS server, and developers' instances to a team's
 group server. The first sections give the steps for the common cases; the sections after them have the detail. Building
-is in the [README](../README.md#build-test-and-run), and the build packages are in [Packaging](Packaging.md).
+and the build packages are in [Build-Test](Build-Test.md).
 
 - [Quick start](#quick-start): develop on your machine, run one production server, run in a container
 - [Everyday commands](#everyday-commands)
@@ -143,7 +143,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 ## Production checklist
 
 - **Package**: Maximal for embedded Postgres, or Enterprise for an external database. Dev and Debug carry the dev tools
-  and are not for deployment ([Packaging](Packaging.md)).
+  and are not for deployment ([Packaging](Build-Test.md#packages)).
 - **Purpose**: `instance_purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Secrets**: the first start writes generated secrets to `runtime/.env` with mode 0600. Keep the file private and back
@@ -158,7 +158,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
   ([backups](#backups)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
 - **CORS**: leave `webapp_allow_origins` empty. The dev conf sets `*`.
-- **Lock-down**: the full list is in [SECURITY_SURFACE.md, Heavy lock-down](SECURITY_SURFACE.md#heavy-lock-down).
+- **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
 
 ---
 
@@ -251,8 +251,8 @@ The database properties are in [Database and search](#database-and-search), and 
 | `moqui load [name=value ...]` | Load data files into the configured database, then exit |
 | `moqui save-db <cluster-dir> <dump-file>` | `pg_dump` of an embedded cluster, usually `runtime/db/embedded` |
 | `moqui load-save <cluster-dir> <dump-file>` | `pg_restore` into an embedded cluster; stop the server first |
-| `moqui tui [--path P] [--user U]` | The apps in this terminal, on this runtime; `--server URL` reaches a running server instead ([TUI](TUI.md)) |
-| `moqui test`, `moqui test-client` | Component specs ([Testing](Testing.md), [Client-Testing](Client-Testing.md)) |
+| `moqui tui [--path P] [--user U]` | The apps in this terminal, on this runtime; `--server URL` reaches a running server instead ([TUI](ui/TUI.md)) |
+| `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [Client-Testing](dev/Client-Testing.md)) |
 | `moqui lint`, `check`, `refs`, `types`, `lsp` | Checks and tools for developers |
 | `moqui version` | The version, package and features of this binary |
 
@@ -392,7 +392,7 @@ external database.
 | 8443 | HTTPS, certificates from `runtime/cert` | On when there is a certificate (dev makes one) | `webapp_https_listen_port` (`off`) |
 | 8444 | Cluster HTTPS, client certificate required | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
-| `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
+| `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
 
@@ -501,7 +501,7 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
    loaded on its own. To load it, stop the server, run `sudo -u moqui /opt/moqui/moqui load types=seed`, and start it
    again. Leave out `seed-initial`, whose rows the deployment may have changed since.
 
-A deploy marker for the dashboards can be posted from the upgrade script ([Monitoring](Monitoring.md#deploy-markers-and-annotations)).
+A deploy marker for the dashboards can be posted from the upgrade script ([Monitoring](tools/Monitoring.md#deploy-markers-and-annotations)).
 
 ### Optional services
 
@@ -510,8 +510,8 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `pdf_chromium_path`. The server starts without it, and PDF is unavailable |
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
-| Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](Mail-Inbound.md)); Maximal and Enterprise |
-| SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](TUI.md), [Sync](Sync.md), [Git-Hosting](Git-Hosting.md)) |
+| Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
+| SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
 
 ## Cluster
 
@@ -712,7 +712,7 @@ origin.
 
 1. Run BOSS: `./moq component-get mr-boss` (which brings mr-mantle), on Maximal, or on Enterprise as a
    [cluster](#cluster). Set it up as in [One production server](#one-production-server).
-2. **Git hosting** ([Git-Hosting](Git-Hosting.md)):
+2. **Git hosting** ([Git-Hosting](interfaces/Git-Hosting.md)):
    - HTTPS clones work as soon as HTTPS does: `https://team.example.com/git/<repositoryId>.git`.
    - For SSH, set `ssh_port` (such as 2222, since 22 is usually the system's sshd), `ssh_host=0.0.0.0`, and
      `ssh_public_port` for the clone URLs shown.
@@ -721,13 +721,13 @@ origin.
      Finder). On a cluster, make them `db` repositories.
    - Commit trailers such as `Task: PROJ-12` and branch names link commits to Projects work items through Mantle's
      gitECA rules.
-3. **LLM gateway** ([Gateway](Gateway.md)):
+3. **LLM gateway** ([Gateway](ai/Gateway.md)):
    - set `llm_gateway_enabled=true` and the aliases developers call;
    - grant `LlmGatewayUse` to the developers' group;
    - for each developer's key, add an `LlmApiClient` row with the `gateway` scope (System › LLM › Gateway). Its
      `allowedAliases`, `dailyTokens` and `dailyCost` limit that key.
 4. Optionally, turn on MCP (`mcp_enabled=true`) for coding agents. `/mcp/setup` gives a client config to paste
-   ([MCP](MCP.md)).
+   ([MCP](ai/MCP.md)).
 
 ### Each dev instance
 
@@ -813,7 +813,7 @@ with no names) and `default-repository` on its root.
 
 The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev` puts the named components in
 `runtime/dev-component`. A component with a `Cargo.toml` is linked into the binary on the next build
-([Native-Components](Native-Components.md)). A change to the set of components takes a restart.
+([Native-Components](dev/Native-Components.md)). A change to the set of components takes a restart.
 
 ## Moving from Moqui Java
 
@@ -831,7 +831,7 @@ The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev
 | Hazelcast for a cluster | The shared database and HTTPS between members |
 | `JAVA_TOOL_OPTIONS` heap sizing | No JVM, so no heap to size |
 
-Component and data changes for a Java deployment are in [Moqui-Java-Migration.md](Moqui-Java-Migration.md).
+Component and data changes for a Java deployment are in [Moqui-Java-Migration.md](dev/Moqui-Java-Migration.md).
 
 ## Directory layout
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The notification capture, for specs (no Java counterpart; docs/Testing.md, "Notifications"). While a spec has it
+//! The notification capture, for specs (no Java counterpart; docs/Build-Test.md, "Notifications"). While a spec has it
 //! on (`ec.factory.getTool('NotificationCapture').enable()`), it listens on the [`NOTIFICATION_MESSAGE`] topic as the
 //! host's notification socket does, so what is sent only when someone listens (the shell counts) is sent, and keeps
 //! each message in memory, where the tool reads and clears it. A `moqui test` run has no socket otherwise. The most

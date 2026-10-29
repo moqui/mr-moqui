@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The wiki behind the gallery's Editor archetype (screen/Gallery/Editor.xml): a space whose pages are dbresource
     files, Welcome with two versions, and a git repository in the database for the second space the screen creates on
-    request (git://example-wiki/). See docs/Revision-Management.md. -->
+    request (git://example-wiki/). See docs/data/Revision-Management.md. -->
 <entity-facade-xml type="demo">
     <moqui.resource.DbResource resourceId="EX_WIKI" filename="ExampleWiki" isFile="N" parentResourceId=""/>
     <moqui.resource.DbResource resourceId="EX_WIKI_ROOT" filename="EXAMPLE.md" isFile="Y" parentResourceId="EX_WIKI">

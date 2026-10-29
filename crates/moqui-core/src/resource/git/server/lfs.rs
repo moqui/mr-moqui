@@ -22,7 +22,7 @@
 //! The actions a batch answers carry a `MoquiLfs` token in their `Authorization` header: the user, repository,
 //! operation and expiry, signed with `git_lfs_token_key` (or `git_lfs_token_key_previous`, while a key is rotated).
 //! The token only says who the user is: each request is authorized again, as any other is. Guide:
-//! `docs/Git-Hosting.md`, Large files.
+//! `docs/interfaces/Git-Hosting.md`, Large files.
 
 use std::io::Read;
 

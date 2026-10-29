@@ -13,7 +13,7 @@
  */
 
 //! The session's side of the Assist pane (plans/LLM-A2A-Assist.md 4.12): its keys, the `/assist/*` calls through the
-//! JSON lane (docs/Assist.md "The calls"), the stored events read after each sequence while a run works, and follow:
+//! JSON lane (docs/ai/Assist.md "The calls"), the stored events read after each sequence while a run works, and follow:
 //! the agent's `ui.navigate`, `ui.fill`, `ui.dialog` and `ui.focus` applied to this session, and a hand-off's Save
 //! focused. The reducer is [`crate::assist::state`].
 

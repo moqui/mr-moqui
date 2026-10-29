@@ -10,7 +10,7 @@ keep using the sync. As of Oct 21, 2026.
 
 The code is `crates/moqui-host/src/smtp.rs` (the server) and `crates/moqui-core/src/service/mail/delivery.rs` (routing and
 delivery). It is the moqui-host feature `inbound-smtp`, in the Debug, Maximal (`--release`) and Enterprise packages
-([Packaging](Packaging.md)); the Dev and Lite packages leave it out, and add it with:
+([Packaging](../Build-Test.md#packages)); the Dev and Lite packages leave it out, and add it with:
 
 ```
 ./moq build -- --features inbound-smtp

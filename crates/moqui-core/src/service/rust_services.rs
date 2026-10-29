@@ -44,7 +44,7 @@ macro_rules! rust_service {
 
 static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new();
 
-/// The Rust service locations of the features a build may leave out (docs/Packaging.md), by path prefix; the first
+/// The Rust service locations of the features a build may leave out (docs/Build-Test.md), by path prefix; the first
 /// prefix that matches decides. A service at one of these locations still loads in a build without the feature, and a
 /// call reports that the feature is not built into this host.
 const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[

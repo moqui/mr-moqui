@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP client tools (plans/LLM-A2A-Assist.md 4.6, 4.16 "Client"; docs/MCP.md): `mcp__<server>__<tool>`, one for
+//! The MCP client tools (plans/LLM-A2A-Assist.md 4.6, 4.16 "Client"; docs/ai/MCP.md): `mcp__<server>__<tool>`, one for
 //! each tool an `AgentMcpServerTool` row allows on an `AgentMcpServer` that names the run's agent in `allowedAgents`,
 //! and that the server lists, in the lazy catalog ([`super::catalog`]).
 //!

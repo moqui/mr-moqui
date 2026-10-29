@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The redirect URI of a mail account's sign-in with Google or Microsoft (docs/Mail-OAuth.md): the provider sends the
+<!-- The redirect URI of a mail account's sign-in with Google or Microsoft (docs/interfaces/Mail-OAuth.md): the provider sends the
     popup back here with the state and the code (or an error). org.moqui.impl.EmailClientServices.complete#OAuthSignIn
     checks the state against the user's session, exchanges the code and stores the sign-in, and sends the popup's page,
     which tells its opener (this server's own origin only) how it ended. A deployment registers

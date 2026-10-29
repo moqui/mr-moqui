@@ -3,9 +3,9 @@
 `moqui tui` shows the apps in a terminal. It draws the same XML Screens the browser does, through the `tui` render mode:
 the server writes each screen as a JSON document of nodes, and the client in `crates/moqui-tui` draws it with
 [Revue](https://github.com/hawk90/revue). There are no TUI-only screens. The design is in
-[plans/archive/Screen-TUI-Impl.md](../plans/archive/Screen-TUI-Impl.md).
+[plans/archive/Screen-TUI-Impl.md](../../plans/archive/Screen-TUI-Impl.md).
 
-It is in every package, Default (`lite`) included (the `tui` feature, [Packaging](Packaging.md)). `apps` over SSH also
+It is in every package, Default (`lite`) included (the `tui` feature, [Packaging](../Build-Test.md#packages)). `apps` over SSH also
 needs the `ssh` feature, which Default leaves out.
 
 ## Starting it
@@ -49,7 +49,7 @@ carries a login key. `--agent`, `--snapshot`, `--ascii` and `--no-color` work wi
 - **Counters.** The client opens `/notws` with its key, so the counters change when a notification comes, and the
   notification's title shows on the message line. Without the socket it reads them each minute, as before.
 - **Build.** The client alone builds without a database driver or the HTTP server:
-  `cargo build -p moqui-host --no-default-features --features tui` (docs/Packaging.md).
+  `cargo build -p moqui-host --no-default-features --features tui` (docs/Build-Test.md).
 
 ## Over SSH
 
@@ -416,7 +416,7 @@ post, follow, a message), and its help.
 
 ## Assist
 
-F2 (or Alt+A) opens the Assist pane, the terminal's copy of the browser's Assist drawer (docs/Assist.md,
+F2 (or Alt+A) opens the Assist pane, the terminal's copy of the browser's Assist drawer (docs/ai/Assist.md,
 plans/LLM-A2A-Assist.md 4.12): the user asks in the pane, the agent works the user's own screens as the user, this
 session follows it, and every write waits for the user's approval. It speaks the drawer's `/assist/*` calls through the
 same JSON lane the palette uses, so it works in process, over SSH, in the browser terminal and over `--server`. The
@@ -451,7 +451,7 @@ last applied, and text that cannot be placed reads the conversation again. An er
 (`{errorCode, errors, code}`) shows its `errors` on the message line.
 
 **Follow.** The agent's `ui.navigate`, `ui.fill`, `ui.dialog` and `ui.focus` apply to this session when they are this
-client's (its id and page version, docs/Assist.md "Follow") and follow is on: the session goes to the screen
+client's (its id and page version, docs/ai/Assist.md "Follow") and follow is on: the session goes to the screen
 (`Session::navigate`), and a fill sets the field (`Session::fill`, by the event's `tuiId`, else by its form and field
 name), marks it changed and tags it `Assist` while it holds that value, with "Assist filled Status" on the message
 line. A fill waits until the screen it follows has come; a password, file, hidden or display field is never filled. A
@@ -464,7 +464,7 @@ then Enter on Save"; the keys go to the screen.
 **Approvals.** An approval is a card in the pane: `! Approval · write`, its summary, a `Field: current → proposed`
 line per change, and Approve, Edit in screen and Reject. Enter on the card opens the confirmation with the same lines;
 only Enter on a choice decides (no letter does, and Esc leaves it pending). Reject asks for the feedback, which becomes
-the agent's next task. The server takes a decision only from a person's channel (docs/Assist.md `POST decide`): the
+the agent's next task. The server takes a decision only from a person's channel (docs/ai/Assist.md `POST decide`): the
 in-process terminal (local, over SSH, in the browser terminal) renders as `Terminal`, so its decisions count; over
 `--server` the link signs in with a key, a header login a program could use, so a decision (and a hand-off's Skip) is
 refused with 403 and is made in the browser instead. A question card lists its options (the recommended one marked), Enter offers them and "Other:

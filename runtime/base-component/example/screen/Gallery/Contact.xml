@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- A plain edit form whose Save checks what it is given: a name is required and an email must look like one, refused with
     validation errors on their fields as an app's save is. Assist's Edit in screen hands a proposed write on it to the user
-    (docs/Assist.md, the hand-off; the browser smoke in crates/moqui-host/tests/gate3_browser.rs). Nothing is written: a
+    (docs/ai/Assist.md, the hand-off; the browser smoke in crates/moqui-host/tests/gate3_browser.rs). Nothing is written: a
     good save comes back as a message. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Contact" default-menu-include="false">

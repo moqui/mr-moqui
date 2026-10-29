@@ -704,7 +704,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="AgentRemoteA2a" package="moqui.agent" use="configuration" cache="true">
-        <description>A remote A2A agent an agent may delegate to (the tool a2a__remoteId, docs/A2A.md): its card URL
+        <description>A remote A2A agent an agent may delegate to (the tool a2a__remoteId, docs/ai/A2A.md): its card URL
             (admin configuration only), its authentication (encrypted, never shown: {"bearer": key}, {"basic": {username,
             password}} or {"header": {name, value}}), the card as last read, the local agents that may delegate to it
             (allowedAgents, comma separated, * for all; empty for none), whether its address may be a private one
@@ -744,7 +744,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="AgentMcpServer" package="moqui.agent" use="configuration" cache="true">
-        <description>A remote MCP server whose tools agents may call (the tools mcp__server__tool, docs/MCP.md): its
+        <description>A remote MCP server whose tools agents may call (the tools mcp__server__tool, docs/ai/MCP.md): its
             URL (admin configuration only), its authentication (encrypted, never shown, as AgentRemoteA2a's), whether
             each user calls with a token of their own (AgentMcpUserToken), the local agents that may call it
             (allowedAgents, comma separated, * for all; empty for none), whether its address may be a private one

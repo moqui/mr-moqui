@@ -98,7 +98,7 @@ moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapsh
           [--server URL [--forget]]
     The apps in this terminal (the tui render mode), on this runtime and in this process. No port is
     opened unless --serve, and nothing is written to stderr: the log files and the log pane (Alt+L) get
-    the log. It asks for a login, as the browser does. F1 lists the keys; docs/TUI.md has the rest.
+    the log. It asks for a login, as the browser does. F1 lists the keys; docs/ui/TUI.md has the rest.
 
   --path PATH        The first screen (default /apps).
   --user NAME        Log in as NAME without a password. Only on an instance whose instance_purpose is dev.
@@ -108,7 +108,7 @@ moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapsh
   --snapshot PATH    Print the screen at PATH as text and exit, at --size (default 180x50).
   --agent            For a program: read command lines on stdin and answer each with the screen as text (look,
                      key, type, go, focus, set, do, find, elements, help, close), at --size (default 120x40).
-                     Over SSH the same is `agent-apps`; docs/TUI.md, For agents.
+                     Over SSH the same is `agent-apps`; docs/ui/TUI.md, For agents.
   --server URL       Reach a running server over HTTP instead of this runtime (https, or http to localhost). The
                      login is asked for once and a login key is kept in ~/.config/moqui/tui/<host>.toml.
   --forget           With --server: remove that stored key.
@@ -334,7 +334,7 @@ Options:
   --log-level level               Console level: trace, debug, info, warn, or error.
                                   The default is warn. The run prints the moqui.log path.
 
-Agent evaluation (docs/Testing.md, Agent evaluation):
+Agent evaluation (docs/Build-Test.md, Agent evaluation):
   moqui test tools --agents --llm-profile local-qwen --runs 3 --seed 7
   moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay
 
@@ -436,7 +436,7 @@ moqui help <command> and moqui <command> --help (or -h) print that command.
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
-    feature built in. See docs/Packaging.md.
+    feature built in. See docs/Build-Test.md.
 
   moqui version
   moqui --version

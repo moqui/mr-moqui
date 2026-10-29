@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- No Java counterpart (MR Moqui). The rules are in framework/xsd/git-eca-3.xsd; guide: docs/Git-Hosting.md. -->
+<!-- No Java counterpart (MR Moqui). The rules are in framework/xsd/git-eca-3.xsd; guide: docs/interfaces/Git-Hosting.md. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="process" noun="GitEca" type="interface">
         <description>The values a gitECA rule has in its context. A service a rule calls with in-map="context" can

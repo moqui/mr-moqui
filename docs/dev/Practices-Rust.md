@@ -7,7 +7,7 @@ code goes, how a crate is organized, how tests are kept, and the idioms to use. 
 where MR Moqui departs from it on purpose (§8).
 
 The review that applies these practices to the existing code, with its targets and results, is
-[Rust-Practices-Review](../plans/Rust-Practices-Review.md).
+[Rust-Practices-Review](../../plans/Rust-Practices-Review.md).
 
 Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organization-within-a-crate) ·
 [3 tests](#3-tests) · [4 working on rust code](#4-working-on-rust-code) ·
@@ -18,7 +18,7 @@ Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organ
 ## 1. Crates and where code goes
 
 One workspace, one `src/` tree per crate. The cut and its reasons are in
-[Crate-Layout](../plans/archive/Crate-Layout.md). Dependencies point one way:
+[Crate-Layout](../../plans/archive/Crate-Layout.md). Dependencies point one way:
 
 ```
 moqui (bin) → moqui-host → moqui-llm, moqui-tui (optional features)
@@ -35,7 +35,7 @@ moqui-browser → moqui-core (default-features = false)
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), drivers, process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
-| `moqui` | The binary: the CLI and the build packages and their features ([Packaging](Packaging.md)). |
+| `moqui` | The binary: the CLI and the build packages and their features ([Packaging](../Build-Test.md#packages)). |
 
 Component crates (`example`, `dev-aide`) are workspace members that the binary links. An add-on component's crate, a
 `Cargo.toml` beside its `component.xml`, is not a member: `./moq build` links it through a generated crate in
@@ -101,7 +101,7 @@ a reader (or an agent) loading the code does not load its tests too.
   it is committed.
 - Tests may `unwrap`, `expect` and index; the rules of §5 are for non-test code.
 - A test that needs a process property or starts a server takes the serial lock (`common::serial` in the host).
-- JavaScript specs (`*.spec.js`) run under `moqui test` and `moqui test-client`, not Node ([Testing](Testing.md),
+- JavaScript specs (`*.spec.js`) run under `moqui test` and `moqui test-client`, not Node ([Testing](../Build-Test.md#component-specs),
   [Client-Testing](Client-Testing.md)).
 
 ## 4. Working on Rust code
@@ -113,7 +113,7 @@ a reader (or an agent) loading the code does not load its tests too.
   default set; pedantic, nursery and restriction lints stay off. Do not add lints to `[workspace.lints]` that the code
   does not already pass.
 - **Toolchain.** Use one toolchain and incremental development builds so the cache stays warm
-  ([building skill](../.agents/skills/building/SKILL.md)).
+  ([building skill](../../.agents/skills/building/SKILL.md)).
 - **Formatting.** `max_width = 120`, edition 2021 (`rustfmt.toml`). Format only the files you changed:
   `rustfmt --edition 2021 --config-path rustfmt.toml <files>`, then check `git diff -U0` for hunks that are not yours
   and put them back. Never run `cargo fmt` on a whole crate.
@@ -315,7 +315,7 @@ are shared on purpose:
 Do not "fix" these:
 - **`catch_unwind` and `panic = "unwind"`.** Google forbids `catch_unwind`. Here every QuickJS host function, the
   service pool and the background jobs catch panics, so that one bad piece fails alone
-  ([Architecture-Proposal](../plans/archive/Architecture-Proposal.md), `.cargo/config.toml`, the failure tolerance rule).
+  ([Architecture-Proposal](../../plans/archive/Architecture-Proposal.md), `.cargo/config.toml`, the failure tolerance rule).
   A new background loop does the same.
 - **Poisoned locks.** Google says never to reach into a poisoned mutex. Here the policy is
   `unwrap_or_else(PoisonError::into_inner)` through `moqui_lib::sync`, so that one panicked request does not lock

@@ -13,7 +13,7 @@
  */
 
 //! Mail the SMTP listener received for the hosted and shared accounts (moqui-host's `inbound-smtp` feature, behind the
-//! edge gateway; docs/Mail-Inbound.md). The listener asks [`find_recipient`] at each `RCPT TO` and hands the message to
+//! edge gateway; docs/interfaces/Mail-Inbound.md). The listener asks [`find_recipient`] at each `RCPT TO` and hands the message to
 //! [`deliver`] after `DATA`; both run on a request worker with authorization disabled.
 //!
 //! Routing: a recipient is an account of kind EakHosted or EakShared that is not removed and has no incoming (IMAP or

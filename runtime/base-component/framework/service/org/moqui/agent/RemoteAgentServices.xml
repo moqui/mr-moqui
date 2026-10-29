@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The admin services of the A2A and MCP clients (plans/LLM-A2A-Assist.md 4.15, 4.16, 4.18; System > LLM > Remote;
-    docs/A2A.md and docs/MCP.md): the remote agents agents may delegate to and the MCP servers whose tools they may call.
+    docs/ai/A2A.md and docs/ai/MCP.md): the remote agents agents may delegate to and the MCP servers whose tools they may call.
     The bodies are Rust (crates/moqui-core/src/llm/remote.rs). Each needs AgentAdmin. A credential is set by its kind and
     secret and never returned. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">

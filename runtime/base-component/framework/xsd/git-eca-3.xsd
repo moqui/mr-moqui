@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- gitECA rules: *.gitecas.xml files in a component's service directory. No Java counterpart (MR Moqui). Guide:
-    docs/Git-Hosting.md; the values each event puts in the context are described by the
+    docs/interfaces/Git-Hosting.md; the values each event puts in the context are described by the
     org.moqui.GitServices.process#GitEca service interface. -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
     <xs:include schemaLocation="xml-actions-3.xsd"/>

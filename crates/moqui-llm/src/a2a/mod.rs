@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A 1.0 server (plans/LLM-A2A-Assist.md 4.15, D9, D10; docs/A2A.md), off by default (`llm-facade` `a2a
+//! The A2A 1.0 server (plans/LLM-A2A-Assist.md 4.15, D9, D10; docs/ai/A2A.md), off by default (`llm-facade` `a2a
 //! enabled`). It is an adapter over the one run model: a context is a conversation, a task is a run of the `a2a`
 //! surface, and the task states are the run states, whose wire values are A2A's.
 //!

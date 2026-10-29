@@ -6,33 +6,33 @@ What is not ported on purpose (JSON-RPC, the Groovy and Java runners, the databa
 
 ## Agents, Assist, A2A, MCP and the gateway
 
-Plan [LLM-A2A-Assist](LLM-A2A-Assist.md); guides [Assist](../docs/Assist.md), [A2A](../docs/A2A.md), [MCP](../docs/MCP.md), [Gateway](../docs/Gateway.md). Every check so far ran on the scripted fake provider, fixture or loopback servers only.
+Plan [LLM-A2A-Assist](LLM-A2A-Assist.md); guides [Assist](../docs/ai/Assist.md), [A2A](../docs/ai/A2A.md), [MCP](../docs/ai/MCP.md), [Gateway](../docs/ai/Gateway.md). Every check so far ran on the scripted fake provider, fixture or loopback servers only.
 
 | Area | Item | Source |
 |---|---|---|
 | Live models | No check has run against a live model: the evaluation suites on Qwen 3.8 27B (at least 80%) and on an 8B model in JSON mode (60%, at most 10% wrong calls), with their `baseline-local-qwen.json` and 8B baselines; live embeddings, transcription and text actions. The provider stream fixtures (`llm/provider/testdata/`) are hand-written from the documented formats; replace them with recorded streams when an endpoint is at hand | 13.1, 13.3, 13.7, 13.13, 13.14 |
-| Drawer | A record chip map from the server; "Let Assist save it" on a hand-off; Summarize earlier messages; Chromium smokes for the 13.14 drawer extras (they have node tests only); TUI decisions over `--server` (a key login cannot decide) | docs/Assist.md, docs/TUI.md "Assist" |
+| Drawer | A record chip map from the server; "Let Assist save it" on a hand-off; Summarize earlier messages; Chromium smokes for the 13.14 drawer extras (they have node tests only); TUI decisions over `--server` (a key login cannot decide) | docs/ai/Assist.md, docs/ui/TUI.md "Assist" |
 | Canvas | The Wide splitter, Page mode and phone tabs; a canvas `Lookup` against real option transitions in the Chromium smoke; an admin field for `AgentDefinition.canvasDialects`; the worker renderer for `vue-sfc`, required before enabling it for agents that read untrusted content (self-navigation and WebRTC put back by the component's own code are only mitigated) | 13.6, 13.8 |
 | Window | Reading the context length the server reports; did-you-mean for screen paths (the `screen` tool refuses a bad path with no suggestion) | 13.7 |
 | Learning | Lessons from fail-then-succeed and from repeated Adjust | 13.14 |
 | Chat agents | Feedback from reactions; manager/worker agents (`parentRunId` is unused); form questions in rooms | 13.9 |
-| A2A server | OIDC JWT auth; an `LlmApiClient` `a2a` scope; an A2A tasks admin screen; A2A in `clean#AgentData`; CORS for `/a2a` | docs/A2A.md "Not yet" |
-| MCP server | OAuth 2.1 with Moqui as the authorization server and the `LlmApiClient` `mcp` scope; `subscriptions/listen` and `listChanged`; resources and prompts; SSE answers; legacy `initialize` clients; an approval path for clients without URL elicitation | docs/MCP.md "Not yet" |
+| A2A server | OIDC JWT auth; an `LlmApiClient` `a2a` scope; an A2A tasks admin screen; A2A in `clean#AgentData`; CORS for `/a2a` | docs/ai/A2A.md "Not yet" |
+| MCP server | OAuth 2.1 with Moqui as the authorization server and the `LlmApiClient` `mcp` scope; `subscriptions/listen` and `listChanged`; resources and prompts; SSE answers; legacy `initialize` clients; an approval path for clients without URL elicitation | docs/ai/MCP.md "Not yet" |
 | Remote clients | Long remote tasks as a RemoteTask pause resumed by push; per-user OAuth sign-in for MCP servers; form elicitations and legacy in-stream requests; remote resources and prompts | 13.12 |
-| Gateway | Protocol translation (Chat Completions to Responses or Anthropic models); interrupting a call's blocking upstream request when its caller leaves; making a login key for a client in the admin screen (shown once); cluster-wide requests per minute (counted per node) | docs/Gateway.md "Not built" |
+| Gateway | Protocol translation (Chat Completions to Responses or Anthropic models); interrupting a call's blocking upstream request when its caller leaves; making a login key for a client in the admin screen (shown once); cluster-wide requests per minute (counted per node) | docs/ai/Gateway.md "Not built" |
 | Apps | The active organization and organizations as a Mantle user-facts provider, and Mantle skills in mr-mantle and mr-marble (no component has a `skill/` directory yet) | [LLM-A2A-Assist](LLM-A2A-Assist.md) §12 |
 
 `allow-remote` on services is not parsed; no remote path calls services by name, so it is documentation only. Provider calls keep the sim-allow exception on the outbound client.
 
 ## Mail
 
-Guides [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs/Mail-OAuth.md); mr-boss `plan/impl-drawers-commons.md` §5 M5.
+Guides [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Mail-OAuth](../docs/interfaces/Mail-OAuth.md); mr-boss `plan/impl-drawers-commons.md` §5 M5.
 
 | Area | Item | Source |
 |---|---|---|
 | Replies | The automatic reply counts as internal a user's address, the domain of a hosted or shared account, or one of its `internalDomains`, and answers only mail with the account's or an identity's address in To or Cc (not mail an alias forwards) | M5c, `send#OutOfOfficeReplies` |
 | Sync | Not yet run against a real account (a Gmail app password). A folder gone from the server keeps its local messages (`remoteRemovedDate`); POP3 reads no sync window, newest first. BOSS's mail settings have no control for `EmailServer.storeAllowPlain` (the opt-out that lets a plain `imap` or `pop3` store sign in without STARTTLS or STLS) | M5d, `service/mail/sync.rs`, `inbound.rs` |
-| OAuth | Not yet run against real Google and Microsoft clients (the Testing 7-day limit and Google verification) | M5e, docs/Mail-OAuth.md |
+| OAuth | Not yet run against real Google and Microsoft clients (the Testing 7-day limit and Google verification) | M5e, docs/interfaces/Mail-OAuth.md |
 | Inbound SMTP | No TLS client certificates (the allow-list is the gateway's identity); no BINARYMIME; no failure or delay DSNs of its own; the delivered report waits on the outgoing server for up to 30 seconds inside the store, before the listener answers | M5f, `moqui-host/src/smtp.rs`, `service/mail/delivery.rs` |
 | Sending | A held send goes at the job's next minute unless the client calls `send#DueDrafts` when its hold ends | `EmailClientServices` |
 | Accounts | `delete#EmailAccount` with deleteLocalCopies runs in the request (a job for large accounts) | `EmailClientServices` |
@@ -40,7 +40,7 @@ Guides [Mail-Inbound](../docs/Mail-Inbound.md), [Mail-OAuth](../docs/Mail-OAuth.
 
 ## Monitoring
 
-Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/Monitoring.md). Not started: the plan's Later stages (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC).
+Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stages (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC).
 
 | Area | Item | Source |
 |---|---|---|
@@ -63,17 +63,17 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/Monitoring.md). Not
 | Item | Source |
 |---|---|
 | Previews and extracted text of docx, pptx and odt (deferred); PDF fonts, cmaps and JPEG 2000 or JBIG2 images (pdf.js `standard_fonts`, `cmaps` and `wasm` are not vendored: License-Review) | mr-boss `plan/impl-drawers-commons.md` §5 M8 |
-| WebDAV: locks are per server (a client stays on one, `resource/locks.rs`), dead properties are not kept, no quota properties | [Sync](../docs/Sync.md) |
+| WebDAV: locks are per server (a client stays on one, `resource/locks.rs`), dead properties are not kept, no quota properties | [Sync](../docs/interfaces/Sync.md) |
 
 ## Calendar and contacts
 
 | Item | Source |
 |---|---|
-| Not built in the `VCard` and `ICalendar` tools and the CalDAV and CardDAV servers (`crates/moqui-core/src/pim`, `dav/pim.rs`): sync-collection (clients keep in step by ctag and entity tags), scheduling (CalDAV `schedule-*`), free-busy-query, attendees written by a client, iTIP processing of a received REPLY or COUNTER, VJOURNAL and VFREEBUSY, RSCALE and SKIP (RFC 7529), vCard PHOTO and other binary values, IMPP, ANNIVERSARY, GENDER and related cards. A VTIMEZONE that no IANA zone matches keeps its rule as a POSIX TZ text in the event's `timeZone`, which `expand` reads back. A `RANGE=THISANDFUTURE` override splits its series on import (mr-mantle `store#CalendarFeedEvents`), but a day shift is not applied to the new series' BYDAY or BYMONTHDAY, and RDATEs stay on the old series | [Sync](../docs/Sync.md); M4, M7 framework |
+| Not built in the `VCard` and `ICalendar` tools and the CalDAV and CardDAV servers (`crates/moqui-core/src/pim`, `dav/pim.rs`): sync-collection (clients keep in step by ctag and entity tags), scheduling (CalDAV `schedule-*`), free-busy-query, attendees written by a client, iTIP processing of a received REPLY or COUNTER, VJOURNAL and VFREEBUSY, RSCALE and SKIP (RFC 7529), vCard PHOTO and other binary values, IMPP, ANNIVERSARY, GENDER and related cards. A VTIMEZONE that no IANA zone matches keeps its rule as a POSIX TZ text in the event's `timeZone`, which `expand` reads back. A `RANGE=THISANDFUTURE` override splits its series on import (mr-mantle `store#CalendarFeedEvents`), but a day shift is not applied to the new series' BYDAY or BYMONTHDAY, and RDATEs stay on the old series | [Sync](../docs/interfaces/Sync.md); M4, M7 framework |
 
 ## Git and git hosting
 
-Guides [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revision-Management.md).
+Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](../docs/data/Revision-Management.md).
 
 | Area | Item | Source |
 |---|---|---|
@@ -94,7 +94,7 @@ Guides [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revi
 |---|---|
 | Universal search result links go to the generic entity edit screens until the apps have record screens; the per-document hook predicate is not built | [SearchFacade, REST service and UI](archive/SearchFacade.md) |
 | Postgres broad queries (common words: rank, facets, proximity) take tens to hundreds of ms at 50k documents; candidates are a stored per-field `tsvector`, a ranked-row cap, and measuring cover density on a real corpus. Hybrid `k` and weights wait on a relevance set | [Performance, Search](Performance.md) |
-| Semantic retrieval has the development hash embedder and `LlmEmbedder` (`embedder="llm"`, a model server's `/v1/embeddings`); there is no built-in local model, and no live embedding model has been run | [Implementation-Phases, Phase 9](archive/Implementation-Phases.md); docs/Gateway.md |
+| Semantic retrieval has the development hash embedder and `LlmEmbedder` (`embedder="llm"`, a model server's `/v1/embeddings`); there is no built-in local model, and no live embedding model has been run | [Implementation-Phases, Phase 9](archive/Implementation-Phases.md); docs/ai/Gateway.md |
 | mr-mantle `search#Universal` can now limit to current party rows (its TODO on `parties.partyThruDate`) | `UniversalSearchServices.xml` |
 
 ## Screens, client and shell
@@ -154,9 +154,9 @@ Guides [Git-Hosting](../docs/Git-Hosting.md), [Revision-Management](../docs/Revi
 | Item | Source |
 |---|---|
 | The Java vs MR-Moqui comparison harness and its diff report (a gate artifact) has no code; only search-backend comparison tests exist. The Java runtime must stay runnable | [Implementation-Phases, Tests](archive/Implementation-Phases.md) |
-| The Java Spock security suite (`Security*.groovy`) has not been ported | [SECURITY_TESTS](../docs/SECURITY_TESTS.md) |
+| The Java Spock security suite (`Security*.groovy`) has not been ported | [Proof-Tests](../docs/security/Proof-Tests.md) |
 | Optional client-test extensions: move suitable `gate3_browser` flows into client specs; browser users in load tests, an arrival-rate model, server metrics around load runs and merged client reports; screenshot comparison; CDP over a pipe; TypeScript declarations shared with server specs | [ClientTestHarness, Later](archive/ClientTestHarness.md#15-later) |
-| Anonymous `GET /menuData/apps/tools` is HTTP 500 (`sri.getScreenUrlInfo()` is undefined in that script) before `getMenuData` would answer 401. The client proof only requires that the body is not the Tools menu | [SECURITY_TESTS](../docs/SECURITY_TESTS.md) |
+| Anonymous `GET /menuData/apps/tools` is HTTP 500 (`sri.getScreenUrlInfo()` is undefined in that script) before `getMenuData` would answer 401. The client proof only requires that the body is not the Tools menu | [Proof-Tests](../docs/security/Proof-Tests.md) |
 | A full `moqui test` run (all components, 1540 features) runs out of memory in QuickJS about 930 features in: mr-boss screen renders then fail with `out of memory` (about 63 features), though the same specs pass on their own. Something held per run grows: find it (contexts, compiled screens, cached finds) or give each spec file its own runtime | `./moq test-all`, 2026-10-25 |
 | Co-editing across servers has no test: `cluster::publish` giving a message its `message_id` (without one a peer refuses `collab-update` posts) is checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
 | `example/test/GitHosting.spec.js` "a merge request waits for its review and check, then merges" fails about 1 run in 10: `merge#MergeRequest` right after `create#GitCommitStatus` for the head commit still says "checks not passed: ci/build". Look at how `latest_statuses` (`service/git_hosting.rs`) sees the new row, and whether the merge request's head and the branch head can differ there | `./moq test-all`, 2026-10-25 |

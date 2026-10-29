@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- Co-edited documents (crates/moqui-core/src/collab; docs/Revision-Management.md, Co-editing): a Yjs document per
+    <!-- Co-edited documents (crates/moqui-core/src/collab; docs/data/Revision-Management.md, Co-editing): a Yjs document per
         record that several people edit at once in m-coedit over the notification WebSocket, kept as
         moqui.resource.CollabDocument and written to its record (a wiki page, documentKey WikiPage:<wikiPageId>) only as a
         version: on Save, after two minutes without an edit on database files, and when its last editor leaves. -->

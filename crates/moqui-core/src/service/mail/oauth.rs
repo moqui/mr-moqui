@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Sign-in with Google or Microsoft for a mail account (IronStone M5e, `docs/Mail-OAuth.md`): the OAuth 2.0
+//! Sign-in with Google or Microsoft for a mail account (IronStone M5e, `docs/interfaces/Mail-OAuth.md`): the OAuth 2.0
 //! authorization code grant with PKCE in a popup, the refresh token stored encrypted on the account's `EmailServer`,
 //! and the access tokens the sync, the IDLE workers, the server test and the SMTP send sign in with (XOAUTH2).
 //!

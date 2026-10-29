@@ -1,10 +1,10 @@
 # Attack surface of mr-moqui
 
-This is a map of the HTTP routes, screens, REST, WebSockets, and the other listeners in this repository. It is for operators, security researchers, and review of this repository. It records what can be reached. It is not a vulnerability report, and it is not a WAF. Proof of the controls lives in [SECURITY_TESTS.md](SECURITY_TESTS.md).
+This is a map of the HTTP routes, screens, REST, WebSockets, and the other listeners in this repository. It is for operators, security researchers, and review of this repository. It records what can be reached. It is not a vulnerability report, and it is not a WAF. Proof of the controls lives in [Proof-Tests.md](Proof-Tests.md).
 
 Application components (Mantle, Marble, IronStone, and the mr-boss screens beyond the framework's token-route mount) add their own screens and services. Those are out of scope here, except where the framework mounts a route they plug into.
 
-To report an issue that should stay private until it is fixed, write to [moqui-board@googlegroups.com](mailto:moqui-board@googlegroups.com). The policy is in [SECURITY.md](SECURITY.md).
+To report an issue that should stay private until it is fixed, write to [moqui-board@googlegroups.com](mailto:moqui-board@googlegroups.com). The policy is in [SECURITY.md](../../SECURITY.md).
 
 ## How to read this
 
@@ -18,7 +18,7 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 
 ## HTTP authentication and authorization
 
-A servlet request is signed in from the session cookie, HTTP Basic, an `api_key` or `login_key` header, or `authUsername` and `authPassword` (`docs/Web-Scripts.md`). `/notws` accepts the session cookie and, failing that, a `login_key` header. `/termws` accepts the session cookie only. Notification sockets revalidate the original session or hashed login key every 60 seconds and close on logout, a changed user, key revocation or expiry, or a failed credential lookup. Revalidation does not log in again or write login history. Protocol Ping/Pong traffic cannot extend authentication.
+A servlet request is signed in from the session cookie, HTTP Basic, an `api_key` or `login_key` header, or `authUsername` and `authPassword` (`docs/interfaces/Web-Scripts.md`). `/notws` accepts the session cookie and, failing that, a `login_key` header. `/termws` accepts the session cookie only. Notification sockets revalidate the original session or hashed login key every 60 seconds and close on logout, a changed user, key revocation or expiry, or a failed credential lookup. Revalidation does not log in again or write login history. Protocol Ping/Pong traffic cannot extend authentication.
 
 Screens carry `require-authentication`. The parser maps `false`, `anonymous-view`, and `anonymous-all` to those modes, and it maps a missing attribute to required. A render requires a user when any screen in the chain is required. An anonymous login counts as a user.
 
@@ -35,7 +35,7 @@ Seed grants, from `runtime/base-component/tools/data/ToolsSecurityData.xml`:
 
 `user-facade` `authz` sets the privileged groups to `ADMIN` and `ADMIN_ADV`. Creating, updating, or deleting membership in those groups is allowed only when the caller is already a member. Seed and install, and a call with authorization disabled, skip that check. The sealed permissions are `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, `ADMIN_LOGIN_AS`, `ADMIN_PASSWORD`, `SearchRemote`, `DashboardRemote`, `REST_SCHEMA`, and `LlmGateway`. A `UserGroupPermission` row for one of those can be written only by a caller who already has that permission.
 
-From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring](Monitoring.md#security)), all granted to `ADMIN` only:
+From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring](../tools/Monitoring.md#security)), all granted to `ADMIN` only:
 
 | Group | Artifacts |
 | --- | --- |
@@ -163,7 +163,7 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | --- | --- | --- | --- | --- | --- |
 | Health | `GET /health` | on | TCP peer in `webapp_status_ips` (default `127.0.0.1`) plus `127.0.0.1`, `::1`, and `0:0:0:0:0:0:0:1`; otherwise 404 | that IP list | JSON `{"ready":true}` or `{"ready":false}` with 503 when pool stats are missing. The client-ip header is not used. |
 | Metrics | `GET /metrics` | on | same IP check | same list | Plain text pool, guard, and (when a search replica exists) replica-lag gauges, and the telemetry queue, export, drop and failure counters. 503 when pool stats are missing. No request span is written for it or for `/health`. |
-| OTLP ingest | `POST /v1/traces`, `/v1/logs`, `/v1/metrics`, `/v1/annotations` | on in builds with `telemetry` unless `telemetry/receiver` `enabled="false"` | an ingest key as `Authorization: Bearer` or `api_key`; not a login credential | the key's owner must hold `MONITOR_INGEST` on every request; key revocation, expiry and the owner's enabled state are checked each time | Body limit 4 MiB, 600 requests per minute per key, 8 at once (`telemetry/receiver`). Redaction runs before indexing. The source recorded is the key's, never the sender's claim. No request span is written for these paths ([Monitoring](Monitoring.md)). |
+| OTLP ingest | `POST /v1/traces`, `/v1/logs`, `/v1/metrics`, `/v1/annotations` | on in builds with `telemetry` unless `telemetry/receiver` `enabled="false"` | an ingest key as `Authorization: Bearer` or `api_key`; not a login credential | the key's owner must hold `MONITOR_INGEST` on every request; key revocation, expiry and the owner's enabled state are checked each time | Body limit 4 MiB, 600 requests per minute per key, 8 at once (`telemetry/receiver`). Redaction runs before indexing. The source recorded is the key's, never the sender's claim. No request span is written for these paths ([Monitoring](../tools/Monitoring.md)). |
 | Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |
@@ -273,7 +273,7 @@ System-message receive:
 
 ## LLM, A2A, MCP, Assist, git, and DAV
 
-Routes exist when the `llm` feature is compiled. While a protocol is off, its handlers answer 404. `llm-facade` `enabled` is `true`. That element is the model facade. It is not the A2A server, the MCP server, or the gateway. Assist answers 503 when the facade is disabled; `bootstrap` still answers (`docs/Assist.md`).
+Routes exist when the `llm` feature is compiled. While a protocol is off, its handlers answer 404. `llm-facade` `enabled` is `true`. That element is the model facade. It is not the A2A server, the MCP server, or the gateway. Assist answers 503 when the facade is disabled; `bootstrap` still answers (`docs/ai/Assist.md`).
 
 A user with `EXTERNAL_USER` never holds `A2aServerUse` or `AgentUse`. The Assist contract says that permission also blocks the other agent permissions, so that user starts no run and gets no model call.
 
@@ -281,29 +281,29 @@ A user with `EXTERNAL_USER` never holds `A2aServerUse` or `AgentUse`. The Assist
 
 Off. `a2a_enabled` is `false`, and `trust-forwarded-headers` is `false`. While it is off, `/a2a` and `GET /.well-known/agent-card.json` answer 404.
 
-From `docs/A2A.md`: a caller needs `A2aServerUse` and `AgentUse`. Credentials are a Bearer login key, an `api_key` or `login_key` header, or Basic with an app password or a login key as the password. The account password is refused (401). Credentials are taken only over TLS, a believed proxy's https, or loopback. Missing credentials are 401 `WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`. No permission is 403. The body max is 4 MiB. Waits and streams are at most 256 on a node (503) and 16 per user (429). Every request except the public card needs `A2A-Version: 1.0`. OIDC is not built. An agent is reached only when `exposeA2a="Y"` and the surface includes `a2a`. The seed `assist` agent does not. Writes wait for the human owner.
+From `docs/ai/A2A.md`: a caller needs `A2aServerUse` and `AgentUse`. Credentials are a Bearer login key, an `api_key` or `login_key` header, or Basic with an app password or a login key as the password. The account password is refused (401). Credentials are taken only over TLS, a believed proxy's https, or loopback. Missing credentials are 401 `WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`. No permission is 403. The body max is 4 MiB. Waits and streams are at most 256 on a node (503) and 16 per user (429). Every request except the public card needs `A2A-Version: 1.0`. OIDC is not built. An agent is reached only when `exposeA2a="Y"` and the surface includes `a2a`. The seed `assist` agent does not. Writes wait for the human owner.
 
 ### MCP
 
 Off. `mcp_enabled` is `false`, and `trust-forwarded-headers` is `false`. While it is off, `/mcp` and its documents answer 404.
 
-From `docs/MCP.md`: a caller needs `McpServerUse` and `AgentUse`. Credential shapes match A2A, with realm `mcp`. No credentials is 401 JSON-RPC `-31401`. No permission is 403 `-31403`. `server/discover` needs no credentials. The body max is 4 MiB. The transport is `POST /mcp` only; GET and DELETE are 405. The seed agent `mcp` serves `mcp` with `exposeMcp="Y"`. The MCP client cannot approve a write. Public when on, and cached for an hour: `GET /mcp/server-card`, `/mcp/setup`, `/.well-known/mcp.json`, `/.well-known/ai-catalog.json`.
+From `docs/ai/MCP.md`: a caller needs `McpServerUse` and `AgentUse`. Credential shapes match A2A, with realm `mcp`. No credentials is 401 JSON-RPC `-31401`. No permission is 403 `-31403`. `server/discover` needs no credentials. The body max is 4 MiB. The transport is `POST /mcp` only; GET and DELETE are 405. The seed agent `mcp` serves `mcp` with `exposeMcp="Y"`. The MCP client cannot approve a write. Public when on, and cached for an hour: `GET /mcp/server-card`, `/mcp/setup`, `/.well-known/mcp.json`, `/.well-known/ai-catalog.json`.
 
 ### Gateway
 
 Off. `llm_gateway_enabled` is `false`. The live element is `<gateway enabled="${llm_gateway_enabled}" require-client="true" timeout="300"/>`. An `enabled="true"` example above it in the conf is inside a comment.
 
-From `docs/Gateway.md`: Bearer login key or app password, or Basic with those. The account password is refused. TLS, a believed proxy's https, or loopback. Missing or bad credentials are 401 `invalid_api_key`. The caller needs `LlmGatewayUse` and an `LlmApiClient` row. An app password always needs a client. A login key needs one because `require-client` defaults to true. The body max is 16 MiB. The path is exempt from the webapp request deadline. The gateway `timeout` of 300 seconds answers 504. Paths: `GET /models`, `GET /models/{alias}`, `POST /chat/completions`, `POST /responses`, `POST /embeddings`. An unknown alias is 404. No tools run on the server: function-tool definitions pass through, and any other tool type is 400 `unsupported_tool`.
+From `docs/ai/Gateway.md`: Bearer login key or app password, or Basic with those. The account password is refused. TLS, a believed proxy's https, or loopback. Missing or bad credentials are 401 `invalid_api_key`. The caller needs `LlmGatewayUse` and an `LlmApiClient` row. An app password always needs a client. A login key needs one because `require-client` defaults to true. The body max is 16 MiB. The path is exempt from the webapp request deadline. The gateway `timeout` of 300 seconds answers 504. Paths: `GET /models`, `GET /models/{alias}`, `POST /chat/completions`, `POST /responses`, `POST /embeddings`. An unknown alias is 404. No tools run on the server: function-tool definitions pass through, and any other tool type is 400 `unsupported_tool`.
 
 ### Assist
 
 The drawer is screen transitions on `assist.xml` (`require-authentication="false"`), not host routes. Each transition calls the Assist service. GET reads: `bootstrap`, `conversations`, `conversation`, `tasks`, `prompts`, `mentions`, `attachment`, `memories`, `skills`, `events`, `read`. POST: `turn`, `cancel`, `retry`, `follow`, `context`, `submitted`, `decide`, `preview`, `answer`, `feedback`, `queued`, `attachments`, `transcribe`, `textAction`, `memory`, `skill`, `canvasState`, `canvasAction`, `canvasAdjust`, `canvasProblems`.
 
-`docs/Assist.md` is the contract for those calls. The browser session cookie is the login. Every call acts for the current user and needs `AgentUse`. Another user's conversation, run, approval, question, hand-off, or message is 404. A call from inside a run is 403. POST requires `X-CSRF-Token` or `moquiSessionToken`, and a missing token is 401 `Session token is missing or is not valid` before the call. The qapps shell includes the drawer when the llm feature is on and the user has `AgentUse`. Per-call tool policy inside the Rust services was not read.
+`docs/ai/Assist.md` is the contract for those calls. The browser session cookie is the login. Every call acts for the current user and needs `AgentUse`. Another user's conversation, run, approval, question, hand-off, or message is 404. A call from inside a run is 403. POST requires `X-CSRF-Token` or `moquiSessionToken`, and a missing token is 401 `Session token is missing or is not valid` before the call. The qapps shell includes the drawer when the llm feature is on and the user has `AgentUse`. Per-call tool policy inside the Rust services was not read.
 
-`GET /assist/runs/{run_id}/events` and `.../events.json` authenticate like `/notws` (origin, session cookie, else `login_key`). The stream is for the run's owner. At most 256 streams; one more is 503 with `Retry-After` (`docs/Assist.md`).
+`GET /assist/runs/{run_id}/events` and `.../events.json` authenticate like `/notws` (origin, session cookie, else `login_key`). The stream is for the run's owner. At most 256 streams; one more is 503 with `Retry-After` (`docs/ai/Assist.md`).
 
-`GET /assist/sandbox` is public and has no session. The host must be a plain name, or the answer is 400. Query `v` is a cache buster. `x=1` adds `https:` to `img-src` only. The iframe is `sandbox="allow-scripts"` without `allow-same-origin` (`docs/Assist.md`). The policy is the frame document, separate from the screen CSP:
+`GET /assist/sandbox` is public and has no session. The host must be a plain name, or the answer is 400. Query `v` is a cache buster. `x=1` adds `https:` to `img-src` only. The iframe is `sandbox="allow-scripts"` without `allow-same-origin` (`docs/ai/Assist.md`). The policy is the frame document, separate from the screen CSP:
 
 ```
 sandbox allow-scripts; default-src 'none';
@@ -320,7 +320,7 @@ Response headers from that doc: `Referrer-Policy: no-referrer`, `X-Content-Type-
 
 `ANY /git/{*rest}` when `git` is compiled. `git-server` defaults: `allow-http="false"`, `max-concurrent="4"`, `max-queued="16"`, `max-request="67108864"`, `max-push-size="2147483648"`, `max-object-size="536870912"`, `idle-timeout="120"`, `lfs-max-object-size="5368709120"`, `webhook-private-network="false"`. The route is exempt from the webapp request timeout.
 
-From `docs/Git-Hosting.md`: HTTP Basic with the username and the password, or an access token or an app password as the password. An account with a second factor needs the token or the app password. The account password cannot finish that login. `Authorization: Bearer` and the `api_key` header also work. No credentials is 401. Credentials are accepted only over HTTPS (the TLS listener, or `X-Forwarded-Proto: https` from a believed proxy), from loopback, or when `allow-http="true"`.
+From `docs/interfaces/Git-Hosting.md`: HTTP Basic with the username and the password, or an access token or an app password as the password. An account with a second factor needs the token or the app password. The account password cannot finish that login. `Authorization: Bearer` and the `api_key` header also work. No credentials is 401. Credentials are accepted only over HTTPS (the TLS listener, or `X-Forwarded-Proto: https` from a believed proxy), from loopback, or when `allow-http="true"`.
 
 Authorization is artifact type `AT_GIT_REPOSITORY`, name `repositoryId`. The server refuses to serve when that type's authorization is not enabled. VIEW is clone and fetch. CREATE is a new branch or tag. UPDATE is a fast-forward. DELETE is a force-push, a deleted ref, or settings. No view is 404. View without push is 403. Only `refs/heads/` and `refs/tags/` can be pushed. The default branch cannot be deleted. Seed `GitRepositories` is always-all for `ADMIN`. A `remote` repository is a read-only mirror. LFS is under `/git/<repositoryId>.git/info/lfs`. Webhooks are not sent to loopback, private, or link-local addresses unless `webhook-private-network="true"`.
 
@@ -328,7 +328,7 @@ SSH git is a channel on the SSH server, not this route. See [SSH and the TUI](#s
 
 ### DAV
 
-The routes are always registered. There is no `<dav-server>` element in `MoquiDefaultConf.xml`. The defaults are the Rust fallbacks, and `docs/Sync.md` states the same numbers.
+The routes are always registered. There is no `<dav-server>` element in `MoquiDefaultConf.xml`. The defaults are the Rust fallbacks, and `docs/interfaces/Sync.md` states the same numbers.
 
 | Flag | Default | Effect |
 | --- | --- | --- |
@@ -340,7 +340,7 @@ The routes are always registered. There is no `<dav-server>` element in `MoquiDe
 
 OPTIONS is answered with no login: `DAV: 1, 2, 3, calendar-access, addressbook, extended-mkcol`, and `Allow` lists `OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, REPORT`.
 
-Every other method is HTTP Basic. No credentials is 401 `WWW-Authenticate: Basic realm="Moqui", charset="UTF-8"`. Plain HTTP while `allow-http` is false is 403 `credentials over plain HTTP are refused; use HTTPS`. A path whose user segment is not the signed-in username (case-insensitive) is 404. Writes go through the file and adapter services as that user. `docs/Sync.md` paths: `/dav/`, `/dav/principals/<user>/`, `/dav/files/<user>/<drive>/<path>`, `/dav/calendars/...`, `/dav/addressbooks/...`. The framework keeps no calendar or contact of its own. An application serves them through adapter services, and Mantle sets those adapters.
+Every other method is HTTP Basic. No credentials is 401 `WWW-Authenticate: Basic realm="Moqui", charset="UTF-8"`. Plain HTTP while `allow-http` is false is 403 `credentials over plain HTTP are refused; use HTTPS`. A path whose user segment is not the signed-in username (case-insensitive) is 404. Writes go through the file and adapter services as that user. `docs/interfaces/Sync.md` paths: `/dav/`, `/dav/principals/<user>/`, `/dav/files/<user>/<drive>/<path>`, `/dav/calendars/...`, `/dav/addressbooks/...`. The framework keeps no calendar or contact of its own. An application serves them through adapter services, and Mantle sets those adapters.
 
 `login_user` does not call `finish_login` when a second factor is required. DAV requires that login to succeed and requires a non-empty current user id. The wrapper that maps a second-factor result onto the current user was not read.
 
@@ -352,7 +352,7 @@ Every other method is HTTP Basic. No credentials is 401 `WWW-Authenticate: Basic
 
 There is no open SMTP receiver. `smtp_listen_port` empty does not start one. The host default is `127.0.0.1`. There is no default port (the doc example is 2525; this process does not take port 25). `inbound-smtp` is an Enterprise and Maximal feature. Dev and Lite omit it. If the port is set on a build without the feature, startup logs an error and does not listen.
 
-The listener is the last hop behind an operator-run gateway (`docs/Mail-Inbound.md`). There is no SMTP `AUTH` and no client certificate. The allow-list is the gateway. A peer outside `smtp_allowed_addresses` gets `554` at connect and the connection closes. An empty allow-list refuses to start the listener. `proxy-protocol`, `starttls`, and `require-tls` default to false. STARTTLS with no certificate does not start the listener. `dsn` defaults to false. The message cap is 25 MiB (`max-message-size` 26214400), 100 recipients, 20 connections.
+The listener is the last hop behind an operator-run gateway (`docs/interfaces/Mail-Inbound.md`). There is no SMTP `AUTH` and no client certificate. The allow-list is the gateway. A peer outside `smtp_allowed_addresses` gets `554` at connect and the connection closes. An empty allow-list refuses to start the listener. `proxy-protocol`, `starttls`, and `require-tls` default to false. STARTTLS with no certificate does not start the listener. `dsn` defaults to false. The message cap is 25 MiB (`max-message-size` 26214400), 100 recipients, 20 connections.
 
 A permitted gateway can `RCPT TO` a hosted (`EakHosted`) or shared (`EakShared`) address that has no incoming IMAP or POP server. Other recipients are `550`. After `DATA`, the message is stored in that account's Inbox, or Junk when a configured spam header starts with yes or true. That store runs with authorization disabled, including the app `EmailMessage` ECA when Mantle is loaded. There is no relaying. `VRFY` answers `252`. Empty `smtp_authserv_id` keeps every `Authentication-Results` header, including a forged one, and warns at startup. The listener does not check SPF, DKIM, or DMARC.
 
@@ -362,7 +362,7 @@ OAuth mail sign-in is not a listen port. It stays off until the operator sets a 
 
 ### SSH and the TUI
 
-The SSH server is one `TcpListener`. SFTP, git, the admin shell, `apps`, `agent-apps`, and the SSH cluster channel are channels on it. `moqui tui` with no `--serve` and no `--server` opens no port (`docs/TUI.md`).
+The SSH server is one `TcpListener`. SFTP, git, the admin shell, `apps`, `agent-apps`, and the SSH cluster channel are channels on it. `moqui tui` with no `--serve` and no `--server` opens no port (`docs/ui/TUI.md`).
 
 Off in the default conf: `ssh_port` empty, `ssh_host` `127.0.0.1`. `0` binds an ephemeral port. `./moq run` merges the dev conf, which sets `ssh_port` to `2222`, still on loopback unless `ssh_host` changes. `MoquiProductionConf.xml` does not set `ssh_port`. The `ssh` feature is in Dev, Enterprise, and Maximal. Lite leaves it out. `moqui tui --serve` starts this listener together with HTTP and the cluster listener.
 
@@ -374,7 +374,7 @@ The SSH cluster channel is not a separate port. It is used when a peer's base UR
 
 ### SFTP
 
-SFTP is the SSH `sftp` subsystem. Nothing listens for it unless the SSH server is up. `docs/Sync.md` "SFTP to the drives" is this subsystem. The outbound SFTP client dials other hosts.
+SFTP is the SSH `sftp` subsystem. Nothing listens for it unless the SSH server is up. `docs/interfaces/Sync.md` "SFTP to the drives" is this subsystem. The outbound SFTP client dials other hosts.
 
 `sftp-drives` defaults to true. `sftp-root` defaults to `runtime://sftp`. `sftp-max-file` defaults to 256 MiB. The user must already be logged in by key, password, or app password. A dialog login is refused. `SSH_SFTP` (seeded on `ADMIN`) selects the root: one resource location (`runtime://`, `file:`, `component://`, or `dbresource://`), paths normalized against `/`, and `..` that leaves the root is refused. Those calls run with authorization off. The permission checked at login is the gate. A user without `SSH_SFTP` gets the drives that user may open, when `sftp-drives` is true. `sftp-drives="false"` gives that user no SFTP. A write is an upload and a new version. A removal goes to the trash. At most 64 handles per channel.
 
@@ -449,7 +449,7 @@ A production install keeps the default conf's closed switches and does not publi
 
 Walk each surface in the deployment you have: is it enabled, is it reachable from the networks you care about, how does it authenticate, what authorization (including inherit) applies, and what untrusted input does it accept. Application components add screens, services, and REST roots, and they need their own pass.
 
-This file maps the surface. It does not prove the controls. The proof catalog is [SECURITY_TESTS.md](SECURITY_TESTS.md). The client suite those tests run is `runtime/base-component/framework/test/client/`. Reporting is in [SECURITY.md](SECURITY.md).
+This file maps the surface. It does not prove the controls. The proof catalog is [Proof-Tests.md](Proof-Tests.md). The client suite those tests run is `runtime/base-component/framework/test/client/`. Reporting is in [SECURITY.md](../../SECURITY.md).
 
 ## Confirmed absent
 
@@ -475,7 +475,7 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - Token-route failure behavior (a bad token, an anonymous session, the status code) was not read in `screen/token_route.rs`. The mr-boss conf and the dispatch call in `screen/mod.rs` were read.
 - Service REST `*.rest.xml` roots were not listed. Seed data covers `/moqui` for `ADMIN` and `/moqui/git` for `ALL_USERS`, and the git services still check repository rights.
 - The public `login_user` wrapper's handling of `Checked::SecondFactor`, and whether `current_user_id` stays empty, was not read. DAV treats an empty user id as failure (`dav/mod.rs`). `finish_login` is not called on the second-factor branch (`user/login.rs`).
-- Assist authorization inside each Rust service body was not read. `docs/Assist.md` is the contract cited above (cookie session, `AgentUse`, 404 for another user's object, 403 from inside a run, CSRF on POST).
+- Assist authorization inside each Rust service body was not read. `docs/ai/Assist.md` is the contract cited above (cookie session, `AgentUse`, 404 for another user's object, 403 from inside a run, CSRF on POST).
 - `listViewColumns` and `statusBar` call services with authorization disabled and do not check `userId` in the transition (`webroot.xml`). Whether artifact authorization on the root transition still wraps those scripts was not read.
 - The entity REST page size used after `pageNoLimit` is removed was not read. `rest-max-page-size` is 1000.
 - Unix embedded Postgres: this tree sets an empty `listen_addresses` and password auth, and it does not set the socket-directory mode or `pg_hba.conf`. Whether another local user can open `.s.PGSQL.5432` is whatever `postgresql_embedded` 0.21 defaults to. The superuser password is in the cluster `pgpass` file.

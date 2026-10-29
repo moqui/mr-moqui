@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The internal entry to the run engine (plans/LLM-A2A-Assist.md 4.4, 4.5 and 4.8; crates/moqui-core/src/llm/run and
     llm/approval): start a run of an agent for the current user, cancel it, give it input, read its stored events, and
     decide, preview and read its approvals. They need AgentUse and act only on the user's own runs and approvals. The bodies are Rust (crates/moqui-core/src/llm/services.rs), in builds with the llm
-    feature. The drawer's own calls are the transitions of the assist subscreen (AssistServices.xml, docs/Assist.md); a run streams over the
+    feature. The drawer's own calls are the transitions of the assist subscreen (AssistServices.xml, docs/ai/Assist.md); a run streams over the
     host route /assist/runs/{runId}/events. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 

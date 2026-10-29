@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The repositories behind git:// resource locations (moqui.resource.GitRepository). No Java counterpart. The bodies
     are Rust: crates/moqui-core/src/service/git.rs over crates/moqui-core/src/resource/git. Guide:
-    docs/Revision-Management.md. -->
+    docs/data/Revision-Management.md. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="fetch" noun="GitRepository" type="rust" location="moqui_core::service::git::fetch_repository">
         <description>Fetch the branch of a remote kind repository from its remoteUrl into its bare mirror, created by
@@ -184,7 +184,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="commitId"><description>Empty when nothing changed</description></parameter></out-parameters>
     </service>
 
-    <!-- The storage of db and local repositories (docs/Git-Hosting.md, Storage) -->
+    <!-- The storage of db and local repositories (docs/interfaces/Git-Hosting.md, Storage) -->
     <service verb="gc" noun="GitRepositories" type="rust" location="moqui_core::service::git::gc_repositories"
             transaction="ignore">
         <description>Delete the objects of db kind repositories that no ref reaches (and no change in progress or of
@@ -269,7 +269,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <!-- Hosting (docs/Git-Hosting.md: Browsing, Refs, Compare and merge, Archive, Commit statuses, Webhooks, Branch
+    <!-- Hosting (docs/interfaces/Git-Hosting.md: Browsing, Refs, Compare and merge, Archive, Commit statuses, Webhooks, Branch
         rules). Each checks the repository's rights as the git server does (AT_GIT_REPOSITORY, or the drive's rule for a
         drive's repository): the rows are moqui.* entities that entity filters do not reach, so screens read them only
         through these services. The bodies are Rust: crates/moqui-core/src/service/git_hosting.rs. -->

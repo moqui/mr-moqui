@@ -765,7 +765,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.basic.email.EmailServer" short-alias="server"/>
     </entity>
     <entity entity-name="EmailOAuthProvider" package="moqui.basic.email" use="configuration" cache="true">
-        <description>An OAuth 2.0 provider a mail account signs in with instead of a password (docs/Mail-OAuth.md;
+        <description>An OAuth 2.0 provider a mail account signs in with instead of a password (docs/interfaces/Mail-OAuth.md;
             EmailClientServices.start#OAuthSignIn, XOAUTH2 for IMAP and SMTP): its endpoints, the scopes it asks for and
             those that must be granted, how the ID token names the address, how discover#EmailServer knows its addresses,
             and the servers of an account made with it. The deployment's own OAuth client, registered at the provider,
@@ -814,7 +814,7 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="oauthProviderEnumId" related="enumId"/></relationship>
         <seed-data>
             <!-- Google: Gmail and Google Workspace. https://mail.google.com/ is the only scope IMAP and SMTP take; it is a
-                restricted scope (docs/Mail-OAuth.md). prompt=consent so every sign-in gives a refresh token. -->
+                restricted scope (docs/interfaces/Mail-OAuth.md). prompt=consent so every sign-in gives a refresh token. -->
             <moqui.basic.email.EmailOAuthProvider oauthProviderEnumId="EopGoogle" propertyPrefix="email_oauth_google"
                     authorizeUrl="https://accounts.google.com/o/oauth2/v2/auth" tokenUrl="https://oauth2.googleapis.com/token"
                     revokeUrl="https://oauth2.googleapis.com/revoke" userInfoUrl="https://openidconnect.googleapis.com/v1/userinfo"

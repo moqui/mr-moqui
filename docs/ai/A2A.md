@@ -4,7 +4,7 @@ Moqui serves its agents to other agents over A2A 1.0, with both bindings: JSON-R
 sends a message, the same run engine as the Assist drawer works it (the agent uses its screens and data as the caller,
 with the headless addendum), and the answer comes back as the task's `response` artifact. Every write the agent wants
 waits for its human owner: the task goes to `TASK_STATE_AUTH_REQUIRED` with a link the owner opens in Moqui, and it goes
-on by itself once they decide. The design is [plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.15, D9, D10,
+on by itself once they decide. The design is [plans/LLM-A2A-Assist.md](../../plans/LLM-A2A-Assist.md) (4.15, D9, D10,
 4.5, 4.8). As of Oct 22, 2026 (13.10 built; the client, [Delegating to remote agents](#delegating-to-remote-agents),
 13.12).
 

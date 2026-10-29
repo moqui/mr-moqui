@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- A minimal page for a public link, the screen of a token route in the public shell (docs/Revision-Management.md,
+<!-- A minimal page for a public link, the screen of a token route in the public shell (docs/data/Revision-Management.md,
     "Token routes"): no route names it by default; a conf adds one, for example
     <webapp-list><webapp name="webroot"><token-route name="link" screen-location="component://example/screen/PublicLink.xml"
         token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared with you"/></webapp></webapp-list>

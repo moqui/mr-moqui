@@ -20,7 +20,7 @@
 //! message facade refuses the push, or that ref. The post events (`ref-update`, `commit`, `tag`, `post-receive`) run
 //! after refs changed, each rule in a transaction of its own; one that fails is logged and recorded on the
 //! `GitUpdate`, and the others still run. Rules run with authorization off: they are a component's own code, and the
-//! repository was checked when it was reached. Schema: `framework/xsd/git-eca-3.xsd`; guide: `docs/Git-Hosting.md`.
+//! repository was checked when it was reached. Schema: `framework/xsd/git-eca-3.xsd`; guide: `docs/interfaces/Git-Hosting.md`.
 //!
 //! A build without the `git` feature still reads and checks the rules, so a component's files load the same; nothing
 //! runs them, since there are no git events.

@@ -10,7 +10,7 @@
     <default-property name="entity_empty_db_load" value="all"/>
     <default-property name="entity_lock_track" value="true"/>
     <!-- The built-in SSH server on localhost (ssh_host defaults to 127.0.0.1): the apps in the terminal over SSH for
-        every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/TUI.md "Over SSH" -->
+        every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->
     <default-property name="ssh_port" value="2222"/>
 
     <!-- A local model server (OpenAI-compatible, LM Studio's port) for the default llm-facade endpoint; set the model -->

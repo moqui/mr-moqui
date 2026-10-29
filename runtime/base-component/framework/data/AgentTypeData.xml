@@ -263,7 +263,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== The MCP server's agent ========== -->
     <!-- It has no model: its tool policy is the MCP server's allowlist and its role group (none here: the caller's own
-        permissions alone) bounds the tools, separate from the assistant's (llm-facade mcp agent, docs/MCP.md) -->
+        permissions alone) bounds the tools, separate from the assistant's (llm-facade mcp agent, docs/ai/MCP.md) -->
     <moqui.agent.AgentDefinition agentId="mcp" agentName="MCP server" isSystem="Y" surfaces="mcp" exposeMcp="Y"
             startPath="/apps" description="The tools of the MCP server: screens, search, data, skills and the services exposed to MCP"/>
 </entity-facade-xml>

@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 
     <!-- The drive services a device calls through the DAV server (WebDAV) and SFTP to the drives, as the user who logged in
-        with an app password (docs/Sync.md). Each checks the drive's members and shares itself, as for the Files screens. -->
+        with an app password (docs/interfaces/Sync.md). Each checks the drive's members and shares itself, as for the Files screens. -->
     <moqui.security.ArtifactGroup artifactGroupId="DriveDeviceServices" description="Drive services of devices (WebDAV, SFTP)"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="DriveDeviceServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.impl\.FileServices\.(get#UserDrives|list#Folder|get#ResourceInfo|upload#Resource|create#Folder|rename#Resource|move#Resource|copy#Resource|trash#Resource)"/>

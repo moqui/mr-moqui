@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A delegate tools (plans/LLM-A2A-Assist.md 4.6, 4.15 "Client"; docs/A2A.md): `a2a__<remote>`, one for each
+//! The A2A delegate tools (plans/LLM-A2A-Assist.md 4.6, 4.15 "Client"; docs/ai/A2A.md): `a2a__<remote>`, one for each
 //! `AgentRemoteA2a` row that names the run's agent in `allowedAgents`, in the lazy catalog ([`super::catalog`]), so
 //! the model finds them with `find_tools` and calls them through `run_tool`.
 //!

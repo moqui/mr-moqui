@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The OpenAI-compatible gateway's routes, `/llm/v1` and under it (`moqui_llm::gateway`, docs/Gateway.md). The
+//! The OpenAI-compatible gateway's routes, `/llm/v1` and under it (`moqui_llm::gateway`, docs/ai/Gateway.md). The
 //! body is read whole (at most 16 MiB) and the request is served on a request worker, which authenticates and checks
 //! it; the model call runs on a thread of its own, counted with the A2A server's waits and streams (at most 256 on a
 //! node, 16 of one user), and answers with a whole reply or a `text/event-stream` written into the response body as it

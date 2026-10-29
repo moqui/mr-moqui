@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The canvas calls of the drawer (plans/LLM-A2A-Assist.md 4.5, 4.10; docs/Assist.md "The canvas"): `canvasState` (the
+//! The canvas calls of the drawer (plans/LLM-A2A-Assist.md 4.5, 4.10; docs/ai/Assist.md "The canvas"): `canvasState` (the
 //! values on the user's canvas, and closing it), `canvasAction` (a Button: its values to the agent, or a Mutation the
 //! click runs), `canvasAdjust` (the user's correction, a turn), `canvasProblems` (what the page reported, mapped to the
 //! skill's sections, deduplicated by hash and revalidated once a version) and `read`, the one read proxy

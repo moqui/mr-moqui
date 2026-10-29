@@ -1,4 +1,4 @@
-// Java's MoquiAuthFilter as a web script filter (docs/Web-Scripts.md): the request goes on only for a signed in user,
+// Java's MoquiAuthFilter as a web script filter (docs/interfaces/Web-Scripts.md): the request goes on only for a signed in user,
 // and when the init-param "permission" names one, a user who has it. The sign in already happened as it does for a
 // screen: the session cookie, Basic, api_key or login_key, or authUsername and authPassword. Nobody signed in is 401
 // with a Basic challenge, a user without the permission 403. A conf for Java naming the class

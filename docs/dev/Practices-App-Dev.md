@@ -54,7 +54,7 @@ Each component is its own git repository. Commit in each repository that a chang
   in its own scope on each call, so module-level state does not survive between calls; per-call caches belong in the
   call (§4).
 - **Screens render** in `qvt` (the browser: Vue 3 and Quasar), `tui` (the terminal, as a JSON node document; see
-  [TUI](TUI.md) "For screen authors"), `html` and `html-print` (print and PDF). Every screen must work in `qvt` and
+  [TUI](../ui/TUI.md) "For screen authors"), `html` and `html-print` (print and PDF). Every screen must work in `qvt` and
   `tui`. A `render-mode` text for one mode needs its twin for the other.
 - **Decimals are not JavaScript numbers.** A `BigDecimal` from an entity or service supports `add`, `subtract`,
   `multiply`, `divide`, `compare`, `eq`, `isZero` and `toNumber`; `toDecimal(x)` makes one. String concatenation calls
@@ -65,7 +65,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | Command | Use |
 | --- | --- |
 | `./moq run` | Start the server on the dev conf. |
-| `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](Testing.md)). |
+| `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
 | `./moq test-client <component> --serve -- --spec S --out DIR` | Client specs against a started server; screenshots to `DIR` ([Client-Testing](Client-Testing.md)). |
 | `target/develop/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
 | `moqui lint [service-file]`, `moqui lint --groovy <dir>` | Service expression lint; leftover Groovy. |
@@ -87,14 +87,14 @@ Each component is its own git repository. Commit in each repository that a chang
   `plan/initial-design.md` holds the decided app set.
 - **Products notes:** `runtime/component/mr-boss/docs/ProductsSharedScreens.md` (shared mounts and the shared
   context) and `ProductsImplementation.md`.
-- **Framework guides in `docs/`:** [Services](Services.md) (errors, transactions, probe calls), [Testing](Testing.md),
-  [Client-Testing](Client-Testing.md), [TUI](TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
-  deliberate differences listed in [Parity-Diffs](../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
-  [Web-Scripts](Web-Scripts.md).
+- **Framework guides in `docs/`:** [Services](../logic/Services.md) (errors, transactions, probe calls), [Testing](../Build-Test.md#component-specs),
+  [Client-Testing](Client-Testing.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
+  deliberate differences listed in [Parity-Diffs](../../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
+  [Web-Scripts](../interfaces/Web-Scripts.md).
 - **Schemas:** `runtime/base-component/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
   `entity-definition-3.xsd`. Their documentation elements describe MR Moqui's behavior where it differs.
-- **Building:** [.agents/skills/building/SKILL.md](../.agents/skills/building/SKILL.md), and the rules in
-  [AGENTS.md](../AGENTS.md) (failure tolerance, no Node dependency).
+- **Building:** [.agents/skills/building/SKILL.md](../../.agents/skills/building/SKILL.md), and the rules in
+  [AGENTS.md](../../AGENTS.md) (failure tolerance, no Node dependency).
 
 ## 3. Where logic goes
 
@@ -163,10 +163,10 @@ Each component is its own git repository. Commit in each repository that a chang
 
 ### Failure tolerance and errors
 
-- As [AGENTS.md](../AGENTS.md) says: when one independent item fails (a row, a facility, a record of a list), log an
+- As [AGENTS.md](../../AGENTS.md) says: when one independent item fails (a row, a facility, a record of a list), log an
   error naming it and go on with the rest. Wrap each item in `try`/`catch`.
 - A call whose failure the caller expects and gets past runs as a probe, in its own transaction, with
-  `ec.message.pushErrors()`/`popErrors()` around it ([Services](Services.md) "A probe call"). Clearing the errors
+  `ec.message.pushErrors()`/`popErrors()` around it ([Services](../logic/Services.md) "A probe call"). Clearing the errors
   does not clear the transaction's rollback mark.
 - Check concurrency: pass `lastUpdatedStamp` or the service's `expectedRevision` back on update so a stale write is
   refused.

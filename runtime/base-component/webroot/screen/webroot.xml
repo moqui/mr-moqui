@@ -46,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- The suite shell of /qapps, fetched once per page load: the apps the user may open with their menus to depth two and
         their shell-providers, the shell's theme values and the first counts. menuData stays per path. The JSON is described in
-        docs/Qvt-Client.md, "Shell data and providers" (crates/moqui-core/src/screen/shell.rs). 401 without a user. -->
+        docs/ui/Qvt-Client.md, "Shell data and providers" (crates/moqui-core/src/screen/shell.rs). 401 without a user. -->
     <transition name="shellData" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             const shellData = sri.getShellData()

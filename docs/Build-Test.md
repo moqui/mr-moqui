@@ -1,4 +1,264 @@
-# Testing components with `moqui test`
+# Build and Test
+
+How to build MR Moqui from source, the build packages and their features, the `./moq` tasks, the Rust tests and lints,
+and the component specs that `moqui test` runs. Running and deploying are in [Run-Deploy](Run-Deploy.md), and the specs
+that test a running server from outside are in [Client-Testing](dev/Client-Testing.md).
+
+- [Build](#build)
+- [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
+  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost)
+- [The moq script](#the-moq-script)
+- [Rust tests and lints](#rust-tests-and-lints)
+- [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
+  [conditions](#conditions), [helpers](#helpers), [mail](#mail), [notifications](#notifications), [agent
+  evaluation](#agent-evaluation), [porting a Spock spec](#porting-a-spock-spec), [pitfalls](#pitfalls)
+
+## Build
+
+Prerequisites: Rust 1.95 or newer (`rustc --version`). A build with embedded Postgres embeds the 18.6.0 archive that
+`scripts/pg-payload.sh strip` downloads once and strips of psql (it links GPL readline); `./moq build` runs that when
+the archive is missing. Node is not needed to build or test.
+
+```sh
+./moq build                            # the Dev package, target/develop/moqui; --lite, --debug, --release or
+                                       # --enterprise for the others; links any component crates in runtime/component
+scripts/pg-payload.sh strip            # once: the Postgres archive the binary embeds, without psql
+cargo build -p moqui                   # Debug, every feature: target/debug/moqui
+cargo build --profile develop --no-default-features -F dev -p moqui   # Dev: target/develop/moqui
+cargo build --profile lite --no-default-features -F lite -p moqui     # Lite: target/lite/moqui
+cargo build --release -p moqui         # Maximal: target/release/moqui
+scripts/pg-payload.sh check            # before a distribution: no psql or readline in what is embedded
+```
+
+Tasks that run moqui build a missing binary themselves. `./moq build` also links the crates of native components
+([Native-Components](dev/Native-Components.md)), which plain `cargo build` does not.
+
+## Packages
+
+A moqui binary is built as one of five packages, plus the browser build. They differ in the Cargo features they turn
+on (what the binary can do), the Cargo profile they build with (how it is compiled), and where the binary lands.
+`./moq build` picks one with a flag; every task that runs moqui (`run`, `load`, `test`, `save-db`, ...) takes the same
+flag and uses that binary. `moqui version` prints a binary's package and features.
+
+| Package | `./moq` flag | Profile | Binary | What it has |
+|---|---|---|---|---|
+| Dev | (none) | `develop` | `target/develop/moqui` | Lite's features with git hosting (`git`), the SSH server (`ssh`) and the dev tools (`devtools`) |
+| Lite | `--lite` | `lite` | `target/lite/moqui` | The web server on embedded Postgres, PDF (through Chromium), outbound mail (SMTP), the terminal client (`moqui tui`) |
+| Debug | `--debug` | `dev` | `target/debug/moqui` | Every feature and the dev tools, unoptimized framework code with debug info |
+| Maximal | `--release` | `release` | `target/release/moqui` | Every feature, Postgres embedded |
+| Enterprise | `--enterprise` | `enterprise` | `target/enterprise/moqui` | Every feature, with the databases external (Postgres and MySQL drivers, no embedded Postgres) |
+| Browser | `scripts/wasm-build.sh [--release]` | `dev` / `release` | `target/browser/wasm-pkg/<profile>` | The framework on SQLite in a Web Worker; none of the optional features |
+
+Plain `cargo build -p moqui`, `cargo test` and `cargo lint` use the Maximal feature set with `devtools`, so they cover
+everything.
+
+The Dev package is the default since development wants git and SSH (the dev-aide, the hosting, the SSH apps), which
+Lite leaves out, and the packages a deployment uses should not carry the dev tools. Its profile has Lite's settings
+and is named `develop`, since `dev` is Cargo's own debug profile, which the Debug package uses. A deployment builds
+Lite, Maximal or Enterprise; `./moq build --release -- --features devtools` adds the dev tools to another package.
+
+### Features
+
+The framework features are in `crates/moqui-core`; the host features, and the packages, are in `crates/moqui-host`;
+`crates/moqui` (and the crate `./moq build` generates in `target/moqui-app` for add-on component crates) forwards the
+package features `dev`, `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
+one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
+through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in.
+
+| Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
+|---|---|---|---|---|---|---|
+| `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes | yes |
+| `postgres` | host | The Postgres driver | yes | yes | yes | yes |
+| `embedded-postgres` | host | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
+| `mysql` | host | The MySQL driver | | | yes | yes |
+| `pdf` | host | The DevTools client of the external Chromium that prints `html-print` to PDF | yes | yes | yes | yes |
+| `ssh` | host | The SFTP client, the built-in SSH server (SFTP, admin shell, git over SSH, and `apps` with `tui`), the SSH cluster channel | yes | | yes | yes |
+| `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | | yes | yes |
+| `print` | host | Network printing over IPP (`moqui-cups`) | | | yes | yes |
+| `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes | yes |
+| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes | yes |
+| `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | | yes | yes |
+| `devtools` | host, core | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
+| `smtp` | core | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
+| `imap` | core | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
+| `git` | core | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
+| `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
+| `xlsx` | core | The `xlsx` render mode and `org.moqui.impl.SpreadsheetServices` | | | yes | yes |
+| `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
+| `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes | yes |
+
+`mail` is `smtp` and `imap` together. The browser build has none of the core features.
+
+#### When a feature is left out
+
+The definitions still load, so components, screens and service files are the same in every package:
+
+- A service whose Rust implementation belongs to a missing feature fails when called, with
+  `service <name>: <feature> is not built into this host` in the message facade (`rust_services::missing_feature`).
+- The host integrations report through the framework's existing messages: SFTP and SSO calls say no client is
+  installed, network printing says it is not installed, and `cluster_transport=ssh` cannot start without the SSH
+  server. A cluster peer that advertises `ssh://` gets an error naming the missing feature.
+- An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
+  location has no provider, and `/git/...` is not routed.
+- gitECA rules are still read and checked; nothing runs them, since there are no git events.
+- Without `embedded-postgres`, `entity_ds_db_conf` must name an external `postgres` or `mysql` database, the sim
+  overlay is not available, and `save-db`, `load-save`, and `moqui test --db fresh` (which makes scratch embedded
+  databases) report that this build has no embedded Postgres. `moqui test --db none` still runs specs that set
+  `database: false`.
+
+A spec file that needs a feature says so, and `moqui test` reports it as skipped in a binary without it:
+
+```js
+spec({
+    requires: ["git"],
+    ...
+})
+```
+
+### Profiles
+
+The profiles are in `.cargo/config.toml`, so the generated `target/moqui-app` crate builds the same way. Each package
+has its own, so the artifacts of one never replace another's and switching packages does not rebuild.
+
+- `dev` (Debug): the workspace crates at opt-level 0 with debug info, the dependencies at opt-level 3.
+- `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
+  (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
+  keep the release settings and are built once.
+- `develop` (Dev): `lite`'s settings in a profile of its own, so its binary is `target/develop/moqui` beside Lite's.
+- `release` (Maximal) and `enterprise`: `panic = "unwind"` (services unwind across the service boundary), otherwise
+  Cargo's release defaults.
+
+### Embedded Postgres archive
+
+The `embedded-postgres` feature embeds the theseus Postgres archive (the version `.cargo/config.toml` forces through
+`POSTGRESQL_VERSION`) and unpacks it once into `install/postgres/<version>` in the runtime directory (or under
+`MOQUI_INSTALL`), shared by the entity, search and sim clusters. An install an earlier build unpacked in
+`runtime/db/install` is moved there on the first start. `crates/moqui-host/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
+the file `MOQUI_PG_ARCHIVE` names, and downloads nothing. It refuses an archive that still holds `bin/psql` or a
+readline library (GPL, plans/archive/License-Review.md).
+
+`scripts/pg-payload.sh strip` downloads the archive when it is missing (checking its sha256) and repacks it without
+psql; `./moq build` runs it the first time. A plain `cargo build` of a package with embedded Postgres asks for it.
+`scripts/pg-payload.sh check` checks an archive, and every one staged under `target/`, for psql and readline.
+
+### Instance archive
+
+`./moq archive [file]` (with the package flags and `--nobuild`) zips what one instance needs to run into `file`
+(default `mr-moqui-YYYYMMDD.zip`; `--tgz`, or a `.tgz` or `.tar.gz` name, writes a gzipped tar), which expands to a
+directory of the same name. That directory is a runtime directory with the binary in it:
+
+```
+mr-moqui-20261019/
+  moqui            the package's binary
+  MoquiConf.xml    runtime/conf/MoquiProductionConf.xml, or the --conf file
+  README.txt       how to run it, the package, the commit, and what went in
+  LICENSE.md
+  .env, base-component/, component/, conf/, db/, opensearch/, ...
+                   runtime/ without log/, tmp/, save/ (--with-save adds it), install/, db/install, .git,
+                   component target/
+  install/         not in the archive: the first start unpacks the embedded Postgres into install/postgres/
+```
+
+The binary takes the first directory with `base-component/` in it of: `runtime` in the working directory, `runtime`
+beside the binary, and the binary's own directory (links resolved), so `<dir>/moqui` runs from anywhere. With no
+`MOQUI_CONF`, it merges `<runtime>/MoquiConf.xml`, else `<runtime>/conf/MoquiDevConf.xml`. `--tgz` needs GNU or BSD tar.
+The embedded database, OpenSearch and Chromium go in when they are in `runtime/`, so the embedded Postgres must be
+stopped; `--no-data` leaves out the database, OpenSearch data, `.env` and `cert/` for a fresh instance. A binary runs
+on the OS and CPU it was built for.
+
+### Build cost
+
+Measured on Oct 19, 2026, on one 12-thread Linux machine, Rust 1.99: a clean build of each package in its own target
+directory, the binary, and two run-time checks. Before the packages there was one feature set, every build carrying
+everything, and postgresql_embedded's `bundled` build script compiled a second HTTP and TLS stack.
+
+| Build | Clean build (wall) | Compile CPU | Crates | Binary | Stripped | `.text` |
+|---|---|---|---|---|---|---|
+| Before (release, everything) | 171 s | 1394 s | 623 | 84 MB | 67.5 MB | 38.1 MiB |
+| Maximal (`release`) | 151 s | 1091 s | 545 | 82.9 MB | 66.8 MB | 37.7 MiB |
+| Enterprise | 141 s | 971 s | 522 | 68.4 MB | 53.1 MB | 36.4 MiB |
+| Lite (`lite`, then Default) | 113 s | 1054 s | 397 | 64.6 MB | 53.1 MB | 28.2 MiB |
+| Lite without `tui` | 105 s | 901 s | 375 | 58.4 MB | 48.4 MB | 25.2 MiB |
+
+The two Lite rows (Lite was the Default package then) were measured on Oct 20, 2026, on the same machine, at commit 5a18e9c, after the terminal client
+joined `lite`; the other rows are Oct 19's, on the code of that day, and were not measured again. The terminal client
+(Revue, crossterm and their dependencies, 22 crates) adds 8 s to a clean build, 153 s of compile CPU, 6.2 MB to the
+binary and 3.0 MiB of `.text`. Lite without it is `cargo build --profile lite --no-default-features -F
+moqui-host/axum,moqui-host/embedded-postgres,moqui-host/pdf,moqui-host/smtp -p moqui`, for comparison only; it is not a
+package. Without it, Lite still takes 293 s more compile CPU and 21 more crates than Oct 19's row; that came with
+the code and dependencies added since, and is not broken down here.
+
+The embedded Postgres archive is 11.9 MB of each binary that has it.
+
+| Build | Rebuild after a one-line edit in moqui-core | Load seed, seed-initial, install (8141 records) |
+|---|---|---|
+| Maximal (`release`) | 60 s | 8.4 to 10.0 s |
+| Default (`lite`, opt-level 3) | 11.3 s (Oct 20, with the terminal client; 11.6 s on Oct 19) | 8.6 s |
+| Default at opt-level 2 / 1 | 11.6 s / 10.7 s | 8.3 s / 9.1 s |
+| Debug (`dev`) | 8.8 s | 18.1 s |
+
+The Default profile keeps opt-level 3: a lower one saves no rebuild time. Thin LTO on the release profile made the
+binary larger (84.1 MB, 67.6 MB stripped) for a seed load of 8.0 to 8.3 s, within the noise of a load that waits on the
+database, so it is off. Stripping symbols saves about 16 MB a binary; it is not done, so a backtrace in a log keeps its
+function names.
+
+What a clean build still spends: aws-lc-sys (the TLS crypto every package links) is the first link of the longest
+chain, then rustls, reqwest and moqui-core itself; QuickJS is compiled twice because rquickjs's `macro` proc-macro links
+its own copy; postgresql_embedded's build script still compiles reqwest and tokio (without TLS) though it no longer
+uses them. `cargo build --timings` writes the chart to `target/cargo-timings/`.
+
+## The moq script
+
+The `./moq` script runs the built binaries in place and replaces the Java Moqui Gradle tasks: run, load, save and reload
+of the database, clean, OpenSearch, Chromium for PDF, git across all repositories, and component get, create and zip.
+It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux or macOS. `./moq` with no arguments lists
+the tasks, and `./moq help <task>` describes one. Task names match by partial parts, ignoring case, so `./moq r-p` and
+`./moq runProduction` both mean `run-production`.
+
+```sh
+./moq build                    # the Dev package, target/develop/moqui (--lite, --debug, --release, --enterprise for
+                               # the others), linking any component crates in runtime/component; tasks that
+                               # run moqui build a missing binary themselves
+./moq run                      # target/develop/moqui with runtime/conf/MoquiDevConf.xml; --release uses target/release/moqui
+./moq run -p 8081 -D entity_ds_db_conf=postgres
+./moq run lint --screens       # moqui's own commands, with the same conf
+./moq load                     # all data types; ./moq load seed seed-initial install
+./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
+./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
+./moq test-all                 # every suite: cargo (with the opt-in host tests), moq, moqui test, test-client --serve
+./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
+./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
+./moq git-status               # or any git command in every repo: ./moq git pull
+./moq completion --install     # tab completion for bash or zsh
+```
+
+The everyday tasks with their Gradle counterparts, and the runtime, conf and deployment detail, are in
+[Run-Deploy](Run-Deploy.md#everyday-commands).
+
+## Rust tests and lints
+
+```sh
+cargo test                             # the whole workspace, every feature
+cargo lint                             # clippy on the workspace, warnings denied
+cargo lint-min                         # clippy on the host with no features
+scripts/check-packages.sh              # clippy on each package's feature set
+
+# The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
+# pdf_chromium_path, or chromium on the PATH)
+cargo test -p moqui-host --test gate3 --test gate3_browser
+```
+
+`scripts/check-packages.sh` runs Clippy with warnings denied on each feature set a build uses: the workspace
+(Maximal with the dev tools, as `cargo lint`), the Dev, Lite, Maximal and Enterprise packages, the host with no features
+(`cargo lint-min`) and with only the terminal client, and the framework with none (what the browser links). Then it
+runs the scripted TUI screens, which `cargo test` leaves out. A gate that only one package sees still has to compile
+there.
+
+`./moq test-all` runs every suite in turn and lists which passed: `cargo test`, the opt-in host tests (Gate 3, the
+browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component, and
+the client specs. `./moq help test-all` lists them.
+
+## Component specs
 
 `moqui test` runs the JavaScript spec files in a component's `test/` directory. They run in the same script engine as
 the component's services, on a database loaded with every data type, with Spock's conveniences: spec and feature
@@ -11,12 +271,12 @@ The specs of `runtime/component/mr-mantle/test` are the largest set, ported from
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
 component's `test/client/`, which `moqui test-client` runs against a running server:
-[Client-Testing](Client-Testing.md).
+[Client-Testing](dev/Client-Testing.md).
 
-## Running
+### Running
 
 ```sh
-./moq test mr-mantle                                  # the release binary and the dev conf
+./moq test mr-mantle                                  # the Dev binary and the dev conf
 moqui test mr-mantle                                  # every spec, fresh database
 moqui test mr-mantle --db snapshot                    # load once, restore the saved dump on later runs
 moqui test mr-mantle --spec OrderToCashBasicFlow      # one spec and the specs its dependsOn names
@@ -38,14 +298,14 @@ binary.
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
 | `--db none` | Boot the factory and skip Postgres, so `ec.resource` works and the entity facade stays unset. A build without `embedded-postgres` can run this. Every selected spec must set `database: false`; one that does not is named and the run stops before boot. When every selected spec sets it, and the run is not `--serve`, `--agents`, `--skills`, or `--coverage`, this is the default |
 | `--junit dir` | `TEST-<component>.<Spec>.xml` per spec |
-| `--serve [address]` | When the specs pass, serve the scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone) until Ctrl-C, SIGTERM, or the end of standard input when it is a pipe; then remove the scratch runtime unless `--keep`. Not with `--db existing` or `--db none`. For client specs ([Client-Testing](Client-Testing.md#--serve)) or a person |
+| `--serve [address]` | When the specs pass, serve the scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone) until Ctrl-C, SIGTERM, or the end of standard input when it is a pipe; then remove the scratch runtime unless `--keep`. Not with `--db existing` or `--db none`. For client specs ([Client-Testing](dev/Client-Testing.md#--serve)) or a person |
 | `--ready-file path` | With `--serve`: write the server's URL here once it listens |
 | `--coverage`, `--coverage-report file` | The services of the components' `service/*.xml` that no spec called, with the total; the report adds call counts |
 | `--log-level level` | Console level, `warn` by default. Everything goes to `runtime/log/moqui.log`, whose path the run prints |
 
 The console has a line per feature, and the failures in full at the end. Any failed feature exits 1.
 
-## Files and order
+### Files and order
 
 A spec is `<component>/test/<Name>.spec.js`. Its name is the file name. `test/suite.js`, `suite(["SpecA", "SpecB"])`,
 gives the order; the other spec files run after it, by name. Each spec runs in its own execution context, on the one
@@ -54,7 +314,7 @@ database of the run, so a spec sees what the specs before it wrote.
 A component's `test/MoquiConf.xml` merges after its `MoquiConf.xml` in `moqui test` runs only, for a test-only setting
 or mount. `test/client/` holds client specs, which `moqui test` does not read.
 
-## A spec file
+### A spec file
 
 ```js
 const effectiveTime = Date.now()
@@ -95,13 +355,13 @@ feature("call the REST API (#requestMethod, #screenPath)", {
 })
 ```
 
-### `spec({...})`
+#### `spec({...})`
 
 Once per file:
 
 - `dependsOn`: the specs that run first when this one is picked with `--spec`.
 - `requires`: build features the spec needs, such as `["git"]` (`moqui version` lists a binary's; see
-  `docs/Packaging.md`). In a binary without one of them the spec is reported as skipped, not run.
+  [Packages](#packages)). In a binary without one of them the spec is reported as skipped, not run.
 - `database: false`: the spec does not use the entity facade. `ec.entity`, `call`, and `screenTest` throw, and the
   error names `database: false`, even when the run opened a database. `ec.resource` stays. A run of only such specs
   uses `--db none` (see the option above). `checkData` uses the entity facade, so it fails in one of these specs.
@@ -113,7 +373,7 @@ Once per file:
 - `allowMessageErrors`, and `timeout` in seconds per block.
 - `setupSpec`, `cleanupSpec`, `setup` and `cleanup`, as in Spock. Cleanups always run. These get no `ctx`.
 
-### `feature(name, {...})`
+#### `feature(name, {...})`
 
 A statement at the top level of the file; features run in the order they are written.
 
@@ -130,7 +390,7 @@ A statement at the top level of the file; features run in the order they are wri
   are not started without their setup.
 - A feature with `then` and no `when`, or a block name that is not one of these, is an error when the file loads.
 
-## Conditions
+### Conditions
 
 Each expression statement directly in `then` or `expect` is a condition, as in a Spock `then:` block. A false one fails
 the feature and shows the value of each part:
@@ -156,7 +416,7 @@ The source is rewritten for this before it runs (`crates/moqui-core/src/testkit/
 line numbers are the file's. A `then` or `expect` the rewrite cannot see, such as a feature object built in a helper
 function, is refused when the file loads rather than run with conditions that cannot fail. Use `where` rows instead.
 
-## Helpers
+### Helpers
 
 `ec` is the full script `ec`, as in a service. The spec engine adds:
 
@@ -176,7 +436,7 @@ function, is refused when the file loads rather than run with conditions that ca
 `fromDate` defaults; the runner clears it after the spec. `ec.entity.tempSetSequencedIdPrimary` and
 `tempResetSequencedIdPrimary` are what `tempSequences` calls.
 
-## Mail
+### Mail
 
 A spec checks a send that goes, with no mail server, through the mail capture: while it is on, `send#EmailMessage`,
 and so `send#EmailTemplate` and the mail client's `send#Draft`, does all of a real send (the `EmailMessage` row, its
@@ -204,7 +464,7 @@ capture.last().toList            // ["customer@example.com"]
 
 The capture is a tool of the framework (`moqui_core::service::mail_capture`, in `MoquiDefaultConf.xml`).
 
-## Notifications
+### Notifications
 
 A `moqui test` run has no notification socket, and what is sent only to someone listening (the shell counts of
 `org.moqui.impl.ShellServices.publish#ShellCounts`) is not sent at all. A spec that checks those notifications turns on
@@ -228,7 +488,7 @@ try {
 
 The capture is a tool of the framework (`moqui_core::notify::capture`, in `MoquiDefaultConf.xml`).
 
-## Agent evaluation
+### Agent evaluation
 
 `--agents` runs a component's agent tasks instead of its specs: the files `test/agent/*.agent.js`, each a set of tasks
 for one agent, run as real runs of the agent on the test database, with the agent engine started and the screen
@@ -255,7 +515,7 @@ specs. A live profile is a model of the conf, such as the commented `local-qwen`
 in LM Studio at `http://127.0.0.1:1234`): copy it into the runtime's conf, or set the default endpoint's
 `llm_openai_url` and `llm_openai_model` and use `--llm-profile default`.
 
-### A task file
+#### A task file
 
 ```js
 agentSpec({
@@ -306,7 +566,7 @@ or `{ edit: { field: value } }`, Edit in screen: the write goes to its screen an
 the user, the values (by field name or label) over the proposed ones, so the agent reads the user's own save. A run
 that waits for an approval the task has no answer for fails it.
 
-### Transcripts, measures and baselines
+#### Transcripts, measures and baselines
 
 Each task run writes `runtime/log/agent-eval/<run>/<spec>/<task>-<n>.jsonl`: a header with the model's settings, then
 the user's messages, each model reply (text, tool calls, usage) with its calls and their full results, the held writes,
@@ -332,7 +592,6 @@ The tools component's suite (`test/agent/`): `assist.agent.js` (21 tasks in the 
 the `a2a` surface, run through the run engine; the spec lets the assist agent serve that surface while it runs). The
 surface of a spec is `drawer`, `chat`, `tui`, `job`, `a2a` or `mcp`; a headless one sends only the time in the tail.
 
-
 The dev agent's tasks are in `runtime/dev-component/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
 field added to an upstream entity and shown on its form from the site component, a list column, where a service is used,
 and a spec written from a Try in the sim. A dev component's agents run on a dev instance; the example component stands in
@@ -342,7 +601,8 @@ environment, nightly and before a phase closes; the design's `--live` is `--llm-
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
 files proposed and written are the expected ones and check clean. Copy a passing run's transcript into the replay set to
 keep it.
-## Porting a Spock spec
+
+### Porting a Spock spec
 
 How a Moqui Java Spock specification maps to a spec file, as used to port mr-mantle's flows:
 
@@ -369,7 +629,7 @@ How a Moqui Java Spock specification maps to a spec file, as used to port mr-man
 | `ec.screen.makeTest().baseScreenPath("rest")` | `screenTest("rest")` |
 | `for (x in list) assert ...` | `for (const x of list) assert(...)` |
 
-## Pitfalls
+### Pitfalls
 
 - Outside a `then` or `expect` block, a line that starts with `[`, `(`, `/` or a template literal continues the line
   before it, since JavaScript inserts no semicolon there: `x = 1` then a line `[a, b].forEach(f)` is one expression.

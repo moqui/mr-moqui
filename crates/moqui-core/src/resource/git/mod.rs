@@ -21,7 +21,7 @@
 //! - `db`: the objects and refs are `GitObject` and `GitRef` rows, so the database backup holds the repository.
 //!
 //! A write commits at once, by the current user, with a `Moqui-User-Id` trailer the history reads back. Guide:
-//! `docs/Revision-Management.md`.
+//! `docs/data/Revision-Management.md`.
 
 pub mod attributes;
 pub(crate) mod browse;

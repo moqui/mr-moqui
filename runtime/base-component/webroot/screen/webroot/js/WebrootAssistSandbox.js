@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The frame runtime of a Vue SFC canvas (plans/LLM-A2A-Assist.md 4.10; docs/Assist.md "Vue SFC canvases"). It runs INSIDE
+ * The frame runtime of a Vue SFC canvas (plans/LLM-A2A-Assist.md 4.10; docs/ai/Assist.md "Vue SFC canvases"). It runs INSIDE
  * the frame document GET /assist/sandbox serves, in <iframe sandbox="allow-scripts">: an opaque origin, so nothing here
  * reaches the page's DOM, cookies, session token or storage, and the document's CSP leaves it no network (connect-src
  * 'none'), no form, no frame and no worker. Everything here is as untrusted as the component it runs: the parent

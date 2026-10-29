@@ -3,12 +3,12 @@
 ## Quick Start
 
 ```sh
-./moq build   # The Dev package (docs/Packaging.md); --lite without git, SSH and dev tools; --release for every feature
-./moq load    # Load all data, including demo; skip this and production data loads on first run
+./moq build   # The Dev package (docs/Build-Test.md); --lite without git, SSH and dev tools; --release for every feature
+./moq load    # Load all data, including demo; the first run on an empty database loads it too
 ./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
 ```
 
-This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
+It needs Rust 1.95 or newer and bash, on Linux or macOS ([Build](docs/Build-Test.md#build)). This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
 
 ## Status
 
@@ -37,7 +37,7 @@ MR Moqui spans five repositories in the [moqui](https://github.com/moqui) organi
 | [mr-boss](https://github.com/moqui/mr-boss) | IronStone BOSS: Commons & Comms (groupware and communication), Projects, and the other BOSS applications | New for MR Moqui. The repository was named `ironstone-boss` until 2026-10-25 |
 | [mr-pass](https://github.com/moqui/mr-pass) | IronStoa PASS: the public-facing companion suite for Forum, Blog/Publishing and Commerce | New for MR Moqui; design stage |
 
-The merges into `mr-mantle` and `mr-marble` kept the commit history of both repositories. On GitHub the renamed repositories redirect from their old names. A Java component that depends on `mantle-udm`, `mantle-usl`, `SimpleScreens` or `MarbleERP` now depends on `mr-mantle` or `mr-marble`, and its `component://` locations change the same way. See [Moqui Java migration notes](docs/Moqui-Java-Migration.md).
+The merges into `mr-mantle` and `mr-marble` kept the commit history of both repositories. On GitHub the renamed repositories redirect from their old names. A Java component that depends on `mantle-udm`, `mantle-usl`, `SimpleScreens` or `MarbleERP` now depends on `mr-mantle` or `mr-marble`, and its `component://` locations change the same way. See [Moqui Java migration notes](docs/dev/Moqui-Java-Migration.md).
 
 ## Goals
 
@@ -67,68 +67,20 @@ Components can supply linked Rust services, tools, resource schemes, template re
 as a Gradle build did for a Java Moqui component: a `Cargo.toml` and `src/` beside the `component.xml`, which
 `./moq build` links into the binary. Service XML still defines services; component configuration selects
 implementations, and scripts get tools with `ec.factory.getTool("Name")`. See
-[Native component usage](docs/Native-Components.md), the [plan](plans/archive/Native-Components.md), and
+[Native component usage](docs/dev/Native-Components.md), the [plan](plans/archive/Native-Components.md), and
 `runtime/base-component/example`, which also holds the screen archetype gallery (`/qapps/gallery`); it is on by default and
 `./moq run -D example_disabled=true` leaves it out.
 
 ## Documentation
 
-Reference guides for built features are in [`docs/`](docs/), including [running and deploying](docs/Run-Deploy.md) and the practices for [application development](docs/Practices-App-Dev.md) and [Rust](docs/Practices-Rust.md). The [security policy](docs/SECURITY.md) links to the attack-surface map and the HTTP proof tests. For a Moqui Java deployment or component moving to MR Moqui, start with the [Moqui Java migration notes](docs/Moqui-Java-Migration.md). Design, status and review documents are in [`plans/`](plans/), indexed by [`plans/README.md`](plans/README.md): what is still open, what comes next, the proposals, and the archive of built designs and finished reviews.
+Reference guides for built features are in [`docs/`](docs/), by tier and area with an index in [`docs/README.md`](docs/README.md), including [building and testing](docs/Build-Test.md), [running and deploying](docs/Run-Deploy.md) and the practices for [application development](docs/dev/Practices-App-Dev.md) and [Rust](docs/dev/Practices-Rust.md). The [security policy](SECURITY.md) links to the attack-surface map and the HTTP proof tests. For a Moqui Java deployment or component moving to MR Moqui, start with the [Moqui Java migration notes](docs/dev/Moqui-Java-Migration.md). Design, status and review documents are in [`plans/`](plans/), indexed by [`plans/README.md`](plans/README.md): what is still open, what comes next, the proposals, and the archive of built designs and finished reviews.
 
 ## Build, Test, and Run
 
-Prerequisites: Rust 1.95 or newer (`rustc --version`). A build with embedded Postgres embeds the 18.6.0 archive that
-`scripts/pg-payload.sh strip` downloads once and strips of psql (it links GPL readline); `./moq build` runs that when
-the archive is missing. Node is not needed to build or test.
-
-The build packages are in [`docs/Packaging.md`](docs/Packaging.md): Dev (`./moq build`), Lite (`--lite`), Debug
-(`--debug`), Maximal (`--release`) and Enterprise (`--enterprise`), plus the browser build.
-
-```sh
-scripts/pg-payload.sh strip            # once: the Postgres archive the binary embeds, without psql
-cargo build -p moqui                   # Debug, every feature: target/debug/moqui
-cargo build --profile develop --no-default-features -F dev -p moqui   # Dev: target/develop/moqui
-cargo build --profile lite --no-default-features -F lite -p moqui     # Lite: target/lite/moqui
-cargo build --release -p moqui         # Maximal: target/release/moqui
-scripts/pg-payload.sh check            # before a distribution: no psql or readline in what is embedded
-
-# Tests (whole workspace, every feature) and lints
-cargo test
-cargo lint
-scripts/check-packages.sh              # clippy on each package's feature set
-
-# The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# pdf_chromium_path, or chromium on the PATH)
-cargo test -p moqui-host --test gate3 --test gate3_browser
-```
-
-The `./moq` script runs the built binaries in place and replaces the Java Moqui Gradle
-tasks (run, load, save and reload of the database, clean, OpenSearch, Chromium for PDF, git across all repos,
-and component get/create/zip). It needs only bash (3.2 or newer), so it works on a fresh
-checkout on Linux or macOS. `./moq` with no arguments lists the tasks, and
-`./moq help <task>` describes one. Task names match by partial parts, ignoring case, so
-`./moq r-p` and `./moq runProduction` both mean `run-production`.
-
-```sh
-./moq build                    # the Dev package, target/develop/moqui (--lite, --debug, --release, --enterprise for
-                               # the others), linking any component crates in runtime/component; tasks that
-                               # run moqui build a missing binary themselves
-./moq run                      # target/develop/moqui with runtime/conf/MoquiDevConf.xml; --release uses target/release/moqui
-./moq run -p 8081 -D entity_ds_db_conf=postgres
-./moq run lint --screens       # moqui's own commands, with the same conf
-./moq load                     # all data types; ./moq load seed seed-initial install
-./moq test mr-mantle         # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
-./moq test-client framework    # a component's test/client specs against the running server (docs/Client-Testing.md)
-./moq test-all                 # every suite: cargo (with the opt-in host tests), moq, moqui test, test-client --serve
-./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
-./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
-./moq git-status               # or any git command in every repo: ./moq git pull
-./moq completion --install     # tab completion for bash or zsh
-```
-
-Running and deploying (the runtime directory and conf lookup, HTTPS certificates and ports, production archives,
-clusters, and PASS and team topologies) are in [`docs/Run-Deploy.md`](docs/Run-Deploy.md); Podman and systemd are in
-[`podman/README.md`](podman/README.md).
+Building from source, the build packages and their features, the `./moq` tasks, and the Rust tests and component specs
+are in [`docs/Build-Test.md`](docs/Build-Test.md). Running and deploying (the runtime directory and conf lookup, HTTPS
+certificates and ports, production archives, clusters, and PASS and team topologies) are in
+[`docs/Run-Deploy.md`](docs/Run-Deploy.md); Podman and systemd are in [`podman/README.md`](podman/README.md).
 
 ## AI/LLM Policy
 

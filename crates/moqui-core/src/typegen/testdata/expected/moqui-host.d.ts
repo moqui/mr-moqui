@@ -406,7 +406,7 @@ interface MoquiResourceFacade {
             quietZone?: number | boolean;
         } | null,
     ): string;
-    /** A change set under one root (docs/Revision-Management.md, Change sets): one commit on git://, the changes in order elsewhere. */
+    /** A change set under one root (docs/data/Revision-Management.md, Change sets): one commit on git://, the changes in order elsewhere. */
     makeChangeSet(root: string): MoquiChangeSet;
     /** Write with a note for the version (the commit message on git://, versionNote on dbresource://). */
     putContent(location: string, content: unknown, note?: string | null): void;
@@ -563,7 +563,7 @@ interface MoquiWebFacade {
     getWebappRootUrl(requireFullUrl?: boolean, useEncryption?: boolean | null): string;
     getWebappRootUrl(webappName: string, servletContextPath: string | null, requireFullUrl: boolean,
         useEncryption?: boolean | null): string;
-    /** The servlet API's request of a web request, null with none (docs/Web-Scripts.md). */
+    /** The servlet API's request of a web request, null with none (docs/interfaces/Web-Scripts.md). */
     readonly request: MoquiWebRequest | null;
     /** The servlet API's response of a web request, null with none. */
     readonly response: MoquiWebResponse | null;

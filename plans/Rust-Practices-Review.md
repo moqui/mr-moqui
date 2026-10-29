@@ -1,6 +1,6 @@
 # Rust Practices Review
 
-A review of the workspace Rust against [Practices-Rust](../docs/Practices-Rust.md), the practices drawn from
+A review of the workspace Rust against [Practices-Rust](../docs/dev/Practices-Rust.md), the practices drawn from
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) for mr-moqui. That document holds the
 rules and examples; this one applies them to the existing code: the targets, the order, and the results. It is written
 for the model doing the review and changes.
@@ -11,7 +11,7 @@ Earlier review: [Code-Quality-Review](archive/Code-Quality-Review.md) (2026-10-1
 
 ## How to work
 
-- Follow [Practices-Rust §4](../docs/Practices-Rust.md#4-working-on-rust-code) (behaviour, checks, formatting).
+- Follow [Practices-Rust §4](../docs/dev/Practices-Rust.md#4-working-on-rust-code) (behaviour, checks, formatting).
 - One theme per commit, one crate (or one moqui-core module) at a time. Commit messages follow the recent ones: what changed, and the section of Practices-Rust.
 - Skip test code (`*_tests.rs`, `tests.rs`, `tests/`, `#[cfg(test)]`, `testkit` assertions). Tests may `unwrap`.
 - Do not mass-rewrite. Change a site only when the new form is clearly better there. When in doubt, leave it and list it in the report.
@@ -34,7 +34,7 @@ The workspace already denies the default Clippy set, so these are already clean:
 
 Counts are of non-test code when the review began.
 
-### Unwraps and runtime type checks ([Practices-Rust §5](../docs/Practices-Rust.md#5-unwraps-and-invariants))
+### Unwraps and runtime type checks ([Practices-Rust §5](../docs/dev/Practices-Rust.md#5-unwraps-and-invariants))
 
 Most of the ~11,600 `.unwrap()` calls are in tests. Non-test code has under a hundred, plus a few hundred `.expect(`.
 Known sites:
@@ -43,7 +43,7 @@ Known sites:
 - `crates/moqui-core/src/telemetry/exponential.rs:284`: `last_key_value().unwrap()` after checking the first (§5d).
 - `clippy::string_slice` lists the string slices (§5e).
 
-### Ownership and borrowing ([Practices-Rust §6](../docs/Practices-Rust.md#6-ownership-and-borrowing))
+### Ownership and borrowing ([Practices-Rust §6](../docs/dev/Practices-Rust.md#6-ownership-and-borrowing))
 
 - About 300 signatures take `&Arc<T>`, mostly `&Arc<ExecutionContextFactory>` (§6a), such as `preview_overlay` in
   `runtime/dev-component/dev-aide/src/changeset.rs:52`.
@@ -52,7 +52,7 @@ Known sites:
   dismissed 533 of those.
 - ~17 `&Option<T>` parameters (`clippy::ref_option`, §6e).
 
-### Idiom ([Practices-Rust §7](../docs/Practices-Rust.md#7-idiom))
+### Idiom ([Practices-Rust §7](../docs/dev/Practices-Rust.md#7-idiom))
 
 - Glob imports at `crates/moqui-core/src/script/runtime.rs:78-83` (`use convert::*;`, `use decimal::*;` …).
 - ~24 `.for_each(...)` with side effects.
@@ -61,7 +61,7 @@ Known sites:
 - ~290 `Result<_, String>` signatures: leave unless already changing the function.
 - `#[must_use]` additions are low priority.
 
-The deliberate departures from Google are in [Practices-Rust §8](../docs/Practices-Rust.md#8-where-mr-moqui-departs-from-google); do not "fix" them.
+The deliberate departures from Google are in [Practices-Rust §8](../docs/dev/Practices-Rust.md#8-where-mr-moqui-departs-from-google); do not "fix" them.
 
 ## Order
 
