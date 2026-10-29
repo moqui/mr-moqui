@@ -471,8 +471,11 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="userId" required="true"/></out-parameters>
         <actions>
-            <!-- only allow this if there are no user accounts, other than the _NA_ UserAccount which is in seed data -->
-            <if condition="ec.entity.find('moqui.security.UserAccount').count() > 1">
+            <!-- only allow this if there are no user accounts, other than those in seed data that nobody logs in as: _NA_
+                and the chat users of agents (AgentTypeData.xml) -->
+            <if condition="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
+                    ['_NA_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
+                        .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() > 0">
                 <return error="true" message="Can only create initial admin account if there are no UserAccount records"/></if>
             <service-call name="org.moqui.impl.UserServices.create#UserAccount" in-map="context" out-map="context"/>
             <service-call name="create#moqui.security.UserGroupMember" in-map="{userId: userId, userGroupId: 'ADMIN'}"

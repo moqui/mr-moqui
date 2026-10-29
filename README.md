@@ -8,7 +8,7 @@
 ./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
 ```
 
-This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing.
+This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
 
 ## Status
 
@@ -73,7 +73,7 @@ implementations, and scripts get tools with `ec.factory.getTool("Name")`. See
 
 ## Documentation
 
-Reference guides for built features are in [`docs/`](docs/), including [running and HTTPS](docs/Running.md) and the practices for [application development](docs/Practices-App-Dev.md) and [Rust](docs/Practices-Rust.md). The [security policy](docs/SECURITY.md) links to the attack-surface map and the HTTP proof tests. For a Moqui Java deployment or component moving to MR Moqui, start with the [Moqui Java migration notes](docs/Moqui-Java-Migration.md). Design, status and review documents are in [`plans/`](plans/), indexed by [`plans/README.md`](plans/README.md): what is still open, what comes next, the proposals, and the archive of built designs and finished reviews.
+Reference guides for built features are in [`docs/`](docs/), including [running and deploying](docs/Run-Deploy.md) and the practices for [application development](docs/Practices-App-Dev.md) and [Rust](docs/Practices-Rust.md). The [security policy](docs/SECURITY.md) links to the attack-surface map and the HTTP proof tests. For a Moqui Java deployment or component moving to MR Moqui, start with the [Moqui Java migration notes](docs/Moqui-Java-Migration.md). Design, status and review documents are in [`plans/`](plans/), indexed by [`plans/README.md`](plans/README.md): what is still open, what comes next, the proposals, and the archive of built designs and finished reviews.
 
 ## Build, Test, and Run
 
@@ -126,8 +126,9 @@ checkout on Linux or macOS. `./moq` with no arguments lists the tasks, and
 ./moq completion --install     # tab completion for bash or zsh
 ```
 
-Running details (the runtime directory and conf lookup, HTTPS certificates and ports, production archives) are in
-[`docs/Running.md`](docs/Running.md); Podman and systemd are in [`podman/README.md`](podman/README.md).
+Running and deploying (the runtime directory and conf lookup, HTTPS certificates and ports, production archives,
+clusters, and PASS and team topologies) are in [`docs/Run-Deploy.md`](docs/Run-Deploy.md); Podman and systemd are in
+[`podman/README.md`](podman/README.md).
 
 ## AI/LLM Policy
 

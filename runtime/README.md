@@ -10,7 +10,7 @@ first with `base-component/` in it). `./moq archive` zips this directory, withou
 | `base-component/` | yes | The framework and base components that ship with Moqui |
 | `component/` | no | Additional components, normally checked out by `./moq` |
 | `conf/` | yes | Runtime conf files (`MoquiDevConf.xml`, `MoquiProductionConf.xml`, ...) merged over `MoquiDefaultConf.xml` |
-| `cert/` | no | HTTPS certificates by domain (nginx-proxy, certbot or mkcert layouts; `docs/Running.md`). Never commit keys. |
+| `cert/` | no | HTTPS certificates by domain (nginx-proxy, certbot or mkcert layouts; `docs/Run-Deploy.md`). Never commit keys. |
 | `db/` | no | Embedded database cluster and related files |
 | `log/` | no | Log files |
 | `opensearch/` | no | Managed OpenSearch install and data |
