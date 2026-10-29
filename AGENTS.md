@@ -1,3 +1,4 @@
 - Default building skill: read [.agents/skills/building/SKILL.md](.agents/skills/building/SKILL.md) before building or working in a worktree.
+- Application development: read [docs/Practices-App-Dev.md](docs/Practices-App-Dev.md) before working on MR Moqui applications (entities, services, screens, `.qvue` files and specs in a component such as mr-boss or mr-mantle).
 - Node is not a test dependency. `moqui test` and `moqui test-client` run the JavaScript specs. `libs/refresh.mjs` and `scripts/wasm-smoke.mjs` still use Node.
 - Failure tolerance: as Moqui Java does, when one independent piece fails (a DDL statement, a data file, a ServiceJob, a service file, a row that will not decrypt) log an error naming it and go on with the rest; do not `?` out of a loop over independent items. Stay strict only where it protects security or data (for example the legacy-schema check).
