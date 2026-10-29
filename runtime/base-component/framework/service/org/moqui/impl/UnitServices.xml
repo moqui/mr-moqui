@@ -156,4 +156,14 @@
             <script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('preview',context))</script>
         </actions>
     </service>
+    <service verb="end" noun="UnitConversion" allow-remote="false">
+        <in-parameters>
+            <parameter name="uomConversionId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="thruDate" type="Timestamp" required="true"/>
+            <parameter name="changeReason" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="uomConversionId"/><parameter name="expectedRevision"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('end',context))</script></actions>
+    </service>
 </services>
