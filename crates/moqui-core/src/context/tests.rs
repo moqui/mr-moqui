@@ -51,6 +51,7 @@ impl Drop for EnvGuard {
         }
         env::clear_property("phase2_probe_secret");
         env::clear_property("phase2_probe_unwritable");
+        env::clear_property("phase2_probe_newline");
         env::clear_property("moqui_version");
         env::clear_property("moqui.version");
     }
@@ -351,6 +352,33 @@ fn generated_secret_is_stable_and_unwritable_env_fails() {
     assert!(!shown.contains("MoquiDefaultPassword"));
     assert!(!shown.contains("CHANGEME"));
     assert!(shown.contains("directory"));
+    assert_eq!(repo_env_stamp(&root), before);
+}
+
+#[test]
+fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
+    let _lock = crate::user::session::cookie_property_lock();
+    let root = workspace_root();
+    let _env = EnvGuard::new(root.clone());
+    let before = repo_env_stamp(&root);
+    let temp = TempRuntime::new("secret-newline");
+    write_probe_conf(temp.path(), "phase2_probe_newline", "probe-secret-CHANGEME");
+    // Host settings written before the first start (docs/Run-Deploy.md), the last line with no newline
+    std::fs::write(temp.path().join(".env"), "phase2_probe_host=erp.example.com").unwrap();
+    let framework = root.join("runtime/base-component/framework");
+    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
+    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
+    let lines: Vec<&str> = env_text.lines().collect();
+    assert_eq!(lines.first(), Some(&"phase2_probe_host=erp.example.com"), "{env_text}");
+    assert!(
+        lines.iter().any(|line| line.starts_with("phase2_probe_newline=")),
+        "{env_text}"
+    );
+    assert_eq!(env::get_prop_or_env("phase2_probe_host"), "erp.example.com");
+    for name in factory.property_names() {
+        env::clear_property(name);
+    }
+    env::clear_dotenv();
     assert_eq!(repo_env_stamp(&root), before);
 }
 

@@ -1498,6 +1498,10 @@ fn append_env_secrets(path: &Path, pairs: &[(String, String)]) -> Result<(), Err
         })?;
     }
     let mut body = String::new();
+    // A file written by hand may end without a newline, and the first secret must not join its last line.
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        body.push('\n');
+    }
     for (name, value) in pairs {
         body.push_str(name);
         body.push('=');
