@@ -411,7 +411,7 @@ pub fn parse_timestamp(input: &str, zone: &TimeZone) -> Option<Timestamp> {
         }
     }
     if let Some(parts) = parse_civil(input) {
-        return parts_to_timestamp(parts, zone);
+        return parts_to_timestamp(&parts, zone);
     }
     Timestamp::from_str(input).ok()
 }
@@ -820,7 +820,7 @@ fn stamp(
     }
 }
 
-fn parts_to_timestamp(parts: CivilParts, default_zone: &TimeZone) -> Option<Timestamp> {
+fn parts_to_timestamp(parts: &CivilParts, default_zone: &TimeZone) -> Option<Timestamp> {
     let date = Date::new(parts.year, parts.month, parts.day).ok()?;
     let time = Time::new(parts.hour, parts.minute, parts.second, parts.nano).ok()?;
     let date_time = DateTime::from_parts(date, time);
@@ -1015,13 +1015,9 @@ fn date_epoch_millis(date: Date) -> i64 {
         .unwrap_or(0)
 }
 
+/// The time on 1970-01-01 UTC as epoch milliseconds: the time since midnight.
 fn time_epoch_millis(time: Time) -> i64 {
-    let date_time = DateTime::from_parts(Date::new(1970, 1, 1).expect("epoch date"), time);
-    date_time
-        .to_zoned(TimeZone::UTC)
-        .ok()
-        .map(|zoned| zoned.timestamp().as_millisecond())
-        .unwrap_or(0)
+    time.duration_since(Time::midnight()).as_millis() as i64
 }
 
 fn like_match(text: &str, pattern: &str) -> bool {

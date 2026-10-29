@@ -502,26 +502,28 @@ fn flat_xml(etl: &mut SimpleEtl, location: &str, text: &str) -> Result<(), Error
             }
             XmlEvent::Text(chars) => cur_text.push_str(&chars),
             XmlEvent::End(name) => {
-                let Some(entry) = cur_entry.as_mut() else {
+                // A text field closing; one is only open inside an entry.
+                if let Some(text_name) = cur_text_name.take() {
+                    if let Some(entry) = cur_entry.as_mut() {
+                        entry
+                            .values
+                            .insert(text_name, Value::String(std::mem::take(&mut cur_text)));
+                    }
+                    continue;
+                }
+                let Some(entry) = cur_entry.take() else {
                     // The root element closing in a flat record file.
                     if root_name.as_deref() == Some(name.as_str()) {
                         root_name = None;
                     }
                     continue;
                 };
-                if let Some(text_name) = cur_text_name.take() {
-                    entry
-                        .values
-                        .insert(text_name, Value::String(std::mem::take(&mut cur_text)));
-                    continue;
-                }
                 if name != entry.etl_type {
                     return Err(Error::new(format!(
                         "Invalid close element {name}, was expecting {}",
                         entry.etl_type
                     )));
                 }
-                let entry = cur_entry.take().expect("entry is open");
                 cur_text.clear();
                 if etl.process_entry(entry).is_err() {
                     // Java logs the stop and ignores the rest of the document.
