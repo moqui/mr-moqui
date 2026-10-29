@@ -196,6 +196,24 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         Function::new(ctx.clone(), resource_code128_svg),
     )?;
     caught(ctx, "resource.code128Svg", resource.set("code128Svg", code128))?;
+    let barcode = caught(
+        ctx,
+        "resource.barcodeSvg",
+        Function::new(ctx.clone(), resource_barcode_svg),
+    )?;
+    caught(ctx, "resource.barcodeSvg", resource.set("barcodeSvg", barcode))?;
+    let gs1 = caught(ctx, "resource.parseGs1", Function::new(ctx.clone(), resource_parse_gs1))?;
+    caught(ctx, "resource.parseGs1", resource.set("parseGs1", gs1))?;
+    let check = caught(
+        ctx,
+        "resource.isValidGs1CheckDigit",
+        Function::new(ctx.clone(), resource_gs1_check),
+    )?;
+    caught(
+        ctx,
+        "resource.isValidGs1CheckDigit",
+        resource.set("isValidGs1CheckDigit", check),
+    )?;
     let template = caught(ctx, "resource.template", Function::new(ctx.clone(), resource_template))?;
     caught(ctx, "resource.template", resource.set("template", template))?;
     let extensions = caught(
@@ -1018,3 +1036,52 @@ pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result
 #[cfg(test)]
 #[path = "ec_extra_tests.rs"]
 mod tests;
+
+/// Strict barcode SVG generation for labels; a batch caller catches a failed symbol independently.
+fn resource_barcode_svg(
+    ctx: Ctx<'_>,
+    symbology: String,
+    text: JsValue<'_>,
+    options: Opt<JsValue<'_>>,
+) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        let text = to_plain_string(&js_to_host(&ctx, &text)?);
+        let options = match options.0.filter(|v| !v.is_null() && !v.is_undefined()) {
+            Some(v) => code128_options(&js_to_host(&ctx, &v)?).map_err(|e| Exception::throw_message(&ctx, &e))?,
+            None => moqui_lib::barcode::SvgOptions::default(),
+        };
+        moqui_lib::barcode::barcode_svg(&symbology, &text, &options).map_err(|e| throw_lib(&ctx, &e))
+    })
+}
+fn resource_gs1_check(ctx: Ctx<'_>, text: String) -> rquickjs::Result<bool> {
+    host_guard(&ctx, || Ok(moqui_lib::barcode::valid_check_digit(&text)))
+}
+fn resource_parse_gs1<'js>(ctx: Ctx<'js>, input: String) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let parsed = moqui_lib::barcode::parse_gs1(&input).map_err(|e| throw_lib(&ctx, &e))?;
+        let mut identifiers = indexmap::IndexMap::new();
+        let elements = parsed
+            .elements
+            .into_iter()
+            .map(|e| {
+                identifiers.insert(e.application_identifier.clone(), Value::String(e.value.clone()));
+                Value::Map(indexmap::IndexMap::from([
+                    (
+                        "applicationIdentifier".to_string(),
+                        Value::String(e.application_identifier),
+                    ),
+                    ("value".to_string(), Value::String(e.value)),
+                ]))
+            })
+            .collect();
+        host_to_js(
+            &ctx,
+            Value::Map(indexmap::IndexMap::from([
+                ("elements".to_string(), Value::List(elements)),
+                ("applicationIdentifiers".to_string(), Value::Map(identifiers)),
+                ("elementString".to_string(), Value::String(parsed.element_string)),
+                ("humanReadable".to_string(), Value::String(parsed.human_readable)),
+            ])),
+        )
+    })
+}
