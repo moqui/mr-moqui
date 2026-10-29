@@ -24,7 +24,7 @@ fn main() {
 }
 ```
 
-Components kept in the framework repository, such as `runtime/base-component/example`, are workspace members that `crates/moqui` links the same way.
+The framework's dev components, `runtime/dev-component/example` and `runtime/dev-component/dev-aide`, are workspace members that `crates/moqui` links the same way, under its `devtools` feature (the Dev and Debug packages).
 
 A `component.xml` with `disabled="true"`, which can be a property (`disabled="${my_component_disabled ?: 'true'}"`), is skipped when a component directory is scanned, unless a conf `component-list` names it. A linked crate whose component is not loaded contributes nothing.
 
@@ -113,4 +113,4 @@ The framework selects two tools of its own in `MoquiDefaultConf.xml` (`moqui_cor
 
 Existing built-in XLSX/image/SFTP/IPP support is unchanged. This API does not load JARs, Java tool classes, Java widget renderers, servlet filters, FOP, Hazelcast or Drools. Port component code and explicitly select its Rust implementation identifiers. Rebuild the application whenever native code/dependencies change.
 
-Executable public-API examples and tests: `crates/moqui-core/tests/native_components.rs`. A worked component, on by default, with specs: `runtime/base-component/example` (`./moq test example`; `-D example_disabled=true` leaves it out).
+Executable public-API examples and tests: `crates/moqui-core/tests/native_components.rs`. A worked component, loaded on a dev instance, with specs: `runtime/dev-component/example` (`./moq test example`; `-D example_disabled=true` leaves it out).

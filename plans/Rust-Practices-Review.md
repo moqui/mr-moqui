@@ -5,7 +5,7 @@ A review of the workspace Rust against [Practices-Rust](../docs/dev/Practices-Ru
 rules and examples; this one applies them to the existing code: the targets, the order, and the results. It is written
 for the model doing the review and changes.
 
-Scope: `crates/*`, `runtime/dev-component/dev-aide` and `runtime/base-component/example`. Component repositories (`runtime/component/*`) are separate git repos and out of scope.
+Scope: `crates/*`, `runtime/dev-component/dev-aide` and `runtime/dev-component/example`. Component repositories (`runtime/component/*`) are separate git repos and out of scope.
 
 Earlier review: [Code-Quality-Review](archive/Code-Quality-Review.md) (2026-10-14) covered panics reachable from input, locks, and unsafe. Do not redo its findings. This review is about idiom and ownership.
 

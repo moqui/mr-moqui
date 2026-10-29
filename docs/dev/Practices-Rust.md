@@ -1,7 +1,7 @@
 # MR Moqui Rust practices
 
 A guide for agents and people writing Rust in MR Moqui: the workspace crates (`crates/*`), the framework's component
-crates (`runtime/base-component/example`, `runtime/dev-component/dev-aide`) and add-on component crates. It covers where
+crates (`runtime/dev-component/example`, `runtime/dev-component/dev-aide`) and add-on component crates. It covers where
 code goes, how a crate is organized, how tests are kept, and the idioms to use. It follows
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) where that helps this code, and says
 where MR Moqui departs from it on purpose (§8).
@@ -37,9 +37,9 @@ moqui-browser → moqui-core (default-features = false)
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
 | `moqui` | The binary: the CLI and the build packages and their features ([Packaging](../Build-Test.md#packages)). |
 
-Component crates (`example`, `dev-aide`) are workspace members that the binary links. An add-on component's crate, a
-`Cargo.toml` beside its `component.xml`, is not a member: `./moq build` links it through a generated crate in
-`target/moqui-app` ([Native-Components](Native-Components.md)).
+Component crates (`example`, `dev-aide`) are workspace members that the binary links under its `devtools` feature. An
+add-on component's crate, a `Cargo.toml` beside its `component.xml`, is not a member: `./moq build` links it through a
+generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)).
 
 - Put code in the lowest crate that can hold it. A helper that needs no ExecutionContext goes in `moqui-lib`.
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the

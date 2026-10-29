@@ -1,8 +1,8 @@
 # example
 
 Examples of Rust in an MR Moqui component, kept with the framework and added to over time, and the screen archetype
-gallery of the IronStone BOSS style guide (`screen/Gallery.xml`, at `/qapps/gallery` once signed in). The component
-is on by default while the framework is young.
+gallery of the IronStone BOSS style guide (`screen/Gallery.xml`, at `/qapps/gallery` once signed in). It is a dev
+component: it loads when `instance_purpose` is `dev` (`./moq run` and `./moq test`), not on a production instance.
 
 ## Turning it off
 
@@ -12,10 +12,12 @@ is on by default while the framework is young.
   off; one that names it loads it even when its `component.xml` is disabled:
 
   ```xml
-  <component-list><component name="example" location="base-component/example"/></component-list>
+  <component-list><component name="example" location="dev-component/example"/></component-list>
   ```
 
-The binary always links this crate. Its implementations are only used when the component loads.
+The binaries with the dev tools (Dev and Debug) link this crate. Its implementations are only used when the component
+loads. A binary without it (Lite, Maximal, Enterprise) on the dev conf loads the component and leaves its tool factory
+out with an error line, so the gallery works and the rust services and tool do not.
 
 ## What is here
 

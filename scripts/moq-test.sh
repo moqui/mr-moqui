@@ -413,7 +413,7 @@ if have git; then
     git config --global init.defaultBranch master
     git config --global protocol.file.allow always
 
-    # Component "remotes": comp-a depends on comp-b, and a start template.
+    # Component "remotes": comp-a depends on comp-b.
     mkrepo() {
         local name=$1 body=$2
         mkdir -p "$FIX/src/$name"
@@ -433,13 +433,6 @@ if have git; then
     mkrepo comp-e '<component name="comp-e">
     <depends-on name="comp-d"/>
 </component>'
-    mkdir -p "$FIX/src/start/screen" "$FIX/src/start/data" "$FIX/src/start/services" "$FIX/src/start/src"
-    echo '<screen name="start"/>' >"$FIX/src/start/screen/start.xml"
-    echo 'StartApp start' >"$FIX/src/start/data/AppSeedData.xml"
-    echo 'api' >"$FIX/src/start/data/ApiSeedData.xml"
-    echo 'rest' >"$FIX/src/start/services/start.rest.xml"
-    echo '<moqui-conf/>' >"$FIX/src/start/MoquiConf.xml"
-    mkrepo start '<component name="start" version="1.0"/>'
 
     cat >"$R/myaddons.xml" <<EOF
 <addons default-repository="local" default="comp-c">
@@ -461,7 +454,6 @@ if have git; then
     <component name="comp-skip" group="g" branch="master" skip-get="true"/>
     <component name="mr-comp-d" component-name="comp-d" group="g" branch="master"/>
     <component name="comp-e" group="g" branch="master"/>
-    <component name="start" group="g" branch="master"/>
     <component-set name="outer" sets="inner"/>
     <component-set name="inner" components="comp-c"/>
 </addons>
@@ -469,15 +461,15 @@ EOF
     (cd "$R" && git init -q && git add moq && git commit -qm root)
 
     check "complete component names" 0 '^comp-a$' -- "$M" __complete 2 component-get comp
-    check "complete set names" 0 '^outer$' -- "$M" __complete 2 component-set ''
+    check "complete set names" 0 '^outer$' -- "$M" __complete 2 component-get ''
     check "component-get with depends" 0 'Checked: comp-a, comp-b' -- "$M" component-get comp-a
     check "component-get cloned dependency" 0 '' -- test -f "$R/runtime/component/comp-b/component.xml"
     check "component-get present" 0 'comp-a is already in' -- "$M" component-get comp-a
     check "component-get skip-get" 0 'Skipping comp-skip' -- "$M" component-get comp-skip
-    check "component-get unknown" 1 'not in myaddons.xml or addons.xml' -- "$M" component-get nope
+    check "component-get unknown" 1 'not a component or component-set' -- "$M" component-get nope
     check "component-get defaults" 0 'Getting comp-c' -- "$M" component-get
     rm -rf "$R/runtime/component/comp-c"
-    check "component-set nested" 0 'Getting comp-c' -- "$M" component-set outer
+    check "component-get nested set" 0 'Getting comp-c' -- "$M" component-get outer
     rm -rf "$R/runtime/component/comp-b"
     check "component-depends" 0 'comp-a depends on comp-b' -- "$M" component-depends
     check "component-get bad type" 1 'not git, current' -- "$M" component-get -t svn comp-a
@@ -498,7 +490,6 @@ EOF
     # repo was cloned (https -> github, git@ -> github-ssh, no origin -> github).
     check "complete -r option" 0 '^--repo$' -- "$M" __complete 2 component-get --r
     check "complete -r repositories" 0 '^github-ssh$' -- "$M" __complete 3 component-get -r git
-    check "complete -r on create" 0 '^github$' -- "$M" __complete 3 component-create -r github
     cp "$R/myaddons.xml" "$FIX/myaddons.xml.bak"
     rm -rf "$R/runtime/component/comp-c" "$R/runtime/component/comp-b"
     sed 's/ default-repository="local"//' "$R/myaddons.xml" >"$R/myaddons.xml.moq-tmp" &&
@@ -519,8 +510,6 @@ EOF
         dry "$M" component-get --repo=github-ssh comp-b
     check "-r unknown repository" 1 'repository nope has no git location' -- dry "$M" component-get -r nope comp-c
     check "-r needs a repository" 1 'needs a repository' -- "$M" component-get -r
-    check "component-create -r" 0 "file://$FIX/repos-ssh/start.git" -- \
-        dry "$M" component-create mk-demo -r github-ssh --no-git
     (cd "$R" && git remote remove origin)
     cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
     # Back to the fixture defaults, with the components the later checks expect in place again.
@@ -538,18 +527,49 @@ EOF
     check "complete git refs" 0 '^master$' -- "$M" __complete 3 git checkout ma
     check "complete git-checkout-all alias refs" 0 '^master$' -- "$M" __complete 2 gitCheckoutAll ma
 
-    check "component-create" 0 'Created runtime/component/my-app from start' -- \
-        "$M" component-create my-app --rest --myaddons me --git-remote https://example.com/my-app.git
-    check "create renamed file" 0 '' -- test -f "$R/runtime/component/my-app/services/my-app.rest.xml"
-    check "create replaced contents" 0 'name="my-app"' -- cat "$R/runtime/component/my-app/component.xml"
-    check "create rest drops screens" 1 '' -- test -e "$R/runtime/component/my-app/screen"
-    check "create drops src" 1 '' -- test -e "$R/runtime/component/my-app/src"
-    check "create new git repo" 0 'example.com/my-app.git' -- git -C "$R/runtime/component/my-app" remote -v
-    check "create myaddons line" 0 'name="my-app" group="me"' -- cat "$R/myaddons.xml"
+    # component-create from a copy of the component template (runtime/dev-component/template).
+    mkdir -p "$R/runtime/dev-component"
+    cp -R "$SRC/runtime/dev-component/template" "$R/runtime/dev-component/"
+    files_of() { (cd "$1" && find . -type f ! -path './.git/*' | LC_ALL=C sort); }
+    check "complete --from templates" 0 '^template$' -- "$M" __complete 3 component-create --from t
+    check "create dry run" 0 'cp -R .*/template/\. .*/component/dry-shop' -- dry "$M" component-create dry-shop
+    check "create dry run writes nothing" 1 '' -- test -e "$R/runtime/component/dry-shop"
+    check "component-create" 0 'Created runtime/component/my-shop from template' -- \
+        "$M" component-create my-shop --myaddons me --git-remote https://example.com/my-shop.git
+    S=$R/runtime/component/my-shop
+    check "create names every file" 0 '' -- test "$(files_of "$S")" = "$(files_of "$R/runtime/dev-component/template" \
+        | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
+    check "create directories" 0 '' -- test -f "$S/service/myshop/MyShopServices.xml" -a -f "$S/screen/MyShop/FindItem.xml"
+    check "create leaves no placeholder" 1 '' -- grep -rE --exclude-dir=.git '@(component|Title|Class|package|ID)@' "$S"
+    check "create takes out disabled" 1 '' -- grep -q 'disabled=' "$S/component.xml"
+    check "create name" 0 'name="my-shop" version' -- cat "$S/component.xml"
+    check "create title" 0 'menu-title="My Shop"' -- cat "$S/MoquiConf.xml"
+    check "create class and package" 0 'entity-name="MyShopItem" package="myshop"' -- cat "$S/entity/MyShopEntities.xml"
+    check "create id" 0 'artifactGroupId="MY_SHOP_APP"' -- cat "$S/data/MyShopSecurityData.xml"
+    check "create leaves the template as it is" 0 'name="@component@"' -- \
+        cat "$R/runtime/dev-component/template/component.xml"
+    check "create new git repo" 0 'example.com/my-shop.git' -- git -C "$S" remote -v
+    check "create myaddons line" 0 'name="my-shop" group="me"' -- cat "$R/myaddons.xml"
     check "create myaddons still closed" 0 '</addons>' -- tail -n 1 "$R/myaddons.xml"
-    check "create exists" 1 'already exists' -- "$M" component-create my-app
-    check "create --screens" 0 'Screens only' -- "$M" component-create my-ui --screens --no-git
-    check "create --screens drops rest" 1 '' -- test -e "$R/runtime/component/my-ui/services/my-ui.rest.xml"
+    check "create exists" 1 'already exists' -- "$M" component-create my-shop
+    check "create name starts with a letter" 1 'starts with a letter' -- "$M" component-create 9lives --no-git
+    check "create name has no dot" 1 'starts with a letter' -- "$M" component-create my.shop --no-git
+    check "create unknown template" 1 'no template nope' -- "$M" component-create other --from nope --no-git
+    check "create --rest" 0 'REST API only' -- "$M" component-create my_api --rest --no-git
+    check "create --rest has no screens" 1 '' -- test -e "$R/runtime/component/my_api/screen" -o \
+        -e "$R/runtime/component/my_api/MoquiConf.xml" -o -e "$R/runtime/component/my_api/test/MyApiScreens.spec.js"
+    check "create --rest keeps the REST API" 0 '' -- test -f "$R/runtime/component/my_api/service/my_api.rest.xml"
+    check "create --screens --dev" 0 'Screens only' -- "$M" component-create shop --screens --dev --no-git
+    check "create --screens has no REST API" 1 '' -- test -e "$R/runtime/dev-component/shop/service/shop.rest.xml" -o \
+        -e "$R/runtime/dev-component/shop/data/ShopApiSecurityData.xml"
+    check "create --screens keeps the screens" 0 '' -- test -f "$R/runtime/dev-component/shop/screen/Shop.xml"
+    # A template reached through a link: its contents are copied, so filling them in leaves the template as it is.
+    ln -s "$R/runtime/dev-component/template" "$R/runtime/component/linked-template"
+    check "create from a linked template" 0 'Created' -- "$M" component-create via-link --from linked-template --no-git
+    check "a linked template is copied, not linked" 1 '' -- test -L "$R/runtime/component/via-link"
+    check "a linked template stays a template" 0 'name="@component@"' -- \
+        cat "$R/runtime/dev-component/template/component.xml"
+    rm -rf "$R/runtime/component/linked-template" "$R/runtime/component/via-link" "$R/runtime/dev-component/shop"
 else
     skipped="$skipped git"
 fi

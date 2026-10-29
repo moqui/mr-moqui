@@ -20,7 +20,7 @@ Contents: [1 tools and artifacts](#1-tools-and-artifacts) · [2 references](#2-r
 
 | Layer | Repository and directory | What belongs there |
 | --- | --- | --- |
-| Framework | mr-moqui: `crates/*`, `runtime/base-component/{framework,webroot,tools,example}` | The facades, the screen renderers (`framework/template/screen/Screen*.js`), the browser client (`webroot/screen/webroot/js/WebrootVue.qvt*.js`), the XSDs (`framework/xsd`). No business data model. |
+| Framework | mr-moqui: `crates/*`, `runtime/base-component/{framework,webroot,tools}`, `runtime/dev-component/{example,dev-aide,template}` | The facades, the screen renderers (`framework/template/screen/Screen*.js`), the browser client (`webroot/screen/webroot/js/WebrootVue.qvt*.js`), the XSDs (`framework/xsd`). No business data model. |
 | Mantle | mr-mantle: `runtime/component/mr-mantle` | The business data model (entities, seed data) and the business services. It stands alone: no Mantle service, script, data file or spec names a BOSS group, service, screen or setting. It checks Moqui permissions itself (for example `PRODUCT_CATALOG_EDIT`, `PRICE_VIEW`). |
 | Apps | mr-boss: `runtime/component/mr-boss` | The apps: screens, the app's access check, screen context (options, names, capabilities), settings forms, app-specific services. |
 
@@ -76,9 +76,9 @@ Each component is its own git repository. Commit in each repository that a chang
 - **Style guide:** `runtime/component/mr-boss/plan/style-guide.md`. The shell (§2), the screen archetypes (§3: landing,
   list, detail, 360, task, board, wizard, report, settings and more), the widget guide (§4), color and status display
   (§5), states and feedback (§6), devices and breakpoints (§7), and the checklist for a new XML element (§8.1).
-- **Archetype gallery:** `runtime/base-component/example/screen/Gallery*.xml` and its `.qvue` files, at
-  `/qapps/gallery` once signed in. One screen per archetype; its README lists them. `test/client/GalleryShots.spec.js`
-  is the pattern for screenshot specs.
+- **Archetype gallery:** `runtime/dev-component/example/screen/Gallery*.xml` and its `.qvue` files, at
+  `/qapps/gallery` once signed in on a dev instance. One screen per archetype; its README lists them.
+  `test/client/GalleryShots.spec.js` is the pattern for screenshot specs.
 - **Reference implementation:** the Projects app, `runtime/component/mr-boss/screen/Projects/`. For record headers
   and actions see `Projects/Projects/ProjectDetail.xml` (the `m-record-header` block); for a landing see
   `Projects/Home.xml`.
@@ -270,7 +270,7 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Use the `m-*` inputs and the shell's feedback (`moqui.notifyMessages`, a `$q.dialog` confirm) so it looks and
   behaves like the XML screens: one primary button at a time, a count in the confirmation of a bulk action, result
   boxes only when there are results.
-- The gallery's `Board.qvue`, `Calendar.qvue` and `QuickTask.qvue` (`runtime/base-component/example/screen/Gallery/`)
+- The gallery's `Board.qvue`, `Calendar.qvue` and `QuickTask.qvue` (`runtime/dev-component/example/screen/Gallery/`)
   are the patterns.
 
 ## 7. Tests

@@ -251,26 +251,25 @@ fn boot_registers_components_and_named_resource_errors() {
     )
     .unwrap();
     std::os::unix::fs::symlink(root.join("runtime/base-component"), temp.path().join("base-component")).unwrap();
+    // A component whose MoquiConf.xml selects a tool factory this binary does not link, as a dev component's is in a
+    // Lite binary: the boot leaves the tool factory out and goes on.
+    let unlinked = temp.path().join("component/unlinked-tool");
+    std::fs::create_dir_all(&unlinked).unwrap();
+    std::fs::write(
+        unlinked.join("component.xml"),
+        r#"<component name="unlinked-tool" version="${moqui_version}"/>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        unlinked.join("MoquiConf.xml"),
+        r#"<moqui-conf><tools><tool-factory class="unlinked::ToolFactory"/></tools></moqui-conf>"#,
+    )
+    .unwrap();
     env::set_property("moqui_version", "phase2-test");
     let framework = root.join("runtime/base-component/framework");
-    // example is in base-component too, with disabled="${example_disabled ?: 'false'}" in its component.xml;
-    // turned off here, so this boot has only the three components the test binary links.
-    env::set_property("example_disabled", "true");
-    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework);
-    env::clear_property("example_disabled");
-    let factory = factory.unwrap();
+    let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let names: Vec<&str> = factory.components().iter().map(|info| info.name.as_str()).collect();
-    assert_eq!(names, vec!["framework", "tools", "webroot"]);
-    // Turned on, it loads and its MoquiConf.xml selects its tool factory, which this test binary does not link.
-    env::set_property("example_disabled", "false");
-    let enabled = ExecutionContextFactory::boot_with_framework(temp.path(), &framework);
-    env::clear_property("example_disabled");
-    let err = enabled.err().expect("the example tool factory is not linked here");
-    assert!(
-        err.to_string()
-            .contains("tool-factory example::ExampleToolFactory is not linked"),
-        "{err}"
-    );
+    assert_eq!(names, vec!["framework", "tools", "webroot", "unlinked-tool"]);
     for info in factory.components() {
         assert_eq!(info.version, "phase2-test");
     }

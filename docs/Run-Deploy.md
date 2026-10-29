@@ -28,7 +28,7 @@ You need Rust 1.95 or newer (`rustc --version`), git and bash, on Linux or macOS
 ```sh
 git clone https://github.com/moqui/mr-moqui.git
 cd mr-moqui
-./moq component-set apps   # optional: Marble ERP (mr-marble) and IronStone BOSS (mr-boss), with Mantle (mr-mantle)
+./moq component-get apps   # optional: Marble ERP (mr-marble) and IronStone BOSS (mr-boss), with Mantle (mr-mantle)
 ./moq load                 # builds the Dev package the first time, then loads every data type, demo included
 ./moq run                  # serves http://localhost:8080; ctrl-c stops it
 ```
@@ -190,7 +190,7 @@ The runtime conf is the first of these that is found:
 3. `<runtime>/conf/MoquiDevConf.xml`.
 
 `./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. Conf merges add
-components but never remove one. To leave a component out, keep it out of `runtime/component`. The example base
+components but never remove one. To leave a component out, keep it out of `runtime/component`. The example dev
 component is the exception: `example_disabled=true` leaves it out.
 
 ### Properties
@@ -217,7 +217,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 
 | Property | Default | What it does |
 |---|---|---|
-| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE) |
+| `instance_purpose` | `production` (`dev` in the dev conf) | `production`, `dev` or `test`. Only `dev` loads the dev components (Dev AIDE, the example component) |
 | `default_locale`, `default_time_zone`, `database_time_zone` | `en_US`, `UTC`, `UTC` | |
 | `webapp_http_host` | empty: the request's host | The host in generated URLs |
 | `webapp_http_bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
@@ -234,7 +234,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
-| `example_disabled` | `false` | `true` leaves out the example component and its gallery |
+| `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
 | `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
@@ -642,7 +642,6 @@ In local mode, mr-pass runs in the same runtime as Mantle and makes in-process c
    pass_backend_url=https://boss.example.com
    pass_client_id=forum
    pass_client_secret=...
-   example_disabled=true
    ```
 
    ```xml
@@ -804,10 +803,9 @@ with no names) and `default-repository` on its root.
 
 | Task | What it does |
 |---|---|
-| `./moq component-get <name...>` | Get components and the components they depend on (`depends-on` in `component.xml`) |
-| `./moq component-set apps` | Get the components of a set (`apps`: mr-marble and mr-boss) |
+| `./moq component-get <name...>` | Get components and the components they depend on (`depends-on` in `component.xml`); a `component-set` name gets the components of the set (`apps`: mr-marble and mr-boss) |
 | `./moq component-depends` | Get missing dependencies of what is in `runtime/component` |
-| `./moq component-create <name>` | Make a component from the start component |
+| `./moq component-create <name>` | Make a component from the component template, `runtime/dev-component/template`: an entity, services, a REST API, screens, data and specs; `--rest` or `--screens` for one part |
 | `./moq component-zip [name...]` | Zip components |
 | `./moq git <args>`, `git-status`, `git-pull` | Run git in the root repository and every component repository |
 
@@ -842,9 +840,9 @@ mr-moqui/
   crates/             the Rust workspace: moqui (the binary), moqui-host, moqui-core, moqui-lib, moqui-llm, moqui-db,
                       moqui-tui, moqui-browser
   runtime/            the runtime directory (runtime/README.md)
-    base-component/   framework, tools, webroot, example
+    base-component/   framework, tools, webroot
     component/        components from ./moq component-get (not in git)
-    dev-component/    components that load only on a dev instance: dev-aide
+    dev-component/    components that load only on a dev instance: dev-aide, example; template for component-create
     conf/             MoquiDevConf.xml, MoquiProductionConf.xml
     cert/ db/ log/ .env   per-instance files (not in git)
   podman/             the image, compose stacks and Quadlet units

@@ -445,7 +445,7 @@ fn template_key() -> String {
     let root = repo_root();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (COMPANION, WIDGETS, STATIC_LIST).hash(&mut hasher);
-    for part in ["runtime/base-component", "Cargo.lock"] {
+    for part in ["runtime/base-component", "runtime/dev-component/example", "Cargo.lock"] {
         stamp_tree(&root.join(part), &mut hasher);
     }
     let mut crates: Vec<PathBuf> = std::fs::read_dir(root.join("crates"))
@@ -546,6 +546,11 @@ fn prepare_runtime(runtime: &Path, fixtures: &Template, extra_conf: &str) {
     let base =
         std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component")).unwrap();
     std::os::unix::fs::symlink(&base, runtime.join("base-component")).unwrap();
+    // The example dev component (its gallery, the Example entity, the token route screen) loads from component/ here, so
+    // the gates have it on their production purpose; in the repository runtime it loads only on a dev instance.
+    let example = std::fs::canonicalize(repo_root().join("runtime/dev-component/example")).unwrap();
+    std::fs::create_dir_all(runtime.join("component")).unwrap();
+    std::os::unix::fs::symlink(&example, runtime.join("component/example")).unwrap();
 }
 
 /// Load the seed (the framework files and each component's `data` directory), the demo users, and the grants of the fixture.

@@ -1,5 +1,6 @@
-# The Rust side of the example component. The binary links it (`use example as _;`), and its submit_component! entry
-# names the component, so its tool factory and services are there only when the component loads.
+# The Rust side of the example component. The binaries with the dev tools (Dev and Debug) link it
+# (`use example as _;`), and its submit_component! entry names the component, so its tool factory and services are
+# there only when the component loads.
 #
 # It is a member of the mr-moqui workspace, so it takes its versions and dependencies from there. A crate in
 # runtime/component is not a member: copied there as a template, it names them itself (see README.md).

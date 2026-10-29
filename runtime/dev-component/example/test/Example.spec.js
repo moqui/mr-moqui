@@ -1,7 +1,9 @@
 // The Rust parts of example: a type="rust" service, the tool from JavaScript, and the tool from XML Actions.
-// Run with the component on: ./moq test example -D example_disabled=false
+// ./moq test example (a dev component, so its specs run on a dev instance). The crate is linked into the binaries with
+// the dev tools only, so in another (./moq test --lite) these are skipped.
 
 spec({
+    requires: ["devtools"],
     setup() { ec.artifactExecution.disableAuthz() },
     cleanup() { ec.artifactExecution.enableAuthz() },
 })

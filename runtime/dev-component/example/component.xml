@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Examples of a component with Rust in it: a tool factory, a type="rust" service, and a tool scripts call through
-    ec.factory.getTool; and the screen archetype gallery (screen/Gallery.xml). On by default while the framework is young:
-    run with -D example_disabled=true to leave it out. -->
+    ec.factory.getTool; and the screen archetype gallery (screen/Gallery.xml). A dev component, loaded when
+    instance_purpose is dev: run with -D example_disabled=true to leave it out there too. -->
 <component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
         name="example" version="${moqui_version}" disabled="${example_disabled ?: 'false'}"/>

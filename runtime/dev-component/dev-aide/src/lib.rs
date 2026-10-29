@@ -37,6 +37,7 @@ mod services;
 pub mod settings;
 mod site;
 mod tasks;
+mod template;
 pub mod tier;
 mod vcs;
 pub(crate) mod workspace;

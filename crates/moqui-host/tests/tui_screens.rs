@@ -531,7 +531,7 @@ fn log_in_with_a_code_and_from_an_address(factory: &Arc<ExecutionContextFactory>
 fn start_gate() -> common::Gate {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     // The Editor screen reads the EXAMPLE wiki space. That file is demo data, so the seed load leaves it out.
-    let wiki = std::fs::read_to_string(repo.join("runtime/base-component/example/data/ExampleWikiData.xml"))
+    let wiki = std::fs::read_to_string(repo.join("runtime/dev-component/example/data/ExampleWikiData.xml"))
         .expect("example wiki data");
     common::start_with_links("tui-screens", "", Some(&wiki), Some(&["demo"]), &[])
 }

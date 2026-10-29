@@ -30,10 +30,10 @@ use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 use crate::entity::{EntityFacade, EntityGroup};
 use crate::transaction::{PoolConfig, TransactionManager};
 
-/// Leaves the example component out of a boot of the repository runtime. The component is on by default and its
-/// `MoquiConf.xml` selects a tool factory that only a binary linking the `example` crate has (the `moqui` binary and
-/// the host integration tests); this crate's own tests cannot link it, since `example` depends on this crate. Clears
-/// the property when dropped.
+/// Leaves the example component out of a boot of the repository runtime. It loads on a dev instance
+/// (`runtime/dev-component/example`) and its `MoquiConf.xml` selects a tool factory that only a binary linking the
+/// `example` crate has (the Dev `moqui` binary and the host integration tests); this crate's own tests cannot link it,
+/// since `example` depends on this crate. Clears the property when dropped.
 pub struct ExampleOff;
 
 impl ExampleOff {

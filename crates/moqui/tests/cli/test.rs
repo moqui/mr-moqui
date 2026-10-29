@@ -59,7 +59,7 @@ pub(super) fn test_runtime(tag: &str, components: &[(&str, &Path)]) -> Option<Te
     Some(TestRuntime { dir })
 }
 
-fn moqui_test(runtime: &TestRuntime, args: &[&str]) -> (String, String, bool) {
+pub(super) fn moqui_test(runtime: &TestRuntime, args: &[&str]) -> (String, String, bool) {
     let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
         .arg("test")
         .args(args)
@@ -82,7 +82,7 @@ fn the_fixture_suite_passes_in_suite_order_and_writes_junit() {
         return;
     };
     let junit = runtime.dir.join("junit");
-    // Named, as base-component/example has specs of its own.
+    // Named, as the other components have specs of their own.
     let (out, err, ok) = moqui_test(&runtime, &["moqui-test-fixture", "--junit", junit.to_str().unwrap()]);
     assert!(ok, "stdout:\n{out}\nstderr:\n{err}");
     let lines: Vec<&str> = out.lines().filter(|line| line.contains(" > ")).collect();

@@ -80,10 +80,9 @@ chromium-download|Chromium|[revision] [--latest]|Download Chromium into runtime/
 git|Git|<git args...>|Run a git command in the root repo and each component repo
 git-status|Git|[-s]|Branch, tracking, ahead/behind, and changes in each repo
 git-pull|Git|[git pull args...]|Pull each repo and list the new commits
-component-get|Components|[name...] [-t type] [-r repo]|Get components and the components they depend on
-component-set|Components|<set...> [-t type] [-r repo]|Get the components in a component-set
+component-get|Components|[name...] [-t type] [-r repo]|Get components or component-sets and the components they depend on
 component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/component
-component-create|Components|<name> [opts]|Create a component from the start component
+component-create|Components|<name> [opts]|Create a component from the component template
 component-zip|Components|[name...]|Zip components in runtime/component
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml (mr-moqui-YYYYMMDD.zip)
 completion|Setup|[bash or zsh] [--install]|Print or install shell completion
@@ -117,7 +116,7 @@ get-current|component-get -t current
 get-release|component-get -t release
 get-binary|component-get -t binary
 get-depends|component-depends
-get-component-set|component-set
+get-component-set|component-get
 create-component|component-create
 zip-component|component-zip
 zip-components|component-zip
@@ -751,26 +750,17 @@ help_component_get() {
 Gets each named component into runtime/component from the location in myaddons.xml or
 addons.xml, then gets any component it depends on (component.xml depends-on) that is not
 there yet. A component already present is not changed, but its dependencies are checked.
-With no names it gets the default="a,b" list on the myaddons.xml root element.
+A name that is a component-set, and not a component, gets the components of the set,
+including nested sets. With no names it gets the default="a,b" list on the myaddons.xml
+root element.
   ./moq component-get mr-mantle
   ./moq component-get -t current mr-boss
+  ./moq component-get apps
 
 Options:
       --dev            Get the named components into runtime/dev-component, the components that load
                        only when instance_purpose is dev; what they depend on still goes in
                        runtime/component
-$COMPONENT_TYPE_HELP
-$COMPONENT_REPO_HELP
-EOF
-}
-
-help_component_set() {
-    cat <<EOF
-Gets the components of each component-set in myaddons.xml or addons.xml, including nested sets,
-and their dependencies.
-  ./moq component-set apps
-
-Options:
 $COMPONENT_TYPE_HELP
 $COMPONENT_REPO_HELP
 EOF
@@ -788,22 +778,23 @@ EOF
 
 help_component_create() {
     cat <<EOF
-Creates runtime/component/<name> from a template component (start by default): renames files
-whose names begin with the template name, replaces the template name in file contents, and drops
-src/ and build.gradle (the Groovy and Java side). The template's git history is not kept.
-  ./moq component-create my-app
+Creates runtime/component/<name> from the component template, runtime/dev-component/template:
+copies it, fills in the placeholders in its file names and contents, and takes out the
+template's disabled="true". For the name my-shop the placeholders are @component@ my-shop,
+@Title@ My Shop, @Class@ MyShop, @package@ myshop and @ID@ MY_SHOP. A name starts with a letter
+and has letters, digits, '-' and '_'. The new component loads at the next start.
+  ./moq component-create my-shop
   ./moq component-create my-api --rest --git-remote git@github.com:me/my-api.git --myaddons me
 
 Options:
       --dev            Create it in runtime/dev-component, loaded only when instance_purpose is dev
-      --from NAME      Template component from addons.xml (default start)
-      --rest           REST API only: drop screen/, template/, data/AppSeedData.xml, and empty MoquiConf.xml
-      --screens        Screens only: drop services/<name>.rest.xml and data/ApiSeedData.xml
+      --from NAME      Another template, in runtime/dev-component or runtime/component (a component.xml
+                       named @component@)
+      --rest           REST API only: no screen/, MoquiConf.xml, or screen security data and spec
+      --screens        Screens only: no REST API (service/<name>.rest.xml) or its security data and spec
       --git-remote URL git init, git add ., and add this remote as origin
       --no-git         Do not git init
       --myaddons GROUP Add the component to myaddons.xml with this git group (creating the file if needed)
-$COMPONENT_TYPE_HELP
-$COMPONENT_REPO_HELP
 EOF
 }
 
@@ -1091,7 +1082,7 @@ component_crate_dirs() {
 # by crates/moqui under its devtools feature.
 framework_dev_crate() {
     case $1 in
-        "$ROOT/runtime/dev-component/dev-aide") return 0 ;;
+        "$ROOT/runtime/dev-component/dev-aide" | "$ROOT/runtime/dev-component/example") return 0 ;;
     esac
     return 1
 }
@@ -2748,7 +2739,7 @@ default_location_type() {
     if [ -e "$ROOT/.git" ]; then echo git; else echo current; fi
 }
 
-# Set by parse_component_args or component-create from -r; empty means fall back to the element and the defaults.
+# Set by parse_component_args from -r; empty means fall back to the element and the defaults.
 REPOSITORY=
 
 # The default repository when neither -r, the component element, nor default-repository says one: github for an
@@ -2973,32 +2964,27 @@ task_component_get() {
     fi
     run_cmd mkdir -p "$COMPONENT_BASE"
     for name in "${COMPONENT_ARGS[@]}"; do
-        component_get_one "$name" "$LOCATION_TYPE" "$COMPONENT_BASE"
+        if addons_find component "$(addons_name_for "$name")" >/dev/null; then
+            component_get_one "$name" "$LOCATION_TYPE" "$COMPONENT_BASE"
+        elif addons_find component-set "$name" >/dev/null; then
+            component_set_get "$name" "$LOCATION_TYPE" "$COMPONENT_BASE"
+        else
+            die "$name is not a component or component-set in myaddons.xml or addons.xml"
+        fi
     done
     components_checked_summary
 }
 
+# $1 the component-set, $2 the location type, $3 the component directory its components go in.
 component_set_get() {
-    local set=$1 type=$2 element name
+    local set=$1 type=$2 base=$3 element name
     element=$(addons_find component-set "$set") || die "component-set $set is not in myaddons.xml or addons.xml"
     for name in $(xml_attr "$element" components | tr ',' ' '); do
-        component_get_one "$name" "$type"
+        component_get_one "$name" "$type" "$base"
     done
     for name in $(xml_attr "$element" sets | tr ',' ' '); do
-        component_set_get "$name" "$type"
+        component_set_get "$name" "$type" "$base"
     done
-}
-
-task_component_set() {
-    local set
-    parse_component_args "$@"
-    require_addons
-    [ ${#COMPONENT_ARGS[@]} -gt 0 ] || die "component-set needs a set name: $(addons_names component-set | tr '\n' ' ')"
-    run_cmd mkdir -p "$RUNTIME_DIR/component"
-    for set in "${COMPONENT_ARGS[@]}"; do
-        component_set_get "$set" "$LOCATION_TYPE"
-    done
-    components_checked_summary
 }
 
 component_dirs() {
@@ -3026,36 +3012,75 @@ task_component_depends() {
     components_checked_summary
 }
 
-# A sed regex matching $1 literally, and a replacement inserting $1 literally.
-sed_regex_escape() {
-    printf '%s\n' "$1" | sed 's/[]\/$*.^[]/\\&/g'
+# The forms of the component name $1 that the template placeholders stand for (runtime/dev-component/README.md):
+# @component@ my-shop, @Title@ My Shop, @Class@ MyShop, @package@ myshop, @ID@ MY_SHOP. The Dev AIDE makes the same
+# (dev-aide src/template.rs).
+name_title() {
+    printf '%s\n' "$1" | awk -F'[-_]' -v sep="${2- }" '{
+        out = ""
+        for (i = 1; i <= NF; i++) if ($i != "") out = out (out == "" ? "" : sep) toupper(substr($i, 1, 1)) substr($i, 2)
+        print out
+    }'
+}
+name_class() { name_title "$1" ''; }
+name_package() { printf '%s\n' "$1" | tr -d '_-' | tr 'A-Z' 'a-z'; }
+name_id() { printf '%s\n' "$1" | tr 'a-z-' 'A-Z_'; }
+
+# Whether $1 can be a component name a template fills in: a letter, then letters, digits, '-' and '_', so each form is
+# a name in XML, a package and a URL.
+template_name() {
+    case $1 in
+        [A-Za-z]*) ;;
+        *) return 1 ;;
+    esac
+    case $1 in
+        *[!A-Za-z0-9_-]*) return 1 ;;
+    esac
+    return 0
 }
 
-sed_replacement_escape() {
-    printf '%s\n' "$1" | sed 's/[\/&]/\\&/g'
+# The directory of the template $1: one in runtime/dev-component or runtime/component whose component.xml is named
+# @component@.
+component_template() {
+    local dir
+    for dir in "$RUNTIME_DIR/dev-component/$1" "$RUNTIME_DIR/component/$1"; do
+        if [ -f "$dir/component.xml" ] && grep -q 'name="@component@"' "$dir/component.xml"; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The templates for --from completion.
+component_template_names() {
+    local dir
+    for dir in "$RUNTIME_DIR"/dev-component/*/ "$RUNTIME_DIR"/component/*/; do
+        grep -qs 'name="@component@"' "${dir}component.xml" && basename "$dir"
+    done
+}
+
+# The files a part leaves out of a new component, by their template paths: --rest has no screens, --screens no REST API.
+template_part_files() {
+    case $1 in
+        rest) printf '%s\n' screen MoquiConf.xml data/@Class@SecurityData.xml test/@Class@Screens.spec.js ;;
+        screens) printf '%s\n' service/@component@.rest.xml data/@Class@ApiSecurityData.xml test/@Class@Api.spec.js ;;
+    esac
 }
 
 task_component_create() {
-    local name='' from=start part='' remote='' no_git='' group='' element target file base new from_re name_rep branch
+    local name='' from=template part='' remote='' no_git='' group='' template target file dir base new branch
     local component_base=$RUNTIME_DIR/component
-    LOCATION_TYPE=$(default_location_type)
-    REPOSITORY=
     while [ $# -gt 0 ]; do
         case $1 in
             --dev) component_base=$RUNTIME_DIR/dev-component ;;
             --from)
-                [ $# -ge 2 ] || die "--from needs a component name"
+                [ $# -ge 2 ] || die "--from needs a template name"
                 from=$2
                 shift
                 ;;
             --rest) part=rest ;;
             --screens) part=screens ;;
-            -r | --repo)
-                [ $# -ge 2 ] || die "$1 needs a repository"
-                REPOSITORY=$2
-                shift
-                ;;
-            --repo=*) REPOSITORY=${1#--repo=} ;;
             --git-remote)
                 [ $# -ge 2 ] || die "--git-remote needs a URL"
                 remote=$2
@@ -3067,11 +3092,6 @@ task_component_create() {
                 group=$2
                 shift
                 ;;
-            -t | --type)
-                [ $# -ge 2 ] || die "$1 needs a type"
-                LOCATION_TYPE=$2
-                shift
-                ;;
             -*) die "unknown option $1" ;;
             *)
                 [ -z "$name" ] || die "component-create takes one component name"
@@ -3081,49 +3101,49 @@ task_component_create() {
         shift
     done
     [ -n "$name" ] || die "component-create needs a component name"
-    valid_name "$name" || die "component name '$name' may use only letters, digits, '.', '_' and '-'"
+    template_name "$name" || die "component name '$name' starts with a letter and has letters, digits, '-' and '_'"
     [ -z "$remote" ] || [ -z "$no_git" ] || die "--git-remote and --no-git do not go together"
-    check_location_type "$LOCATION_TYPE"
-    require_addons
+    template=$(component_template "$from") \
+        || die "no template $from in runtime/dev-component or runtime/component (a component.xml named @component@)"
     target=$component_base/$name
     [ ! -e "$target" ] || die "$(rel "$target") already exists"
-    element=$(addons_find component "$from") || die "template component $from is not in myaddons.xml or addons.xml"
-    run_cmd mkdir -p "$component_base"
-    download_component "$from" "$LOCATION_TYPE" "$element" "$target"
+    # The template's contents, so a template reached through a link is copied and not the link.
+    run_cmd mkdir -p "$target"
+    run_cmd cp -R "$template/." "$target" || die "could not copy $(rel "$template") to $(rel "$target")"
     if dry_run; then
-        info "(dry run: renaming $from to $name in $(rel "$target") is skipped)"
+        info "(dry run: filling in the placeholders in $(rel "$target") is skipped)"
         return 0
     fi
-    rm -rf "$target/.git" "$target/src" "$target/build.gradle"
+    rm -rf "$target/.git"
+    while IFS= read -r file; do
+        rm -rf "${target:?}/$file"
+    done < <(template_part_files "$part")
 
-    # Files named <from>*, deepest first so a renamed directory does not move a file still to be renamed.
+    local title class package id
+    title=$(name_title "$name")
+    class=$(name_class "$name")
+    package=$(name_package "$name")
+    id=$(name_id "$name")
+    # Contents first, then the names, deepest first so a renamed directory does not move a file still to be renamed.
     while IFS= read -r file; do
-        base=$(basename "$file")
-        new=$(dirname "$file")/$name${base#"$from"}
-        mv "$file" "$new"
-    done < <(find "$target" -depth -type f -name "$from*")
-    from_re=$(sed_regex_escape "$from")
-    name_rep=$(sed_replacement_escape "$name")
-    while IFS= read -r file; do
-        sed "s/$from_re/$name_rep/g" "$file" >"$file.moq-tmp" && cat "$file.moq-tmp" >"$file"
+        sed -e "s/@component@/$name/g" -e "s/@Title@/$title/g" -e "s/@Class@/$class/g" -e "s/@package@/$package/g" \
+            -e "s/@ID@/$id/g" "$file" >"$file.moq-tmp" && cat "$file.moq-tmp" >"$file"
         rm -f "$file.moq-tmp"
-    done < <(grep -rlIF -- "$from" "$target")
-
+    done < <(grep -rlI -e '@component@' -e '@Title@' -e '@Class@' -e '@package@' -e '@ID@' "$target")
+    while IFS= read -r file; do
+        dir=$(dirname "$file")
+        base=$(basename "$file")
+        new=$(printf '%s\n' "$base" | sed -e "s/@component@/$name/g" -e "s/@Class@/$class/g" \
+            -e "s/@package@/$package/g" -e "s/@ID@/$id/g")
+        mv "$file" "$dir/$new"
+    done < <(find "$target" -depth -name '*@*')
+    # The template's own disabled="true", which keeps it from loading as a component.
+    sed 's/ disabled="true"//' "$target/component.xml" >"$target/component.xml.moq-tmp" \
+        && cat "$target/component.xml.moq-tmp" >"$target/component.xml"
+    rm -f "$target/component.xml.moq-tmp"
     case $part in
-        rest)
-            rm -rf "$target/screen" "$target/template" "$target/data/AppSeedData.xml"
-            cat >"$target/MoquiConf.xml" <<'EOF'
-<?xml version="1.0" encoding="UTF-8" ?>
-<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
-</moqui-conf>
-EOF
-            info "REST API only: removed screen/, template/, and data/AppSeedData.xml"
-            ;;
-        screens)
-            rm -f "$target/services/$name.rest.xml" "$target/data/ApiSeedData.xml"
-            info "Screens only: removed services/$name.rest.xml and data/ApiSeedData.xml"
-            ;;
+        rest) info "REST API only: no screens" ;;
+        screens) info "Screens only: no REST API" ;;
     esac
 
     branch=master
@@ -3596,11 +3616,14 @@ save_names() {
 }
 
 # Names (from component.xml) of the components that have test/*.spec.js files.
+# Components with server specs, in runtime/base-component, runtime/component and runtime/dev-component; not a template,
+# whose name is a placeholder (runtime/dev-component/template).
 test_components() {
-    local d
-    for d in "$RUNTIME_DIR"/component/*/; do
-        compgen -G "${d}test/*.spec.js" >/dev/null || continue
-        sed -n 's/.*<component [^>]*name="\([^"]*\)".*/\1/p' "${d}component.xml" 2>/dev/null | head -1
+    local d name
+    for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
+        compgen -G "${d}test/*.spec.js" >/dev/null && [ -f "${d}component.xml" ] || continue
+        name=$(component_name_of "${d%/}")
+        case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
     done
 }
 
@@ -3619,8 +3642,8 @@ git_refs() {
 client_test_components() {
     local d
     for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
-        compgen -G "${d}test/client/*.spec.js" >/dev/null || continue
-        sed -n 's/.*<component [^>]*name="\([^"]*\)".*/\1/p' "${d}component.xml" 2>/dev/null | head -1
+        compgen -G "${d}test/client/*.spec.js" >/dev/null && [ -f "${d}component.xml" ] || continue
+        component_name_of "${d%/}"
     done
 }
 
@@ -3736,18 +3759,17 @@ complete_task() {
             ;;
         git-status) filter_prefix "$cur" -s --short ;;
         git-pull) filter_prefix "$cur" --rebase --ff-only --no-rebase ;;
-        component-get | component-set | component-depends | component-create)
+        component-get | component-depends | component-create)
             case $prev in
                 -t | --type) filter_prefix "$cur" git current release binary; return ;;
                 -r | --repo) filter_prefix "$cur" $(addons_names repository); return ;;
-                --from) filter_prefix "$cur" $(addons_names component); return ;;
+                --from) filter_prefix "$cur" $(component_template_names); return ;;
                 --git-remote | --myaddons) return ;;
             esac
             case $cur in
                 -*)
                     if [ "$task" = component-create ]; then
-                        filter_prefix "$cur" -t --type -r --repo --dev --from --rest --screens --git-remote --no-git \
-                            --myaddons
+                        filter_prefix "$cur" --dev --from --rest --screens --git-remote --no-git --myaddons
                     elif [ "$task" = component-get ]; then
                         filter_prefix "$cur" -t --type -r --repo --dev
                     else
@@ -3755,10 +3777,9 @@ complete_task() {
                     fi
                     ;;
                 *)
-                    case $task in
-                        component-get) filter_prefix "$cur" $(addons_names component) ;;
-                        component-set) filter_prefix "$cur" $(addons_names component-set) ;;
-                    esac
+                    if [ "$task" = component-get ]; then
+                        filter_prefix "$cur" $(addons_names component) $(addons_names component-set)
+                    fi
                     ;;
             esac
             ;;

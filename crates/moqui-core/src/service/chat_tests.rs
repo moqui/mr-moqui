@@ -20,7 +20,7 @@
 //! event by its eventSeq, the files and threads of a room, forwards, polls, link previews (through a stub of the page),
 //! read receipts by preference and @room, retention per room, the mentions of a record room's non-members, and the
 //! unread counts of one query each against the counts per room. The SQL on the real database and the
-//! search index are `runtime/base-component/example/test/Chat.spec.js`.
+//! search index are `runtime/dev-component/example/test/Chat.spec.js`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

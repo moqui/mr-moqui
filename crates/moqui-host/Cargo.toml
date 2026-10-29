@@ -129,8 +129,9 @@ dev-aide = { workspace = true }
 indexmap = { workspace = true }
 # The entity model the definition_speed test builds.
 moqui-db = { workspace = true }
-# The example component is on by default and its MoquiConf.xml selects a tool factory, so a test that boots the
-# repository runtime (tests/it, gate3, gate3_browser, search_logs_postgres) links the crate as the moqui binary does.
+# The example component (runtime/dev-component/example) loads on a dev instance and in the gate runtimes
+# (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
+# gate3_browser, search_logs_postgres) links the crate as the Dev binary does.
 example = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }

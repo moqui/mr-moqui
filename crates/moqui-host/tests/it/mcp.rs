@@ -852,7 +852,7 @@ fn the_dev_tools_over_mcp() {
         std::env::remove_var("MOQUI_LOGIN_KEY");
         let file = std::fs::canonicalize(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../runtime/base-component/example/entity/ExampleEntities.xml"
+            "/../../runtime/dev-component/example/entity/ExampleEntities.xml"
         ))
         .unwrap();
         let text = std::fs::read_to_string(&file).unwrap().replacen(

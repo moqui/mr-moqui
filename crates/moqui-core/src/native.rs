@@ -385,10 +385,12 @@ impl NativeRegistry {
             }
             nodes.sort();
             for (_, class) in nodes {
-                let constructor = self
-                    .tools
-                    .get(&class)
-                    .ok_or_else(|| Error::new(format!("tool-factory {class} is not linked")))?;
+                // A dev component's crate is linked only into the packages with the dev tools, so a Lite or Maximal
+                // binary on the dev conf has its component and not its tool factory (AGENTS.md: failure tolerance).
+                let Some(constructor) = self.tools.get(&class) else {
+                    tracing::error!("Leaving out tool-factory {class}: it is not linked into this binary");
+                    continue;
+                };
                 factory.native_tools.add(constructor(), factory)?;
             }
         }

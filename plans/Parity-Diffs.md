@@ -194,7 +194,7 @@ Behaviour changes made when the [Code-Quality-Review](archive/Code-Quality-Revie
 
 ## Gallery fixes (2026-10-18)
 
-Defects the screen archetype gallery (`runtime/base-component/example/screen/Gallery/`) found in the qvt render mode and the script runtime; these fixes differ from Java on purpose. The last three rows are gallery findings F4 and F28, fixed after the gallery commit.
+Defects the screen archetype gallery (`runtime/dev-component/example/screen/Gallery/`) found in the qvt render mode and the script runtime; these fixes differ from Java on purpose. The last three rows are gallery findings F4 and F28, fixed after the gallery commit.
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The services of @Title@, called as @package@.@Class@Services.<verb>#<noun> by the screens, the REST API and
+    the specs. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="create" noun="Item">
+        <description>Create an item. The name is required.</description>
+        <in-parameters>
+            <auto-parameters entity-name="@package@.@Class@Item" include="nonpk"/>
+            <parameter name="itemName" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="itemId"/></out-parameters>
+        <actions>
+            <service-call name="create#@package@.@Class@Item" in-map="context" out-map="context"/>
+        </actions>
+    </service>
+
+    <service verb="update" noun="Item">
+        <description>Change an item's name or description; a field that is not passed stays as it is.</description>
+        <in-parameters>
+            <auto-parameters entity-name="@package@.@Class@Item" include="pk" required="true"/>
+            <auto-parameters entity-name="@package@.@Class@Item" include="nonpk"/>
+        </in-parameters>
+        <actions>
+            <entity-find-one entity-name="@package@.@Class@Item" value-field="item"/>
+            <if condition="!item"><return error="true" message="No item ${itemId}"/></if>
+            <service-call name="update#@package@.@Class@Item" in-map="context"/>
+        </actions>
+    </service>
+</services>

@@ -158,7 +158,10 @@ fn write_screen(name: &str, body: &str) -> PathBuf {
 
 #[test]
 fn screen_trees_have_no_parse_failures() {
-    let roots = [workspace("runtime/base-component")];
+    let roots = [
+        workspace("runtime/base-component"),
+        workspace("runtime/dev-component/example"),
+    ];
     let report = lint_screens(&roots).unwrap();
     assert!(report.files.len() > 100, "{} files", report.files.len());
     assert!(report.site_count() > 1000, "{} sites", report.site_count());

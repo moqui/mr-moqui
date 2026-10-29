@@ -193,6 +193,18 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restart" type="Boolean"/>
         </out-parameters>
     </service>
+    <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
+        <description>A component from the component template (runtime/dev-component/template), in runtime/component, or runtime/dev-component with dev, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true"/>
+            <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="dev" type="Boolean"><description>In runtime/dev-component, loaded only on a dev instance</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="restart" type="Boolean"/>
+        </out-parameters>
+    </service>
     <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">
         <description>The files of a root this user has open, on a shared dev server told to the other users; answers the root's other editors.</description>
         <in-parameters>

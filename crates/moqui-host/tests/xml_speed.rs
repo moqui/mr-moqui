@@ -143,6 +143,8 @@ fn record_elements(count: usize) -> Vec<String> {
         .collect()
 }
 
+/// The XML files under `dir`, but not the component template's, whose placeholders (`<@package@.@Class@Item>`) are not
+/// XML names.
 fn collect_xml(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -150,6 +152,9 @@ fn collect_xml(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.ends_with("dev-component/template") {
+                continue;
+            }
             collect_xml(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "xml") {
             out.push(path);

@@ -29,7 +29,7 @@ suffix, read that version, as Java's `getLocationText` does. A suffix on storage
 in `<del>` and `<ins>`, and every text escaped (with `{` written as `&#123;`, so a qvt screen's Vue compile reads no
 interpolation in it). The `moqui-diff` rules in the webroot CSS style it in light and dark. Put it in a screen with
 `<render-mode><text type="html,qvt"><![CDATA[${diff.html}]]></text></render-mode>`; the gallery's Editor screen
-(`runtime/base-component/example/screen/Gallery/Editor.xml`) and mr-marble's `WikiCompare` do. The diff is
+(`runtime/dev-component/example/screen/Gallery/Editor.xml`) and mr-marble's `WikiCompare` do. The diff is
 Patience over lines, with three lines of context ([`similar`](https://crates.io/crates/similar)); Rust code calls
 `ResourceFacade::version_diff` or `crate::resource::textdiff`.
 
@@ -417,7 +417,7 @@ screen, loaded as `/<name>/<token>.qvt` (or `.qvue`, `.qjs`, by the screen's ren
 under `/<name>/<token>/`. The screen's context has `token` and `tokenRoute` (`{name, token, basePath, title,
 context}`); a request parameter of either name is replaced. A route named as a framework path (`apps`, `qapps`, `rest`,
 ...) is left out, and a component's route of the same name replaces an earlier one. The services a public screen calls
-check the token again. `runtime/base-component/example/screen/PublicLink.xml` is a minimal route screen.
+check the token again. `runtime/dev-component/example/screen/PublicLink.xml` is a minimal route screen.
 
 A `POST` to `/<name>/<token>` itself is the shell page, as a `GET` is, unless the route has a `post-transition`: then,
 after the token check, it runs that transition of the route's screen, as a `POST` to `/<name>/<token>/<transition>`

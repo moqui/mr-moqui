@@ -406,12 +406,18 @@ mod tests {
         assert!(Doc::parse("<a>").is_err());
     }
 
-    /// Every XML file of the framework and the components scans with no gaps or overlaps.
+    /// Every XML file of the framework and the components scans with no gaps or overlaps. Not the component template,
+    /// whose placeholders (`<@package@.@Class@Item>`) are not XML names.
     #[test]
     fn the_corpus_scans_byte_exact() {
         let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        let template = runtime.join("dev-component/template");
         let mut files = Vec::new();
-        let mut stack = vec![runtime.join("base-component"), runtime.join("component")];
+        let mut stack = vec![
+            runtime.join("base-component"),
+            runtime.join("component"),
+            runtime.join("dev-component"),
+        ];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
@@ -421,7 +427,7 @@ mod tests {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if path.is_dir() {
-                    if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    if !name.starts_with('.') && name != "target" && name != "node_modules" && path != template {
                         stack.push(path);
                     }
                 } else if name.ends_with(".xml") || name.ends_with(".xsd") {

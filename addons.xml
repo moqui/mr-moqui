@@ -1,8 +1,9 @@
 <addons>
     <!--
-    Components known to work with MR Moqui, for the ./moq component-get, component-set, component-depends, and
-    component-create tasks. To add or override repository, component, and component-set elements, and to set the
-    default="a,b" components that component-get gets with no names, use a myaddons.xml file (not in git).
+    Components known to work with MR Moqui, for the ./moq component-get and component-depends tasks; component-get
+    also takes a component-set name. To add or override repository, component, and component-set elements, and to set
+    the default="a,b" components that component-get gets with no names, use a myaddons.xml file (not in git).
+    ./moq component-create makes a new component from runtime/dev-component/template, not from here.
 
     Location urls fill in ${group}, ${name}, ${branch}, ${version}, and ${token} from the component element. The Java
     Moqui form ${component.'@group'} also works, so a Java myaddons.xml can be copied as it is.
@@ -42,9 +43,6 @@
         <location type="git" url="https://x-token-auth:${token}@bitbucket.org/${group}/${name}.git"/>
     </repository>
 
-    <!-- Template for ./moq component-create; still the Java Moqui start component -->
-    <component name="start" group="moqui" version="" branch="master"/>
-
     <!-- Mantle Business Artifacts, the data model and services (no MR Moqui releases yet) -->
     <component name="mr-mantle" group="moqui" version="" branch="master"/>
     <!-- Applications -->
@@ -55,5 +53,5 @@
     <component name="mr-l10n" group="moqui" version="" branch="master"/>
 
     <!-- Component Sets -->
-    <component-set name="apps" components="mr-marble,mr-boss"/>
+    <component-set name="apps" components="mr-marble,mr-boss,mr-pass"/>
 </addons>

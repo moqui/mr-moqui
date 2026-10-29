@@ -18,7 +18,7 @@ fn monitoring_and_migrated_screens_have_valid_native_expressions() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let report = moqui_core::script::screen_lint::lint_screens(&[
         root.join("runtime/base-component/tools/screen"),
-        root.join("runtime/base-component/example/screen/Gallery"),
+        root.join("runtime/dev-component/example/screen/Gallery"),
     ])
     .unwrap();
     assert!(report.failures().is_empty(), "{}", report.failures().join("\n"));

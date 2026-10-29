@@ -134,7 +134,7 @@ parameters, so the canvas shows the record the user was looking at.
 The rail on the left switches the side panel: Files, Search, Changes, Artifacts, Tasks.
 
 **A change, start to end.** On a site whose site component is `my-site` (D17), a user looking at an example in the
-gallery's `ExampleDetail` (`runtime/base-component/example/screen/Gallery/ExampleDetail.xml`, an upstream screen) opens
+gallery's `ExampleDetail` (`runtime/dev-component/example/screen/Gallery/ExampleDetail.xml`, an upstream screen) opens
 Assist from "Customize this screen" (the `dev` agent, picked by default on dev-aide pages) and asks: "Add a due date to
 examples and show it after Ends."
 
@@ -235,8 +235,9 @@ loads in about 5 ms (Performance-Implementation), so relinking the whole model o
 - **Dependencies.** A component that loads on every purpose may not depend on a dev-only one: discovery logs an error
   naming both and leaves the dependent out (the others go on). A dev component may depend on any.
 - **The directory.** `runtime/dev-component` is a component directory as `runtime/component` is. The framework's own
-  dev components are tracked in this repository, as base-component's are: the dev-aide first, more later, each named in
-  `.gitignore` as an exception to `/runtime/dev-component/*` (`!/runtime/dev-component/dev-aide/`). A user's own dev
+  dev components are tracked in this repository, as base-component's are: the dev-aide, the example component and the
+  component template, each named in `.gitignore` as an exception to `/runtime/dev-component/*`
+  (`!/runtime/dev-component/dev-aide/`). A user's own dev
   components sit beside them in repositories of their own, which this repository ignores as it ignores
   `runtime/component`. `./moq`'s component tasks take `--dev` to work there (`component-get --dev`,
   `component-create --dev`), and `git`, `git-status` and `git-pull` include its repositories.
@@ -1002,7 +1003,7 @@ parameter validation".
   dynamic-dialog, a button-menu, a status-bar, a number-card, a chart. A new screen starts from one of the style
   guide's archetypes (`boss/plan/style-guide.md` §3: Landing, List, Detail, 360, Task, Board, Calendar, Split, Settings,
   Wizard, Dialog, Report, Editor, Panel, Tree list), as the gallery shows them
-  (`runtime/base-component/example/screen/Gallery/`).
+  (`runtime/dev-component/example/screen/Gallery/`).
 - **Forms**: a field's place on screen comes from the form's `field-layout` when it has one, so moving a field moves
   its `field-ref` (or a list's `form-list-column`), and adding a field to such a form adds its `field-ref` too; without
   a layout it is the order of the `field` elements. A form merge from a `screen-extend` does the same through F16's
@@ -1754,6 +1755,17 @@ between the phases. Fixed:
 Still open: there is no CI, so the Windows checks of P1a and §19 run nowhere; the restart's re-exec has no test; P4's
 live-model run has not been run; the card's summary from a patch has no page test; the `.qvue` Design canvas renders
 the `.qvue` buffer, not an unsaved sibling XML.
+
+**New components from the component template** (Oct 29, 2026), §12's App and REST API kinds, with these differences:
+
+- **One template for both.** The App and REST API kinds come from `runtime/dev-component/template`, a component with
+  placeholders (`@component@`, `@Title@`, `@Class@`, `@package@`, `@ID@`) and `disabled="true"` so it never loads, not
+  from the dev-aide's `template/`. `./moq component-create` and Home's New component (`create#Component`,
+  `src/template.rs`) copy it the same way, with a part (screens and REST API, screens only, REST API only) and `--dev`;
+  a dev-aide test makes each part both ways and compares them file for file. The rules are in
+  `runtime/dev-component/README.md`. The Site template stays the dev-aide's.
+- **Not built:** the optional remote (git init only, as for a site), and the data only, native, theme, skill pack and
+  dev tool kinds.
 
 ---
 
