@@ -21,6 +21,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::iter::once;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -38,15 +39,18 @@ pub enum Lookup {
     Context,
 }
 
+/// The frames of one context: the top one, and those below it root first. A frame is `None` until something is put
+/// in it.
+#[derive(Clone)]
 struct Saved {
-    frames: Vec<Option<Frame>>,
-    index: usize,
+    top: Option<Frame>,
+    below: Vec<Option<Frame>>,
 }
 
 /// A context stack. It is not `Sync`: one execution context owns it.
 pub struct ContextStack {
-    frames: Vec<Option<Frame>>,
-    index: usize,
+    top: Option<Frame>,
+    below: Vec<Option<Frame>>,
     shared: Frame,
     saved: Vec<Saved>,
     include_context: bool,
@@ -59,9 +63,9 @@ impl ContextStack {
 
     pub fn with_include_context(include_context: bool) -> Self {
         Self {
-            frames: vec![None],
-            index: 0,
-            shared: Rc::new(RefCell::new(IndexMap::new())),
+            top: None,
+            below: Vec::new(),
+            shared: Frame::default(),
             saved: Vec::new(),
             include_context,
         }
@@ -69,9 +73,8 @@ impl ContextStack {
 
     /// The entries of the top frame only, the map the last [`Self::push`] began.
     pub fn top_entries(&self) -> IndexMap<String, Value> {
-        self.frames
-            .last()
-            .and_then(Option::as_ref)
+        self.top
+            .as_ref()
             .map(|frame| frame.borrow().clone())
             .unwrap_or_default()
     }
@@ -82,16 +85,14 @@ impl ContextStack {
     }
 
     pub fn push(&mut self) {
-        self.index += 1;
-        self.frames.push(None);
+        self.below.push(self.top.take());
     }
 
     pub fn push_map(&mut self, map: Frame) -> Result<(), Error> {
         if self.include_context && map.borrow().contains_key("context") {
             return Err(Error::new("cannot push a map containing key 'context'"));
         }
-        self.index += 1;
-        self.frames.push(Some(map));
+        self.below.push(self.top.replace(map));
         Ok(())
     }
 
@@ -101,48 +102,41 @@ impl ContextStack {
 
     /// Remove the top frame. The last frame cannot be popped.
     pub fn pop(&mut self) -> Result<Option<Frame>, Error> {
-        if self.index == 0 {
+        let Some(next) = self.below.pop() else {
             return Err(Error::new("ContextStack is empty, cannot pop the context"));
-        }
-        let frame = self.frames.pop().flatten();
-        self.index -= 1;
-        Ok(frame)
+        };
+        Ok(std::mem::replace(&mut self.top, next))
     }
 
     /// The saved contexts and the frames pushed on the current one: a mark for [`Self::truncate`].
     pub fn depth(&self) -> (usize, usize) {
-        (self.saved.len(), self.index)
+        (self.saved.len(), self.below.len())
     }
 
     /// Pop the frames pushed on the current context since `depth` was read. Nothing changes when a different context
     /// is current than then.
     pub fn truncate(&mut self, depth: (usize, usize)) {
-        let (saved, index) = depth;
+        let (saved, below) = depth;
         if self.saved.len() != saved {
             return;
         }
-        while self.index > index {
-            self.frames.pop();
-            self.index -= 1;
-        }
+        while self.below.len() > below && self.pop().is_ok() {}
     }
 
     /// Save the whole stack and start an isolated empty one.
     pub fn push_context(&mut self) {
         self.saved.push(Saved {
-            frames: self.frames.clone(),
-            index: self.index,
+            top: self.top.take(),
+            below: std::mem::take(&mut self.below),
         });
-        self.frames = vec![None];
-        self.index = 0;
     }
 
     pub fn pop_context(&mut self) -> Result<(), Error> {
         let Some(saved) = self.saved.pop() else {
             return Err(Error::new("cannot pop context, no context pushed"));
         };
-        self.frames = saved.frames;
-        self.index = saved.index;
+        self.top = saved.top;
+        self.below = saved.below;
         Ok(())
     }
 
@@ -150,23 +144,17 @@ impl ContextStack {
         if self.include_context && map.borrow().contains_key("context") {
             return Err(Error::new("cannot push a map containing key 'context'"));
         }
-        self.frames.insert(0, Some(map));
-        self.index += 1;
+        self.below.insert(0, Some(map));
         Ok(())
     }
 
     pub fn root_map(&self) -> Option<Frame> {
-        self.frames.first().and_then(Clone::clone)
+        self.below.first().unwrap_or(&self.top).clone()
     }
 
     pub fn get(&self, key: &str) -> Lookup {
-        for frame in self.frames[..=self.index].iter().rev() {
-            let Some(frame) = frame else {
-                continue;
-            };
-            if let Some(value) = frame.borrow().get(key) {
-                return Lookup::Value(value.clone());
-            }
+        if let Some(value) = self.with_value(key, Value::clone) {
+            return Lookup::Value(value);
         }
         if self.include_context && key == "context" {
             Lookup::Context
@@ -178,7 +166,7 @@ impl ContextStack {
     /// `read` of the value `key` resolves to, in place without the copy [`Self::get`] makes. `None` when no frame holds
     /// it (`context`, or a missing name). The stack stays borrowed while `read` runs.
     pub fn with_value<R>(&self, key: &str, read: impl FnOnce(&Value) -> R) -> Option<R> {
-        for frame in self.frames[..=self.index].iter().rev().flatten() {
+        for frame in self.top_down() {
             if let Some(found) = frame.borrow().get(key) {
                 return Some(read(found));
             }
@@ -188,12 +176,7 @@ impl ContextStack {
 
     /// Whether `key` resolves to a value equal to `value`, compared in place without the copy [`Self::get`] makes.
     pub fn holds(&self, key: &str, value: &Value) -> bool {
-        for frame in self.frames[..=self.index].iter().rev().flatten() {
-            if let Some(found) = frame.borrow().get(key) {
-                return found == value;
-            }
-        }
-        false
+        self.with_value(key, |found| found == value).unwrap_or(false)
     }
 
     pub fn put(&mut self, key: impl Into<String>, value: Value) -> Result<Option<Value>, Error> {
@@ -201,15 +184,13 @@ impl ContextStack {
         if self.include_context && key == "context" {
             return Err(Error::new("cannot put with key 'context'"));
         }
-        let frame = self.top_frame();
-        let previous = frame.borrow_mut().insert(key, value);
-        Ok(previous)
+        Ok(self.top_frame().borrow_mut().insert(key, value))
     }
 
     /// Replace `key` in the nearest frame that holds it, so a callee's change to a caller's
     /// list stays with the caller. Returns false and stores nothing when no frame holds it.
     pub fn put_existing(&mut self, key: &str, value: Value) -> bool {
-        for frame in self.frames[..=self.index].iter().rev().flatten() {
+        for frame in self.top_down() {
             if frame.borrow().contains_key(key) {
                 frame.borrow_mut().insert(key.to_string(), value);
                 return true;
@@ -219,40 +200,32 @@ impl ContextStack {
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        self.frames
-            .get(self.index)
-            .and_then(Option::as_ref)
-            .and_then(|frame| frame.borrow_mut().shift_remove(key))
+        self.top.as_ref().and_then(|frame| frame.borrow_mut().shift_remove(key))
     }
 
     pub fn put_all(&mut self, map: &IndexMap<String, Value>) -> Result<(), Error> {
         if self.include_context && map.contains_key("context") {
             return Err(Error::new("cannot push a map containing key 'context'"));
         }
-        let frame = self.top_frame();
-        frame
+        self.top_frame()
             .borrow_mut()
             .extend(map.iter().map(|(key, value)| (key.clone(), value.clone())));
         Ok(())
     }
 
     pub fn clear(&mut self) {
-        if let Some(frame) = self.frames.get(self.index).and_then(Option::as_ref) {
+        if let Some(frame) = &self.top {
             frame.borrow_mut().clear();
         }
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
-        self.frames[..=self.index]
-            .iter()
-            .rev()
-            .flatten()
-            .any(|frame| frame.borrow().contains_key(key))
+        self.top_down().any(|frame| frame.borrow().contains_key(key))
     }
 
     pub fn contains_value(&self, value: &Value) -> bool {
         let mut seen = HashSet::new();
-        for frame in self.frames[..=self.index].iter().rev().flatten() {
+        for frame in self.top_down() {
             for (key, entry) in frame.borrow().iter() {
                 if !seen.insert(key.clone()) {
                     continue;
@@ -266,10 +239,7 @@ impl ContextStack {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.frames[..=self.index]
-            .iter()
-            .flatten()
-            .all(|frame| frame.borrow().is_empty())
+        self.top_down().all(|frame| frame.borrow().is_empty())
     }
 
     pub fn len(&self) -> usize {
@@ -278,7 +248,7 @@ impl ContextStack {
 
     pub fn key_set(&self) -> HashSet<String> {
         let mut keys = HashSet::new();
-        for frame in self.frames[..=self.index].iter().rev().flatten() {
+        for frame in self.top_down() {
             for key in frame.borrow().keys() {
                 keys.insert(key.clone());
             }
@@ -289,7 +259,7 @@ impl ContextStack {
     /// The visible keys in the order of [`Self::combined_map`], without copying the values.
     pub fn combined_keys(&self) -> Vec<String> {
         let mut keys = IndexMap::new();
-        for frame in self.frames[..=self.index].iter().flatten() {
+        for frame in self.root_first() {
             for key in frame.borrow().keys() {
                 keys.insert(key.clone(), ());
             }
@@ -300,7 +270,7 @@ impl ContextStack {
     /// Root first, so a higher frame overrides a lower one.
     pub fn combined_map(&self) -> IndexMap<String, Value> {
         let mut combined = IndexMap::new();
-        for frame in self.frames[..=self.index].iter().flatten() {
+        for frame in self.root_first() {
             for (key, value) in frame.borrow().iter() {
                 combined.insert(key.clone(), value.clone());
             }
@@ -311,23 +281,27 @@ impl ContextStack {
     /// Shallow copy: the frame maps are shared, the shared map is copied.
     pub fn clone_stack(&self) -> Self {
         Self {
-            frames: self.frames.clone(),
-            index: self.index,
+            top: self.top.clone(),
+            below: self.below.clone(),
             shared: Rc::new(RefCell::new(self.shared.borrow().clone())),
-            saved: self
-                .saved
-                .iter()
-                .map(|saved| Saved {
-                    frames: saved.frames.clone(),
-                    index: saved.index,
-                })
-                .collect(),
+            saved: self.saved.clone(),
             include_context: self.include_context,
         }
     }
 
-    fn top_frame(&mut self) -> Frame {
-        Rc::clone(self.frames[self.index].get_or_insert_with(|| Rc::new(RefCell::new(IndexMap::new()))))
+    /// The frames that hold something, from the top down: the order of a lookup.
+    fn top_down(&self) -> impl Iterator<Item = &Frame> {
+        once(&self.top).chain(self.below.iter().rev()).flatten()
+    }
+
+    /// The frames that hold something, root first.
+    fn root_first(&self) -> impl Iterator<Item = &Frame> {
+        self.below.iter().chain(once(&self.top)).flatten()
+    }
+
+    /// The top frame, made on the first write.
+    fn top_frame(&mut self) -> &Frame {
+        self.top.get_or_insert_with(Frame::default)
     }
 }
 
@@ -373,7 +347,7 @@ mod tests {
     fn pushed_map_is_shared_and_push_context_isolates() {
         let mut stack = ContextStack::new();
         stack.put("a", Value::I32(1)).unwrap();
-        let frame = Rc::new(RefCell::new(IndexMap::new()));
+        let frame = Frame::default();
         stack.push_map(Rc::clone(&frame)).unwrap();
         stack.put("b", Value::I32(2)).unwrap();
         assert_eq!(frame.borrow().get("b"), Some(&Value::I32(2)));
