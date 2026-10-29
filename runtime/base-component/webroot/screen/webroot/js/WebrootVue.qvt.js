@@ -2603,7 +2603,13 @@
                 '<template v-slot:no-option><q-item><q-item-section class="text-grey">No results</q-item-section></q-item></template>' +
                 '<template v-if="$slots.after" v-slot:after><slot name="after"></slot></template>' +
             '</q-select>',
-        watch: { options(list) { this.curOptions = list; this.allOptions = list; } },
+        watch: { options(list) {
+            // A parent form render can recreate its empty initial-options array. The remote search owns
+            // its loaded pages; do not discard them when that unchanged seed is rendered again.
+            if (this.serverSearch && this.optionsUrl) {
+                if (list && list.length) this.setNewOptions(list);
+            } else { this.curOptions = list; this.allOptions = list; }
+        } },
         methods: {
             handleInput(value) {
                 if (this.onSelectGoTo && this.onSelectGoTo.length) {
@@ -2683,6 +2689,13 @@
                     this.modelValue.forEach((curValue) => this.allOptions.forEach((curOption) => { if (curValue === curOption.value) all.push(curOption); }));
                     this.allOptions = all;
                 } else {
+                    // Search pages need not contain the selected row. Keep its authorized label until the
+                    // user clears it; dependency changes already clear modelValue before fetching again.
+                    if (this.serverSearch && this.modelValue && this.allOptions) {
+                        const selected = this.allOptions.find((option) => option.value === this.modelValue);
+                        if (selected && !options.some((option) => option.value === selected.value)) options = options.concat([selected]);
+                    }
+                    this.curOptions = options;
                     this.allOptions = options;
                     this.checkCurrentValue(this.allOptions);
                 }

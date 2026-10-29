@@ -3,7 +3,7 @@ spec({ server: false, timeout: 60 })
 
 const states = "[{value:'AL',label:'Alabama'},{value:'AK',label:'Alaska'},{value:'AZ',label:'Arizona'}]"
 
-function mount(template, data) {
+function mount(template, data, setup = "") {
     const page = browser.newPage({ viewport: { width: 1200, height: 900 } })
     page.setContent(`<!doctype html><html><head>
         <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
@@ -14,6 +14,7 @@ function mount(template, data) {
         <script src="/js/MoquiL10n.js"></script>
         <script src="/js/WebrootVue.qvt.js"></script>
         <script>
+        ${setup}
         const app = Vue.createApp({ data() { return ${JSON.stringify(data)}; }, template: ${JSON.stringify(template)} });
         app.use(Quasar);
         Object.keys(moqui.qvt.components).forEach((name) => app.component(name, moqui.qvt.components[name]));
@@ -95,5 +96,24 @@ feature("date keys step an m-date-time input; its q-date and q-time keep their o
         assert.equal(shiftH, "2026-10-25 23:05")
         assert.ok(dOnEmptyTime === "" || dOnEmptyTime === "__:__", dOnEmptyTime)
         assert.equal(tTime, true)
+    },
+})
+
+feature("remote choices retain a selection through form renders and search pages, and clear it for changed dependencies", {
+    expect() {
+        const page = mount(`<div><m-drop-down id="remote" name="remote" v-model="fields.one" allow-empty server-search :server-min-length="0"
+            options-url="/choices" :options="[]" :fields="fields" :depends-on="{organization:'organization'}"></m-drop-down>
+            <input id="reason" v-model="fields.reason"><input id="organization" v-model="fields.organization"></div>`,
+            { fields: { one: null, reason: "", organization: "first" } },
+            `moqui.request = (url, init) => Promise.resolve({json: String(init.params.term || '').includes('Z') ? [{value:'Z',label:'Zebra'}] : [{value:'A',label:'Alpha'}]});`)
+        page.locator("#remote").fill("Zebra")
+        page.getByRole("option", {name:"Zebra",exact:true}).click()
+        page.locator("#reason").fill("Reviewed selection")
+        page.waitFor(()=>window.vm.fields.one === "Z")
+        page.locator("#remote").fill("Alpha")
+        page.getByRole("option", {name:"Alpha",exact:true}).waitFor()
+        assert.equal(page.evaluate(()=>window.vm.fields.one),"Z")
+        page.locator("#organization").fill("second")
+        page.waitFor(()=>window.vm.fields.one === null)
     },
 })
