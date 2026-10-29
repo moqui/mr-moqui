@@ -45,8 +45,8 @@ imap = ["moqui-core/imap"]
 git = ["moqui-core/git"]
 image = ["moqui-core/image"]
 xlsx = ["moqui-core/xlsx"]
-# The agents and the model providers (moqui_core::llm).
-llm = ["moqui-core/llm"]
+# The agents and the model providers (crates/moqui-llm).
+llm = ["dep:moqui-llm"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
@@ -66,6 +66,7 @@ test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex"]
 # certificate; the other core features follow the host's own.
 moqui-core = { workspace = true, features = ["http", "cluster-tls"] }
 moqui-lib = { workspace = true, features = ["http"] }
+moqui-llm = { workspace = true, optional = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }

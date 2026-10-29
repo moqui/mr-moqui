@@ -17,11 +17,11 @@
 //! whether it is the site's or upstream. Files are confined to the Workspace's roots as the editor's are.
 
 use moqui_core::devtools::index;
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use moqui_lib::xml_edit::{Doc, Kind};
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
 use super::{arg, context, file};
@@ -207,7 +207,7 @@ pub(crate) fn outline(text: &str, depth: usize) -> Vec<String> {
     lines
 }
 
-moqui_core::submit_tool!(SourceTool);
+moqui_llm::submit_tool!(SourceTool);
 
 #[cfg(test)]
 mod tests {

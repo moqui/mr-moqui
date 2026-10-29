@@ -359,8 +359,9 @@
         },
         mounted() {
             this.pick();
-            this.ctx.onSaved(() => this.load(this.name));
+            this.offSaved = this.ctx.onSaved(() => this.load(this.name));
         },
+        beforeUnmount() { if (this.offSaved) this.offSaved(); },
         watch: { outline() { if (!this.name) this.pick(); } },
         methods: {
             prefixOf() {
@@ -376,7 +377,7 @@
             },
             load(name) {
                 this.name = name;
-                try { this.values = JSON.parse(root.localStorage.getItem(this.storageKey) || "{}"); } catch (err) { this.values = {}; }
+                this.values = devAide.store.get(this.storageKey) || {};
                 return this.ctx.get("serviceView", { serviceName: name }).then((answer) => { this.view = answer.view; this.error = ""; },
                     (error) => { this.error = pure.errorText(error); });
             },
@@ -401,21 +402,15 @@
             },
             // ---- SECA rules: Add writes into the site's secas file (D17) ----
             addSeca() {
-                const site = this.view && this.view.site;
-                if (!site) { this.ctx.note("Create a site component on Home first", "warning"); return; }
-                const roots = this.ctx.roots || [];
-                const rootItem = roots.find((item) => (item.components || []).some((component) => component.site && component.name === site));
-                const component = rootItem && rootItem.components.find((item) => item.name === site);
-                if (!component) return;
-                const klass = site.split(/[-_]/).filter((part) => part).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
-                const path = (component.path ? component.path + "/" : "") + "service/" + klass + ".secas.xml";
-                this.ctx.companion(rootItem.id, path, ops.SECAS_TEXT).then((buffer) => {
+                const file = this.view && this.view.secasFile;
+                if (!file) { this.ctx.note("Create a site component on Home first", "warning"); return; }
+                this.ctx.companion(file.rootId, file.path, ops.SECAS_TEXT).then((buffer) => {
                     this.secas = buffer;
                     return this.ctx.apply(ops.addRule(buffer.outline, ops.secaXml(this.name, "post-service")), buffer);
                 }).catch((error) => this.ctx.fail(error));
             },
             // ---- Try (9.4) ----
-            remember() { try { root.localStorage.setItem(this.storageKey, JSON.stringify(this.values)); } catch (err) { /* no storage */ } },
+            remember() { devAide.store.set(this.storageKey, this.values); },
             runTry(real) {
                 if (real) {
                     this.$q.dialog({ title: "Run " + this.name + " for real?", message: "What it writes is kept.", cancel: true, ok: { label: "Run", color: "negative" } })
@@ -430,7 +425,7 @@
                     this.trying = false;
                     this.result = Object.assign({ parameters }, answer.result || {});
                     // the last Try, which a rule's condition is tried against (10)
-                    try { root.localStorage.setItem("moqui.devAide.tryResult." + this.name, JSON.stringify({ parameters, out: this.result.out || {} })); } catch (err) { /* no storage */ }
+                    devAide.store.set("moqui.devAide.tryResult." + this.name, { parameters, out: this.result.out || {} });
                 }, (error) => { this.trying = false; this.ctx.fail(error); });
             },
             saveSpec() {
@@ -595,7 +590,7 @@
             canEdit() { return this.ctx.canWrite; }
         },
         mounted() {
-            this.ctx.get("schema", { rootElement: this.outline ? this.outline.name : "secas" }).then((answer) => { this.schema = answer.digest || null; }, () => {});
+            this.ctx.schema(this.outline ? this.outline.name : "secas").then((digest) => { this.schema = digest; });
             const line = Number(this.tab.line) || 0;
             const at = line ? this.rules.find((node) => node.line === line) : null;
             if (at) this.selected = at.path;
@@ -632,8 +627,7 @@
             // record of an EECA's entity)
             defaultContext() {
                 const service = this.rule ? attrOf(this.rule, "service") : "";
-                let last = null;
-                try { last = JSON.parse(root.localStorage.getItem("moqui.devAide.tryResult." + service) || "null"); } catch (err) { last = null; }
+                const last = devAide.store.get("moqui.devAide.tryResult." + service);
                 return JSON.stringify(last ? Object.assign({}, last.parameters || {}, last.out || {}) : {}, null, 1);
             },
             tryCondition() {
@@ -691,10 +685,6 @@
     };
     ecaView.computed.pure = () => pure;
 
-    devAide.registerView({ name: "service", label: "Service", roots: ["services"], component: "m-dev-service-view",
-        script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
-    devAide.registerView({ name: "eca", label: "Rules", roots: ["secas", "eecas", "emecas", "gitecas"], component: "m-dev-eca-view",
-        script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
     const register = () => {
         const qvt = moqui.qvt;
         for (const [name, component] of [["m-dev-composer", composer], ["m-dev-service-view", serviceView], ["m-dev-eca-view", ecaView]]) {

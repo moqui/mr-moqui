@@ -19,12 +19,12 @@
 
 use std::collections::BTreeMap;
 
-use moqui_core::llm::approval::{self, ApprovalRequest, ChangeRow, Requested, Resumed, TargetKind};
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use moqui_lib::object::Value;
+use moqui_llm::approval::{self, ApprovalRequest, ChangeRow, Requested, Resumed, TargetKind};
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use serde_json::{json, Value as Json};
 
 use super::{arg, context, list_arg};
@@ -226,4 +226,4 @@ fn approved(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOu
     }
 }
 
-moqui_core::submit_tool!(VcsTool);
+moqui_llm::submit_tool!(VcsTool);

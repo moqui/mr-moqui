@@ -1720,7 +1720,9 @@ fn find_member(root: &MNode, verb: &str, noun: &str) -> Option<MNode> {
     })
 }
 
-fn service_prefix(path: &Path) -> String {
+/// The prefix a service file gives its services: its path under `service/`, the `.xml` dropped and `/` as `.`
+/// (`service/moqui/example/ExampleServices.xml` is `moqui.example.ExampleServices`), empty outside one.
+pub(crate) fn service_prefix(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     let Some(index) = text.rfind("/service/") else {
         return String::new();

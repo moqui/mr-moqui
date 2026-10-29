@@ -106,6 +106,15 @@ fn every_root(
     let mut failed = 0_usize;
     let mut affected = 0_i64;
     for root in context.roots.iter().filter(|root| root.kind == RootKind::Git) {
+        // a repository with no remote has nothing to fetch or pull: passed over, not a failure
+        let remotes = context.git().read(&root.path, &["remote"]).unwrap_or_default();
+        if remotes.trim().is_empty() {
+            results.push(
+                json!({ "rootId": root.id, "label": root.label, "ok": true, "skipped": true,
+                "output": "no remote" }),
+            );
+            continue;
+        }
         let mut parameters = Parameters::new();
         parameters.insert("rootId".into(), Value::string(&root.id));
         match run(ec, service, &parameters) {

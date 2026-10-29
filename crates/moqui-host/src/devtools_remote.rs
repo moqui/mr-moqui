@@ -51,6 +51,12 @@ impl Remote {
         if !(base.starts_with("https://") || base.starts_with("http://")) {
             return Err(Error::new(format!("--server {url}: an http or https URL")));
         }
+        // the login key goes in a header: in the clear only to this machine
+        if base.starts_with("http://") && !loopback(&base) {
+            return Err(Error::new(format!(
+                "--server {url}: the login key is sent with each call, so a server not on this machine is https"
+            )));
+        }
         let key = std::env::var("MOQUI_LOGIN_KEY")
             .ok()
             .filter(|key| !key.is_empty())
@@ -109,7 +115,17 @@ impl Remote {
                 text.chars().take(300).collect::<String>()
             )));
         }
-        let answer: Json = serde_json::from_str(&text).map_err(|err| Error::new(format!("{}: {err}", self.base)))?;
+        // a JSON answer, or one event of a stream (the transport lets the server answer either way)
+        let body = if text.trim_start().starts_with('{') {
+            text.as_str()
+        } else {
+            text.lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(str::trim)
+                .rfind(|data| data.starts_with('{'))
+                .unwrap_or(text.as_str())
+        };
+        let answer: Json = serde_json::from_str(body).map_err(|err| Error::new(format!("{}: {err}", self.base)))?;
         if let Some(error) = answer.get("error") {
             return Err(Error::new(format!(
                 "{tool}: {}",
@@ -238,7 +254,12 @@ fn component_name(dir: &Path) -> String {
         .and_then(|text| {
             let root = &text[text.find("<component")?..];
             let tag = &root[..root.find('>')?];
-            let at = tag.find(" name=\"")? + 7;
+            // name= after any white space: a space, or the attributes one to a line
+            let at = tag
+                .match_indices("name=\"")
+                .find(|(at, _)| tag[..*at].ends_with(char::is_whitespace))?
+                .0
+                + 6;
             Some(tag[at..at + tag[at..].find('"')?].to_string())
         })
         .unwrap_or_else(|| {
@@ -280,6 +301,17 @@ fn component_dirs() -> HashMap<String, PathBuf> {
     out
 }
 
+/// Whether an `http://` URL's host is this machine.
+fn loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']').map(|(host, _)| host))
+        .unwrap_or_else(|| authority.split(':').next().unwrap_or(authority));
+    host == "localhost" || host == "::1" || host.starts_with("127.")
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -298,6 +330,22 @@ mod tests {
             Some("component://site-x/screen/MySite/A.xml")
         );
         assert_eq!(super::location_of(&std::env::temp_dir().join("nowhere.xml")), None);
+        // the attributes one to a line; a name= inside another attribute's name is not it
+        std::fs::write(
+            dir.join("my-site/component.xml"),
+            "<component xmlns:xsi=\"x\"\n        name=\"site-y\" version=\"1\"/>",
+        )
+        .unwrap();
+        assert_eq!(super::component_name(&dir.join("my-site")), "site-y");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_login_key_goes_in_the_clear_to_this_machine_only() {
+        assert!(super::loopback("http://localhost:8080"));
+        assert!(super::loopback("http://127.0.0.1:8080/x"));
+        assert!(super::loopback("http://[::1]:8080"));
+        assert!(!super::loopback("http://dev.example.com"));
+        assert!(super::Remote::connect("http://dev.example.com").is_err());
     }
 }

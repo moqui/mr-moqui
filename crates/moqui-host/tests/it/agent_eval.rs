@@ -34,10 +34,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Reply, Step};
-use moqui_core::testkit::agents::{evaluate, AgentSpecFile, EvalOptions, Mode, TaskOutcome};
 use moqui_core::testkit::SpecFile;
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_llm::provider::fake::{self, Reply, Step};
+use moqui_llm::testkit::agents::{evaluate, AgentSpecFile, EvalOptions, Mode, TaskOutcome};
 
 use crate::common::{start_with_data, temp_dir};
 
@@ -214,7 +214,7 @@ fn replayed(factory: &Arc<ExecutionContextFactory>, out: &std::path::Path) {
         &mut |_| {},
     )
     .unwrap();
-    assert_eq!(moqui_core::testkit::agents::replay_label(&small), "replay-small");
+    assert_eq!(moqui_llm::testkit::agents::replay_label(&small), "replay-small");
     let passed: Vec<&str> = evaluation
         .results
         .iter()
@@ -447,7 +447,7 @@ fn text(row: &moqui_core::entity::EntityValue, field: &str) -> String {
 /// A user whose only permission is `AgentUse`: a run with a screen, a data read spilled past the model's cap, a
 /// question, and a second turn reading the spilled artifact ends Completed, and every row of it is written.
 fn a_plain_user_runs_an_agent(factory: &Arc<ExecutionContextFactory>) {
-    use moqui_core::llm::run::{start_run, submit_input, wait_for, RunState, StartRequest};
+    use moqui_llm::run::{start_run, submit_input, wait_for, RunState, StartRequest};
     {
         let context = factory.new_context();
         let _entered = context.enter();

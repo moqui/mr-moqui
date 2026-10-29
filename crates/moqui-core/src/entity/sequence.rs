@@ -432,7 +432,7 @@ fn unit_roll() -> Result<f64, Error> {
     Ok((number as f64) / (u64::MAX as f64))
 }
 
-pub(crate) fn uuid_v4() -> Result<String, Error> {
+pub fn uuid_v4() -> Result<String, Error> {
     let mut bytes = [0_u8; 16];
     fill_random(&mut bytes)?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;

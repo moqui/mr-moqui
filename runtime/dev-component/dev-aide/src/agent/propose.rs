@@ -25,14 +25,14 @@ use std::collections::BTreeMap;
 
 use moqui_core::devtools::index::{self, extract};
 use moqui_core::devtools::{Problem, Severity};
-use moqui_core::llm::approval::{
+use moqui_lib::node::MNode;
+use moqui_llm::approval::{
     self, ApprovalRequest, ChangeRow, HandoffTarget, PreviewMode, Requested, Resumed, TargetKind,
 };
-use moqui_core::llm::run::context::TurnContext;
-use moqui_core::llm::tools::format::ToolError;
-use moqui_core::llm::tools::schema::{object, Property};
-use moqui_core::llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
-use moqui_lib::node::MNode;
+use moqui_llm::run::context::TurnContext;
+use moqui_llm::tools::format::ToolError;
+use moqui_llm::tools::schema::{object, Property};
+use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
@@ -84,6 +84,20 @@ pub struct TextEdit {
 }
 
 impl FileChange {
+    /// Why this change may not be written over `current` (the file now, `None` when it is not there): its whole text
+    /// proposed against a version the file is no longer at, or a new file there now. Operations and replacements
+    /// apply to the file as it is, the three-way merge of 13.3. Read at Accept, once the approval bound the base.
+    #[must_use]
+    pub fn stale_over(&self, current: Option<&str>, shown: &str) -> Option<String> {
+        match (&self.text, current) {
+            (Some(_), Some(_)) if self.base_hash.is_empty() => Some(format!("{shown} was made since the proposal")),
+            (Some(_), Some(now)) if sha256(now.as_bytes()) != self.base_hash => Some(format!(
+                "{shown} changed since the proposal, which replaces its whole text"
+            )),
+            _ => None,
+        }
+    }
+
     /// The file's text after this change, from `current` (the file now, `None` when it is not there).
     ///
     /// # Errors
@@ -162,7 +176,7 @@ impl AgentTool for ProposeEditTool {
     }
 
     fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
-        if ctx.run.is_some() && moqui_core::llm::skills::loaded(ctx, SKILL).is_none() {
+        if ctx.run.is_some() && moqui_llm::skills::loaded(ctx, SKILL).is_none() {
             return ToolError::new(
                 "skill_required",
                 format!("propose_edit needs the {SKILL} skill. Call skill with name \"{SKILL}\", then propose again."),
@@ -194,6 +208,9 @@ impl AgentTool for ProposeEditTool {
 pub(crate) struct Prepared<'a> {
     pub named: NamedFile<'a>,
     pub current: Option<String>,
+    /// Why the change may not be written over the file as it is now: its whole text proposed against a version the
+    /// file is no longer at, or a new file that is there now. Operations and replacements apply to the file now.
+    pub stale: Option<String>,
     pub new_text: String,
     pub kind: moqui_core::devtools::ArtifactKind,
     pub location: String,
@@ -205,6 +222,7 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
     for change in &set.files {
         let named = file(context, &change.file)?;
         let current = std::fs::read_to_string(&named.path).ok();
+        let stale = change.stale_over(current.as_deref(), &named.shown);
         let new_text = change
             .apply(current.as_deref())
             .map_err(|why| ToolError::new("does_not_apply", why))?;
@@ -216,6 +234,7 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
         prepared.push(Prepared {
             named,
             current,
+            stale,
             new_text,
             kind,
             location,
@@ -358,6 +377,15 @@ fn write(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOutco
             ));
         }
     };
+    let stale: Vec<&str> = prepared.iter().filter_map(|file| file.stale.as_deref()).collect();
+    if !stale.is_empty() {
+        let reasons: Vec<Json> = stale.iter().map(|reason| json!({ "reason": reason })).collect();
+        approval::conflict(ctx, approval_id, &Json::Array(reasons));
+        return ToolOutcome::text(format!(
+            "The files changed since the proposal ({}), so nothing was written. Read the files again and propose anew.",
+            stale.join("; ")
+        ));
+    }
     if let Err(why) = approval::begin(ctx, approval_id, args) {
         return ToolOutcome::text(why);
     }
@@ -369,15 +397,12 @@ fn write(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOutco
     let mut written: Vec<Json> = Vec::new();
     let mut failed = None;
     for file in &prepared {
+        // the base the save checks is the text the change was applied to, so a write since then is a conflict
         let base = file
             .current
             .as_deref()
             .map(|text| sha256(text.as_bytes()))
             .unwrap_or_default();
-        // the base the save checks is the file as read just now; the change was applied to that text
-        let base = std::fs::read(&file.named.path)
-            .map(|bytes| sha256(&bytes))
-            .unwrap_or(base);
         let resolved = match context.resolve(file.named.root, &file.named.relative) {
             Ok(resolved) => resolved,
             Err(err) => {
@@ -621,7 +646,7 @@ fn new_titles(old: &str, new: &str) -> Vec<String> {
     added
 }
 
-moqui_core::submit_tool!(ProposeEditTool);
+moqui_llm::submit_tool!(ProposeEditTool);
 
 #[cfg(test)]
 mod tests {
@@ -662,6 +687,43 @@ mod tests {
             ..FileChange::default()
         };
         assert!(by_ops.apply(Some(base)).unwrap().contains("dueDate"));
+    }
+
+    #[test]
+    fn a_whole_text_is_stale_once_its_file_moved_on() {
+        let whole = |base_hash: &str| FileChange {
+            file: "x".into(),
+            base_hash: base_hash.into(),
+            text: Some("<entities/>".into()),
+            ..FileChange::default()
+        };
+        let proposed_on = "<entities><!-- a --></entities>";
+        let base = sha256(proposed_on.as_bytes());
+        assert_eq!(whole(&base).stale_over(Some(proposed_on), "x"), None);
+        assert!(whole(&base)
+            .stale_over(Some("<entities><!-- b --></entities>"), "x")
+            .unwrap()
+            .contains("changed since"));
+        // a new file proposed, and one made there since
+        assert_eq!(whole("").stale_over(None, "x"), None);
+        assert!(whole("")
+            .stale_over(Some(proposed_on), "x")
+            .unwrap()
+            .contains("made since"));
+        // replacements apply to the file now
+        let by_edit = FileChange {
+            file: "x".into(),
+            base_hash: base,
+            edits: vec![TextEdit {
+                old: "a".into(),
+                new: "c".into(),
+            }],
+            ..FileChange::default()
+        };
+        assert_eq!(
+            by_edit.stale_over(Some("<entities><!-- a, moved --></entities>"), "x"),
+            None
+        );
     }
 
     #[test]

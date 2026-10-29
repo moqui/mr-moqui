@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     host route /assist/runs/{runId}/events. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="start" noun="AgentRun" type="rust" location="moqui_core::llm::services::start_agent_run"
+    <service verb="start" noun="AgentRun" type="rust" location="moqui_llm::services::start_agent_run"
             transaction="ignore">
         <description>Start a run of agentId (default assist) for the current user on a surface (default drawer), in a
             conversation of theirs or a new one. While the conversation has an active run, the message goes to that
@@ -43,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="cancel" noun="AgentRun" type="rust" location="moqui_core::llm::services::cancel_agent_run"
+    <service verb="cancel" noun="AgentRun" type="rust" location="moqui_llm::services::cancel_agent_run"
             transaction="ignore">
         <description>Ask a run of the current user to stop. A run that holds no worker ends Canceled now; one working
             stops at its next check (a service call already running finishes). The text streamed so far is kept.</description>
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>
 
-    <service verb="submit" noun="AgentInput" type="rust" location="moqui_core::llm::services::submit_agent_input"
+    <service verb="submit" noun="AgentInput" type="rust" location="moqui_llm::services::submit_agent_input"
             transaction="ignore">
         <description>Input for a run of the current user: a message (steering, folded in at the next step), an answer
             to its question, a decision or a remote reply. A paused run resumes with it.</description>
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>
 
-    <service verb="get" noun="AgentRunEvents" type="rust" location="moqui_core::llm::services::get_agent_run_events"
+    <service verb="get" noun="AgentRunEvents" type="rust" location="moqui_llm::services::get_agent_run_events"
             transaction="ignore">
         <description>The stored events of a run of the current user after afterSeq (at most 1000), with the last
             sequence and the run's status: the catch-up of a client that polls.</description>
@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="decide" noun="AgentApproval" type="rust" location="moqui_core::llm::services::decide_agent_approval"
+    <service verb="decide" noun="AgentApproval" type="rust" location="moqui_llm::services::decide_agent_approval"
             transaction="ignore">
         <description>The current user's decision on an approval of theirs: approve (with edited arguments for a service
             or tool call), reject with feedback (the agent's next task), or edit (Edit in screen: the user's page gets
@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="preview" noun="AgentApproval" type="rust" location="moqui_core::llm::services::preview_agent_approval"
+    <service verb="preview" noun="AgentApproval" type="rust" location="moqui_llm::services::preview_agent_approval"
             transaction="ignore">
         <description>The effects of a pending approval of the current user, run in the sim overlay as the user: the rows
             it would create, change or delete, against production, or why it failed in the preview. Kept on the
@@ -111,7 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="preview" type="Map"/></out-parameters>
     </service>
 
-    <service verb="get" noun="AgentApproval" type="rust" location="moqui_core::llm::services::get_agent_approval"
+    <service verb="get" noun="AgentApproval" type="rust" location="moqui_llm::services::get_agent_approval"
             transaction="ignore">
         <description>An approval of the current user as its card shows it: the summary, the changes (current against
             proposed), the record, the status, the expiry, whether it may be edited in the screen and previewed, and
@@ -120,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="approval" type="Map"/></out-parameters>
     </service>
 
-    <service verb="abandon" noun="AgentHandoff" type="rust" location="moqui_core::llm::services::abandon_agent_handoff"
+    <service verb="abandon" noun="AgentHandoff" type="rust" location="moqui_llm::services::abandon_agent_handoff"
             transaction="ignore">
         <description>The current user left a hand-off (Edit in screen) without saving, as when the drawer navigates
             away: the watch is abandoned and the run goes on with that. Only from an interactive session, only the
@@ -132,7 +132,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
 
-    <service verb="handle" noun="ChatMessage" type="rust" location="moqui_core::llm::chat::handle_chat_message"
+    <service verb="handle" noun="ChatMessage" type="rust" location="moqui_llm::chat::handle_chat_message"
             authenticate="anonymous-all" allow-remote="false" transaction="ignore">
         <description>The agentRef of an agent's chat member (plans/LLM-A2A-Assist.md 4.13; ChatServices.deliver#AgentMessage
             calls it for each message of the room): the message is read from the room, and a message that mentions the
@@ -158,7 +158,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="decide" noun="ChatCard" type="rust" location="moqui_core::llm::chat::decide_chat_card"
+    <service verb="decide" noun="ChatCard" type="rust" location="moqui_llm::chat::decide_chat_card"
             transaction="ignore">
         <description>The current user's press of a button on an agent's card in a chat room (content.assist of message
             eventSeq): approve or reject an approval, which any human user who may post in the room may do (answered

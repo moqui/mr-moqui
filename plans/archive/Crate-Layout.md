@@ -8,6 +8,8 @@ This follows `plans/archive/Architecture-Proposal.md`. It replaces the Gradle so
 
 Six crates, one workspace, and two data directories.
 
+2026-10-28: a seventh, `crates/moqui-llm`. The agent runtime (`moqui_core::llm`, 79,000 lines) moved out of `moqui-core` onto it, so an edit there no longer rebuilds the framework. Core reaches it only through `moqui_core::llm_hooks`, and `moqui-host` links it under its `llm` feature.
+
 ```
 mr-moqui/
   Cargo.toml                 # workspace

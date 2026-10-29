@@ -28,8 +28,18 @@ thread_local! {
 /// Run `body` keeping the log lines written on this thread meanwhile; answers its result, the lines and how many more
 /// were left out.
 pub fn with<T>(body: impl FnOnce() -> T) -> (T, Vec<String>, usize) {
-    let before = LINES.with(|lines| lines.borrow_mut().replace((Vec::new(), 0)));
+    /// Puts back the capture held before however the body ends, so a panic leaves no capture on a pooled thread.
+    struct Restore(Option<Option<(Vec<String>, usize)>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if let Some(before) = self.0.take() {
+                LINES.with(|lines| *lines.borrow_mut() = before);
+            }
+        }
+    }
+    let mut restore = Restore(Some(LINES.with(|lines| lines.borrow_mut().replace((Vec::new(), 0)))));
     let result = body();
+    let before = restore.0.take().unwrap_or_default();
     let (kept, more) = LINES
         .with(|lines| std::mem::replace(&mut *lines.borrow_mut(), before))
         .unwrap_or_default();
@@ -69,5 +79,15 @@ mod tests {
         assert_eq!(lines[0], "one");
         assert_eq!(lines.len(), MAX_LINES);
         assert_eq!(more, 1);
+    }
+
+    #[test]
+    fn a_capture_that_panics_ends_on_its_thread() {
+        let caught = std::panic::catch_unwind(|| with(|| panic!("in the body")));
+        assert!(caught.is_err());
+        let ((), lines, _) = with(|| ());
+        assert!(lines.is_empty());
+        note("after the panic");
+        LINES.with(|lines| assert!(lines.borrow().is_none()));
     }
 }

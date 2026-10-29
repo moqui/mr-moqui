@@ -26,9 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Step};
-use moqui_core::llm::run::state::RunState;
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_llm::provider::fake::{self, Step};
+use moqui_llm::run::state::RunState;
 use serde_json::{json, Value as Json};
 
 use crate::common::{basic, exchange, http_request, merge_cookies, session_token, sign_in, start_with_data};
@@ -216,7 +216,7 @@ fn field(row: &moqui_core::entity::EntityValue, name: &str) -> String {
 }
 
 fn wait(factory: &Arc<ExecutionContextFactory>, run_id: &str) -> RunState {
-    moqui_core::llm::run::wait_for(factory, run_id, WAIT).unwrap()
+    moqui_llm::run::wait_for(factory, run_id, WAIT).unwrap()
 }
 
 fn description(factory: &Arc<ExecutionContextFactory>) -> String {
@@ -1030,7 +1030,7 @@ fn make_canvas(
     let _entered = context.enter();
     let _authz = context.disable_authz();
     let facade = factory.entity().unwrap();
-    let prepared = moqui_core::llm::ui::Prepared {
+    let prepared = moqui_llm::ui::Prepared {
         program: program.to_string(),
         statements: vec!["root".to_string()],
         mutations: mutations.iter().map(|name| (*name).to_string()).collect(),
@@ -1040,15 +1040,7 @@ fn make_canvas(
         .transactions_for("moqui.agent.AgentArtifact")
         .unwrap()
         .run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
-            moqui_core::llm::ui::Canvas::write_version(
-                &facade,
-                None,
-                conversation_id,
-                run_id,
-                "openui",
-                "Limited",
-                &prepared,
-            )
+            moqui_llm::ui::Canvas::write_version(&facade, None, conversation_id, run_id, "openui", "Limited", &prepared)
         })
         .unwrap()
         .artifact_id

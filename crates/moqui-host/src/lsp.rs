@@ -144,9 +144,11 @@ pub fn path_of(uri: &str) -> Option<PathBuf> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
+        // the two hex digits by bytes: a `%` before a character of several bytes is not a slice of it
         if bytes[at] == b'%' && at + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&rest[at + 1..at + 3], 16) {
-                out.push(byte);
+            let hex = |byte: u8| char::from(byte).to_digit(16);
+            if let (Some(high), Some(low)) = (hex(bytes[at + 1]), hex(bytes[at + 2])) {
+                out.push(u8::try_from(high * 16 + low).unwrap_or(b'%'));
                 at += 3;
                 continue;
             }
@@ -262,7 +264,7 @@ fn range(line: u32, column: u32, length: u32) -> lsp::Range {
     let column = column.saturating_sub(1);
     lsp::Range::new(
         lsp::Position::new(line, column),
-        lsp::Position::new(line, column + length.max(1)),
+        lsp::Position::new(line, column.saturating_add(length.max(1))),
     )
 }
 
@@ -494,9 +496,10 @@ impl Server {
                 ));
             }
         }
-        if let (Some(root), Some((element, attribute, _))) =
-            (schema::root_of(&text), tag_context(&text, line, character + 1))
-        {
+        if let (Some(root), Some((element, attribute, _))) = (
+            schema::root_of(&text),
+            tag_context(&text, line, character.saturating_add(1)),
+        ) {
             if let Some(spec) = self
                 .backend
                 .digest(root)
@@ -613,7 +616,10 @@ impl Server {
             };
             let line = u32::try_from(node.line.saturating_sub(1)).unwrap_or(0);
             let column = u32::try_from(node.column.saturating_sub(1)).unwrap_or(0);
-            let at = lsp::Range::new(lsp::Position::new(line, column), lsp::Position::new(line, column + 1));
+            let at = lsp::Range::new(
+                lsp::Position::new(line, column),
+                lsp::Position::new(line, column.saturating_add(1)),
+            );
             let children: Vec<Json> = if depth < 8 {
                 node.children.iter().map(|child| symbol(child, depth + 1)).collect()
             } else {
@@ -725,6 +731,11 @@ mod tests {
         assert_eq!(path_of(&uri_of(path)).unwrap(), path);
         assert_eq!(path_of("file:///C:/w/a.xml").unwrap(), PathBuf::from("C:/w/a.xml"));
         assert!(path_of("untitled:1").is_none());
+        // a % before a character of several bytes is taken as it is, not sliced
+        assert_eq!(
+            path_of("file:///w/%a\u{e9}.xml").unwrap(),
+            PathBuf::from("/w/%a\u{e9}.xml")
+        );
     }
 
     #[test]

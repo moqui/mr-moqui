@@ -94,6 +94,13 @@ fn update_subscreen(
     let name = text(parameters, "name");
     let make_default = text(parameters, "isDefault") == "true";
     let menu_index = text(parameters, "menuIndex");
+    // both go into the parent's XML as attribute values
+    if !valid_screen_name(&name) {
+        return Err(LibError::new("a screen name is letters, digits and _"));
+    }
+    if !menu_index.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(LibError::new("a menu index is a whole number"));
+    }
     let mounted = text(parameters, "mountedBy");
     if name.is_empty() {
         return Err(LibError::new("name the subscreen"));
@@ -727,7 +734,7 @@ fn create_subscreen(
     let root = context.root(&text(parameters, "rootId"))?;
     let parent = text(parameters, "parentPath");
     let name = text(parameters, "name");
-    if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+    if !valid_screen_name(&name) {
         return Err(LibError::new("a screen name is letters, digits and _"));
     }
     let archetype = text(parameters, "archetype");
@@ -768,7 +775,7 @@ fn create_subscreen(
 
 /// An archetype's XML with `default-menu-title` set to `title`.
 fn retitle(text: &str, title: &str) -> String {
-    let escaped = title.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escaped = crate::workspace::xml_attr(title);
     match moqui_lib::xml_edit::outline(text) {
         Ok(_) => moqui_lib::xml_edit::apply(
             text,
@@ -781,6 +788,11 @@ fn retitle(text: &str, title: &str) -> String {
         .map_or_else(|_| text.to_string(), |applied| applied.text),
         Err(_) => text.replacen("<screen ", &format!("<screen default-menu-title=\"{escaped}\" "), 1),
     }
+}
+
+/// A screen's name as a file and a menu name: letters, digits and `_`.
+fn valid_screen_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 #[cfg(test)]

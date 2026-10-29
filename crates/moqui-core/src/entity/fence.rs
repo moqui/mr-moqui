@@ -287,7 +287,7 @@ pub fn label() -> Option<String> {
 
 /// Forget every fence of this thread: the pools call it when a unit of work is over, so a guard that was leaked does
 /// not fence the thread's later work.
-pub(crate) fn clear() {
+pub fn clear() {
     FENCE.with(|stack| stack.borrow_mut().clear());
 }
 

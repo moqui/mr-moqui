@@ -162,6 +162,8 @@ impl Git {
             .current_dir(repo)
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
+            // a path the page names is that file, never a pattern (`a[1].xml`, `*`)
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .env("GIT_ASKPASS", "")
             .env("SSH_ASKPASS", "")
             .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })

@@ -13,7 +13,7 @@
  */
 
 //! `moqui test <component> --agents`: the agent evaluation tasks of each component's `test/agent/*.agent.js`
-//! ([`moqui_core::testkit::agents`]) on a live model (`--llm-profile`) or a recording (`--replay`), on the database a
+//! ([`moqui_llm::testkit::agents`]) on a live model (`--llm-profile`) or a recording (`--replay`), on the database a
 //! test run uses, with the agent engine started and the screen sessions installed as a server has them. Transcripts go
 //! to `runtime/log/agent-eval/<run>/<spec>/<task>-<n>.jsonl` with a summary per component; the component's
 //! `test/agent/baseline-<profile>.json`, when there is one, flags regressions.
@@ -24,9 +24,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use moqui_core::testkit::agents::{self, AgentSpecFile, EvalOptions, Mode, TaskOutcome, TaskResult};
 use moqui_core::testkit::SpecFile;
 use moqui_lib::error::Error;
+use moqui_llm::testkit::agents::{self, AgentSpecFile, EvalOptions, Mode, TaskOutcome, TaskResult};
 
 use super::{drop_unloaded, fixture, order_by_load, TestArgs, TestComponent};
 
@@ -106,7 +106,7 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
         .factory
         .start_request_pool()
         .map_err(|err| Error::new(err.to_string()))?;
-    moqui_core::llm::start(&fixture.factory);
+    moqui_llm::start(&fixture.factory);
     #[cfg(all(feature = "axum", feature = "tui"))]
     crate::llm::screens::install(&fixture.factory);
 

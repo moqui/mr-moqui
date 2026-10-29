@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
     last spec run; each opens in the service view (its parameters, its actions in the logic composer, Try in sim, Save as
     spec, its SECA rules). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Services" default-menu-index="5">
+        default-menu-title="Services" default-menu-index="6">
     <subscreens default-item="List">
         <subscreens-item name="List" menu-title="Services" menu-index="1" location="component://dev-aide/screen/DevAide/Services/List.xml"/>
         <subscreens-item name="Edit" menu-title="Edit" menu-index="2" menu-include="false" location="component://dev-aide/screen/DevAide/Services/Edit.xml"/>

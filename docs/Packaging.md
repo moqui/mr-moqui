@@ -27,7 +27,8 @@ Lite, Maximal or Enterprise; `./moq build --release -- --features devtools` adds
 The framework features are in `crates/moqui-core`; the host features, and the packages, are in `crates/moqui-host`;
 `crates/moqui` (and the crate `./moq build` generates in `target/moqui-app` for add-on component crates) forwards the
 package features `dev`, `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
-one.
+one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
+through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|---|
@@ -48,7 +49,7 @@ one.
 | `git` | core | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
 | `xlsx` | core | The `xlsx` render mode and `org.moqui.impl.SpreadsheetServices` | | | yes | yes |
-| `llm` | core | The agents and the model providers (`moqui_core::llm`, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
+| `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes | yes |
 
 `mail` is `smtp` and `imap` together. The browser build has none of the core features.

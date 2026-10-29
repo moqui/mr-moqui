@@ -35,7 +35,7 @@ pub fn core_features() -> Vec<&'static str> {
         ("git", cfg!(feature = "git")),
         ("image", cfg!(feature = "image")),
         ("xlsx", cfg!(feature = "xlsx")),
-        ("llm", cfg!(feature = "llm")),
+        ("llm", crate::llm_hooks::linked()),
         ("telemetry", cfg!(feature = "telemetry")),
     ]
     .into_iter()

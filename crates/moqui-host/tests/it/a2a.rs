@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::provider::fake::{self, Step};
+use moqui_llm::provider::fake::{self, Step};
 use serde_json::{json, Value as Json};
 
 use crate::common::{exchange, http_request, merge_cookies, session_token, sign_in, start_with_conf_properties};
@@ -1022,7 +1022,7 @@ fn the_a2a_server_over_both_bindings_on_postgres() {
         let context = factory.new_context();
         let _entered = context.enter();
         let facade = factory.entity().unwrap();
-        moqui_core::llm::a2a::push::clean(&facade, jiff::Timestamp::now().as_millisecond() + 8 * 86_400_000).unwrap()
+        moqui_llm::a2a::push::clean(&facade, jiff::Timestamp::now().as_millisecond() + 8 * 86_400_000).unwrap()
     };
     assert!(configs >= 50, "{configs}");
     assert!(rows(&factory, "moqui.agent.AgentPushConfig", "userId", "A2A_ANN").is_empty());

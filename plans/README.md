@@ -6,6 +6,7 @@ Design, status and review documents for the MR-Moqui port. The first pass is com
 - [Remaining-Work.md](Remaining-Work.md): what is still open, in one place, grouped by domain (agents, mail, git, screens, apps, tests and the rest), each item linking to its detail.
 - [Future-Plans.md](Future-Plans.md): digest of the unbuilt proposals.
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
+- [Rust-Practices-Review.md](Rust-Practices-Review.md): the Rust practices review (unwraps and runtime type checks, borrows over Rc/Arc, idiom), with examples, for the model doing it.
 
 **Phase 13: LLM, A2A and Assist**
 - [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14; its leftovers are in Remaining-Work.

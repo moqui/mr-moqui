@@ -39,10 +39,13 @@ pub use runtime::{
     top_context_entries,
 };
 pub(crate) use runtime::{
-    context_combined, eval_named_value, invoke_web_handler, mark_request_thread, put_context_all, text_upload_to_js,
-    value_entity_name, value_field, value_items, value_map, with_ctx, with_screen_runner, WidgetWrap,
+    context_combined, invoke_web_handler, mark_request_thread, put_context_all, text_upload_to_js, value_entity_name,
+    value_field, with_ctx, with_screen_runner, WidgetWrap,
 };
 pub use runtime::{eval_condition, expand_localized, ContextFrame, DeadlineGuard, EngineMemory, IsolatedContext};
+// for host callbacks outside this crate: moqui-llm's ec.llm
+pub use runtime::{eval_named_value, value_items, value_map};
+pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
 
 #[cfg(test)]
 mod tests {

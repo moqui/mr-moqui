@@ -340,6 +340,10 @@ impl ScreenFacade {
     /// The providers kept for `key`, while every screen they were read from is current and they are not older than
     /// [`SHELL_PROVIDERS_TTL`].
     pub(super) fn cached_shell_providers(&self, factory: &ExecutionContextFactory, key: &str) -> Option<Value> {
+        // under an overlay the providers are read from its definitions, which are no one else's
+        if super::overlay::active() {
+            return None;
+        }
         let (value, defs) = {
             let mut cache = lock(&self.shell_providers);
             let entry = cache.get(key)?;
@@ -359,6 +363,9 @@ impl ScreenFacade {
     }
 
     pub(super) fn put_shell_providers(&self, key: String, value: Value, defs: Vec<Arc<ScreenDef>>) {
+        if super::overlay::active() {
+            return;
+        }
         let mut cache = lock(&self.shell_providers);
         if cache.len() >= SHELL_PROVIDERS_MAX {
             cache.retain(|_, entry| entry.made.elapsed() <= SHELL_PROVIDERS_TTL);
@@ -544,6 +551,10 @@ impl ScreenFacade {
     /// An expanded `//` path, or `None` for a cached miss. `None` of the outer option means the cache has no entry,
     /// or screen configuration changed since it was stored.
     pub(super) fn cached_sparse(&self, factory: &ExecutionContextFactory, key: &str) -> Option<Option<Vec<String>>> {
+        // an overlay may add or rename a subscreen: its searches are its own
+        if super::overlay::active() {
+            return None;
+        }
         let generation = super::definition::screen_config_generation(factory);
         let mut cache = lock(&self.sparse);
         if cache.generation != generation {
@@ -555,6 +566,9 @@ impl ScreenFacade {
     }
 
     pub(super) fn put_sparse(&self, factory: &ExecutionContextFactory, key: String, names: Option<Vec<String>>) {
+        if super::overlay::active() {
+            return;
+        }
         let generation = super::definition::screen_config_generation(factory);
         let mut cache = lock(&self.sparse);
         if cache.generation != generation {
@@ -605,6 +619,7 @@ impl ScreenFacade {
         let _ = self.urls.clear();
         let _ = self.icons.clear();
         lock(&self.shell_providers).clear();
+        self.clear_sparse();
     }
 
     /// Drop at once every cached definition read from one of `files` (a screen file, a `screen-extend` file, a form or
@@ -729,6 +744,24 @@ mod tests {
         assert!(caught.is_err());
         assert!(LOADING.with(|loading| loading.borrow().is_empty()));
         assert!(locks.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_overlay_render_neither_reads_nor_keeps_a_search() {
+        let ctx = crate::context::ExecutionContextFactory::test_context();
+        let factory = ctx.factory();
+        let facade = ScreenFacade::of(factory);
+        facade.put_sparse(factory, "root\u{1}//Plain".into(), Some(vec!["Plain".into()]));
+        let mut overlay = super::super::overlay::Overlay::new();
+        overlay.insert("component://x/screen/Draft.xml", None, "<screen/>");
+        super::super::overlay::with(overlay, || {
+            assert_eq!(facade.cached_sparse(factory, "root\u{1}//Plain"), None);
+            facade.put_sparse(factory, "root\u{1}//Draft".into(), Some(vec!["Draft".into()]));
+        });
+        assert_eq!(facade.cached_sparse(factory, "root\u{1}//Draft"), None);
+        assert!(facade.cached_sparse(factory, "root\u{1}//Plain").is_some());
+        facade.clear();
+        assert_eq!(facade.cached_sparse(factory, "root\u{1}//Plain"), None);
     }
 
     /// Two screens whose transitions include each other, in a new directory: their locations.

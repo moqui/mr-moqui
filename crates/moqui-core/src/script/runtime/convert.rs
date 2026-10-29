@@ -26,7 +26,8 @@ pub(super) const MAX_NESTING: usize = 200;
 /// maps host code wraps it in.
 const MAX_HOST_NESTING: usize = MAX_NESTING + 56;
 
-pub(super) fn host_to_js<'js>(ctx: &Ctx<'js>, value: Value) -> rquickjs::Result<JsValue<'js>> {
+/// A host value as a JS value.
+pub fn host_to_js<'js>(ctx: &Ctx<'js>, value: Value) -> rquickjs::Result<JsValue<'js>> {
     host_to_js_at(ctx, &value, 0)
 }
 
@@ -122,7 +123,8 @@ pub(super) fn i64_to_js<'js>(ctx: &Ctx<'js>, number: i64) -> rquickjs::Result<Js
     (number as f64).into_js(ctx)
 }
 
-pub(super) fn js_to_host(ctx: &Ctx<'_>, value: &JsValue<'_>) -> rquickjs::Result<Value> {
+/// A JS value as a host value; throws on one it cannot convert.
+pub fn js_to_host(ctx: &Ctx<'_>, value: &JsValue<'_>) -> rquickjs::Result<Value> {
     js_value_to_host(ctx, value).map_err(|err| Exception::throw_message(ctx, err.message()))
 }
 

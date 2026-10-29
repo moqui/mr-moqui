@@ -198,9 +198,9 @@ Anti-patterns seen and avoided: write tools before an approval design (Carbon de
 
 ### 4.1 Modules and features
 
-The core feature `llm` (default on; off for the `moqui-browser` build) gates `pub mod llm` in `crates/moqui-core/src/lib.rs`. `crates/moqui-core/src/service/rust_services.rs:48` gets `("moqui_core::llm::", "llm", cfg!(feature = "llm"))` in `FEATURE_LOCATIONS`, so the agent service XML loads everywhere and a call in a build without the feature says so. No new crates: blocking reqwest through `moqui-lib` `http`, `serde_json`, `hmac`, `sha2` and `inventory` are already core dependencies. The host feature `llm = ["moqui-core/llm"]` joins `lite`, `enterprise` and `maximal` in `crates/moqui-host/Cargo.toml`.
+Since 2026-10-28 the runtime is its own crate, `crates/moqui-llm`, on `moqui-core`; core reaches it only through `moqui_core::llm_hooks` (the Rust services, the `canvas:` overlay, the skill sync on reload and `ec.llm`), and the host feature `llm = ["dep:moqui-llm"]` links it. The service locations are `moqui_llm::…`. The rest of this paragraph is the design as first built. The core feature `llm` (default on; off for the `moqui-browser` build) gated `pub mod llm` in `crates/moqui-core/src/lib.rs`. `crates/moqui-core/src/service/rust_services.rs:48` gets `("moqui_core::llm::", "llm", cfg!(feature = "llm"))` in `FEATURE_LOCATIONS`, so the agent service XML loads everywhere and a call in a build without the feature says so. No new crates: blocking reqwest through `moqui-lib` `http`, `serde_json`, `hmac`, `sha2` and `inventory` are already core dependencies. The host feature `llm = ["moqui-core/llm"]` joins `lite`, `enterprise` and `maximal` in `crates/moqui-host/Cargo.toml`.
 
-`crates/moqui-core/src/llm/`:
+`crates/moqui-llm/src/`:
 
 | File | Responsibility |
 | --- | --- |
@@ -336,7 +336,7 @@ Two more host routes serve the drawer: the SSE stream above and `GET /assist/san
 ### 4.7 Screens
 
 ```rust
-pub trait ScreenSessions: Send + Sync { // crates/moqui-core/src/llm/screen.rs
+pub trait ScreenSessions: Send + Sync { // crates/moqui-llm/src/screen.rs
     fn open(&self, spec: OpenSpec) -> Result<String, Error>; // owner, conversation, start path, size, follow
     fn command(&self, id: &str, owner: &str, cmd: &ScreenCommand) -> Result<ScreenAnswer, Error>;
     fn sync(&self, id: &str, owner: &str, state: &BrowserState) -> Result<Vec<FollowEvent>, Error>;
@@ -896,7 +896,7 @@ As built (docs/Assist.md "The calls of 13.14", docs/TUI.md "Assist"): `remember`
 
 ## 9. Tests and evaluation
 
-- **Providers**: recorded SSE fixtures per protocol and vendor in `crates/moqui-core/src/llm/provider/testdata/` with golden normalized events, played through an installed `HttpSender` (`crates/moqui-core/src/outbound.rs:103`); classifier tables; a scripted `fake` protocol for delays, errors and cancels.
+- **Providers**: recorded SSE fixtures per protocol and vendor in `crates/moqui-llm/src/provider/testdata/` with golden normalized events, played through an installed `HttpSender` (`crates/moqui-core/src/outbound.rs:103`); classifier tables; a scripted `fake` protocol for delays, errors and cancels.
 - **Runtime**: tool round trips, parallel reads, `length` with complete and cut calls, empty retry, overflow compaction, cancel mid-stream, budget pause, steering input, lazy tools and did-you-mean, spill and read; leases and recovery; the fence (a READ service that writes fails; async, mail and remote calls are blocked; allowlisted entities pass).
 - **Approvals**: the matrix in 13.4, plus MRTR `requestState` tamper, replay, TTL and principal.
 - **Screens**: following `crates/moqui-host/tests/tui_screens.rs` on embedded Postgres: held writes, `domId` against qvt, sync-in, follow events.

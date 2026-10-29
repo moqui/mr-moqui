@@ -8,10 +8,10 @@ on by itself once they decide. The design is [plans/LLM-A2A-Assist.md](../plans/
 4.5, 4.8). As of Oct 22, 2026 (13.10 built; the client, [Delegating to remote agents](#delegating-to-remote-agents),
 13.12).
 
-The code: `crates/moqui-core/src/llm/a2a/` (`mod.rs` the request, authentication and answers, `types.rs` the wire types
+The code: `crates/moqui-llm/src/a2a/` (`mod.rs` the request, authentication and answers, `types.rs` the wire types
 and checks, `ops.rs` the operations over the run model and the stream projection, `jsonrpc.rs` and `rest.rs` the two
 bindings, `card.rs` the agent cards, `push.rs` the push notification configs and their delivery) and the host adapter
-`crates/moqui-host/src/llm/a2a.rs`. Tests: `crates/moqui-core/src/llm/a2a/tests.rs` (the wire rules) and
+`crates/moqui-host/src/llm/a2a.rs`. Tests: `crates/moqui-llm/src/a2a/tests.rs` (the wire rules) and
 `crates/moqui-host/tests/it/a2a.rs` (both bindings over HTTP on embedded Postgres with the scripted fake provider, and
 the official SDK's interop script, below). The protocol shapes were checked against the A2A 1.0 schema as the
 `a2a-sdk` 1.2.3 package carries it (`a2a.proto` as `a2a_pb2`) and its client and reference server.
@@ -194,8 +194,8 @@ allow the script's host).
 
 The other direction: an agent here delegates to a remote A2A 1.0 agent through a tool `a2a__<remoteId>`, one for each
 `AgentRemoteA2a` row (System > LLM > Remote > Remote Agents, `org.moqui.agent.RemoteAgentServices`). The code is
-`crates/moqui-core/src/llm/a2a/client.rs` (the client), `crates/moqui-core/src/llm/tools/delegate.rs` (the tools) and
-`crates/moqui-core/src/llm/remote.rs` (the addresses, credentials and SSRF limits it shares with the MCP client).
+`crates/moqui-llm/src/a2a/client.rs` (the client), `crates/moqui-llm/src/tools/delegate.rs` (the tools) and
+`crates/moqui-llm/src/remote.rs` (the addresses, credentials and SSRF limits it shares with the MCP client).
 
 - **Which agents**: a row's `allowedAgents` lists the local agents that may delegate to it (comma separated, `*` for
   all, empty for none). The tools are in the lazy catalog: the model finds them with `find_tools`, reads their one
@@ -238,7 +238,7 @@ The other direction: an agent here delegates to a remote A2A 1.0 agent through a
 - **Conf**: `<a2a client-enabled="true" client-timeout="300"/>` (the client is on by default; without rows there are no
   tools).
 
-Tested in `crates/moqui-core/src/llm/tools/remote_tests.rs` against fixture servers on loopback (blocking and streaming,
+Tested in `crates/moqui-llm/src/tools/remote_tests.rs` against fixture servers on loopback (blocking and streaming,
 a question, a link, a redirect) and in `crates/moqui-host/tests/it/agent_remote.rs` against this server's own A2A server
 on a second server over loopback.
 

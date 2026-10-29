@@ -167,7 +167,7 @@ enum HunkWrite {
 fn apply_hunks(ec: &ExecutionContext, parameters: &Parameters, how: HunkWrite) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
+    let root = crate::vcs::git_write_root(&context, parameters, "stages and discards")?;
     let path = context.resolve(root, &text(parameters, "path"))?.relative;
     if how == HunkWrite::Discard {
         context.may_write(root, &path)?;
@@ -774,10 +774,10 @@ fn get_conflict_sides(
     out.insert("theirs".into(), Value::string(stage(3)));
     out.insert("result".into(), Value::string(String::from_utf8_lossy(&bytes)));
     out.insert("hash".into(), Value::string(sha256(&bytes)));
-    let conflicted = true;
+    // a file with sides is conflicted
     out.insert(
         "operation".into(),
-        operation(&context, root, conflicted).map_or(Value::Null, Value::string),
+        operation(&context, root, true).map_or(Value::Null, Value::string),
     );
     Ok(out)
 }
@@ -828,7 +828,7 @@ fn abort_operation(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let root = git_root(&context, parameters)?;
+    let root = crate::vcs::git_write_root(&context, parameters, "aborts operations")?;
     let verb = match operation(&context, root, true) {
         Some(verb @ ("merge" | "cherry-pick" | "revert")) => verb,
         Some("rebase") => {
@@ -992,11 +992,10 @@ fn cancel_git_operation(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let _context = Context::of(ec, Tier::Extend)?;
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let key = crate::vcs::operation_key(&user, &text(parameters, "operationId"));
     let mut out = Parameters::new();
-    out.insert(
-        "cancelled".into(),
-        Value::Bool(git::cancel(&text(parameters, "operationId"))),
-    );
+    out.insert("cancelled".into(), Value::Bool(git::cancel(&key)));
     Ok(out)
 }
 

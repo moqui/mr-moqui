@@ -6,8 +6,8 @@ as it does for its agents. The same configured models make embeddings for semant
 LLM embedder). The design is [plans/LLM-A2A-Assist.md](../plans/LLM-A2A-Assist.md) (4.17, 4.2, D10, 4.19). As of Oct
 22, 2026 (13.13 built).
 
-The code: `crates/moqui-core/src/llm/gateway.rs` (routes, auth, the allowlists, aliases, admission, the pass-through),
-`crates/moqui-core/src/llm/embed.rs` (embeddings and `LlmEmbedder`), the host adapter
+The code: `crates/moqui-llm/src/gateway.rs` (routes, auth, the allowlists, aliases, admission, the pass-through),
+`crates/moqui-llm/src/embed.rs` (embeddings and `LlmEmbedder`), the host adapter
 `crates/moqui-host/src/llm/gateway.rs`, and the embedder choice in `crates/moqui-host/src/search.rs`. Tests: the unit
 tests in both core files, and `crates/moqui-host/tests/it/gateway.rs` (over HTTP on embedded Postgres against a fake
 model server on loopback, and the official OpenAI Python client, below).
@@ -123,7 +123,7 @@ the conf).
 
 ## The LLM embedder
 
-`LlmEmbedder` (`crate::llm::embed`) implements the search facade's `Embedder` over a configured model's
+`LlmEmbedder` (`moqui_llm::embed`) implements the search facade's `Embedder` over a configured model's
 `/v1/embeddings` (LM Studio, Ollama, llama.cpp, vLLM, OpenAI), at most 64 texts a request, each request an `LlmCall` of
 source `embed`. It keeps the vectors of the batches that succeeded by text, so a batch that failed is sent again without
 them. When the server does not answer (a timeout, a network or server error), its breaker skips it for 60 seconds:

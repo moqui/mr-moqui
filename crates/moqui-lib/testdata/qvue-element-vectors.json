@@ -1,0 +1,46 @@
+[
+  {
+    "name": "comments, quoted values, interpolations and an inner template",
+    "text": "<!-- a screen -->\n<template><div class=\"row\">\n  <q-btn label=\"a > b\" @click=\"go\"/>\n  <!-- <span>not</span> -->{{ a < b }}<template v-slot:x><b>x</b></template>\n</div></template>\n<script>const x = '<p>';</script>",
+    "stamped": [
+      "div@2:11",
+      "q-btn@3:3",
+      "b@4:58"
+    ]
+  },
+  {
+    "name": "a character past the basic plane counts once",
+    "text": "<template>\n<div><span>🚀</span><q-btn label=\"x\"/></div>\n</template>\n",
+    "stamped": [
+      "div@2:1",
+      "span@2:6",
+      "q-btn@2:20"
+    ]
+  },
+  {
+    "name": "a component named script- or style- is not the script block",
+    "text": "<template><div><script-editor v-model=\"x\"/><style-picker/><p>y</p></div></template>\n<script setup>const a = 1;</script>",
+    "stamped": [
+      "div@1:11",
+      "script-editor@1:16",
+      "style-picker@1:44",
+      "p@1:59"
+    ]
+  },
+  {
+    "name": "a template in a leading comment is not the block",
+    "text": "<!-- <template><i>no</i></template> -->\n<template><b>yes</b><slot name=\"s\"/></template>\n<style>.b{}</style>",
+    "stamped": [
+      "b@2:11"
+    ]
+  },
+  {
+    "name": "accented letters count one column each",
+    "text": "<template>\n  <q-card>\n    <q-card-section>été</q-card-section><q-btn/>\n  </q-card>\n</template>",
+    "stamped": [
+      "q-card@2:3",
+      "q-card-section@3:5",
+      "q-btn@3:41"
+    ]
+  }
+]

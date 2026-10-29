@@ -654,63 +654,6 @@ mod enabled {
         assert!(providers.iter().all(|provider| Arc::ptr_eq(&providers[0], provider)));
     }
 
-    #[cfg(feature = "llm")]
-    #[test]
-    fn gen_ai_spans_capture_usage_without_prompt_or_response_contents() {
-        use crate::llm::{
-            conf::{EndpointConf, ModelConf, ProtocolId, ReasoningLevel},
-            provider::{self, fake, CallOptions, Message, ModelRequest},
-            registry::Target,
-            usage::{CallSource, Usage},
-        };
-        let context = ExecutionContextFactory::test_context_with_conf(
-            "<moqui-conf><telemetry sample-ratio=\"1\"><artifact type=\"AT_LLM\" spans=\"true\" metrics=\"true\"/></telemetry></moqui-conf>",
-        );
-        let _entered = context.enter();
-        let telemetry = for_factory(context.factory());
-        let memory = Arc::new(Memory::default());
-        telemetry.set_exporter(memory.clone());
-        let id = "monitor-genai-metadata";
-        fake::script(
-            id,
-            vec![fake::Reply::steps(vec![
-                fake::Step::Text("private response text".into()),
-                fake::Step::Usage(Usage {
-                    input: 10,
-                    output: 3,
-                    ..Usage::default()
-                }),
-                fake::Step::Finish("stop".into()),
-            ])],
-        );
-        let target = Target {
-            endpoint: EndpointConf::new(id, ProtocolId::Fake, ""),
-            model: ModelConf::new("monitor-model", id, "model-1"),
-            reasoning: ReasoningLevel::None,
-            feature: None,
-            fell_back_from: None,
-        };
-        let request = ModelRequest {
-            history: vec![Message::user("private prompt text")],
-            ..ModelRequest::default()
-        };
-        let reply = provider::call(&target, &request, &mut CallOptions::new(CallSource::Test));
-        assert_eq!(reply.usage.input, 10);
-        telemetry.flush();
-        let documents = lock(&memory.0);
-        let span = documents
-            .iter()
-            .find(|(index, document)| index == "otel_spans" && text(document, "moqui.artifact.type") == "AT_LLM")
-            .unwrap();
-        assert_eq!(text(&span.1, "gen_ai.provider.name"), id);
-        assert_eq!(number(&span.1, "gen_ai.usage.input_tokens"), 10.0);
-        assert_eq!(number(&span.1, "gen_ai.usage.output_tokens"), 3.0);
-        let contents = format!("{documents:?}");
-        assert!(!contents.contains("private prompt text"));
-        assert!(!contents.contains("private response text"));
-        fake::clear(id);
-    }
-
     #[test]
     fn suppressed_sdk_spans_do_not_exhaust_raw_queue_reservations() {
         let (telemetry, memory) = telemetry(0.0);

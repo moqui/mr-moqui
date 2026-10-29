@@ -31,27 +31,49 @@
 
     const VOID = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"];
 
+    // The first `tag` (`<template`, `<script`) at or after `from` that is a tag of that name (white space, `>` or `/`
+    // after it) outside a comment, or -1.
+    const vueTag = (source, from, tag) => {
+        let at = from;
+        while (at < source.length) {
+            const comment = source.indexOf("<!--", at);
+            const found = source.indexOf(tag, at);
+            if (found < 0) return -1;
+            if (comment >= 0 && comment < found) { const end = source.indexOf("-->", comment); at = end < 0 ? source.length : end + 3; continue; }
+            const next = source.charAt(found + tag.length);
+            if (!next || /[\s>\/]/.test(next)) return found;
+            at = found + tag.length;
+        }
+        return -1;
+    };
+
     // The elements of a `.qvue` text's template block, as the server's stamps see them (moqui_core::screen::stamp::
-    // qvue_elements): each with its name, the offsets of its `<`, of the end of its name, of the end of its opening tag
-    // and of its end (past its closing tag), its line and column (from 1), its parent's index (-1 at the top) and whether
-    // it is stamped (an inner `template` or `slot` is not). Comments, quoted values and `{{ }}` are passed over.
+    // qvue_elements, both held to crates/moqui-lib/testdata/qvue-element-vectors.json): each with its name, the offsets
+    // (in the text's UTF-16 units) of its `<`, of the end of its name, of the end of its opening tag and of its end (past
+    // its closing tag), its line and column (from 1, the column in characters, as the server counts), its parent's index
+    // (-1 at the top) and whether it is stamped (an inner `template` or `slot` is not). Comments, quoted values and
+    // `{{ }}` are passed over.
     pure.vueElements = (text) => {
         const source = String(text || "");
-        const open = source.indexOf("<template");
+        const open = vueTag(source, 0, "<template");
         if (open < 0) return [];
         const bodyStart = source.indexOf(">", open) + 1;
         if (!bodyStart) return [];
         let tail = source.length;
-        for (const tag of ["<script", "<style"]) { const at = source.indexOf(tag, bodyStart); if (at >= 0 && at < tail) tail = at; }
-        const close = source.lastIndexOf("</template>", tail);
+        for (const tag of ["<script", "<style"]) { const at = vueTag(source, bodyStart, tag); if (at >= 0 && at < tail) tail = at; }
+        const close = source.lastIndexOf("</template>", tail - "</template>".length);
         const bodyEnd = close >= bodyStart ? close : tail;
         const out = [];
         const stack = [];
         let at = bodyStart;
+        // the line and column of an offset, counted on from the element before it
+        let line = 1, column = 1, counted = 0;
         const lineCol = (offset) => {
-            const before = source.slice(0, offset);
-            const line = before.split("\n").length;
-            return { line, column: offset - (before.lastIndexOf("\n") + 1) + 1 };
+            for (const ch of source.slice(counted, offset)) {
+                if (ch === "\n") { line++; column = 1; } else column++;
+            }
+            counted = offset;
+            return { line, column };
         };
         while (at < bodyEnd) {
             if (source.startsWith("<!--", at)) { const end = source.indexOf("-->", at); at = end < 0 ? bodyEnd : end + 3; continue; }
@@ -190,11 +212,11 @@
         },
         mounted() {
             this.load();
-            this.ctx.onSaved(() => this.render());
+            this.offSaved = this.ctx.onSaved(() => this.render());
             this.onScroll = () => this.draw();
             root.addEventListener("resize", this.onScroll);
         },
-        beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); },
+        beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
             load() {
                 this.ctx.get("screenView", { rootId: this.ctx.rootId, path: this.xmlPath }).then((answer) => {

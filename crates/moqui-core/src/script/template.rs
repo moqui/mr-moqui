@@ -504,6 +504,12 @@ impl TemplateRegistry {
         renderer.render_prepared(&text, data)
     }
 
+    /// Drop every kept file text: a dev reload of a changed template or text file, whose modified time a coarse file
+    /// system may leave the same for two quick saves (plans/design-dev-aide.md 6.1, F6).
+    pub fn forget_texts(&self) {
+        self.files.lock().unwrap_or_else(|err| err.into_inner()).clear();
+    }
+
     /// The text of a file, kept by location and last-modified time as Java's `resource.text.location`.
     ///
     /// # Errors

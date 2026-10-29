@@ -14,7 +14,7 @@
 
 //! The host routes of the agents (plans/LLM-A2A-Assist.md 4.5), under the `llm` feature: the event stream of a run
 //! and its catch-up ([`sse`]), the frame document of a Vue SFC canvas ([`sandbox`]), and the A2A server ([`a2a`]). The
-//! drawer's JSON calls are transitions of the webroot `assist` subscreen (`moqui_core::llm::assist`, docs/Assist.md);
+//! drawer's JSON calls are transitions of the webroot `assist` subscreen (`moqui_llm::assist`, docs/Assist.md);
 //! the MCP server ([`mcp`]) and the OpenAI-compatible gateway ([`gateway`]) are here too.
 
 pub(crate) mod a2a;

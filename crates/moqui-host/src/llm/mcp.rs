@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP server's routes (`moqui_core::llm::mcp`, docs/MCP.md): `/mcp` (Streamable HTTP, POST only) and the public
+//! The MCP server's routes (`moqui_llm::mcp`, docs/MCP.md): `/mcp` (Streamable HTTP, POST only) and the public
 //! documents, `/mcp/server-card`, `/mcp/setup`, `/.well-known/mcp.json` and `/.well-known/ai-catalog.json`; each is
 //! 404 while the server is off. The body is read whole (at most 4 MiB) and served on a request worker, which
 //! authenticates and answers; a retry that waits for its owner's decision waits on a thread of its own, counted with
@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
-use moqui_core::llm::mcp::{self, Answer, HttpRequest, Reply};
+use moqui_llm::mcp::{self, Answer, HttpRequest, Reply};
 
 use super::a2a::{busy, origin_of, response_of, Open};
 use crate::guard::Event;
@@ -81,7 +81,7 @@ pub(crate) async fn handle(
         query: Vec::new(),
         headers,
         body: body.to_vec(),
-        secure: moqui_core::llm::a2a::secure(origin.https, peer.ip()),
+        secure: moqui_llm::a2a::secure(origin.https, peer.ip()),
         client_ip: client.to_string(),
         origin,
     };

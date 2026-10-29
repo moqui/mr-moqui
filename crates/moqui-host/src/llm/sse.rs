@@ -14,7 +14,7 @@
 
 //! `GET /assist/runs/{runId}/events`: a run's events as Server-Sent Events. The stored events after the client's
 //! sequence (`Last-Event-ID`, else `?after=`) are replayed from `AgentRunEvent`, then the stream follows the node's
-//! hub (`moqui_core::llm::run::hub`): the run's live events when this node works it, else the stored ones the remote
+//! hub (`moqui_llm::run::hub`): the run's live events when this node works it, else the stored ones the remote
 //! tail reads every 400 ms. A stored event has its sequence as its `id:`; a live one has none. `: ping` goes out every
 //! 15 seconds; the stream ends when the run ends or pauses. `GET /assist/runs/{runId}/events.json?after=` is the
 //! catch-up of a client that polls: the stored events after the sequence, as JSON.
@@ -37,8 +37,8 @@ use axum::response::Response;
 use bytes::Bytes;
 use hyper::body::Frame;
 use moqui_core::context::{ErrorKind, ExecutionContextFactory};
-use moqui_core::llm::run::{self, events};
 use moqui_core::user::verify_session_cookie;
+use moqui_llm::run::{self, events};
 use serde_json::{json, Value as Json};
 use tokio::sync::mpsc;
 

@@ -291,6 +291,26 @@ pub(super) fn note_session_token_checked() {
     });
 }
 
+/// Whether the render running on this thread is a program's HTTP request: its user came by a request header (Basic,
+/// `api_key`, `login_key`), or its session is one a header login made. As a hand-off takes no save of such a request,
+/// the dev tools take no write from one (plans/design-dev-aide.md 15). The terminal client, an agent and code in this
+/// process are not.
+#[must_use]
+pub fn header_authenticated_request() -> bool {
+    let header = ORIGIN.with(|stack| {
+        stack
+            .borrow()
+            .last()
+            .filter(|frame| frame.origin == RenderOrigin::Browser)
+            .map(|frame| frame.header_authenticated)
+    });
+    match header {
+        Some(true) => true,
+        Some(false) => crate::user::header_login_session(),
+        None => false,
+    }
+}
+
 /// The origin of the render running on this thread, if one is.
 pub fn current_origin() -> Option<RenderOrigin> {
     ORIGIN.with(|stack| stack.borrow().last().map(|frame| frame.origin.clone()))
@@ -335,8 +355,9 @@ pub enum InteractiveRequest {
 }
 
 /// Run `body` as if a render of `origin` were running on this thread: what the approval tests decide through.
-#[cfg(test)]
-pub(crate) fn with_request_frame<T>(
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn with_request_frame<T>(
     origin: RenderOrigin,
     header_authenticated: bool,
     session_token_checked: bool,

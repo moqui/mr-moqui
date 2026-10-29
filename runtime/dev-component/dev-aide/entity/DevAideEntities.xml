@@ -58,6 +58,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id"><description>Empty for the root's deploy token</description></field>
         <field name="username" type="text-medium"/>
         <field name="token" type="text-medium" encrypt="true"/>
+        <field name="urlPrefix" type="text-medium"><description>The scheme, host and port the token is for
+            (https://git.example.com): git gets it for that remote only</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount"/>
     </entity>
     <entity entity-name="DevAideTaskSource" package="moqui.dev" use="configuration">

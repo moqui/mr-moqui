@@ -480,16 +480,31 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     let editors = moqui_lib::json::to_json(&present["editors"]);
     assert_eq!(editors[0]["username"], "ext.user", "{editors}");
     assert_eq!(editors[0]["paths"][0], "service/mysite/Things.xml");
-    call(
+    // a token is for an https remote's host; this root's origin is a local path, so the remote is named
+    let no_host = call(
         &factory,
         "john.doe",
         &format!("{WS}store#Credential"),
         &[("rootId", "my-site"), ("username", "deploy"), ("token", "s3cret")],
     )
+    .unwrap_err();
+    assert!(no_host.contains("https remote"), "{no_host}");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WS}store#Credential"),
+        &[
+            ("rootId", "my-site"),
+            ("username", "deploy"),
+            ("token", "s3cret"),
+            ("remoteUrl", "https://git.example.com/site.git"),
+        ],
+    )
     .unwrap();
     let stored = call(&factory, "john.doe", &format!("{WS}get#Credentials"), &[]).unwrap();
     let stored = moqui_lib::json::to_json(&stored["credentials"]);
     assert_eq!(stored[0]["username"], "deploy", "{stored}");
+    assert_eq!(stored[0]["urlPrefix"], "https://git.example.com", "{stored}");
     assert!(!stored.to_string().contains("s3cret"), "{stored}");
     let refused = call(&factory, "ext.user", &format!("{WS}get#Credentials"), &[]).unwrap_err();
     assert!(refused.contains("Dev AIDE") || refused.contains("admin"), "{refused}");
@@ -511,6 +526,42 @@ fn the_workspace_saves_checks_commits_and_publishes() {
             .any(|file| file["fileName"] == "DevAideAgentData.xml"),
         "{data}"
     );
+
+    // a header login (here Basic; an API key alike) reads but never writes (15)
+    let path = "service/mysite/Things.xml";
+    let address = gate.server.address();
+    let authorization = crate::common::basic("john.doe", "moqui");
+    let before = std::fs::read_to_string(site.join(path)).unwrap();
+    let body = format!(
+        "rootId=my-site&path={}&text=changed&baseHash={}",
+        path.replace('/', "%2F"),
+        text(&file_now(&factory, path), "hash")
+    );
+    let (_, _, answer) = crate::common::exchange(
+        address,
+        &crate::common::http_request(
+            "POST",
+            "/apps/dev/Workspace/save",
+            &[
+                ("Authorization", &authorization),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            &body,
+        ),
+    );
+    assert!(answer.contains("logged in by a header"), "{answer}");
+    assert_eq!(std::fs::read_to_string(site.join(path)).unwrap(), before);
+}
+
+/// The site's file at `path` as `get#File` answers it.
+fn file_now(factory: &Arc<ExecutionContextFactory>, path: &str) -> BTreeMap<String, Value> {
+    call(
+        factory,
+        "john.doe",
+        &format!("{WS}get#File"),
+        &[("rootId", "my-site"), ("path", path)],
+    )
+    .unwrap()
 }
 
 const UPSTREAM_SCREEN: &str = r#"<screen>

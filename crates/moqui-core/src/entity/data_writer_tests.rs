@@ -74,7 +74,7 @@ fn zip_directory_streams_each_entity_and_loads_back() {
     assert_eq!(writer.zip_directory("data", zip_name).unwrap(), 1205);
 
     let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
-    let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+    let names: Vec<String> = archive.file_names().map(|name| name.unwrap().into_owned()).collect();
     assert_eq!(
         names,
         ["data/moqui.test.TestEntity.xml", "data/moqui.test.Foo.xml"],

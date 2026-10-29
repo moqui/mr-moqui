@@ -50,6 +50,8 @@ test("error text from a transition's answer", () => {
     assert.equal(pure.errorText({ json: { errors: "one" } }), "one");
     assert.equal(pure.errorText({ status: 500, statusText: "Server Error" }), "HTTP 500 Server Error");
     assert.equal(pure.errorText(new Error("boom")), "boom");
+    // a save's conflict, thrown in the client
+    assert.equal(pure.errorText({ errors: "A.xml changed on disk" }), "A.xml changed on disk");
     assert.equal(pure.storageKey("site", "tabs"), "moqui.devAide.tabs.site");
 });
 

@@ -53,7 +53,12 @@ pub(super) fn load_zip_reader<R: Read + Seek>(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|err| {
+                Error::new(format!("could not read the name of entry {index} of zip {location}")).with_source(err)
+            })?
+            .into_owned();
         if unsafe_zip_name(&name) {
             return Err(Error::new(format!("zip entry {name} is not a safe path")));
         }

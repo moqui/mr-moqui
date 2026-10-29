@@ -53,7 +53,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 /// The actions that try a rule's condition: the context set, then whether the condition holds as a message. An
 /// expression goes in `if`'s attribute; a condition element (`compare`, `and`, ...) in its `condition`.
 fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in context {
         if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
@@ -89,7 +89,7 @@ fn eval_condition(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a condition is tried in the sim, which this server has not (it needs embedded Postgres)",
         ));
@@ -240,9 +240,15 @@ fn get_service_view(
         "secas": secas,
         "usedByCount": used_by,
         "calls": calls,
-        "sim": moqui_core::llm::approval::preview::available(&context.facade),
+        "sim": moqui_llm::approval::preview::available(&context.facade),
         "tier": context.tier.name(),
         "site": context.settings.default_site(),
+        // where Add puts a SECA rule: the site's own rules file (D17), a companion buffer made on its first save
+        "secasFile": context
+            .settings
+            .default_site()
+            .and_then(|name| site::site_path(&context, &format!("service/{}.secas.xml", site::class_of(name))))
+            .map(|file| file.json()),
     });
     let mut out = Parameters::new();
     out.insert("view".into(), json_value(&view));
@@ -300,7 +306,7 @@ fn in_sim(
 ) -> Json {
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let started = std::time::Instant::now();
-    let ran = moqui_core::llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
+    let ran = moqui_llm::approval::preview::run_in_sim(&context.factory, &username, label, || {
         let (out, log, more) = moqui_core::devtools::log_capture::with(body);
         let log = (log, more);
         let (messages, errors) = messages();
@@ -363,7 +369,7 @@ fn try_service(
         out.insert("result".into(), json_value(&answer));
         return Ok(out);
     }
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "this server has no sim (it needs embedded Postgres): run it for real",
         ));
@@ -379,7 +385,7 @@ fn try_service(
 /// The actions of a snippet: XML Actions as they are (an `<actions>` element or its content), or JavaScript as a
 /// `script` action; each given parameter set first.
 fn snippet_actions(language: &str, body: &str, given: &serde_json::Map<String, Json>) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in given {
         if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
@@ -416,7 +422,7 @@ fn try_snippet(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a snippet runs in the sim, which this server has not (it needs embedded Postgres)",
         ));
@@ -450,7 +456,7 @@ pub(crate) fn spec_feature(
     out: &serde_json::Map<String, Json>,
     rows: &[Json],
 ) -> String {
-    let escape = |value: &str| value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let escape = crate::workspace::xml_attr;
     let mut text = format!(
         "\nfeature({}, {{\n    when() {{\n",
         js(&json!(format!("{service} as it ran in a Try")))
@@ -499,7 +505,6 @@ pub(crate) fn spec_feature(
 /// The spec file of a service: `test/<Services file>.spec.js` (`ExampleServices` of
 /// `moqui.example.ExampleServices.create#Example`), or for an entity-auto service the entity's name.
 fn spec_name(service: &str) -> String {
-    let path = service.split('#').next().unwrap_or(service);
     let (prefix, verb_noun) = service
         .split_once('#')
         .map_or(("", service), |(prefix, noun)| (prefix, noun));
@@ -512,7 +517,6 @@ fn spec_name(service: &str) -> String {
     } else {
         verb_noun.rsplit('.').next().unwrap_or(verb_noun)
     };
-    let _ = path;
     base.chars()
         .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
         .collect()
@@ -611,7 +615,7 @@ fn run_spec(
         .and_then(|name| name.strip_suffix(".spec.js"))
         .ok_or_else(|| LibError::new("a spec file is named <Name>.spec.js"))?
         .to_string();
-    if !moqui_core::llm::approval::preview::available(&context.facade) {
+    if !moqui_llm::approval::preview::available(&context.facade) {
         return Err(LibError::new(
             "a spec runs in the sim here, which this server has not (it needs embedded Postgres)",
         ));
@@ -623,11 +627,8 @@ fn run_spec(
     };
     let filter = Some(text(parameters, "feature")).filter(|text| !text.is_empty());
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-    let ran = moqui_core::llm::approval::preview::run_in_sim(
-        &context.factory,
-        &username,
-        &format!("Run spec {name}"),
-        || {
+    let ran =
+        moqui_llm::approval::preview::run_in_sim(&context.factory, &username, &format!("Run spec {name}"), || {
             moqui_core::service::coverage::enable();
             let result = moqui_core::testkit::run_spec(
                 &spec,
@@ -639,8 +640,7 @@ fn run_spec(
             );
             let calls = moqui_core::service::coverage::finish();
             Ok((result, calls))
-        },
-    );
+        });
     let (result, calls) = ran?.value;
     {
         let mut kept = coverage().lock().unwrap_or_else(std::sync::PoisonError::into_inner);

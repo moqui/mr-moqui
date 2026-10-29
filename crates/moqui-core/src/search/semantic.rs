@@ -17,7 +17,7 @@
 //!
 //! The model is behind [`Embedder`]. No model is built in; nothing calls a model server unless it is
 //! configured: `embedder="llm"` (or `llm:<modelId>`) is the LLM embedder
-//! (`crate::llm::embed::LlmEmbedder`, with the `llm` feature), which calls the `/v1/embeddings` of
+//! (`moqui_llm::embed::LlmEmbedder`, in a host with the `llm` feature), which calls the `/v1/embeddings` of
 //! the model the `llm-facade` binds to the `embed` feature (or names), a local embedding model in
 //! LM Studio, Ollama or llama.cpp being the expected use. [`HashEmbedder`] (`embedder="hash"`) is a
 //! deterministic bag-of-words hash for tests and development: it exercises storage, the worker,

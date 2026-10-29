@@ -172,13 +172,13 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 }
 
 /// Errors when `(request cap + service cap) * 2` does not fit the default group's pool, with room for one agent
-/// worker more in a build with the `llm` feature: the agent pool takes as many of its `max-concurrent-runs` as the
+/// worker more in a binary that links the agent runtime (crate::llm_hooks): the agent pool takes as many of its `max-concurrent-runs` as the
 /// rest of the pool leaves ([`spare_connections`]), at least one.
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(factory.conf_text());
     let manager = default_manager(&facade)?;
-    let agent_workers = if cfg!(feature = "llm") { 1 } else { 0 };
+    let agent_workers = u32::from(crate::llm_hooks::linked());
     manager.check_caps_with(request_cap, service_cap, agent_workers)?;
     Ok(())
 }

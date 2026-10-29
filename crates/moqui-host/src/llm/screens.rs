@@ -28,11 +28,11 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::llm::screen::{
+use moqui_core::screen::{RenderOptions, RenderOrigin, TransitionGate};
+use moqui_llm::screen::{
     self, ApprovalGrant, BrowserState, FieldChange, FieldConflict, FollowEvent, OpenSpec, PendingWrite, ScreenAnswer,
     ScreenCommand, ScreenError, ScreenSessions, ScreenState,
 };
-use moqui_core::screen::{RenderOptions, RenderOrigin, TransitionGate};
 use moqui_tui::{
     Agent, AgentAnswer, Choice, LinkError, Messages, PushSink, RawBody, ScreenLink, ScreenModel, ShellInfo,
     Subscription, TransitionOutcome,

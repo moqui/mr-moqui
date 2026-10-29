@@ -43,14 +43,20 @@ pub(crate) fn ensure(factory: &Arc<ExecutionContextFactory>) {
     });
 }
 
-/// The dev-aide's users: the members of its groups.
+/// The dev-aide's users: the current members of its groups.
 fn dev_users(facade: &moqui_core::entity::EntityFacade) -> Vec<String> {
+    use moqui_core::entity::Condition;
+    let now = moqui_core::user::now_value();
     let mut users = Vec::new();
     for group in GROUPS {
-        let Ok(rows) = facade
-            .find("moqui.security.UserGroupMember")
-            .and_then(|find| find.eq("userGroupId", Value::string(*group)).list())
-        else {
+        let Ok(rows) = facade.find("moqui.security.UserGroupMember").and_then(|find| {
+            find.eq("userGroupId", Value::string(*group))
+                .condition(Condition::or(vec![
+                    Condition::is_null("thruDate"),
+                    Condition::greater("thruDate", now.clone()),
+                ]))
+                .list()
+        }) else {
             continue;
         };
         for row in rows.iter() {

@@ -132,11 +132,16 @@ impl Context {
                 root.label
             )));
         }
-        if root.is_site_path(relative) || self.upstream_edits() {
+        if self.upstream_edits() {
+            return Ok(());
+        }
+        // where the path leads: a symlink in a site component to an upstream one is the upstream one
+        let real = self.resolve(root, relative)?.real;
+        if root.is_site_path(relative) && root.is_site_path(&real) {
             return Ok(());
         }
         let what = root
-            .component_of(relative)
+            .component_of(&real)
             .map_or_else(|| root.label.clone(), |component| component.name.clone());
         let site = self
             .settings
@@ -160,6 +165,11 @@ pub(crate) fn flag(parameters: &Parameters, key: &str) -> bool {
 /// A serde value as a service value.
 pub(crate) fn json_value<T: serde::Serialize>(value: &T) -> Value {
     moqui_lib::json::from_json(&serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+}
+
+/// `value` as the text of an XML attribute in double quotes.
+pub(crate) fn xml_attr(value: &str) -> String {
+    value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
 }
 
 pub(crate) fn sha256(bytes: &[u8]) -> String {
@@ -440,7 +450,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
     let name = path
         .file_name()
         .map_or_else(|| "file".into(), |name| name.to_string_lossy().into_owned());
-    let temp = dir.join(format!(".{name}.moqui-save-{}", std::process::id()));
+    // two saves of one file at once each write their own
+    static SAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let save = SAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = dir.join(format!(".{name}.moqui-save-{}-{save}", std::process::id()));
     std::fs::write(&temp, bytes).map_err(|err| LibError::new(format!("{}: {err}", temp.display())))?;
     if let Ok(meta) = std::fs::metadata(path) {
         let _ = std::fs::set_permissions(&temp, meta.permissions());
@@ -812,7 +825,12 @@ fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == "target" || name == "node_modules" {
+            let kind = entry.file_type();
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || kind.as_ref().is_ok_and(std::fs::FileType::is_symlink)
+            {
                 continue;
             }
             let path = if relative.is_empty() {
@@ -820,8 +838,11 @@ fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
             } else {
                 format!("{relative}/{name}")
             };
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                stack.push((entry.path(), path));
+            if kind.is_ok_and(|kind| kind.is_dir()) {
+                // not into a directory the dev-aide does not open (the runtime's database, logs)
+                if context.resolve(root, &path).is_ok() {
+                    stack.push((entry.path(), path));
+                }
             } else {
                 files.push(path);
                 if files.len() >= limit {
@@ -899,7 +920,11 @@ fn search_files(
             if !filter.is_empty() && !path.contains(filter.trim_matches('*')) {
                 continue;
             }
-            let Ok(bytes) = std::fs::read(root.path.join(&path)) else {
+            // confined as an open is: a symlink leading out, .git and the runtime's denied directories are passed over
+            let Ok(resolved) = context.resolve(root, &path) else {
+                continue;
+            };
+            let Ok(bytes) = std::fs::read(&resolved.path) else {
                 continue;
             };
             let Some((body, _)) = decode(&bytes) else {
@@ -1028,6 +1053,7 @@ fn get_credentials(
                 "rootLabel": roots::find(&context.roots, &root).map_or_else(|| root.clone(), |root| root.label.clone()),
                 "userId": field(row, "userId"),
                 "username": field(row, "username"),
+                "urlPrefix": field(row, "urlPrefix"),
             })
         })
         .collect();
@@ -1046,12 +1072,30 @@ fn store_credential(
     let context = Context::of(ec, Tier::Full)?;
     require_admin("A git token")?;
     let _authz = ec.disable_authz();
-    let root = context.root(&text(parameters, "rootId"))?.id.clone();
+    let found = context.root(&text(parameters, "rootId"))?;
+    let root = found.id.clone();
     let user_id = text(parameters, "userId");
     let token = text(parameters, "token");
     if token.trim().is_empty() {
         return Err(LibError::new("a token is required"));
     }
+    // the remote the token is for: git hands it to that scheme, host and port only
+    let remote = Some(text(parameters, "remoteUrl"))
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| {
+            context
+                .git()
+                .read(&found.path, &["remote", "get-url", "origin"])
+                .ok()
+                .map(|url| url.trim().to_string())
+        })
+        .unwrap_or_default();
+    let url_prefix = crate::vcs::url_prefix(&remote).ok_or_else(|| {
+        LibError::new(format!(
+            "a token is for an https remote; {} has none ({remote}): give the remote's URL",
+            found.label
+        ))
+    })?;
     let mut find = context.facade.find(CREDENTIAL)?.eq("rootId", Value::string(&root));
     find = if user_id.is_empty() {
         find.eq("userId", Value::Null)
@@ -1069,6 +1113,7 @@ fn store_credential(
     }
     row.set("username", Value::string(text(parameters, "username").trim()));
     row.set("token", Value::string(token.trim()));
+    row.set("urlPrefix", Value::string(&url_prefix));
     row.create(&context.facade)?;
     tracing::info!(
         "Dev AIDE git token for {root}{} stored by {}",
@@ -1176,12 +1221,12 @@ fn create_site_component(
     let context = Context::of(ec, Tier::Full)?;
     let _authz = ec.disable_authz();
     let name = text(parameters, "componentName");
-    let valid = !name.is_empty()
-        && name
-            .chars()
+    let valid = |name: &str| {
+        name.chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        && name.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic());
-    if !valid {
+            && name.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
+    };
+    if !valid(&name) {
         return Err(LibError::new(
             "a component name starts with a letter and has letters, digits, - and _",
         ));
@@ -1192,6 +1237,10 @@ fn create_site_component(
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .collect();
+    // each goes into component.xml as an attribute value
+    if let Some(bad) = depends.iter().find(|depend| !valid(depend)) {
+        return Err(LibError::new(format!("{bad} is not a component name")));
+    }
     let target = context.factory.runtime_dir().join("component").join(&name);
     if target.exists() {
         return Err(LibError::new(format!("runtime/component/{name} is there already")));
@@ -1203,7 +1252,7 @@ fn create_site_component(
         .find(|component| component.name == "dev-aide")
         .map(|component| component.location.join("template/site"))
         .ok_or_else(|| LibError::new("the dev-aide component is not loaded"))?;
-    let class = pascal(&name);
+    let class = crate::site::class_of(&name);
     let depends_xml: String = depends
         .iter()
         .map(|depend| format!("\n    <depends-on name=\"{depend}\"/>"))
@@ -1249,19 +1298,6 @@ fn create_site_component(
     Ok(out)
 }
 
-/// `my-site` as `MySite`.
-fn pascal(name: &str) -> String {
-    name.split(['-', '_'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + chars.as_str()
-            })
-        })
-        .collect()
-}
-
 fn copy_template(
     from: &Path,
     to: &Path,
@@ -1297,8 +1333,8 @@ mod tests {
         assert!(crlf("a\r\nb\r\nc\n"));
         assert!(!crlf("a\nb\r\nc\n"));
         assert!(!crlf("one line"));
-        assert_eq!(pascal("my-site"), "MySite");
-        assert_eq!(pascal("acme_corp"), "AcmeCorp");
+        assert_eq!(crate::site::class_of("my-site"), "MySite");
+        assert_eq!(crate::site::class_of("acme_corp"), "AcmeCorp");
         assert_eq!(sha256(b"").len(), 64);
     }
 }

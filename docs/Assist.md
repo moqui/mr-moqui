@@ -9,12 +9,12 @@ As of Oct 22, 2026 (13.5 built: the server, the drawer and their Chromium smokes
 13.9: chat members, triggers and AI tasks, "Chat members, triggers and AI tasks" below; 13.14: memory, lessons, Save as
 skill and the composer extras, "The calls of 13.14" below).
 
-The code: `crates/moqui-core/src/llm/assist/` (the calls: `mod.rs` the dispatcher, errors and parameters, `read.rs`,
+The code: `crates/moqui-llm/src/assist/` (the calls: `mod.rs` the dispatcher, errors and parameters, `read.rs`,
 `write.rs`, `state.rs` the page state, tail and follow stamp, `prompts.rs` the suggested-prompt providers, `audit.rs`
 the admin services, `canvas.rs` the canvas calls and the read proxy), the webroot subscreen `runtime/base-component/webroot/screen/webroot/assist.xml` (one transition per
 call, each calling `org.moqui.agent.AssistServices.call#Drawer`), the event stream in
 `crates/moqui-host/src/llm/sse.rs`, and the admin screens under `runtime/base-component/tools/screen/System/Llm/`
-(Conversations, Runs, Approvals). Tests: `crates/moqui-core/src/llm/assist/tests.rs` (the page state, parameters,
+(Conversations, Runs, Approvals). Tests: `crates/moqui-llm/src/assist/tests.rs` (the page state, parameters,
 errors) and `crates/moqui-host/tests/it/assist.rs` (every call over HTTP on embedded Postgres with the scripted fake
 provider, the full run → stream → decide → resume flow, and the audit log).
 
@@ -362,7 +362,7 @@ else it fills the composer. Components register a provider in Rust:
 ```rust
 #[derive(Default)]
 struct OrderPrompts;
-impl moqui_core::llm::assist::prompts::PromptProvider for OrderPrompts {
+impl moqui_llm::assist::prompts::PromptProvider for OrderPrompts {
     fn name(&self) -> &str { "orders" }
     fn prompts(&self, facade: &EntityFacade, query: &PromptQuery) -> Result<Vec<SuggestedPrompt>, Error> { … }
 }
@@ -427,7 +427,7 @@ would post one is refused (a canvas does not post secrets; a password form is a 
 ### The calls of 13.14
 
 Memory, lessons, Save as skill and the composer extras (plans/LLM-A2A-Assist.md 4.9, 4.11, 7.5, 7.6;
-`crates/moqui-core/src/llm/assist/extras.rs`, `files.rs`, `llm/memory.rs`, `llm/skills/learn.rs`). Every call acts on
+`crates/moqui-llm/src/assist/extras.rs`, `files.rs`, `llm/memory.rs`, `llm/skills/learn.rs`). Every call acts on
 the caller's own rows only; anything of another user's is 404.
 
 - **`POST queued`**: `inputId`, `op` `edit` (with `text`) or `cancel`: a message queued for the active run that it has
@@ -530,7 +530,7 @@ stream ends after `run.done`, or after a `run.state` that pauses the run (INPUT_
 again from the last id after the user acts. `GET /assist/runs/{runId}/events.json?after=` is the catch-up of a client
 that polls: `{"events": [{"seq", "type", "payload"}], "lastEventSeq", "statusId", "state"}` (at most 1000).
 
-The events (`crates/moqui-core/src/llm/run/events.rs` is the sink; the payloads are built where each is emitted):
+The events (`crates/moqui-llm/src/run/events.rs` is the sink; the payloads are built where each is emitted):
 
 | Event | Kept | Payload |
 | --- | --- | --- |
@@ -811,7 +811,7 @@ page while the drawer stays docked beside it (the drawer pushes the page rather 
 shown, from 600 px), and Back to the page shows the screen again, which stayed mounted under it; Show canvas in the
 drawer brings it back.
 
-**`write_ui`** (`crates/moqui-core/src/llm/tools/ui.rs`: `kind` openui, `title`, `program` the whole program, `patch` only
+**`write_ui`** (`crates/moqui-llm/src/tools/ui.rs`: `kind` openui, `title`, `program` the whole program, `patch` only
 the changed statements, `run` a Mutation of the canvas to run) is in the tool list from the start with a small schema
 and answers `{"error":"skill_required","skill":"openui-lang",…}` until the skill `openui-lang` (any part of it) was
 loaded in the conversation (`llm::skills::loaded`). It is READ for the policy and the fence; the canvas is the run's own
@@ -819,7 +819,7 @@ record, written under the run's lease with the fence lifted for it, as an approv
 (its `canvasDialects`) is answered `dialect_unavailable` before its skill is asked for; `vue-sfc` is
 [below](#vue-sfc-canvases).
 
-**Parsed once, on the server** (`crates/moqui-core/src/llm/ui/openui.rs`, J28). The one parser is the vendored
+**Parsed once, on the server** (`crates/moqui-llm/src/ui/openui.rs`, J28). The one parser is the vendored
 `@openuidev/lang-core` 0.2.18 (`webroot/libs/openui/lang-core.min.js`, the global `OpenUILang`), built by `libs/refresh.mjs`
 from the npm package with two reviewed patches of `libs/patches/` (telemetry off; a failed Query is not fetched again
 until its arguments change), recorded with their sha256 in `MANIFEST.json`; `node libs/refresh.mjs` verifies it. The
@@ -872,7 +872,7 @@ length only. lang-core's bundle has no process, network or telemetry call (its t
 the reviewed patch, and `refresh.mjs` fails on `child_process`, `execFile`, `getBuiltinModule`, `sendBeacon`,
 `XMLHttpRequest`, `fetch(` and the telemetry hosts).
 
-**Reads: one proxy** (`crates/moqui-core/src/llm/ui/proxy.rs`, J12). A Query, a Lookup's options and a Display's value are
+**Reads: one proxy** (`crates/moqui-llm/src/ui/proxy.rs`, J12). A Query, a Lookup's options and a Display's value are
 `GET /assist/read`, never a request of the page to a screen: the path renders in-process as the user from the agent's
 origin, under the read fence with every write held, as `data` reads. A screen answers one of its lists from its `tui`
 render (reading as the user ∩ the agent: the agent's role groups must permit the screen or the transition, viewed, and
@@ -885,7 +885,7 @@ lookup) answers it as it is; one that writes is 403.
 the Mutation, and the server evaluates its arguments from the stored program with the posted state (lang-core's
 `evaluate` in QuickJS), holds the request at the transition gate (a fenced render under `Hold`, which answers the held
 request and its hash and runs nothing) and runs that exact request under `Approved` with the hash
-(`crates/moqui-core/src/llm/ui/write.rs`). Before it is held, when an approval resumes and for a click, the user ∩ the
+(`crates/moqui-llm/src/ui/write.rs`). Before it is held, when an approval resumes and for a click, the user ∩ the
 agent is checked as the screen tool checks its held writes: the agent's role groups on the transition and the user's own
 permission for the path (`check_write`). In the page a Mutation is reached only from a Button's `act()`, through a token
 whose key is a Symbol no program can write, so a Query (its arguments are program data) never reaches one; and the
@@ -918,7 +918,7 @@ screen list through the proxy; typing on it and clicking Save runs its Mutation 
 is a card, and approving it writes; Back to the page shows the screen (`MOQUI_SHELL_SHOTS` saves `assist-canvas-*` and
 `assist-canvas-card-*`). `crates/moqui-host/tests/it/assist.rs` `the_canvas_over_http_on_postgres` covers the calls over
 HTTP; `WebrootAssistCanvas.test.js` the library spec golden, lang-core's parses, the state reconciliation and the drawer's
-canvas state; `crates/moqui-core/src/llm/ui/` the checks, the sections, the merge, the stream and the dialects. The
+canvas state; `crates/moqui-llm/src/ui/` the checks, the sections, the merge, the stream and the dialects. The
 evaluation task "chart fallback" (`tools/test/agent/assist.agent.js`) passes on its hand-authored recording in two
 `write_ui` calls.
 
@@ -936,7 +936,7 @@ change; each replaces the canvas's block of its name. The skill is
 `runtime/base-component/framework/skill/vue-sfc.md` (sections `shape`, `sandbox`, `bridge`, `widgets`, `example`; every
 rule of `llm/ui/vue_sfc.rs` is quoted in its section, and the example checks, which a test asserts).
 
-**Checked on the server** (`crates/moqui-core/src/llm/ui/vue_sfc.rs`) before anything is shown, each problem naming its
+**Checked on the server** (`crates/moqui-llm/src/ui/vue_sfc.rs`) before anything is shown, each problem naming its
 section and quoting its rule (`vue_sfc_invalid`, with the `block` and its line): at most 64k characters; the blocks
 (nothing outside them, none twice, a template); the template compiled with the vendored `libs/vue/compiler-dom.cjs.js`
 in QuickJS (the compiler of the qvt screens; the same version as the browser build); the script compiled, not run, in a
@@ -1076,7 +1076,7 @@ page; a submit on mount is ignored, and a message posted to the page window is n
 the confirm with what it saves, a scripted click on its Save arms nothing, the user's click saves; a component that
 navigates its frame is closed and recorded as a `vue-sfc#sandbox` problem (`MOQUI_SHELL_SHOTS` saves `assist-sfc-*` and
 `assist-sfc-killed-*`). `WebrootAssistCanvas.test.js` covers the validator, the blocks and actions, the read paths,
-the link targets, the watchdog, the submit gate and the read limits; `crates/moqui-core/src/llm/ui/vue_sfc_tests.rs` the
+the link targets, the watchdog, the submit gate and the read limits; `crates/moqui-llm/src/ui/vue_sfc_tests.rs` the
 checks and their sections, the merge, the actions' request, the skill, and the policy; `crates/moqui-host/src/llm/
 sandbox.rs` the route's headers.
 
@@ -1149,11 +1149,11 @@ pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen
 
 ## Chat members, triggers and AI tasks
 
-Phase 13.9 (plan 4.13, 4.14). The code: `crates/moqui-core/src/llm/chat.rs` (chat agent members and the room's
+Phase 13.9 (plan 4.13, 4.14). The code: `crates/moqui-llm/src/chat.rs` (chat agent members and the room's
 cards), `trigger.rs` (triggers, the loop guard, batching, limits, the breaker and the inbox), `ai_task.rs` (typed AI
 tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue` and its `set_field` tool) and
 `run/observe.rs` (the observer worker that hands a run's committed events to them). Tests:
-`crates/moqui-core/src/llm/members_tests.rs` (in memory, scripted fake), `crates/moqui-host/tests/it/agent_members.rs`
+`crates/moqui-llm/src/members_tests.rs` (in memory, scripted fake), `crates/moqui-host/tests/it/agent_members.rs`
 (the loop guard through the real data feed on embedded Postgres) and the node tests of `js/WebrootChat.test.js`.
 
 ### Chat agent members

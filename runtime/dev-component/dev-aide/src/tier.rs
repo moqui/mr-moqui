@@ -14,7 +14,8 @@
 
 //! The tiers of access (plans/design-dev-aide.md 3.4): `DEV_AIDE_VIEW` reads, `DEV_AIDE_EXTEND` also writes inside site
 //! components, `DEV_AIDE` does everything. Every dev-aide service asks [`require`] first, which also refuses on any
-//! instance purpose but dev: the tools give code execution as the server's OS user (D15).
+//! instance purpose but dev: the tools give code execution as the server's OS user (D15), and refuses a write to a
+//! request logged in by a header.
 
 use moqui_lib::error::Error;
 
@@ -59,6 +60,12 @@ pub fn current() -> Option<Tier> {
 pub fn require(least: Tier) -> Result<Tier, Error> {
     if !moqui_core::devtools::is_dev_instance() {
         return Err(Error::new("Dev AIDE is only available when instance_purpose is dev"));
+    }
+    // a program that logs in by a header (an API key) reads, but never writes files or runs git (15)
+    if least >= Tier::Extend && moqui_core::screen::gate::header_authenticated_request() {
+        return Err(Error::new(
+            "Dev AIDE takes no write from a request logged in by a header (an API key); use a session",
+        ));
     }
     match current() {
         Some(tier) if tier >= least => Ok(tier),

@@ -1226,8 +1226,12 @@ the git-depth phase (P8), since a developer's tasks live in the team's tools alr
   git commands off until an admin enables them with a token (§4.2).
 - **Who**: the tiers of §3.4: `DEV_AIDE_VIEW` reads, `DEV_AIDE_EXTEND` writes inside site components with additive
   DDL, `DEV_AIDE` everything; `DEV_AIDE_APP` for the screens; granted in seed only to `ADMIN`, `DEV_AIDE_USERS` and
-  `DEV_AIDE_EXTENDERS`; a header login (an API key) reads but never writes files or runs git; every write is a
-  transition with the session token.
+  `DEV_AIDE_EXTENDERS`; a header login (an API key, Basic) reads but never writes files or runs git (`tier::require`
+  refuses a write from a Browser-origin request whose user or session came by a header; the terminal client and the
+  agents are not such requests); every write is a transition with the session token. The extend tier is close to the
+  full one in effect: a site service it writes runs any code, and a seed file it loads may hold any record (a
+  `UserGroupMember` of `ADMIN` among them), so it is for trusted developers; what it keeps from them is editing
+  upstream files, destructive DDL and git writes outside site components.
 - **Configuration and code.** DbForm (per user group, rows in the database, in production, by admins in System) is
   configuration; the dev-aide writes code (files in components, versioned, on dev instances), and the site component
   (D17) is where a site's code goes. The views show both with their origin, so nobody wonders where a field came from.
@@ -1459,7 +1463,7 @@ are independent of P4 and may run beside it.
   on each chunk; Save accepted saves the files, then `complete#Review` ends the hand-off, on a thread of its own so its
   decision commits before the run resumes.
 - **`screen-xml`** is a dialect whose program's first line names its location and the page that shows it; the canvas is
-  that page framed with the program in place. Open in the builder waits for P6.
+  that page framed with the program in place. Open in the builder came with P6 (below).
 - **Customize this screen** is a `page-action` shell provider in the drawer's header on every app page, opening Dev
   Assist with the recipes for the page; the shell's page menu has none (it has no page menu yet).
 - **Try in sim** is the agents' `try_service` on `approval::preview::run_in_sim`; `moqui test` now starts the sim overlay
@@ -1504,7 +1508,7 @@ are independent of P4 and may run beside it.
   (`entity::info::view_sql`) and its first rows; a link to Tools' Data Edit; and a data file's Check against the database
   (the data check's messages), Load the changed records (those added or changed since the last commit, compared with
   `git show HEAD:`) and Export records (a find written as the file's elements, by full name, at most a thousand, into the
-  buffer). Still to come: the member diagram, with the pan-and-zoom layer (P9); the three-way data load (P10).
+  buffer). The member diagram, with the pan-and-zoom layer, came with P9; the three-way data load is P10.
 
 **P6, the screen builder** (Oct 28, 2026), with these differences:
 
@@ -1547,7 +1551,8 @@ are independent of P4 and may run beside it.
   DbForm's fields are stamped `dbform:<formId>` and the canvas names the form and its groups; and the `screen-xml`
   canvas's "Open in the builder" hands its program to the builder as the unsaved text of its location (a browser draft
   the Workspace takes when it opens that file). A server-static template is built with stamping paused, as it is shared
-  by every render: a server-static screen carries no stamps. Still to come: the archetypes' gallery preview.
+  by every render: a server-static screen carries no stamps. The archetypes' gallery preview came with the catch-up
+  before P8.
 
 **P7, the service writer and ECA rules** (Oct 28, 2026), with these differences:
 
@@ -1597,7 +1602,8 @@ are independent of P4 and may run beside it.
   `DevPresence` and show "being edited by" on the tab and the file status; a save sends `DevSaved` to the others, whose
   clean tabs take the text through the reload report as before, with a note naming who saved.
 
-**Review before P8** (Oct 28, 2026). The menu of §1 had Repositories and Tasks with no screen; Repositories (§4.7) was
+**Review before P8** (Oct 28, 2026; all of it taken up by P8 and P9, below). The menu of §1 had Repositories and
+Tasks with no screen; Repositories (§4.7) was
 assigned to no phase and goes with P8. The Workspace has no Settings tab (§4.3; a root's publish branch is in
 `dev/Settings`), the file status strip no menu (§4.8), the git layer no progress or Cancel and a fixed 120 s write
 timeout (§4.2), the Commits tab one page of 100, and the current task's preference is read but never written (§14):
@@ -1709,6 +1715,46 @@ design mode needs (P9).
   a location the file of this runtime's component of that name. `check --extensions` runs locally only. The
   coding-agent skill (`fw/skill/moqui-coding-agent.md`) has Language server and Remote sections.
 
+**Review after P9** (Oct 28, 2026): an integration review of P1a to P9, against §3.4, §13.3 and §15 and at the seams
+between the phases. Fixed:
+
+- **Access.** A header login writes nothing (§15, above); the extend tier's git writes (stage, unstage, hunks, a branch,
+  a task's branch, abort) are refused on upstream repositories as its commit and push were (`vcs::git_write_root`); the
+  upstream lock is checked on the path a symlink leads to (`confine::Resolved::real`); search and Go to file in a plain
+  root are confined as an open is; a stored git token goes to the host it was stored for only (`DevAideCredential.
+  urlPrefix`, a `credential.<url>.helper`), and storing one names its https remote; git takes paths literally
+  (`GIT_LITERAL_PATHSPECS`); a running operation is cancelled by its own user only; the view tier's task sources reach
+  no internal address (the extend tier's may: a team's server is often on the local network, and http stays allowed on
+  a dev instance); `update#Subscreen` and `create#SiteComponent` take only names that are safe in the XML they write.
+  Smaller: a network command's audit row has its arguments (a force push's remote and branch); two saves of one file
+  write their own temporary files; an expired member of a dev-aide group gets no notices; Fetch all and Pull all pass
+  over a repository with no remote rather than count it failed.
+- **Change sets.** Accept saves against the text it reapplied the change to, and a whole-text change whose file moved on
+  since the proposal, or a new file made there since, is refused as a conflict (`FileChange::stale_over`).
+- **Reload.** After a relink an `auto-parameters` service expands from the new model (the cache keyed by the definitions'
+  generation too); a read shape kept by a find still on the old model is built again; a service reload that adds or
+  removes services reads the SECA rules again (a rule on a service new in the same save ran only after the next secas
+  change) and drops the screens' forms (`auto-fields-service`); a template or text file's reload drops the kept texts; a
+  `screen-extend` that does not parse is left out with an error, not its base screen; the watcher takes changes a
+  debounce after the last one however many other events come (the index build's file opens held it off); the reload
+  listeners are called on a copy; the index's update and the observed calls' flush keep going past one file or row.
+- **Renders.** Stamping and the log capture end on a panic (a Drop guard: the request pool reuses the thread); an overlay
+  render neither reads nor keeps the `//` searches or the shell providers.
+- **Client.** Save all stops at the tab's own conflict; a conflict's message is its words, not "[object Object]";
+  companion buffers' drafts are kept in the browser and offered back, and switching roots says the drafts are kept;
+  a view's save hook goes with it; the drafts are written half a second after typing, from the paths and texts only (the
+  deep watch walked every outline per keystroke); the builder matches a stamp's file as well as its line; the browser
+  drops an answer for a center left already; the service view's secas file is the server's; the `.qvue` scans count a
+  column in characters, find the template block outside comments and end it at a `<script` or `<style` tag only, held
+  to `crates/moqui-lib/testdata/qvue-element-vectors.json` by the server's unit test and the page test alike.
+- **Host.** `moqui lsp` decodes a URI's `%xx` by bytes (a multi-byte character after a `%` panicked it); `--server` sends
+  the login key over http to this machine only, reads an event-stream answer, and finds a `component.xml`'s name on any
+  line.
+
+Still open: there is no CI, so the Windows checks of P1a and §19 run nowhere; the restart's re-exec has no test; P4's
+live-model run has not been run; the card's summary from a patch has no page test; the `.qvue` Design canvas renders
+the `.qvue` buffer, not an unsaved sibling XML.
+
 ---
 
 ## 19. Tests
@@ -1718,9 +1764,11 @@ design mode needs (P9).
   components' order); the restart re-exec; the model swap under concurrent finds (when F5 lands); the lossless XML
   vectors; the digest of every XSD; the reference rules on fixture files; the index's references, origins and
   extension anchors, its per-file replacement after a reload, and that a restart keeps it.
-- **Client, node** (run by `cargo test` when `node` is on the path, as the framework's are): the `xml-op` client (and
-  the WASM module when built) against the vectors; the outline from Lezer; the browser's layout; the composer's sentence
-  table against the digest; the change set review's merge; the card's artifact summary from a patch.
+- **Client, in the page** (`moqui test-client runtime/dev-component/dev-aide --offline`, headless Chromium; node is not
+  a test dependency): the `xml-op` client (and the WASM module when built) against the vectors; the outline is the
+  server's (`get#XmlOutline`, P5); the browser's layout; the composer's sentence table against the digest; the `.qvue`
+  scan against the vectors the server's stamps are held to; the change set review's merge; the card's artifact summary
+  from a patch.
 - **dev-aide specs** (`moqui test dev-aide`): confinement (traversal, symlinks, `.git/`), the tiers (an extend user
   refused an upstream write and a destructive DDL, allowed an `extend-entity`), saves with a stale base, audit rows,
   git operations on scratch repositories with git isolated from the desktop (author and committer identities), Try in
@@ -1730,7 +1778,8 @@ design mode needs (P9).
 - **Agents**: the evaluation tasks of P4 on recordings (`moqui test dev-aide --agents`); the same with a live model
   (`--llm-profile`, a key from the environment; nightly and before P4 closes; scored by `moqui check` clean, the spec passed
   and the diff confined to the expected files, against a pass rate; passing runs recorded into the replay set), since
-  the Assist runtime has only ever run against hand-authored recordings; and the MCP SDK client.
+  the Assist runtime has only ever run against hand-authored recordings; and the MCP tools over HTTP
+  (`it::mcp::the_dev_tools_over_mcp`, rather than the Python SDK script).
 - **Platforms**: the path confinement and the git layer's specs run on Windows in CI from P1a.
 
 ---

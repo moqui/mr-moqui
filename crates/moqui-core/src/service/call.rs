@@ -970,19 +970,17 @@ pub(crate) fn entity_auto_noun(name: &str) -> Option<String> {
 /// A service as an agent's tool takes it (plans/LLM-A2A-Assist.md 4.6): its definition (an implicit entity-auto one
 /// too), its authorization action, its input checked and converted as a call checks it, and the JSON schemas of its
 /// parameters and results as the OpenAPI document writes them.
-#[cfg(feature = "llm")]
-pub(crate) struct ToolService {
-    pub def: Arc<ServiceDef>,
+pub struct ToolService {
+    pub(crate) def: Arc<ServiceDef>,
 }
 
-#[cfg(feature = "llm")]
 impl ToolService {
     /// The service `name`, defined or entity-auto.
     ///
     /// # Errors
     ///
     /// Returns an error when no service has that name, or it is an interface.
-    pub(crate) fn of(name: &str) -> Result<Self, Error> {
+    pub fn of(name: &str) -> Result<Self, Error> {
         let def = resolve(&canonical(name), current_facade().as_ref())?;
         if def.kind == ServiceKind::Interface {
             return Err(Error::new(format!(
@@ -993,31 +991,31 @@ impl ToolService {
         Ok(Self { def })
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.def.name
     }
 
     /// view, create, update, delete or all: its `authz-action`, else by its verb.
-    pub(crate) fn authz_action(&self) -> &str {
+    pub fn authz_action(&self) -> &str {
         auth_action(&self.def)
     }
 
     /// It is declared `read-only="true"`.
-    pub(crate) fn read_only(&self) -> bool {
+    pub fn read_only(&self) -> bool {
         self.def.read_only
     }
 
     /// Whether the user must be authorized for it (`authenticate` is not false or anonymous).
-    pub(crate) fn needs_authz(&self) -> bool {
+    pub fn needs_authz(&self) -> bool {
         self.def.authenticate == Authenticate::Required
     }
 
     /// The entity of an entity-auto service.
-    pub(crate) fn entity_noun(&self) -> Option<String> {
+    pub fn entity_noun(&self) -> Option<String> {
         (self.def.kind == ServiceKind::EntityAuto && !self.def.noun.is_empty()).then(|| self.def.noun.clone())
     }
 
-    pub(crate) fn verb(&self) -> &str {
+    pub fn verb(&self) -> &str {
         &self.def.verb
     }
 
@@ -1027,7 +1025,7 @@ impl ToolService {
     /// # Errors
     ///
     /// Returns the validation errors, each with its field.
-    pub(crate) fn clean(&self, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
+    pub fn clean(&self, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
         let mark = ExecutionContext::with_current(|ctx| ctx.message().error_mark());
         let cleaned = validate::clean(&self.def, parameters, current_facade().as_ref());
         if let Some(mark) = mark {
@@ -1041,7 +1039,7 @@ impl ToolService {
     /// # Errors
     ///
     /// Returns an error when the `auto-parameters` cannot be expanded.
-    pub(crate) fn input_schema(&self, facade: Option<&EntityFacade>) -> Result<Value, Error> {
+    pub fn input_schema(&self, facade: Option<&EntityFacade>) -> Result<Value, Error> {
         let params = validate::declared_in(&self.def, facade)?;
         // an implicit entity-auto service declares none: its entity's fields are its parameters
         if params.is_empty() && self.def.kind == ServiceKind::EntityAuto {
@@ -1062,7 +1060,7 @@ impl ToolService {
     }
 
     /// The JSON schema of the out-parameters.
-    pub(crate) fn output_schema(&self, facade: Option<&EntityFacade>) -> Value {
+    pub fn output_schema(&self, facade: Option<&EntityFacade>) -> Value {
         let expanded = validate::expanded_out(&self.def);
         let params: Vec<&super::define::ParamDef> = expanded
             .iter()

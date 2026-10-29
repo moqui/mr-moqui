@@ -1101,7 +1101,7 @@ pub fn remove_screen_last_parameters(to_saved: bool) {
 }
 
 /// A new login starts a new session view: the CSRF token and cached authorization data are dropped.
-pub(crate) fn set_user(user_id: &str, username: &str) {
+pub fn set_user(user_id: &str, username: &str) {
     with_session(|session| {
         session.user_id = Some(user_id.to_string());
         session.username = Some(username.to_string());
@@ -1194,8 +1194,9 @@ pub(crate) fn restore_identity(identity: &Identity) {
     });
 }
 
-#[cfg(test)]
-pub(crate) fn reset_session() {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn reset_session() {
     with_session(|session| *session = Memory::default());
 }
 
@@ -2426,13 +2427,12 @@ fn mac_matches(id: &str, tag: &[u8]) -> Result<bool, Error> {
 }
 
 /// A key for another signature, derived from `session_cookie_key`: HMAC-SHA256 of `label` under it, so a value signed
-/// with it is never a valid session tag (the MCP server's `requestState`, `crate::llm::mcp::state`).
+/// with it is never a valid session tag (the MCP server's `requestState`, `moqui_llm::mcp::state`).
 ///
 /// # Errors
 ///
 /// Returns an error when `session_cookie_key` is not set or not standard base64.
-#[cfg(feature = "llm")]
-pub(crate) fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
+pub fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
     let key = cookie_key()?;
     let mut mac =
         SessionMac::new_from_slice(&key).map_err(|_| Error::new("session_cookie_key cannot be used as an HMAC key"))?;
@@ -2465,8 +2465,9 @@ fn parse_attributes(text: &str) -> Result<BTreeMap<String, Json>, Error> {
 }
 
 /// Process-wide lock for tests that set `session_cookie_key` or other webapp properties.
-#[cfg(test)]
-pub(crate) fn cookie_property_lock() -> MutexGuard<'static, ()> {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn cookie_property_lock() -> MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     lock(&LOCK)
 }

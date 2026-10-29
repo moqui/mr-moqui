@@ -1560,7 +1560,8 @@ impl ExecutionContextFactory {
     }
 
     /// A test context whose conf text is `conf_text`, for example an `artifact-execution-facade`.
-    pub(crate) fn test_context_with_conf(conf_text: &str) -> ExecutionContext {
+    #[doc(hidden)]
+    pub fn test_context_with_conf(conf_text: &str) -> ExecutionContext {
         Self::test_context_with(conf_text, crate::service::ServicePools::idle())
     }
 
@@ -1570,7 +1571,8 @@ impl ExecutionContextFactory {
     }
 
     /// A test context whose framework directory is `framework_dir`, so framework files resolve.
-    pub(crate) fn test_context_in(
+    #[doc(hidden)]
+    pub fn test_context_in(
         conf_text: &str,
         pools: crate::service::ServicePools,
         framework_dir: PathBuf,
@@ -1579,7 +1581,8 @@ impl ExecutionContextFactory {
     }
 
     /// [`Self::test_context_in`] with `components`, in their load order.
-    pub(crate) fn test_context_with_components(
+    #[doc(hidden)]
+    pub fn test_context_with_components(
         conf_text: &str,
         pools: crate::service::ServicePools,
         framework_dir: PathBuf,

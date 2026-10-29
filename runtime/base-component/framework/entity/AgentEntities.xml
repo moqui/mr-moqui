@@ -181,6 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id"/>
         <field name="runAsUserId" type="id"/>
         <field name="surfaceEnumId" type="id"/>
+        <field name="externalHarnessId" type="text-medium"><description>External executor owns this run; native claiming and lease recovery must not execute it.</description></field>
         <field name="triggerId" type="id"/>
         <field name="triggerRef" type="text-medium"/>
         <field name="parentRunId" type="id"/>
