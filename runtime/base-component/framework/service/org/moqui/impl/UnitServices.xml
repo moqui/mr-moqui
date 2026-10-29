@@ -1,0 +1,159 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="UnitContext" allow-remote="false">
+        <in-parameters>
+            <parameter name="uomId" type="String" />
+            <parameter name="toUomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="uomTypeEnumId" type="String" />
+            <parameter name="description" type="String" />
+            <parameter name="abbreviation" type="String" />
+            <parameter name="fractionDigits" type="Integer" />
+            <parameter name="symbol" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="text" type="String" />
+            <parameter name="conversionFactor" type="String" />
+            <parameter name="conversionOffset" type="BigDecimal" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="amount" type="BigDecimal" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="unitRows" type="List" />
+            <parameter name="conversionRows" type="List" />
+            <parameter name="unitOptions" type="List" />
+            <parameter name="unitTypes" type="List" />
+            <parameter name="canManageUnits" type="Boolean" />
+            <parameter name="uomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="convertedAmount" type="BigDecimal" />
+            <parameter name="conversionPath" type="List" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="appliedConversionOffset" type="BigDecimal" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('context',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Unit" allow-remote="false">
+        <in-parameters>
+            <parameter name="uomId" type="String" />
+            <parameter name="toUomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="uomTypeEnumId" type="String" />
+            <parameter name="description" type="String" />
+            <parameter name="abbreviation" type="String" />
+            <parameter name="fractionDigits" type="Integer" />
+            <parameter name="symbol" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="text" type="String" />
+            <parameter name="conversionFactor" type="String" />
+            <parameter name="conversionOffset" type="BigDecimal" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="amount" type="BigDecimal" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="unitRows" type="List" />
+            <parameter name="conversionRows" type="List" />
+            <parameter name="unitOptions" type="List" />
+            <parameter name="unitTypes" type="List" />
+            <parameter name="canManageUnits" type="Boolean" />
+            <parameter name="uomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="convertedAmount" type="BigDecimal" />
+            <parameter name="conversionPath" type="List" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="appliedConversionOffset" type="BigDecimal" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('store',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="UnitConversion" allow-remote="false">
+        <in-parameters>
+            <parameter name="uomId" type="String" />
+            <parameter name="toUomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="uomTypeEnumId" type="String" />
+            <parameter name="description" type="String" />
+            <parameter name="abbreviation" type="String" />
+            <parameter name="fractionDigits" type="Integer" />
+            <parameter name="symbol" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="text" type="String" />
+            <parameter name="conversionFactor" type="String" />
+            <parameter name="conversionOffset" type="BigDecimal" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="amount" type="BigDecimal" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="unitRows" type="List" />
+            <parameter name="conversionRows" type="List" />
+            <parameter name="unitOptions" type="List" />
+            <parameter name="unitTypes" type="List" />
+            <parameter name="canManageUnits" type="Boolean" />
+            <parameter name="uomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="convertedAmount" type="BigDecimal" />
+            <parameter name="conversionPath" type="List" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="appliedConversionOffset" type="BigDecimal" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('conversion',context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="UnitConversion" allow-remote="false">
+        <in-parameters>
+            <parameter name="uomId" type="String" />
+            <parameter name="toUomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="uomTypeEnumId" type="String" />
+            <parameter name="description" type="String" />
+            <parameter name="abbreviation" type="String" />
+            <parameter name="fractionDigits" type="Integer" />
+            <parameter name="symbol" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="text" type="String" />
+            <parameter name="conversionFactor" type="String" />
+            <parameter name="conversionOffset" type="BigDecimal" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="amount" type="BigDecimal" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="unitRows" type="List" />
+            <parameter name="conversionRows" type="List" />
+            <parameter name="unitOptions" type="List" />
+            <parameter name="unitTypes" type="List" />
+            <parameter name="canManageUnits" type="Boolean" />
+            <parameter name="uomId" type="String" />
+            <parameter name="uomConversionId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="convertedAmount" type="BigDecimal" />
+            <parameter name="conversionPath" type="List" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="appliedConversionOffset" type="BigDecimal" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/UnitPolicy.js').execute('preview',context))</script>
+        </actions>
+    </service>
+</services>

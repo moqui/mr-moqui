@@ -181,3 +181,111 @@ fn the_svg_has_the_quiet_zones_bars_and_text_in_millimetres() {
     let escaped = code128("A<B&\"C\"").unwrap().svg(&SvgOptions::default());
     assert!(escaped.contains(">A&lt;B&amp;&quot;C&quot;</text>"), "{escaped}");
 }
+
+#[test]
+fn retail_symbols_require_existing_valid_checksums_and_keep_standard_module_counts() {
+    for (kind, code, modules) in [
+        ("EAN-13", "4006381333931", 95),
+        ("UPC-A", "036000291452", 95),
+        ("EAN-8", "96385074", 67),
+    ] {
+        let encoded = retail(kind, code).unwrap();
+        assert_eq!(encoded.widths.iter().map(|w| usize::from(*w)).sum::<usize>(), modules);
+        assert_eq!(encoded.text, code);
+        let mut invalid = code.to_string();
+        invalid.pop();
+        invalid.push('0');
+        assert!(retail(kind, &invalid).is_err());
+        assert!(retail(kind, &code[1..]).is_err());
+    }
+    assert_eq!(
+        retail("UPC-A", "036000291452").unwrap().widths,
+        retail("EAN-13", "0036000291452").unwrap().widths
+    );
+    let itf = retail("ITF-14", "10012345000017").unwrap();
+    assert!(itf.widths.starts_with(&[1, 1, 1, 1]));
+    assert!(itf.widths.ends_with(&[3, 1, 1]));
+    assert_eq!(itf.widths.len(), 77);
+    let options = SvgOptions {
+        module_width: 0.5,
+        height: 36.0,
+        ..SvgOptions::default()
+    };
+    let svg = barcode_svg("ITF-14", "10012345000017", &options).unwrap();
+    assert!(svg.contains("width=\"67.5\" height=\"2.5\"")); // bearer bars span the symbol, five modules thick.
+}
+
+#[test]
+fn matrix_modules_preserve_the_data_and_qr_finder_patterns() {
+    let text = "INV-1234567";
+    let dm = matrix("DataMatrix", text).unwrap();
+    assert_eq!(
+        datamatrix::DataMatrix::decode(&dm.bits, dm.width).unwrap(),
+        text.as_bytes()
+    );
+    let qr = matrix("QR", text).unwrap();
+    assert_eq!(qr.width, 21);
+    assert_eq!(qr.height, 21);
+    assert!(qr.bits[0]);
+    assert!(!qr.bits[qr.width + 1]);
+    assert!(qr.bits[3 * qr.width + 3]);
+    for kind in ["QR", "DataMatrix"] {
+        assert!(matrix(kind, "").is_err());
+        assert!(matrix(kind, &"A".repeat(5000)).is_err());
+    }
+    let svg = qr.svg(&SvgOptions::default());
+    assert!(svg.contains("fill=\"white\""));
+    assert!(svg.contains("M10 10h1v1h-1z"));
+}
+
+#[test]
+fn gs1_scanner_and_human_forms_share_one_validated_element_string() {
+    let hri = "(01)04006381333931(17)261231(10)LOT-7(21)SN-9";
+    let scanner = "]C101040063813339311726123110LOT-7\u{1d}21SN-9";
+    let human = parse_gs1(hri).unwrap();
+    let scanned = parse_gs1(scanner).unwrap();
+    assert_eq!(human, scanned);
+    assert_eq!(human.elements[2].value, "LOT-7");
+    assert_eq!(human.elements[3].value, "SN-9");
+    assert_eq!(human.human_readable, hri);
+    assert!(human.element_string.contains('\u{1d}'));
+    for invalid in [
+        "(01)04006381333930",
+        "(17)260230",
+        "(17)261300",
+        "(10)",
+        "(01)123",
+        "(99)unknown",
+        "(10)A(10)B",
+    ] {
+        assert!(parse_gs1(invalid).is_err(), "{invalid}");
+    }
+    assert!(parse_gs1("(17)260200").is_ok()); // day 00 is the last day of the month.
+}
+
+#[test]
+fn gs1_128_places_fnc1_at_the_start_and_between_variable_fields() {
+    let parsed = parse_gs1("(01)04006381333931(10)LOT(21)SERIAL").unwrap();
+    let code = code128_internal(&parsed.element_string, true).unwrap();
+    let values: Vec<usize> = code.widths[..code.widths.len() - 7]
+        .chunks(6)
+        .map(|chunk| {
+            CODE128
+                .iter()
+                .position(|p| p.iter().map(|b| b - b'0').eq(chunk.iter().copied()))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(values[1], 102);
+    assert_eq!(values[..values.len() - 1].iter().filter(|v| **v == 102).count(), 2);
+    let sum: usize = values[..values.len() - 1]
+        .iter()
+        .enumerate()
+        .map(|(i, v)| i.max(1) * v)
+        .sum();
+    assert_eq!(values.last(), Some(&(sum % 103)));
+    assert!(barcode_svg("GS1-128", "(01)04006381333931", &SvgOptions::default())
+        .unwrap()
+        .contains("(01)04006381333931"));
+    assert!(barcode_svg("unknown", "123", &SvgOptions::default()).is_err());
+}

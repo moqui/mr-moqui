@@ -230,3 +230,15 @@ fn flatten_nested_map_mask_and_year_list_as_java() {
     );
     clear_context_stack();
 }
+
+#[test]
+fn barcode_and_gs1_resource_helpers_preserve_validated_values() {
+    clear_context_stack();
+    holds(r#"ec.resource.barcodeSvg('EAN-13','4006381333931').startsWith('<svg')"#);
+    holds(r#"ec.resource.barcodeSvg('QR','INV-123').includes('aria-label="INV-123"')"#);
+    holds(r#"ec.resource.isValidGs1CheckDigit('4006381333931') && !ec.resource.isValidGs1CheckDigit('4006381333930')"#);
+    holds(r#"ec.resource.parseGs1('(01)04006381333931(10)LOT').applicationIdentifiers['10'] === 'LOT'"#);
+    holds(
+        r#"(()=>{try {ec.resource.barcodeSvg('EAN-13','4006381333930');return false} catch(e){return String(e).includes('check digit')}})()"#,
+    );
+}
