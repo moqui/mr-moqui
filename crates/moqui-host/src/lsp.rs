@@ -33,18 +33,7 @@ use moqui_core::devtools::{check, schema, Problem, Severity};
 use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 
-use crate::devtools_remote::Remote;
-
-/// Where an artifact is defined, as the editor opens it.
-#[derive(Clone, Debug, Default)]
-pub struct Target {
-    pub id: String,
-    pub kind: String,
-    pub name: String,
-    pub path: PathBuf,
-    pub line: u32,
-    pub summary: String,
-}
+use crate::devtools_remote::{Remote, Target};
 
 /// What answers the server: this checkout's model and index, or a running instance's.
 pub enum Backend {

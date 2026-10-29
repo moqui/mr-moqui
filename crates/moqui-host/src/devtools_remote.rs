@@ -26,7 +26,16 @@ use moqui_core::devtools::{Problem, Severity};
 use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 
-use crate::lsp::Target;
+/// Where an artifact is defined, as the editor opens it.
+#[derive(Clone, Debug, Default)]
+pub struct Target {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub path: PathBuf,
+    pub line: u32,
+    pub summary: String,
+}
 
 /// The MCP protocol version the calls name.
 const PROTOCOL: &str = "2026-07-28";
