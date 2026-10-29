@@ -264,3 +264,35 @@ fn service_parameter_node_exposes_the_declared_parameter_to_scripts() {
         r#"definition.inParameterInfoMap.mapId.parameterNode.attribute("type") === "Map" && definition.inParameterInfoMap.mapId.parameterNode.children("parameter")[0].attribute("required") === "true""#,
     );
 }
+
+#[test]
+fn convert_validate_clean_parameters_checks_without_running_the_service() {
+    clear_context_stack();
+    let fixture = Fixture::new();
+    let service = fixture.0.join("service/Checked.xml");
+    std::fs::write(
+        &service,
+        r#"<services><service verb="apply" noun="Title" authenticate="false">
+        <in-parameters>
+            <parameter name="title" required="true"><text-length max="5"/></parameter>
+            <parameter name="count" type="Integer"/>
+        </in-parameters>
+        <actions><script>throw new Error('ran')</script></actions>
+    </service></services>"#,
+    )
+    .unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    assert!(crate::service::lint(&[service]).unwrap().is_empty());
+    run_script(r#"definition = ec.service.getServiceDefinition("Checked.apply#Title")"#).unwrap();
+    holds(
+        r#"definition.convertValidateCleanParameters({title: "abc", count: "3", extra: 1}).count === 3 && !ec.message.hasError()"#,
+    );
+    holds(
+        r#"definition.convertValidateCleanParameters({title: "abcdefg"}).title === "abcdefg" && ec.message.hasError()"#,
+    );
+    run_script("ec.message.clearErrors()").unwrap();
+    holds(
+        r#"definition.convertValidateCleanParameters({}) && ec.message.getErrorsString().includes("Field cannot be empty")"#,
+    );
+}

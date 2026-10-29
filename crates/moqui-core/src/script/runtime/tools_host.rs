@@ -336,7 +336,8 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         get: (serviceName) => { const texts = host.secaRuleTexts(serviceName); return texts.length ? texts.map(makeText) : null; }
     };
     wrappers.ServiceDefinition = (info) => Object.assign(info, {
-        getInParameter: (name) => info.inParameterInfoMap[name]?.parameterNode ?? null
+        getInParameter: (name) => info.inParameterInfoMap[name]?.parameterNode ?? null,
+        convertValidateCleanParameters: (parameters) => host.convertValidateCleanParameters(info.serviceName, parameters)
     });
     ec.service.getServiceDefinition = function (serviceName) {
         const info = host.serviceDefinitionInfo(serviceName);
@@ -1559,6 +1560,29 @@ fn service_definition_info<'js>(ctx: Ctx<'js>, name: Opt<JsValue<'js>>) -> rquic
     })
 }
 
+/// Java's `ServiceDefinition.convertValidateCleanParameters`: the in-parameters converted, checked and cleaned as a call
+/// would before running the service, which does not run. A check that fails is a validation error in `ec.message` and
+/// the parameters come back as given.
+fn convert_validate_clean_parameters<'js>(
+    ctx: Ctx<'js>,
+    name: String,
+    parameters: JsValue<'js>,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let parameters: std::collections::BTreeMap<String, Value> = match js_to_host(&ctx, &parameters)? {
+            Value::Map(map) => map.into_iter().collect(),
+            _ => std::collections::BTreeMap::new(),
+        };
+        match crate::service::validate(&name, &parameters) {
+            Ok(cleaned) => host_to_js(&ctx, Value::Map(cleaned.into_iter().collect())),
+            Err(err) if err.kind() == crate::context::ErrorKind::Validation => {
+                host_to_js(&ctx, Value::Map(parameters.into_iter().collect()))
+            }
+            Err(err) => Err(throw_lib(&ctx, &moqui_lib::error::Error::new(err.message()))),
+        }
+    })
+}
+
 /// An XML element as `{name, attributes, text, children}`, for the node wrapper of the screens. [`parse_node`] adds the
 /// root's `xml`; the wrapper writes an element below it only when its `toString()` is called, rather than the XML of
 /// every element being written here, each one again inside each of its ancestors.
@@ -2653,6 +2677,7 @@ pub(super) fn install<'js>(
     method!("getSecaRuleCount", get_seca_rule_count);
     method!("secaRuleTexts", seca_rule_texts);
     method!("serviceDefinitionInfo", service_definition_info);
+    method!("convertValidateCleanParameters", convert_validate_clean_parameters);
     method!("parseNode", parse_node);
     method!("jobRunnerInfo", job_runner_info);
     method!("workerPoolInfo", worker_pool_info);
