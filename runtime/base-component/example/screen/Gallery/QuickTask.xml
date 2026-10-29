@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The gallery's second quick-create kind (shell-providers in Gallery.xml), a .qvue screen and its terminal twin (render-modes="qvue,tui"):
     QuickTask.qvue next to this file, and a tui text the TUI's quick create loads. The provider names it without .qvue, and the shell's dialog (an m-dynamic-container) loads it
-    as qvue all the same (js/README.md, Loading a screen); a tray tab that names it does too. The component reads its own query
+    as qvue all the same (docs/Qvt-Client.md, Loading a screen); a tray tab that names it does too. The component reads its own query
     through inject mScreen, confirms Discard with Quasar's Dialog plugin ($q.dialog), and refreshes itself in place when the tray
     refreshes its tab (shellRefresh). Saving is a no-op. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

@@ -6,7 +6,7 @@ Named HTTP proofs for this repository. They record what is tested. They are not 
 - **What:** [OWASP Top 10:2025](https://owasp.org/Top10/) (plus WSTG / ASVS L1 ideas, and API Top 10 for `/rest`)
 - **Public tests** are the client specs under `runtime/base-component/framework/test/client/`. Each feature name starts with the OWASP id, and a comment names the Moqui Java pytest it ports.
 
-The line-by-line map of all 143 Java HTTP tests is `runtime/base-component/framework/test/client/README.md`: 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
+The line-by-line map of all 143 Java HTTP tests is [Java-Port-Catalog.md](../runtime/base-component/framework/test/client/Java-Port-Catalog.md): 125 ported, 0 pending, 18 not applicable. This file is the control catalog and the notes on what a green run does and does not prove. Application components (Mantle, Marble, IronStone) are out of scope, as are the Java Selenium smokes and the A2A interop script.
 
 Java's Spock suite (`Security*.groovy`) was not ported. A row below that names only a Spock class is not a claim that a Rust unit test covers it.
 

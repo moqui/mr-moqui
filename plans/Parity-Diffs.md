@@ -254,7 +254,7 @@ Timestamp text without an offset is read in the session time zone wherever text 
 ## Rich text (2026-10-19)
 
 IronStone impl-drawers-commons M3: what the safe HTML cleaning keeps for the qvt rich-text editor. The `chatter` and
-`record-files` screen elements and the editor are new (js/README.md, "Record panels, rich text, avatars and record cards").
+`record-files` screen elements and the editor are new (docs/Qvt-Client.md, "Record panels, rich text, avatars and record cards").
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -264,7 +264,7 @@ IronStone impl-drawers-commons M3: what the safe HTML cleaning keeps for the qvt
 ## Layout panels and the calendar and contact tools (2026-10-19)
 
 IronStone impl-drawers-commons M4 and M7 (framework). `container-split` and the `VCard` and `ICalendar` tools are new
-(js/README.md, "Layout panels: split, wizard and stack"; module doc of `moqui-core/src/pim/mod.rs`).
+(docs/Qvt-Client.md, "Layout panels: split, wizard and stack"; module doc of `moqui-core/src/pim/mod.rs`).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|
@@ -283,14 +283,14 @@ Fixes of the gaps the BOSS screens found; where a fix differs from Java on purpo
 | in-memory test db | Numbers of two types (an `I32` condition value, an `I64` column, a decimal) compare by value | As the database compares them; `numeric` in `testing.rs` |
 | spec rewrite | In a `then` or `expect` block a line that starts with `/`, `` ` ``, `(` or `[` after a line that ended an expression is its own condition (a `;` is put before it), as each line is in Spock; JavaScript would join it to the line before | Module doc of `testkit/lines.rs`; docs/Testing.md, Pitfalls |
 | notifications | `mark#NotificationsViewed` of all of an inbox leaves the approvals waiting, and an approve or refuse marks every recipient's row viewed | No Java counterpart (no approvals in Java); the service file's top comment |
-| `link` | `background-submit`, `background-reload-id`, `background-hide-id` and `background-message` on a link that posts through a hidden form, as on a `form-single`; Java's `link` has none | xml-form-3.xsd; js/README.md |
-| `container-dialog` | `tooltip`; the qvt `m-container-dialog` registers as a container of the root by its id, so `background-hide-id` closes it; Java's did not register | xml-screen-3.xsd; js/README.md |
-| `messageInfos` | A message info may carry `link` and `linkText`, a button of its notification | js/README.md, "Shell data and providers" |
-| preferences | A response to a request that set user preferences has `X-Moqui-Preferences` (the JSON of what it set), which the qvt client applies (`moqui.applyPreference`) | js/README.md, "Preferences"; `preferences_header` in `web/mod.rs` |
+| `link` | `background-submit`, `background-reload-id`, `background-hide-id` and `background-message` on a link that posts through a hidden form, as on a `form-single`; Java's `link` has none | xml-form-3.xsd; docs/Qvt-Client.md |
+| `container-dialog` | `tooltip`; the qvt `m-container-dialog` registers as a container of the root by its id, so `background-hide-id` closes it; Java's did not register | xml-screen-3.xsd; docs/Qvt-Client.md |
+| `messageInfos` | A message info may carry `link` and `linkText`, a button of its notification | docs/Qvt-Client.md, "Shell data and providers" |
+| preferences | A response to a request that set user preferences has `X-Moqui-Preferences` (the JSON of what it set), which the qvt client applies (`moqui.applyPreference`) | docs/Qvt-Client.md, "Preferences"; `preferences_header` in `web/mod.rs` |
 | Visit | `sessionId` is the web session id at the visit's start (it changes at a password login's rotation; the `HttpSession` row keeps the visit), and `clientHostName` is the client address (no name lookup) | Java's `request.getRemoteHost()` without lookups gives the address; `create_visit` in `user/session.rs` |
 | sessions | `org.moqui.impl.UserServices.end#UserVisit` and `ec.user.endVisit(visitId)` end another session of the user; `ec.user.visitId` and `ec.user.visit` as Java's `getVisitId` and `getVisit` | No Java counterpart for ending another session; doc comment at `end_user_visit` |
 | mail | With `mail_capture_sends=true`, or the `MailCapture` tool enabled by a spec, `send#EmailMessage` keeps the message in memory (`ec.factory.getTool('MailCapture')`) instead of connecting | docs/Testing.md, "Mail"; module doc of `service/mail_capture.rs` |
-| shell | `sri.getShellProviders(kind)`, the providers of `getShellData` alone, kept per session | js/README.md, "Shell data and providers"; doc comment at `shell_providers` |
+| shell | `sri.getShellProviders(kind)`, the providers of `getShellData` alone, kept per session | docs/Qvt-Client.md, "Shell data and providers"; doc comment at `shell_providers` |
 
 ## Modified fields (2026-10-19)
 

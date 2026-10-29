@@ -366,7 +366,7 @@ text is an HTML injection. The lint reports a `${` outside `JSON.stringify(`. A 
 becomes an error node naming the screen, and the rest of the page is kept. A static file uses `template="false"`.
 
 The node types and their properties are documented with the other client contracts in
-`runtime/base-component/webroot/screen/webroot/js/README.md` ("The tui screen model"); the serde types in
+[Qvt-Client](Qvt-Client.md) ("The tui screen model"); the serde types in
 `crates/moqui-tui/src/model.rs` are the schema.
 
 ### Components

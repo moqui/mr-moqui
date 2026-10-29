@@ -1,10 +1,9 @@
 # Provider stream fixtures
 
-Hand-written, not recorded. No live model endpoint was available when these were made (phase 13.1), so each `.sse`
-file is written from the vendor's documented wire format and from how the Java prototype read it
-(`OpenAiCompatProtocol.java`, `OpenAiResponsesProtocol.java`, `LlmRetryClassifier.java` on the `llm-client` branch).
-Ids, signatures, encrypted content and token counts are made up. Replace a file with a recorded stream when one is
-captured, keeping its name, and rewrite the goldens with `UPDATE_GOLDEN=1 cargo test -p moqui-core llm::provider`.
+Hand-written, not recorded: each `.sse` file is written from the vendor's documented wire format and from how the Java
+prototype read it. Ids, signatures, encrypted content and token counts are made up. Replace a file with a recorded
+stream when one is captured, keeping its name, and rewrite the goldens with
+`UPDATE_GOLDEN=1 cargo test -p moqui-llm provider`, then read the diff.
 
 Each `<name>.sse` is played through an installed `HttpSender` and decoded by its protocol; `<name>.events.json` is the
 golden: the normalized events and the assembled reply.

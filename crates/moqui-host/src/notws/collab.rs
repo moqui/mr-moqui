@@ -12,13 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Co-editing on the notification socket: the Yjs sync messages of `m-coedit` (js/README.md, Collaborative editing) for
-//! the rooms of `moqui_core::collab`. A client sends JSON frames with `collab` (`join`, `update`, `awareness`, `leave`),
-//! and gets frames on the topic `collab:<doc>` (`joined`, `update`, `ack`, `awareness`, `peer`, `saved`, `error`). A
-//! join runs on a request worker (the access check and the load); an update is applied in memory at once, acknowledged,
-//! sent to the document's other editors on this server and published on the cluster topic `collab-update` for those on
-//! the others. A socket that closes leaves its documents. Every second the rooms are written, saved and closed as
-//! `moqui_core::collab::tick` decides, and a save is told to the editors.
+//! Co-editing on the notification socket: the Yjs sync messages of `m-coedit` (docs/Qvt-Client.md, Collaborative
+//! editing) for the rooms of `moqui_core::collab`. A client sends JSON frames with `collab` (`join`, `update`,
+//! `awareness`, `leave`), and gets frames on the topic `collab:<doc>` (`joined`, `update`, `ack`, `awareness`, `peer`,
+//! `saved`, `error`). A join runs on a request worker (the access check and the load); an update is applied in memory
+//! at once, acknowledged, sent to the document's other editors on this server and published on the cluster topic
+//! `collab-update` for those on the others. A socket that closes leaves its documents. Every second the rooms are
+//! written, saved and closed as `moqui_core::collab::tick` decides, and a save is told to the editors.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};

@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- The style sheet of a color scheme (ScreenColorScheme, the THEME_COLOR_SCHEME preference; js/README.md, Appearance): its
+    <!-- The style sheet of a color scheme (ScreenColorScheme, the THEME_COLOR_SCHEME preference; docs/Qvt-Client.md, Appearance): its
         colors for light and dark as the tokens of WebrootVue.qvt.css, then its extra CSS. A brand color is Quasar's --q-* and
         !important, over the brand the Quasar config writes on the body; in dark mode the panel and page colors are also Quasar's
         --q-dark and --q-dark-page, and the link gives way to the user's accent color. A name or value that could break out of

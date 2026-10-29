@@ -21,7 +21,7 @@
 //! data authorizes a subscreen; the palette runs only the source services those apps register, never a name from the
 //! request. An app root that does not load, or whose providers fail, is logged and left out, and a palette source that
 //! fails is logged and its group left out (AGENTS.md failure tolerance). The JSON is described in
-//! `webroot/screen/webroot/js/README.md` ("Shell data and providers").
+//! `docs/Qvt-Client.md` ("Shell data and providers").
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

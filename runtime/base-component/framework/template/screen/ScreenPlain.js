@@ -17,7 +17,7 @@
 // containers write nothing; the subscreen and section calls are kept so text inside a section still shows.
 // qjs is the JavaScript object of a component (its data, methods and a template when it has one) and qvue is
 // a component file with template, script and style parts. The client reads both
-// (js/README.md, loadComponent).
+// (docs/Qvt-Client.md, loadComponent).
 //
 // The module serves two modes, so the mode a unit is made for is read when a macro runs: a text type list
 // matches the mode, and "any" or no type matches both.

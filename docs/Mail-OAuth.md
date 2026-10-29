@@ -94,7 +94,7 @@ its first POP sign-in at Microsoft (no POP scope granted) and waits for a new si
 
 1. The wizard (or a Fix button) calls `start#OAuthSignIn` with the account (`emailAccountId`) or a new account's address
    (`emailAddress`, `accountName`, `displayName`, `accountKindEnumId`, `storeProtocol` imap or pop3) and gets `{authUrl, signInId}`; `moqui.oauthPopup` opens the
-   popup in the click and points it there (`webroot/js/README.md`, "Mail sign-in popup"). A new account is made paused
+   popup in the click and points it there ([Qvt-Client](Qvt-Client.md), "Mail sign-in popup"). A new account is made paused
    (`statusId` `EasPaused`, the default) with a sync window of `syncWindowDays` (365 by default, 0 for all mail), so the sync job
    leaves it until the app has finished its setup and made it active (`update#EmailAccount statusId EasActive`); `statusId`
    `EasActive` makes it sync at once, only with a window. An account signing in again keeps its status and window.

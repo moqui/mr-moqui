@@ -529,7 +529,7 @@ The output directory has what the specs wrote and what failures left:
 
 - `runtime/base-component/framework/test/client/`: the security proofs ported from Moqui Java's pytest suite
   (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityErrors`, `SecurityWebSocket`; each
-  feature named with its OWASP id and a comment naming the Python test), `LoadBasic`, and a `README.md` that catalogs
+  feature named with its OWASP id and a comment naming the Python test), `LoadBasic`, and `Java-Port-Catalog.md`, which catalogs
   all 143 Python tests as ported, pending or not applicable. The fixtures are `framework/test/ClientFixtures.spec.js`.
 - `runtime/component/mr-marble/test/client/`: `BrowserSmoke` (pages of the flow data with their text, PrintOrder's
   barcodes and a PDF) and `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs

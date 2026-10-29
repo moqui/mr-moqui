@@ -11,8 +11,8 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 | Path | What |
 |---|---|
 | `css/moqui-html.css` | style sheet of the `html` mode (light and dark, responsive, print) |
-| `js/moqui-html.js` | client of the `html` mode. `js/README.md` lists the data attributes. `moqui test-client webroot --offline` runs `test/client/moqui-html.spec.js` |
-| `js/MoquiLib.js`, `js/MoquiL10n.js`, `js/WebrootVue.qvt.js`, `js/MoquiQzComponent.js` | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35). `js/README.md` lists the components and the settings block. Their specs run with `moqui test-client webroot --offline` |
+| `js/moqui-html.js` | client of the `html` mode; `js/README.md` lists the data attributes |
+| `js/*.js` (`MoquiLib.js`, `WebrootVue.qvt.js` and the rest) | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35); `js/README.md` lists the files, [docs/Qvt-Client.md](../../../../../docs/Qvt-Client.md) is the reference |
 | `css/WebrootVue.qvt.css` | style sheet of the `qvt` shell and widgets: only what Quasar 2.35 has no prop for (tonal buttons, the div-table rules, the container-box accents, print) |
 | `images/`, `MoquiLogo100.png`, `favicon.ico` | logo and icon |
 
@@ -41,7 +41,7 @@ is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--writ
 | Marked | 18.1.1 | `marked/marked.umd.min.js`, global `marked` | Assist panel, markdown textarea |
 | DOMPurify | 3.4.17 | `dompurify/purify.min.js`, global `DOMPurify` | Assist panel |
 | highlight.js | 11.12.0 | `highlightjs/highlight.min.js` (core and 15 languages), `highlightjs/styles/github-dark.min.css`, `highlightjs/styles/github.min.css`, global `hljs` | Assist panel |
-| Tiptap, with ProseMirror and Yjs (one esbuild bundle of `@tiptap/core`, `starter-kit`, `extension-link`, `-image`, `-mention`, `-placeholder`, `-table`, `-collaboration`, `-collaboration-caret`, `yjs`, `y-protocols` and their dependencies) | 3.31.4 | `tiptap/tiptap.min.js` (587 KB, 187 KB gzipped), global `Tiptap` (`Editor`, `Extension`, `Node`, `Mark`, `mergeAttributes`, `StarterKit`, `Link`, `Image`, `Mention`, `Placeholder`, `Table`, `TableRow`, `TableCell`, `TableHeader`, `PluginKey`, `Collaboration`, `CollaborationCaret`, `Y` (the yjs namespace), `Awareness`, `encodeAwarenessUpdate`, `applyAwarenessUpdate`, `removeAwarenessStates`) | Lazy, once a page's first `m-rich-text` or `m-coedit` mounts |
+| Tiptap, with ProseMirror and Yjs (one esbuild bundle; `refresh.mjs` lists the packages and the exports) | 3.31.4 | `tiptap/tiptap.min.js` (587 KB, 187 KB gzipped), global `Tiptap` | Lazy, once a page's first `m-rich-text` or `m-coedit` mounts |
 | xterm.js, with `@xterm/addon-fit` | 6.0.0, 0.11.0 | `xterm/xterm.js`, `xterm/xterm.css`, `xterm/addon-fit.js`, globals `Terminal` and `FitAddon` | Lazy, the Terminal screen (`apps/Terminal.qvue`, the browser terminal on `/termws`) |
 | QZ Tray | 2.3.0 | `qz-tray/qz-tray.js` (LGPL-2.1, served unmodified) | Only when the user preference `qz.print.enabled` is `true`. The page needs the `qzSign` transition of `apps.xml`. |
 
@@ -53,7 +53,7 @@ The `/qapps` shell loads `vue/vue.global.prod.js` (the compiler build, because s
 language pack that matches the user locale, the Material Symbols icon set, `MoquiLib.js`, `MoquiL10n.js` and `WebrootVue.qvt.js`, in that order, with the Font
 Awesome, Material Symbols, Material Icons, Quasar and `WebrootVue.qvt.css` style sheets of the `DEFAULT_QUASAR` theme (`data/WebrootQuasarThemeData.xml`; the
 icon fonts come before Quasar, whose icon rules set their size). Chart.js, Mermaid, Marked, DOMPurify, Tiptap and
-QZ Tray are loaded by the component that needs them, from the paths in the table. The Assist panel is not ported yet.
+QZ Tray are loaded by the component that needs them, from the paths in the table.
 
 A screen marked `server-static` for `qvt` is sent as a script (`X-Moqui-Qvt: static-template`) that registers a compiled render function in
 `moqui.qvtStatic[path]`, and the client loads it with a script element, so the page needs no `unsafe-eval` for it. The runtime build of Vue
@@ -61,8 +61,4 @@ is for a page whose every qvt response is of that kind, but the `m-*` components
 compiler build compiles, so `webapp_qvt_static_only=true` (which loads `vue.runtime.global.prod.js` and says `build: "runtime"` in the settings) waits
 for those templates to be precompiled. `/qapps` loads the compiler build by default.
 
-The Assist client of the Java tree (`js/assist/AssistOpenUiLibrary.js`, not copied here) names the old paths `/libs/Chart.js/Chart.min.js`,
-`/libs/marked/marked.umd.min.js`, `/libs/dompurify/purify.min.js`, `/libs/highlight.js/highlight.min.js` and
-`/libs/highlight.js/styles/github-dark.min.css`. Here they are `chartjs/chart.umd.min.js`, `marked/marked.umd.min.js` (same),
-`dompurify/purify.min.js` (same), `highlightjs/highlight.min.js` and `highlightjs/styles/github-dark.min.css`.
 Not vendored: jQuery, Bootstrap, Moment, CKEditor, SimpleMDE, Select2, Selectivity, jsTree, http-vue-loader, RSVP, Vue 2, Quasar 1.

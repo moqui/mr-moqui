@@ -1,12 +1,12 @@
 # Plans
 
-Design, status and review documents for the MR-Moqui port. The first pass is complete: phases 0–12 and gates 1–4 of [Implementation-Phases](archive/Implementation-Phases.md) were built by 2026-10-14, with LLM/A2A deferred (Phase 13, now redesigned in [LLM-A2A-Assist](LLM-A2A-Assist.md)). The entity and service parity review finished on 2026-10-16, and the screen and web parity review on 2026-10-20; the gap review of the rest of the framework is in progress. After it come performance work and then the proposals.
+Design, status and review documents for MR Moqui. User guides for built features are in [`../docs/`](../docs/), not here.
 
 **Start here**
 - [Remaining-Work.md](Remaining-Work.md): what is still open, in one place, grouped by domain (agents, mail, git, screens, apps, tests and the rest), each item linking to its detail.
 - [Future-Plans.md](Future-Plans.md): digest of the unbuilt proposals.
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
-- [Rust-Practices-Review.md](Rust-Practices-Review.md): the Rust practices review (unwraps and runtime type checks, borrows over Rc/Arc, idiom), with examples, for the model doing it.
+- [Rust-Practices-Review.md](Rust-Practices-Review.md): the review that applies [Practices-Rust](../docs/Practices-Rust.md) to the existing code (unwraps, borrows over Rc/Arc, idiom): targets, order and results.
 
 **Phase 13: LLM, A2A and Assist**
 - [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14; its leftovers are in Remaining-Work.
@@ -14,7 +14,6 @@ Design, status and review documents for the MR-Moqui port. The first pass is com
 **Reference** (long-lived, kept current)
 - [Parity-Mapping.md](Parity-Mapping.md): every Rust module mapped to the Java, Groovy, XML and FreeMarker it was ported from, and the reverse index; what is excluded on purpose; the cross-cutting threads a review carries.
 - [Parity-Diffs.md](Parity-Diffs.md): the deliberate behaviour differences from Java inside ported features, each with its rationale and the code comment that records it. Companion to the mapping.
-- User guides for built features are in [`../docs/`](../docs/), not here: [Native-Components](../docs/Native-Components.md), [Testing](../docs/Testing.md) (`moqui test`), [Client-Testing](../docs/Client-Testing.md) (`moqui test-client`: specs from outside the server over HTTP, WebSocket and Chromium, and load), [Revision-Management](../docs/Revision-Management.md) (version diffs, `git://` resources, drives), [Git-Hosting](../docs/Git-Hosting.md) (clone and push over HTTPS and SSH, gitECA rules, projects and tasks), [Packaging](../docs/Packaging.md) (the build packages, their features and profiles), [Services](../docs/Services.md) (errors, transactions and probe calls), [Mail-OAuth](../docs/Mail-OAuth.md) (sign-in with Google and Microsoft for mail accounts) and [Mail-Inbound](../docs/Mail-Inbound.md) (the SMTP listener for hosted and shared accounts behind the edge gateway), [TUI](../docs/TUI.md) (`moqui tui`, `apps` over SSH, `agent-apps` for AI agents, `--server` for a running server, its keys, widths and themes, and `tui` texts for screen authors) and [Monitoring](../docs/Monitoring.md) (telemetry, sampling, OTLP in and out, the Monitor and Dashboards apps, alerts and scheduled reports).
 
 **Next phase: performance** (digested in Performance-Summary)
 - [Performance.md](Performance.md): the target (100,000 durable commits or reads per second), one-node and maximum-scale setups, startup budget, capacity limits.
@@ -24,11 +23,7 @@ Design, status and review documents for the MR-Moqui port. The first pass is com
 - [MantleUSL-Execution-Benchmark-Plan.md](MantleUSL-Execution-Benchmark-Plan.md): Stages A–E, the correctness gate, and the execution-method comparison. The audit and this plan cite `../experiments/mantle-execution/README.md`, which lives on a separate experiment branch, not in this repository.
 
 **After performance: monitoring**
-- [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan and its verification summary. M1–M7 built Oct 26–27, 2026, then a review pass on Oct 27; the Later stages are not started. Guide: [Monitoring](../docs/Monitoring.md). Built:
-  - an OpenTelemetry SDK pipeline fed by the artifact stack, with SearchFacade indexes for spans, logs, metrics and errors
-  - an OTLP/HTTP receiver for external systems, and an optional OTLP exporter
-  - a Monitor app in the tools component, replacing ArtifactHit/ArtifactHitBin, the Log Viewer and the log shipping
-  - a Dashboards app and a report engine (datasets, queries, panels, dashboards, alerts, scheduled reports) for telemetry and business data
+- [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/Monitoring.md).
 
 **[proposals/](proposals/)**: unbuilt, no code in the workspace; each is digested in Future-Plans.
 - [Messaging.md](proposals/Messaging.md): runtime-reflective FlatBuffers request/response and document subscriptions (1286 lines, 0 of 6 phases).

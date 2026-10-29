@@ -206,7 +206,7 @@ kept by their XML text (`core/script/actions.rs`), so new text compiles anew.
 | Vendored libraries | Vue 3.5.44 and its compiler for QuickJS, Quasar 2.35.1, Tiptap 3.31.4 with ProseMirror and Yjs in one bundle, highlight.js, Marked, DOMPurify, Mermaid, Chart.js, SortableJS, xterm.js; no code editor | `webroot/libs/refresh.mjs` |
 | Read-only code | `code-view` (highlight.js) and the `moqui-diff` table | `fw/xsd/xml-screen-3.xsd`, docs/Revision-Management.md |
 | Git hosting | Hosted `local`, `db` and `remote` repositories over gitoxide, merge requests, branch rules, gitECA rules; the `git` feature, which today's default package (Lite) leaves out | docs/Git-Hosting.md, docs/Packaging.md |
-| Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `webroot/js/README.md` |
+| Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `docs/Qvt-Client.md` |
 | XSDs | 12 schemas, 7,319 lines, with documentation; nothing reads them | `fw/xsd/` |
 | Script console | None: phase 11 dropped the Groovy shell and decided on no web eval endpoint "even in development" | `runtime/base-component/tools/screen/Tools/GroovyShell.xml`, archive/Implementation-Phases.md |
 

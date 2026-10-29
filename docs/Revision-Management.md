@@ -371,7 +371,7 @@ The page's HTML is kept by location without a base, so it is converted again for
 
 ## Co-editing
 
-Several people edit a wiki page at once in `m-coedit` (Tiptap over Yjs in the browser; js/README.md, Collaborative editing),
+Several people edit a wiki page at once in `m-coedit` (Tiptap over Yjs in the browser; [Qvt-Client](Qvt-Client.md), Collaborative editing),
 and the server keeps the document with `yrs`, the Rust Yjs (`crates/moqui-core/src/collab/`, the socket side
 `crates/moqui-host/src/notws/collab.rs`). A document is named by its record, `WikiPage:<wikiPageId>`, and stored as
 `moqui.resource.CollabDocument`: the Yjs state, the markdown it renders to, the hash of the page text it was made from or

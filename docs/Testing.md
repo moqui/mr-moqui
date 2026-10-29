@@ -342,6 +342,33 @@ environment, nightly and before a phase closes; the design's `--live` is `--llm-
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
 files proposed and written are the expected ones and check clean. Copy a passing run's transcript into the replay set to
 keep it.
+## Porting a Spock spec
+
+How a Moqui Java Spock specification maps to a spec file, as used to port mr-mantle's flows:
+
+| Spock / Groovy | spec file |
+|---|---|
+| `class X extends Specification` | `X.spec.js` with `spec({...})` |
+| `@Shared String cartOrderId` | `let cartOrderId` at the top of the file |
+| `def setupSpec()`, `setup()`, `cleanup()`, `cleanupSpec()` | the same names in `spec({...})` |
+| `ec.entity.tempSetSequencedIdPrimary(name, 55500, 10)` in setupSpec, reset in cleanupSpec | `tempSequences: { start: 55500, banks: { name: 10 } }` |
+| `ec.user.setEffectiveTime(new Timestamp(effectiveTime))` | `ec.user.setEffectiveTime(effectiveTime)` |
+| `def "create Sales Order"() { when: ... then: ... }` | `feature("create Sales Order", { when() {...}, then(ctx) {...} })` |
+| a local of `when:` read in `then:` | returned from `when()`, destructured in `then({ ... })` |
+| `expect:` / `where:` table / `@Unroll` | `expect(row) {...}`, `where: [{...}, ...]`, `#field` in the name |
+| `ec.service.sync().name(n).parameters([a:1]).call()` | `call(n, { a: 1 })` |
+| `"""<entity-facade-xml>...${x}...</entity-facade-xml>"""` with `makeDataLoader().xmlText(..).check()` | `` checkData(`<entity-facade-xml>...${x}...`) `` |
+| `dataCheckErrors.size() == 0` | `dataCheckErrors.length == 0` |
+| `ec.user.loginUser("john.doe", "moqui")` | `login("john.doe")` |
+| `logger.info(...)` | `log.info(...)` |
+| `new Timestamp(effectiveTime)`, `"${effectiveTime}"` in data | `effectiveTime` (time stamps are epoch millis text in scripts and data) |
+| `new Date(effectiveTime + n)` | `new Date(effectiveTime + n)` (converts to a time stamp) |
+| `list.sum { it.availableToPromiseTotal }` | `sum(list, "availableToPromiseTotal")` |
+| `a + b` on BigDecimal | `dec(a).add(b)`; `.subtract`, `.multiply`, `.negate()`, `.compare()` |
+| `Thread.start {}` with a `CountDownLatch` | `parallel(5, (threadNum, args) => {...}, { effectiveTime })` |
+| `ec.screen.makeTest().baseScreenPath("rest")` | `screenTest("rest")` |
+| `for (x in list) assert ...` | `for (const x of list) assert(...)` |
+
 ## Pitfalls
 
 - Outside a `then` or `expect` block, a line that starts with `[`, `(`, `/` or a template literal continues the line

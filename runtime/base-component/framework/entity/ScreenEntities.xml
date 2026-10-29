@@ -157,7 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Theme Preview Screenshot" enumId="STRT_SCREENSHOT" enumTypeId="ScreenThemeResourceType"/>
             <!-- The suite shell of /qapps (m-qapps-root): an app suite such as IronStone BOSS names its screens and its counts service
                 here, so the framework stays free of its data model; the shellData transition of webroot.xml sends them to the shell
-                (webroot/screen/webroot/js/README.md, "Shell data and providers"). A shell element whose value is not set is hidden.
+                (docs/Qvt-Client.md, "Shell data and providers"). A shell element whose value is not set is hidden.
                 The screen paths are under the apps root (Commons/Panel/Today), optionally with a query string. -->
             <moqui.basic.Enumeration description="Shell Tray Today Screen (path under the apps root)" enumId="STRT_TRAY_TODAY" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Tray Chat Screen (path under the apps root)" enumId="STRT_TRAY_CHAT" enumTypeId="ScreenThemeResourceType"/>
@@ -193,7 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.screen.ScreenTheme" short-alias="screenTheme"/>
     </entity>
     <!-- The color schemes a user may choose for a theme (the THEME_COLOR_SCHEME preference): the standard colors for light and dark,
-        sent as one style sheet by the colorSchemeCss transition of apps.xml (webroot/screen/webroot/js/README.md, Appearance). The
+        sent as one style sheet by the colorSchemeCss transition of apps.xml (docs/Qvt-Client.md, Appearance). The
         names are the tokens of WebrootVue.qvt.css: the brand colors primary, secondary, accent, positive, negative, info and warning
         (Quasar's --q-*), and page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text, border and
         divider (--m-*). A scheme with no colors is the theme's own. -->

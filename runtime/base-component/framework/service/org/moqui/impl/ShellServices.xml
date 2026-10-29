@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The badge counts of the /qapps suite shell. No Java counterpart. The framework counts nothing itself: an app suite names
     its counts service in the theme value STRT_SHELL_COUNTS_SERVICE of its Quasar themes (IronStone BOSS seeds
     mantle.party.PartyServices.get#ShellCounts), so the framework stays free of its data model. The bodies are Rust:
-    crates/moqui-core/src/service/shell.rs. The shell and its topic: webroot/screen/webroot/js/README.md, "Shell data and
+    crates/moqui-core/src/service/shell.rs. The shell and its topic: docs/Qvt-Client.md, "Shell data and
     providers". -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="ShellCounts" type="rust" location="moqui_core::service::shell::get_shell_counts" transaction="ignore">

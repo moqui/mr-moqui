@@ -262,7 +262,7 @@ fn handle(
         visitor_cookie.as_deref(),
         token_before,
     )?;
-    // the preferences this request set, for the page to apply at once (js/README.md, Preferences)
+    // the preferences this request set, for the page to apply at once (docs/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
     if !changed.is_empty() {
         response

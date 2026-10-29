@@ -62,7 +62,7 @@ along with this software (see the LICENSE.md file). If not, see
         }
         // SHELL_START_APP: the app /qapps opens on with no path, when the user may open it (the apps of the kept shell providers);
         // without the user's choice, the AppList
-        // SHELL_DENSITY: comfortable (the default) or compact (js/README.md, Preferences)
+        // SHELL_DENSITY: comfortable (the default) or compact (docs/Qvt-Client.md, Preferences)
         let startApp = ''
         const startPref = ec.user.userId ? ec.user.getPreference('SHELL_START_APP') : null
         if (startPref) {
@@ -80,7 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
         for (const text of sri.getThemeValues('STRT_QUASAR_CONFIG')) {
             try { quasarConfig = Object.assign(quasarConfig || {}, JSON.parse(text)) } catch (e) { ec.logger.error('Theme STRT_QUASAR_CONFIG is not JSON: ' + e) }
         }
-        // Appearance (js/README.md, Appearance): the color schemes of the theme and the fonts a user may choose, the user's choices
+        // Appearance (docs/Qvt-Client.md, Appearance): the color schemes of the theme and the fonts a user may choose, the user's choices
         // (the THEME_* preferences, through getPreference so a group's default counts), and the style sheets of the chosen scheme and
         // fonts, which the page links before the client starts. A scheme's version is a hash of its colors, so a changed one is fetched again.
         const appearanceKeys = ['THEME_COLOR_SCHEME', 'THEME_FONT_BODY', 'THEME_FONT_HEADING', 'THEME_FONT_MONO', 'THEME_SIZE_SMALL', 'THEME_SIZE_LARGE',
@@ -151,7 +151,7 @@ along with this software (see the LICENSE.md file). If not, see
                 logout: ec.l10n.localize('Logout'), switchDarkLight: ec.l10n.localize('Switch Dark/Light'), reLogin: ec.l10n.localize('Re-Login'),
                 authenticationCode: ec.l10n.localize('Authentication Code'), signIn: ec.l10n.localize('Sign in'), password: ec.l10n.localize('Password'),
                 reloadPage: ec.l10n.localize('Reload Page'), terminal: ec.l10n.localize('Terminal UI'),
-                // the suite shell: launcher, search and palette, quick create, the tray and its counts, the keys (js/README.md)
+                // the suite shell: launcher, search and palette, quick create, the tray and its counts, the keys (docs/Qvt-Client.md)
                 menu: ec.l10n.localize('Menu'), applications: ec.l10n.localize('Applications'), allApplications: ec.l10n.localize('All applications'), search: ec.l10n.localize('Search'),
                 quickCreate: ec.l10n.localize('Create'), quickCreateFirst: ec.l10n.localize('Create in this app'), today: ec.l10n.localize('Today'),
                 chat: ec.l10n.localize('Chat'), mail: ec.l10n.localize('Mail'), messages: ec.l10n.localize('Messages'), notifications: ec.l10n.localize('Notifications'), close: ec.l10n.localize('Close'),

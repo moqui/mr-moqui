@@ -28,9 +28,9 @@ The binary always links this crate. Its implementations are only used when the c
 | `MoquiConf.xml` | Selects the tool factory by the class the crate registers, `example::ExampleToolFactory`. |
 | `service/example/ExampleServices.xml` | The two rust service definitions, and XML Actions that keep the tool in a field and call it. |
 | `test/Example.spec.js` | Specs for each of these. |
-| `screen/Gallery.xml`, `screen/Gallery/*.xml`, `*.qvue` | The screen archetype gallery of the IronStone BOSS style guide (`runtime/component/mr-boss/plan/style-guide.md` §3, §4 and §10): one screen per archetype over framework data, mounted at `/qapps/gallery` by `MoquiConf.xml`; `Board` and `Calendar` are `.qvue` screens, and `QuickTask` a `.qvue` quick-create kind (its own query through `inject: ["mScreen"]`, a `$q.dialog` confirm, `shellRefresh()` in a tray tab). |
+| `screen/Gallery.xml`, `screen/Gallery/*.xml`, `*.qvue` | The screen archetype gallery of the IronStone BOSS style guide (`runtime/component/mr-boss/plan/style-guide.md` §3, §4 and §10): one screen per archetype over framework data, mounted at `/qapps/gallery`; `Board`, `Calendar` and `QuickTask` show `.qvue` screens. |
 | `data/ExampleSecurityData.xml` | Seed authorization: the gallery for the ADMIN group. |
-| `entity/ExampleEntities.xml`, `data/ExampleDemoData.xml` | `moqui.example.Example` (Java's example record: a type, a status in a flow, a size, and a start and end) with its types, statuses and flow as seed data and eleven demo records, for the gallery's `Views` screen: one form-list as a board by status or type (`group-fields`, `all-rows`) and a calendar (style-guide §8.2, `views`, `view-board`, `view-calendar`) whose moves go through `update#moqui.example.Example`, with a peek pane (`peek-url`, `screen/Gallery/ExampleDetail.xml`), and a work breakdown as a tree (`view-tree`) over the inline rows of `get#GalleryWorkItems` in `service/example/ExampleServices.xml`. |
+| `entity/ExampleEntities.xml`, `data/ExampleDemoData.xml` | `moqui.example.Example` (a type, a status flow, a size, a start and end) with seed and demo data, for the gallery's `Views` screen: one form-list as a board, a calendar and a tree. |
 | `test/Gallery.spec.js` | Renders every gallery screen in its render mode through `ec.screen.makeTest()` (`./moq test example`). |
 | `test/client/GalleryShots.spec.js` | Screenshots of the gallery in the `/qapps` shell (`moqui test-client example --serve --spec GalleryShots`): light at 1280, List and Detail in the dark and at phone width, and the Assist drawer on List. |
 
@@ -47,20 +47,6 @@ moqui-lib = { path = "../../../crates/moqui-lib" }
 tracing = "0.1"
 ```
 
-`./moq build` finds the crate (a `Cargo.toml` beside a `component.xml`) and links it into
-`target/{release,debug}/moqui` with the framework, through a generated crate in `target/moqui-app`.
-
-- **Selection.** `submit_component!` names the component; the crate's code is used only when that component loads. The
-  component's XML picks what runs: service definitions name the locations, and `MoquiConf.xml` selects tool factories
-  by class, with `init-priority` and `disabled`.
-- **Lifecycle.**
-  - `pre_facade_init` runs at the end of the factory boot, with no entity facade yet. Bind closure services there.
-  - `init` runs once the entity facade is attached, before data loads and the first request.
-  - `destroy` runs at shutdown, in reverse order, after the worker pools stop, and also when an init fails.
-- **Tools in scripts.** A script calls a name in `Tool::methods` as a method. It reads any other name through
-  `Tool::property`. Arguments and results convert as service parameters do. The object stays the tool when the
-  context stack keeps it, so `<set field="tool" from="ec.factory.getTool('X')"/>` followed by `tool.method()` works.
-- **Rust services.** They take `(&ExecutionContext, &ServiceInfo, &Parameters)` and run in the caller's execution
-  context and transaction. `moqui_core::user` and the other facades work as they do in the framework's own services.
-
-The full guide is `docs/Native-Components.md`.
+`./moq build` finds the crate (a `Cargo.toml` beside a `component.xml`) and links it into the binary with the
+framework. How the crate's code is selected, the tool and service lifecycles, and calling tools from scripts are in
+`docs/Native-Components.md`.

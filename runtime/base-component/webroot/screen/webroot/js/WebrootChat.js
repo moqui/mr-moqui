@@ -9,7 +9,7 @@
  *   - outbox: the messages sent and not yet answered, kept in localStorage per user (moqui.chat.outbox.<userId>) so a
  *     send made offline, or one that failed for a while, goes when the page is back (chat.send, chat.flush),
  * and hands the chat pushes to the screens that listen (moqui.chat.on). The server side is org.moqui.impl.ChatServices; the
- * topics and their messages are described there and in js/README.md, "Chat store and presence".
+ * topics and their messages are described there and in docs/Qvt-Client.md, "Chat store and presence".
  *
  * Loaded after MoquiLib.js and before WebrootVue.qvt.js (qapps.xml): its components are in moqui.qvtComponents, which
  * WebrootVue.qvt.js registers, and the shell root calls moqui.chat.start(root) once mounted. Runs under Node for its tests

@@ -25,7 +25,7 @@
 
     <!-- A palette source of the suite shell (the shell-providers of screen/Gallery.xml), run by the shellSearch transition of
         webroot.xml: enumerations whose id or description has the text, linked to the Detail gallery screen. The contract of a
-        palette source is in webroot/screen/webroot/js/README.md ("Shell data and providers"). -->
+        palette source is in docs/Qvt-Client.md ("Shell data and providers"). -->
     <service verb="search" noun="GalleryEnumerations">
         <in-parameters>
             <parameter name="text" required="true"/>

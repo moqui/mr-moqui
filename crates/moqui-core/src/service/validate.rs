@@ -1042,8 +1042,9 @@ mod parameter_tests;
 mod safe_html_tests {
     use super::*;
 
-    /// What the qvt rich-text editor writes (`m-rich-text`, js/README.md) survives `allow-html="safe"`: its blocks, marks,
-    /// links, images and the mention span with its id; a link gains ammonia's `rel`, and what the editor never writes goes.
+    /// What the qvt rich-text editor writes (`m-rich-text`, docs/Qvt-Client.md) survives `allow-html="safe"`: its
+    /// blocks, marks, links, images and the mention span with its id; a link gains ammonia's `rel`, and what the editor
+    /// never writes goes.
     #[test]
     fn the_rich_text_editor_output_survives_the_safe_cleaning() {
         let editor = concat!(
