@@ -465,7 +465,8 @@ the whole page; the sizes here are for the small and large text alone.
 | `THEME_COLOR_SCHEME` | a `ScreenColorScheme` id of the theme | the style sheet `/apps/colorSchemeCss?colorSchemeId=…&v=…` linked as `m-color-scheme`; none for a scheme without colors (the theme's own). Without the user's choice the theme's default scheme (a `STRT_DEFAULT_COLOR_SCHEME` theme resource, `defaultSchemeId`) is the effective one |
 | `THEME_FONT_BODY`, `THEME_FONT_HEADING`, `THEME_FONT_MONO` | a `ScreenFontOption` id | `--m-font-body`, `--m-font-heading`, `--m-font-mono` on the html element, and the font's style sheet linked as `m-font-<role>` |
 | `THEME_SIZE_SMALL`, `THEME_SIZE_LARGE` | `0.9`, `1`, `1.1`, `1.25`, `1.4` | `--m-fs-small-scale` (table text, captions, chips, code) and `--m-fs-large-scale` (headings) |
-| `THEME_PRIMARY_COLOR` | a CSS color (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored) | `--q-primary` on the body, `!important`, over the scheme and the Quasar brand; the dark link color is mixed from it |
+| `THEME_PRIMARY_COLOR`, `THEME_PRIMARY_COLOR_DARK` | a CSS color each (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored), one for light and one for dark (a single color rarely works in both) | `--q-primary` per mode (`!important`, over the scheme and the Quasar brand), in a style sheet so it switches with the mode; in dark mode the link color is mixed from the dark accent |
+| `THEME_COLOR_OVERRIDES` | a JSON `{name: {light, dark}}` (each a CSS color, checked by `moqui.isCssColor`), one entry per color of the scheme (`page-bg`, `header-bg`, ...) | the same tokens the scheme's style sheet uses (`--q-*` for a brand color, `--m-*` for the rest; in dark mode `page-bg` and `panel-bg` also set `--q-dark-page` and `--q-dark`), in a style sheet after the scheme link so the user's colors win; the Preferences screen's Edit colors expander keeps the background (`page-bg`) and the menu bar (`header-bg`) |
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
@@ -488,7 +489,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
-- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm and High Contrast for `DEFAULT_QUASAR`.
+- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal and Graphite for `DEFAULT_QUASAR`.
 - A theme may name its default scheme in a `STRT_DEFAULT_COLOR_SCHEME` resource (a `ScreenColorScheme` id of the theme): the effective
   scheme when the user has no `THEME_COLOR_SCHEME` preference. The page links it, the Appearance dialog shows it as chosen, and the
   user's own choice wins over it. This is how a corporate look becomes the theme's default (the System app's Theme screen keeps the

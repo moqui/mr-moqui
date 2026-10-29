@@ -6,7 +6,7 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = {
-        "m-appearance-dialog": { hash: "81c961cb", make: function (Vue) {
+        "m-appearance-dialog": { hash: "f40c2947", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass, createCommentVNode: _createCommentVNode, createBlock: _createBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -74,13 +74,17 @@
                       : _createCommentVNode("", true),
                     _createElementVNode("div", null, [
                       _createElementVNode("div", { class: "text-subtitle2 q-mb-xs" }, _toDisplayString(_ctx.labels.accentColor), 1),
-                      _createElementVNode("div", { class: "row items-center q-gutter-x-sm" }, [
+                      _createElementVNode("div", { class: "row items-center q-gutter-x-sm q-mb-xs" }, [
+                        _createElementVNode("span", {
+                          class: "text-caption",
+                          style: {"min-width":"44px"}
+                        }, _toDisplayString(_ctx.labels.modeLight), 1),
                         _createElementVNode("input", {
                           type: "color",
                           class: "m-appearance-color",
-                          value: _ctx.accentInput,
+                          value: _ctx.accentInputLight,
                           onChange: $event => (_ctx.set('THEME_PRIMARY_COLOR', $event.target.value)),
-                          "aria-label": _ctx.labels.accentColor
+                          "aria-label": _ctx.labels.accentColor + ' (' + _ctx.labels.modeLight + ')'
                         }, null, 40, ["value", "onChange", "aria-label"]),
                         (_ctx.value('THEME_PRIMARY_COLOR'))
                           ? (_openBlock(), _createBlock(_component_q_btn, {
@@ -90,6 +94,29 @@
                               "no-caps": "",
                               label: _ctx.labels.schemeColor,
                               onClick: $event => (_ctx.set('THEME_PRIMARY_COLOR', ''))
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _createElementVNode("div", { class: "row items-center q-gutter-x-sm" }, [
+                        _createElementVNode("span", {
+                          class: "text-caption",
+                          style: {"min-width":"44px"}
+                        }, _toDisplayString(_ctx.labels.modeDark), 1),
+                        _createElementVNode("input", {
+                          type: "color",
+                          class: "m-appearance-color",
+                          value: _ctx.accentInputDark,
+                          onChange: $event => (_ctx.set('THEME_PRIMARY_COLOR_DARK', $event.target.value)),
+                          "aria-label": _ctx.labels.accentColor + ' (' + _ctx.labels.modeDark + ')'
+                        }, null, 40, ["value", "onChange", "aria-label"]),
+                        (_ctx.value('THEME_PRIMARY_COLOR_DARK'))
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              flat: "",
+                              dense: "",
+                              "no-caps": "",
+                              label: _ctx.labels.schemeColor,
+                              onClick: $event => (_ctx.set('THEME_PRIMARY_COLOR_DARK', ''))
                             }, null, 8, ["label", "onClick"]))
                           : _createCommentVNode("", true)
                       ])

@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
         // (the THEME_* preferences, through getPreference so a group's default counts), and the style sheets of the chosen scheme and
         // fonts, which the page links before the client starts. A scheme's version is a hash of its colors, so a changed one is fetched again.
         const appearanceKeys = ['THEME_COLOR_SCHEME', 'THEME_FONT_BODY', 'THEME_FONT_HEADING', 'THEME_FONT_MONO', 'THEME_SIZE_SMALL', 'THEME_SIZE_LARGE',
-            'THEME_PRIMARY_COLOR', 'THEME_MOTION', 'THEME_LINE_HEIGHT', 'THEME_LINKS_UNDERLINE', 'THEME_RADIUS']
+            'THEME_PRIMARY_COLOR', 'THEME_PRIMARY_COLOR_DARK', 'THEME_COLOR_OVERRIDES', 'THEME_MOTION', 'THEME_LINE_HEIGHT', 'THEME_LINKS_UNDERLINE', 'THEME_RADIUS']
         const appearanceValues = {}
         for (const key of appearanceKeys) { const value = ec.user.userId ? ec.user.getPreference(key) : null; if (value) appearanceValues[key] = String(value) }
         const textHash = (text) => { let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0; return hash.toString(36) }

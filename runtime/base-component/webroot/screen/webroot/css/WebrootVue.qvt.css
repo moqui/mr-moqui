@@ -14,7 +14,7 @@
 body:not(.body--dark) { --m-page-bg:#f4f6f8; --m-panel-bg:#fff; --m-header-bg:#fff; --m-header-fg:#1d1d1d; --m-drawer-bg:#fff;
     --m-text:#000; --m-text-muted:#616161; --m-link:var(--q-primary); --m-negative-text:var(--q-negative);
     --m-border:rgba(0,0,0,.12); --m-divider:rgba(0,0,0,.08); }
-body.body--dark { --m-page-bg:var(--q-dark-page); --m-panel-bg:var(--q-dark); --m-header-bg:var(--q-dark); --m-header-fg:#fff; --m-drawer-bg:var(--q-dark);
+.body--dark { --m-page-bg:var(--q-dark-page); --m-panel-bg:var(--q-dark); --m-header-bg:var(--q-dark); --m-header-fg:#fff; --m-drawer-bg:var(--q-dark);
     --m-text:#fff; --m-text-muted:#9e9e9e; --m-link:var(--m-accent-dark-link, #64b5f6); --m-negative-text:#ff8a80;
     --m-border:rgba(255,255,255,.28); --m-divider:rgba(255,255,255,.12); }
 body { font-family:var(--m-font-body); line-height:var(--m-line-height); color:var(--m-text); background:var(--m-page-bg); }

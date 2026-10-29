@@ -526,13 +526,19 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         assert.equal(htmlProp("--m-fs-small-scale"), "1.1");
         moqui.applyPreference("THEME_LINE_HEIGHT", "relaxed");
         assert.equal(htmlProp("--m-line-height"), "1.75");
-        // the accent color only when it is a CSS color, over the scheme and the brand
+        // the accent colors, one per mode (a single color rarely works in both), in the m-accent style sheet so they switch with
+        // the mode; over the scheme and the brand. A bad color is kept in the values but not applied.
         moqui.applyPreference("THEME_PRIMARY_COLOR", "#336699");
-        assert.equal(bodyProp("--q-primary"), "#336699");
-        assert.equal(document.body.style.getPropertyPriority("--q-primary"), "important");
-        assert.match(bodyProp("--m-accent-dark-link"), /^color-mix\(in srgb, #336699 60%, white\)$/);
+        assert.equal(document.getElementById("m-accent").textContent, "body:not(.body--dark){--q-primary:#336699 !important;}");
+        moqui.applyPreference("THEME_PRIMARY_COLOR_DARK", "#445566");
+        assert.equal(document.getElementById("m-accent").textContent,
+            "body:not(.body--dark){--q-primary:#336699 !important;}" +
+            "body.body--dark{--q-primary:#445566 !important;--m-accent-dark-link:color-mix(in srgb,#445566 60%,white);}");
         moqui.applyPreference("THEME_PRIMARY_COLOR", "red; background:url(x)");
-        assert.equal(bodyProp("--q-primary"), "");
+        assert.equal(document.getElementById("m-accent").textContent,
+            "body.body--dark{--q-primary:#445566 !important;--m-accent-dark-link:color-mix(in srgb,#445566 60%,white);}");
+        moqui.applyPreference("THEME_PRIMARY_COLOR_DARK", "");
+        assert.equal(document.getElementById("m-accent"), null, "no accent colors, the style sheet is gone");
         assert.ok(moqui.isCssColor("oklch(0.6 0.15 250)") && moqui.isCssColor("rgb(10, 20, 30)") && !moqui.isCssColor("var(--x)"));
         moqui.applyPreference("THEME_MOTION", "reduce");
         moqui.applyPreference("THEME_LINKS_UNDERLINE", "true");
@@ -540,7 +546,7 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         assert.deepEqual([...document.body.classList].filter((name) => name.startsWith("m-")).sort(), ["m-links-underline", "m-motion-reduce"]);
         assert.deepEqual(qvt.config.appearance.values, { THEME_COLOR_SCHEME: "DEFAULT", THEME_SIZE_LARGE: "1.25", THEME_FONT_MONO: "SYSTEM_MONO",
             THEME_SIZE_SMALL: "1.1", THEME_LINE_HEIGHT: "relaxed", THEME_PRIMARY_COLOR: "red; background:url(x)", THEME_MOTION: "reduce",
-            THEME_LINKS_UNDERLINE: "true" }, "the values are what the user saved, a bad color kept but not applied");
+            THEME_LINKS_UNDERLINE: "true" }, "the values are what the user saved, a bad color kept but not applied, the cleared dark accent gone");
         // QUASAR_DARK auto follows the system
         let dark = null;
         moqui.webrootVue = { $q: { dark: { set: (value) => { dark = value; } } } };
@@ -557,6 +563,7 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         ["--m-fs-large-scale", "--m-fs-small-scale", "--m-font-body", "--m-line-height"].forEach((name) => document.documentElement.style.removeProperty(name));
         ["--q-primary", "--m-accent-dark-link"].forEach((name) => document.body.style.removeProperty(name));
         ["m-radius-square", "m-radius-round", "m-links-underline", "m-motion-reduce", "m-motion-full"].forEach((name) => document.body.classList.remove(name));
+        ["m-accent", "m-scheme-colors"].forEach((id) => { const el = document.getElementById(id); if (el) el.remove(); });
     }
 });
 

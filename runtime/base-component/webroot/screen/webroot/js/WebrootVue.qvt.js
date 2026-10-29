@@ -84,7 +84,7 @@
     // the accent color is --q-primary on the body (!important, over the scheme and the Quasar brand) when it is a CSS color; motion,
     // links and corners are body classes. An empty or unknown value is the default.
     moqui.appearanceKeys = ["THEME_COLOR_SCHEME", "THEME_FONT_BODY", "THEME_FONT_HEADING", "THEME_FONT_MONO", "THEME_SIZE_SMALL", "THEME_SIZE_LARGE",
-        "THEME_PRIMARY_COLOR", "THEME_MOTION", "THEME_LINE_HEIGHT", "THEME_LINKS_UNDERLINE", "THEME_RADIUS"];
+        "THEME_PRIMARY_COLOR", "THEME_PRIMARY_COLOR_DARK", "THEME_COLOR_OVERRIDES", "THEME_MOTION", "THEME_LINE_HEIGHT", "THEME_LINKS_UNDERLINE", "THEME_RADIUS"];
     moqui.appearanceSizes = ["0.9", "1", "1.1", "1.25", "1.4"];
     moqui.isCssColor = (value) => typeof value === "string" &&
         /^(#[0-9a-fA-F]{3,8}|(rgba?|hsla?|oklch|oklab|lab|lch)\([0-9a-zA-Z.,%\s/+-]{1,80}\))$/.test(value.trim());
@@ -106,8 +106,76 @@
             link.rel = "stylesheet";
             link.id = id;
             doc.head.appendChild(link);
+        } else if (link.parentNode !== doc.head) {
+            // the page shell links the scheme and font sheets in the body (before the client starts); move them to the head so the
+            // user's accent and color overrides (style sheets in the head, after the scheme) win over the scheme's colors
+            doc.head.appendChild(link);
         }
         if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+        // the user's accent (m-accent) must stay after the scheme so it wins over the scheme's primary (same selectors, !important)
+        if (id === "m-color-scheme") {
+            const accent = doc.getElementById("m-accent");
+            if (accent && link.nextSibling !== accent) doc.head.insertBefore(accent, link.nextSibling);
+        }
+    };
+    // the user's accent colors, one for light and one for dark (a single color rarely works in both): --q-primary per mode, and in
+    // dark mode the link takes the accent mixed toward white. Kept in a style sheet (not an inline token) so it switches with the mode,
+    // and after the scheme link so the user's choice wins over the scheme's primary.
+    const setAccentStyle = () => {
+        const doc = root.document;
+        if (!doc || !doc.getElementById) return;
+        const appearance = appearanceConfig();
+        const light = moqui.isCssColor(appearance.values.THEME_PRIMARY_COLOR) ? String(appearance.values.THEME_PRIMARY_COLOR).trim() : "";
+        const dark = moqui.isCssColor(appearance.values.THEME_PRIMARY_COLOR_DARK) ? String(appearance.values.THEME_PRIMARY_COLOR_DARK).trim() : "";
+        let style = doc.getElementById("m-accent");
+        let css = "";
+        if (light) css += "body:not(.body--dark){--q-primary:" + light + " !important;}";
+        if (dark) css += "body.body--dark{--q-primary:" + dark + " !important;--m-accent-dark-link:color-mix(in srgb," + dark + " 60%,white);}";
+        if (!css) { if (style) style.remove(); return; }
+        if (!style) { style = doc.createElement("style"); style.id = "m-accent"; doc.head.appendChild(style); }
+        style.textContent = css;
+        const schemeLink = doc.getElementById("m-color-scheme");
+        if (schemeLink && schemeLink.nextSibling !== style) doc.head.insertBefore(style, schemeLink.nextSibling);
+    };
+    // The user's per-color overrides of the scheme (THEME_COLOR_OVERRIDES, a JSON {name: {light, dark}}; the Preferences
+    // Appearance EDIT expander): each name is a color of the scheme (page-bg, header-bg, …), written as the same tokens the
+    // scheme's style sheet uses (the apps colorSchemeCss transition) — a brand color is Quasar's --q-*, the rest --m-*, and in
+    // dark mode page-bg and panel-bg also set Quasar's --q-dark-page and --q-dark. Kept in a style sheet after the scheme link
+    // so the user's colors win over the scheme's.
+    const setSchemeColorOverrides = () => {
+        const doc = root.document;
+        if (!doc || !doc.getElementById) return;
+        const appearance = appearanceConfig();
+        let overrides = {};
+        const raw = appearance.values.THEME_COLOR_OVERRIDES;
+        if (raw) { try { overrides = JSON.parse(raw); } catch (e) { console.info("The THEME_COLOR_OVERRIDES preference is not JSON, ignored"); overrides = {}; } }
+        if (!moqui.isPlainObject(overrides)) overrides = {};
+        const brand = ["primary", "secondary", "accent", "positive", "negative", "info", "warning"];
+        const light = [], dark = [];
+        const push = (list, name, value, isDark) => {
+            if (brand.includes(name)) { list.push("--q-" + name + ":" + value + " !important"); return; }
+            list.push("--m-" + name + ":" + value);
+            if (isDark && name === "page-bg") list.push("--q-dark-page:" + value + " !important");
+            if (isDark && name === "panel-bg") list.push("--q-dark:" + value + " !important");
+        };
+        for (const name of Object.keys(overrides)) {
+            const entry = overrides[name];
+            if (!moqui.isPlainObject(entry) || !/^[a-z][a-z0-9-]{0,40}$/.test(name)) continue;
+            const lightValue = moqui.isCssColor(entry.light) ? String(entry.light).trim() : "";
+            const darkValue = moqui.isCssColor(entry.dark) ? String(entry.dark).trim() : "";
+            if (lightValue) push(light, name, lightValue, false);
+            if (darkValue) push(dark, name, darkValue, true);
+        }
+        let style = doc.getElementById("m-scheme-colors");
+        let css = "";
+        if (light.length) css += "body:not(.body--dark){" + light.join("; ") + ";}";
+        if (dark.length) css += "body.body--dark{" + dark.join("; ") + ";}";
+        if (!css) { if (style) style.remove(); return; }
+        if (!style) { style = doc.createElement("style"); style.id = "m-scheme-colors"; doc.head.appendChild(style); }
+        style.textContent = css;
+        // after the scheme link (and the accent) so the user's colors win over the scheme's
+        const anchor = doc.getElementById("m-accent") || doc.getElementById("m-color-scheme");
+        if (anchor && anchor.nextSibling !== style) doc.head.insertBefore(style, anchor.nextSibling);
     };
     const setToken = (element, name, value, important) => {
         if (!element || !element.style) return;
@@ -137,11 +205,11 @@
             setToken(html, key === "THEME_SIZE_SMALL" ? "--m-fs-small-scale" : "--m-fs-large-scale", scale);
         } else if (key === "THEME_LINE_HEIGHT") {
             setToken(html, "--m-line-height", text === "relaxed" ? "1.75" : "");
-        } else if (key === "THEME_PRIMARY_COLOR") {
-            const color = moqui.isCssColor(text) ? text.trim() : "";
-            if (text && !color) console.info("The THEME_PRIMARY_COLOR preference is not a CSS color, ignored");
-            setToken(body, "--q-primary", color, true);
-            setToken(body, "--m-accent-dark-link", color && "color-mix(in srgb, " + color + " 60%, white)");
+        } else if (key === "THEME_PRIMARY_COLOR" || key === "THEME_PRIMARY_COLOR_DARK") {
+            if (text && !moqui.isCssColor(text)) console.info("The " + key + " preference is not a CSS color, ignored");
+            setAccentStyle();
+        } else if (key === "THEME_COLOR_OVERRIDES") {
+            setSchemeColorOverrides();
         } else if (body && body.classList) {
             if (key === "THEME_MOTION") {
                 body.classList.toggle("m-motion-reduce", text === "reduce");
@@ -8197,8 +8265,12 @@
                             '</button>' +
                         '</div></div>' +
                     '<div><div class="text-subtitle2 q-mb-xs">{{labels.accentColor}}</div>' +
-                        '<div class="row items-center q-gutter-x-sm"><input type="color" class="m-appearance-color" :value="accentInput" @change="set(\'THEME_PRIMARY_COLOR\', $event.target.value)" :aria-label="labels.accentColor">' +
-                            '<q-btn v-if="value(\'THEME_PRIMARY_COLOR\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR\', \'\')"></q-btn></div></div>' +
+                        '<div class="row items-center q-gutter-x-sm q-mb-xs"><span class="text-caption" style="min-width:44px;">{{labels.modeLight}}</span>' +
+                            '<input type="color" class="m-appearance-color" :value="accentInputLight" @change="set(\'THEME_PRIMARY_COLOR\', $event.target.value)" :aria-label="labels.accentColor + \' (\' + labels.modeLight + \')\'\">' +
+                            '<q-btn v-if="value(\'THEME_PRIMARY_COLOR\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR\', \'\')"></q-btn></div>' +
+                        '<div class="row items-center q-gutter-x-sm"><span class="text-caption" style="min-width:44px;">{{labels.modeDark}}</span>' +
+                            '<input type="color" class="m-appearance-color" :value="accentInputDark" @change="set(\'THEME_PRIMARY_COLOR_DARK\', $event.target.value)" :aria-label="labels.accentColor + \' (\' + labels.modeDark + \')\'\">' +
+                            '<q-btn v-if="value(\'THEME_PRIMARY_COLOR_DARK\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR_DARK\', \'\')"></q-btn></div></div>' +
                     '<div v-if="fonts.length"><div class="text-subtitle2 q-mb-xs">{{labels.fonts}}</div>' +
                         '<div class="row q-col-gutter-sm">' +
                             '<div v-for="role in fontRoles" :key="role.key" class="col-12 col-sm-4">' +
@@ -8236,12 +8308,17 @@
             schemeId() { this.version; return this.value("THEME_COLOR_SCHEME") || this.appearance.defaultSchemeId || (this.schemes[0] && this.schemes[0].id) || ""; },
             darkMode() { this.version; return this.$q.dark.mode; },
             density() { this.version; const config = qvt.config || moqui.config || {}; return config.density === "compact" ? "compact" : "comfortable"; },
-            accentInput() {
+            accentInputLight() {
                 const color = this.value("THEME_PRIMARY_COLOR");
                 if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
                 const doc = root.document;
                 const current = doc && root.getComputedStyle ? root.getComputedStyle(doc.body).getPropertyValue("--q-primary").trim() : "";
                 return /^#[0-9a-fA-F]{6}$/.test(current) ? current : "#1976d2";
+            },
+            accentInputDark() {
+                const color = this.value("THEME_PRIMARY_COLOR_DARK");
+                if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+                return this.accentInputLight;  // no own dark accent: start from the light one
             },
             fontRoles() {
                 const options = (kinds) => [{ label: this.labels.themeDefault, value: "", family: "" }].concat(this.fonts.filter((font) => kinds.includes(font.kind))
