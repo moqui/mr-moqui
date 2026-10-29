@@ -57,11 +57,7 @@ pub trait Resource: Sized + Clone {
     }
 
     fn file_name(&self) -> &str {
-        let location = self.location();
-        match location.rfind('/') {
-            Some(index) => &location[index + 1..],
-            None => location,
-        }
+        file_tail(self.location())
     }
 
     fn content_type(&self) -> Option<&'static str> {
@@ -238,18 +234,13 @@ fn join_location(parent: &str, child: &str) -> String {
 }
 
 fn split_relative(relative: &str) -> (&str, &str) {
-    match relative.rfind('/') {
-        Some(index) => (&relative[..index], &relative[index + 1..]),
-        None => ("", relative),
-    }
+    relative.rsplit_once('/').unwrap_or(("", relative))
 }
 
 fn strip_extension_after_slash(location: &str) -> String {
-    let slash = location.rfind('/').map(|index| index + 1).unwrap_or(0);
-    match location[slash..].find('.') {
-        Some(dot) => location[..slash + dot].to_string(),
-        None => location.to_string(),
-    }
+    let (directory, name) = location.split_at(location.rfind('/').map_or(0, |slash| slash + 1));
+    let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
+    format!("{directory}{stem}")
 }
 
 pub fn content_type_for_name(filename: &str) -> Option<&'static str> {
@@ -677,17 +668,11 @@ impl MemoryResource {
 }
 
 fn parent_path(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(index) => &path[..index],
-        None => "",
-    }
+    path.rsplit_once('/').map_or("", |(parent, _)| parent)
 }
 
 fn file_tail(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(index) => &path[index + 1..],
-        None => path,
-    }
+    path.rsplit_once('/').map_or(path, |(_, tail)| tail)
 }
 
 fn now_millis() -> i64 {
@@ -703,6 +688,21 @@ fn system_millis(time: SystemTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_helpers_split_at_the_last_slash() {
+        assert_eq!(split_relative("a/b/c.xml"), ("a/b", "c.xml"));
+        assert_eq!(split_relative("c.xml"), ("", "c.xml"));
+        assert_eq!(parent_path("a/b"), "a");
+        assert_eq!(parent_path("a"), "");
+        assert_eq!(file_tail("a/b"), "b");
+        assert_eq!(file_tail("b"), "b");
+        assert_eq!(file_tail("a/"), "");
+        assert_eq!(strip_extension_after_slash("a/b.c/d.tar.gz"), "a/b.c/d");
+        assert_eq!(strip_extension_after_slash("d.xml"), "d");
+        assert_eq!(strip_extension_after_slash("a.b/"), "a.b/");
+        assert_eq!(strip_extension_after_slash("noext"), "noext");
+    }
 
     #[test]
     fn memory_tree_finds_children_under_a_matching_directory() {

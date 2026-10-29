@@ -261,3 +261,16 @@ fn non_ascii_date_time_text_is_rejected() {
         assert_eq!(parse_timestamp(text, &TimeZone::UTC), None, "{text}");
     }
 }
+
+#[test]
+fn offsets_are_hhmm_or_hh_colon_mm() {
+    assert_eq!(parse_offset("Z"), Some(0));
+    assert_eq!(parse_offset("utc"), Some(0));
+    assert_eq!(parse_offset("+0530"), Some(19_800));
+    assert_eq!(parse_offset("-08:00"), Some(-28_800));
+    for text in [
+        "", "+", "0530", "+5:30", "+053", "+05:3", "+05300", "+05-30", "+é530", "+05é0",
+    ] {
+        assert_eq!(parse_offset(text), None, "{text}");
+    }
+}

@@ -885,13 +885,12 @@ fn take_hms(input: &str) -> Option<(i8, i8, i8, &str)> {
 fn take_hms_frac(input: &str) -> Option<(i8, i8, i8, i32, &str)> {
     let (hour, minute, second, rest) = take_hms(input)?;
     let rest = rest.strip_prefix('.')?;
-    let len = rest.bytes().take_while(u8::is_ascii_digit).count();
-    let digits = &rest[..len];
+    let (digits, rest) = rest.split_at(rest.bytes().take_while(u8::is_ascii_digit).count());
     if digits.is_empty() || digits.len() > 9 {
         return None;
     }
     let nano = frac_to_nano(digits)?;
-    Some((hour, minute, second, nano, &rest[len..]))
+    Some((hour, minute, second, nano, rest))
 }
 
 fn parse_hms(input: &str, allow_short: bool) -> Option<Time> {
@@ -957,30 +956,27 @@ fn parse_offset(input: &str) -> Option<i32> {
     if input == "Z" || input.eq_ignore_ascii_case("GMT") || input.eq_ignore_ascii_case("UTC") {
         return Some(0);
     }
-    let (sign, rest) = match input.chars().next()? {
-        '+' => (1, &input[1..]),
-        '-' => (-1, &input[1..]),
-        _ => return None,
+    let (sign, rest) = if let Some(rest) = input.strip_prefix('+') {
+        (1, rest)
+    } else {
+        (-1, input.strip_prefix('-')?)
     };
-    if rest.len() == 4 && rest.chars().all(|ch| ch.is_ascii_digit()) {
-        let hours: i32 = rest[..2].parse().ok()?;
-        let minutes: i32 = rest[2..].parse().ok()?;
-        return Some(sign * (hours * 3600 + minutes * 60));
+    // HHMM or HH:MM
+    let (hours, rest) = take_n_digits(rest, 2)?;
+    let rest = rest.strip_prefix(':').unwrap_or(rest);
+    let (minutes, rest) = take_n_digits(rest, 2)?;
+    if !rest.is_empty() {
+        return None;
     }
-    if rest.len() == 5 && rest.as_bytes().get(2) == Some(&b':') {
-        let hours: i32 = rest[..2].parse().ok()?;
-        let minutes: i32 = rest[3..].parse().ok()?;
-        return Some(sign * (hours * 3600 + minutes * 60));
-    }
-    None
+    Some(sign * (hours as i32 * 3600 + minutes as i32 * 60))
 }
 
 fn take_n_digits(input: &str, n: usize) -> Option<(u32, &str)> {
-    let head = input.get(..n)?;
+    let (head, rest) = input.split_at_checked(n)?;
     if !head.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    Some((head.parse().ok()?, &input[n..]))
+    Some((head.parse().ok()?, rest))
 }
 
 /// Up to 9 fraction digits as nanoseconds: the digits padded with zeros on the right.

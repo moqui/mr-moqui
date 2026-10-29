@@ -407,13 +407,12 @@ impl MNode {
     }
 
     pub fn replace_child(&self, index: usize, child: MNode) -> Result<(), Error> {
-        let inner = self.inner.borrow_mut();
-        if index >= inner.children.len() {
+        let mut inner = self.inner.borrow_mut();
+        let Some(slot) = inner.children.get_mut(index) else {
             return Err(Error::new(format!("child index {index} is past the end")));
-        }
-        drop(inner);
+        };
         child.inner.borrow_mut().parent = Some(Rc::downgrade(&self.inner));
-        self.inner.borrow_mut().children[index] = child;
+        *slot = child;
         Ok(())
     }
 

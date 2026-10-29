@@ -492,9 +492,11 @@ fn ai_shape(ai: &str) -> Option<(Option<usize>, usize, bool)> {
         "240" | "241" | "250" | "251" => Some((None, 30, false)),
         "400" | "401" => Some((None, 30, false)),
         "410" | "411" | "412" | "413" | "414" | "415" | "416" | "417" => Some((Some(13), 13, true)),
-        _ if ai.len() == 4
-            && matches!(&ai[..3], "310" | "311" | "312" | "313" | "314" | "315" | "316" | "320")
-            && (b'0'..=b'5').contains(&ai.as_bytes()[3]) =>
+        // 310n–316n and 320n, with n (the decimal places) 0–5
+        _ if matches!(
+            ai.as_bytes(),
+            [b'3', b'1', b'0'..=b'6', b'0'..=b'5'] | [b'3', b'2', b'0', b'0'..=b'5']
+        ) =>
         {
             Some((Some(6), 6, true))
         }
@@ -527,48 +529,45 @@ pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {
     if input.is_empty() || input.len() > 4096 || !input.is_ascii() {
         return Err(Error::new("GS1 input needs 1–4096 ASCII bytes"));
     }
-    let mut at = 0;
     let hri = input.starts_with('(');
     let mut elements: Vec<Gs1Element> = Vec::new();
-    while at < input.len() {
-        if input.as_bytes()[at] == 29 {
-            at += 1;
-            if at == input.len() {
+    // The input not read yet.
+    let mut rest = input;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix(char::from(29)) {
+            rest = after;
+            if rest.is_empty() {
                 break;
             }
         }
-        let ai;
-        if hri {
-            if input.as_bytes()[at] != b'(' {
-                return Err(Error::new("expected a parenthesized GS1 application identifier"));
-            }
-            let end = input[at + 1..]
-                .find(')')
-                .map(|n| at + 1 + n)
-                .ok_or_else(|| Error::new("unclosed GS1 application identifier"))?;
-            ai = &input[at + 1..end];
-            at = end + 1;
+        let (ai, after) = if hri {
+            rest.strip_prefix('(')
+                .ok_or_else(|| Error::new("expected a parenthesized GS1 application identifier"))?
+                .split_once(')')
+                .ok_or_else(|| Error::new("unclosed GS1 application identifier"))?
         } else {
-            let length = [4, 3, 2]
+            [4, 3, 2]
                 .into_iter()
-                .find(|length| at + length <= input.len() && ai_shape(&input[at..at + length]).is_some())
-                .ok_or_else(|| Error::new(format!("unknown GS1 application identifier at byte {at}")))?;
-            ai = &input[at..at + length];
-            at += length;
-        }
+                .filter_map(|length| rest.split_at_checked(length))
+                .find(|(ai, _)| ai_shape(ai).is_some())
+                .ok_or_else(|| {
+                    let at = input.len() - rest.len();
+                    Error::new(format!("unknown GS1 application identifier at byte {at}"))
+                })?
+        };
+        rest = after;
         let (fixed, max, numeric) =
             ai_shape(ai).ok_or_else(|| Error::new(format!("unsupported GS1 application identifier {ai}")))?;
-        let end = if hri {
-            input[at..].find('(').map_or(input.len(), |n| at + n)
+        let len = if hri {
+            rest.find('(').unwrap_or(rest.len())
         } else if let Some(len) = fixed {
-            at + len
+            len
         } else {
-            input[at..].find(char::from(29)).map_or(input.len(), |n| at + n)
+            rest.find(char::from(29)).unwrap_or(rest.len())
         };
-        if end > input.len() {
-            return Err(Error::new(format!("GS1 {ai} is truncated")));
-        }
-        let value = &input[at..end];
+        let (value, after) = rest
+            .split_at_checked(len)
+            .ok_or_else(|| Error::new(format!("GS1 {ai} is truncated")))?;
         if value.is_empty()
             || value.len() > max
             || fixed.is_some_and(|len| value.len() != len)
@@ -587,7 +586,12 @@ pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {
             return Err(Error::new(format!("GS1 {ai} check digit is invalid")));
         }
         if matches!(ai, "11" | "13" | "15" | "16" | "17") {
-            let n = |start, end| value[start..end].parse::<u32>().unwrap_or(99);
+            let n = |start, end| {
+                value
+                    .get(start..end)
+                    .and_then(|digits| digits.parse::<u32>().ok())
+                    .unwrap_or(99)
+            };
             let year = 2000 + n(0, 2);
             let month = n(2, 4);
             let day = n(4, 6);
@@ -615,7 +619,7 @@ pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {
             application_identifier: ai.to_string(),
             value: value.to_string(),
         });
-        at = end;
+        rest = after;
     }
     let mut raw = String::new();
     let mut human = String::new();
