@@ -100,11 +100,30 @@ along with this software (see the LICENSE.md file). If not, see
             const scheme = { id: row.colorSchemeId, description: row.description || row.colorSchemeId, light: {}, dark: {} }
             const colorRows = ec.entity.find('moqui.screen.ScreenColorSchemeColor').condition('colorSchemeId', row.colorSchemeId)
                     .disableAuthz().useCache(true).list()
+            // the scheme's style sheet (the apps colorSchemeCss transition, inlined here so switching schemes applies at once,
+            // without a fetch): a brand color is --q-* (!important), the rest --m-*, and in dark mode page-bg and panel-bg also
+            // set Quasar's --q-dark-page and --q-dark. A name or value that could end its declaration is left out.
+            const brand = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning']
+            const lightDecls = [], darkDecls = []
             for (let j = 0; j < colorRows.length; j++) {
                 const color = colorRows.get(j)
+                const name = String(color.colorName || ''), value = String(color.colorValue || '').trim()
                 const mode = color.colorModeEnumId === 'SCM_DARK' ? scheme.dark : color.colorModeEnumId === 'SCM_LIGHT' ? scheme.light : null
-                if (mode) mode[color.colorName] = color.colorValue || ''
+                if (mode) mode[name] = value
+                if (!mode || !/^[a-z][a-z0-9-]{0,40}$/.test(name) || !value || /[;{}<>\\"'!]/.test(value)) continue
+                const dark = color.colorModeEnumId === 'SCM_DARK'
+                const decls = dark ? darkDecls : lightDecls
+                if (brand.includes(name)) decls.push('--q-' + name + ':' + value + ' !important')
+                else if (dark && name === 'link') decls.push('--m-link:var(--m-accent-dark-link, ' + value + ')')
+                else decls.push('--m-' + name + ':' + value)
+                if (dark && name === 'panel-bg') decls.push('--q-dark:' + value + ' !important')
+                if (dark && name === 'page-bg') decls.push('--q-dark-page:' + value + ' !important')
             }
+            let schemeCss = ''
+            if (lightDecls.length) schemeCss += 'body:not(.body--dark){' + lightDecls.join('; ') + ';}'
+            if (darkDecls.length) schemeCss += 'body.body--dark{' + darkDecls.join('; ') + ';}'
+            if (row.extraCss) schemeCss += row.extraCss
+            scheme.css = schemeCss
             scheme.custom = !!(Object.keys(scheme.light).length || Object.keys(scheme.dark).length || row.extraCss)
             scheme.version = textHash(JSON.stringify([scheme.light, scheme.dark, row.extraCss || '']))
             colorSchemes.push(scheme)

@@ -500,17 +500,18 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
     const htmlProp = (name) => document.documentElement.style.getPropertyValue(name);
     const bodyProp = (name) => document.body.style.getPropertyValue(name);
     qvt.config = { preferences: {}, appearance: {
-        colorSchemes: [{ id: "DEFAULT", custom: false }, { id: "SLATE", custom: true, version: "v1" }],
+        colorSchemes: [{ id: "DEFAULT", custom: false }, { id: "SLATE", custom: true, version: "v1", css: "body:not(.body--dark){--q-primary:#123456 !important;}" }],
         fonts: [{ id: "INTER", kind: "sans", family: "Inter, sans-serif", stylesheet: "https://fonts.example/inter.css" }, { id: "SYSTEM_MONO", kind: "mono", family: "monospace" }],
         values: { THEME_COLOR_SCHEME: "SLATE", THEME_SIZE_LARGE: "1.25", THEME_RADIUS: "square" } } };
     try {
         moqui.applyAppearanceAll();
-        assert.equal(links["m-color-scheme"].attrs.href, "/apps/colorSchemeCss?colorSchemeId=SLATE&v=v1");
+        // the scheme's colors are inlined from the config (no fetch), so switching is instant
+        assert.equal(document.getElementById("m-color-scheme-style").textContent, "body:not(.body--dark){--q-primary:#123456 !important;}");
         assert.equal(htmlProp("--m-fs-large-scale"), "1.25");
         assert.ok(document.body.classList.contains("m-radius-square"));
         // a scheme without colors is the theme's own: no sheet
         moqui.applyPreference("THEME_COLOR_SCHEME", "DEFAULT");
-        assert.equal(links["m-color-scheme"], undefined);
+        assert.equal(document.getElementById("m-color-scheme-style"), null);
         moqui.applyPreference("THEME_FONT_BODY", "INTER");
         assert.equal(htmlProp("--m-font-body"), "Inter, sans-serif");
         assert.equal(links["m-font-body"].attrs.href, "https://fonts.example/inter.css");
@@ -563,7 +564,7 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         ["--m-fs-large-scale", "--m-fs-small-scale", "--m-font-body", "--m-line-height"].forEach((name) => document.documentElement.style.removeProperty(name));
         ["--q-primary", "--m-accent-dark-link"].forEach((name) => document.body.style.removeProperty(name));
         ["m-radius-square", "m-radius-round", "m-links-underline", "m-motion-reduce", "m-motion-full"].forEach((name) => document.body.classList.remove(name));
-        ["m-accent", "m-scheme-colors"].forEach((id) => { const el = document.getElementById(id); if (el) el.remove(); });
+        ["m-accent", "m-scheme-colors", "m-color-scheme-style"].forEach((id) => { const el = document.getElementById(id); if (el) el.remove(); });
     }
 });
 

@@ -112,11 +112,20 @@
             doc.head.appendChild(link);
         }
         if (link.getAttribute("href") !== href) link.setAttribute("href", href);
-        // the user's accent (m-accent) must stay after the scheme so it wins over the scheme's primary (same selectors, !important)
-        if (id === "m-color-scheme") {
-            const accent = doc.getElementById("m-accent");
-            if (accent && link.nextSibling !== accent) doc.head.insertBefore(accent, link.nextSibling);
-        }
+    };
+    // the chosen scheme's colors, inlined from the page config (the pre-action generates them; the apps colorSchemeCss transition
+    // is the same). Applied at once, without a fetch, so switching schemes — and back to a scheme without colors — is instant. It
+    // replaces the server-rendered m-color-scheme link and sits in the head before the accent and the color overrides, so those win.
+    const setSchemeStyle = (scheme) => {
+        const doc = root.document;
+        if (!doc || !doc.getElementById) return;
+        const link = doc.getElementById("m-color-scheme");
+        if (link) link.remove();
+        let style = doc.getElementById("m-color-scheme-style");
+        const css = scheme && scheme.css ? scheme.css : "";
+        if (!css) { if (style) style.remove(); return; }
+        if (!style) { style = doc.createElement("style"); style.id = "m-color-scheme-style"; doc.head.appendChild(style); }
+        style.textContent = css;
     };
     // the user's accent colors, one for light and one for dark (a single color rarely works in both): --q-primary per mode, and in
     // dark mode the link takes the accent mixed toward white. Kept in a style sheet (not an inline token) so it switches with the mode,
@@ -134,8 +143,8 @@
         if (!css) { if (style) style.remove(); return; }
         if (!style) { style = doc.createElement("style"); style.id = "m-accent"; doc.head.appendChild(style); }
         style.textContent = css;
-        const schemeLink = doc.getElementById("m-color-scheme");
-        if (schemeLink && schemeLink.nextSibling !== style) doc.head.insertBefore(style, schemeLink.nextSibling);
+        const schemeEl = doc.getElementById("m-color-scheme-style");
+        if (schemeEl && schemeEl.nextSibling !== style) doc.head.insertBefore(style, schemeEl.nextSibling);
     };
     // The user's per-color overrides of the scheme (THEME_COLOR_OVERRIDES, a JSON {name: {light, dark}}; the Preferences
     // Appearance EDIT expander): each name is a color of the scheme (page-bg, header-bg, …), written as the same tokens the
@@ -173,8 +182,8 @@
         if (!css) { if (style) style.remove(); return; }
         if (!style) { style = doc.createElement("style"); style.id = "m-scheme-colors"; doc.head.appendChild(style); }
         style.textContent = css;
-        // after the scheme link (and the accent) so the user's colors win over the scheme's
-        const anchor = doc.getElementById("m-accent") || doc.getElementById("m-color-scheme");
+        // after the scheme (and the accent) so the user's colors win over the scheme's
+        const anchor = doc.getElementById("m-accent") || doc.getElementById("m-color-scheme-style");
         if (anchor && anchor.nextSibling !== style) doc.head.insertBefore(style, anchor.nextSibling);
     };
     const setToken = (element, name, value, important) => {
@@ -193,9 +202,9 @@
         else delete appearance.values[key];
         const fontRole = { THEME_FONT_BODY: "body", THEME_FONT_HEADING: "heading", THEME_FONT_MONO: "mono" }[key];
         if (key === "THEME_COLOR_SCHEME") {
-            // no own choice: the theme's default scheme (the server linked it already), else the first scheme
+            // no own choice: the theme's default scheme, else the first scheme; the colors are inlined from the config
             const schemeId = text || appearance.defaultSchemeId || (appearance.colorSchemes[0] && appearance.colorSchemes[0].id) || "";
-            setStyleLink("m-color-scheme", moqui.colorSchemeHref(appearance.colorSchemes.find((scheme) => scheme.id === schemeId)));
+            setSchemeStyle(appearance.colorSchemes.find((scheme) => scheme.id === schemeId));
         } else if (fontRole) {
             const font = appearance.fonts.find((option) => option.id === text);
             setToken(html, "--m-font-" + fontRole, font && font.family);
