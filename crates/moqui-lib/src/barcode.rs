@@ -479,26 +479,74 @@ pub fn matrix(symbology: &str, text: &str) -> Result<Matrix, Error> {
     }
 }
 
+/// How an application identifier's value is written.
+struct AiShape {
+    /// The length of a fixed-length value; `None` for a variable one.
+    fixed: Option<usize>,
+    max: usize,
+    numeric: bool,
+}
+
 /// Supported inventory GS1 application identifiers. A variable field must end with GS/FNC1 before the next AI.
 /// Unknown identifiers fail explicitly; this parser never guesses a separator inside a lot or serial number.
-fn ai_shape(ai: &str) -> Option<(Option<usize>, usize, bool)> {
+fn ai_shape(ai: &str) -> Option<AiShape> {
     match ai {
-        "00" => Some((Some(18), 18, true)),
-        "01" | "02" => Some((Some(14), 14, true)),
-        "11" | "13" | "15" | "16" | "17" => Some((Some(6), 6, true)),
-        "20" => Some((Some(2), 2, true)),
-        "10" | "21" | "22" => Some((None, 20, false)),
-        "30" | "37" => Some((None, 8, true)),
-        "240" | "241" | "250" | "251" => Some((None, 30, false)),
-        "400" | "401" => Some((None, 30, false)),
-        "410" | "411" | "412" | "413" | "414" | "415" | "416" | "417" => Some((Some(13), 13, true)),
+        "00" => Some(AiShape {
+            fixed: Some(18),
+            max: 18,
+            numeric: true,
+        }),
+        "01" | "02" => Some(AiShape {
+            fixed: Some(14),
+            max: 14,
+            numeric: true,
+        }),
+        "11" | "13" | "15" | "16" | "17" => Some(AiShape {
+            fixed: Some(6),
+            max: 6,
+            numeric: true,
+        }),
+        "20" => Some(AiShape {
+            fixed: Some(2),
+            max: 2,
+            numeric: true,
+        }),
+        "10" | "21" | "22" => Some(AiShape {
+            fixed: None,
+            max: 20,
+            numeric: false,
+        }),
+        "30" | "37" => Some(AiShape {
+            fixed: None,
+            max: 8,
+            numeric: true,
+        }),
+        "240" | "241" | "250" | "251" => Some(AiShape {
+            fixed: None,
+            max: 30,
+            numeric: false,
+        }),
+        "400" | "401" => Some(AiShape {
+            fixed: None,
+            max: 30,
+            numeric: false,
+        }),
+        "410" | "411" | "412" | "413" | "414" | "415" | "416" | "417" => Some(AiShape {
+            fixed: Some(13),
+            max: 13,
+            numeric: true,
+        }),
         // 310n–316n and 320n, with n (the decimal places) 0–5
         _ if matches!(
             ai.as_bytes(),
             [b'3', b'1', b'0'..=b'6', b'0'..=b'5'] | [b'3', b'2', b'0', b'0'..=b'5']
         ) =>
         {
-            Some((Some(6), 6, true))
+            Some(AiShape {
+                fixed: Some(6),
+                max: 6,
+                numeric: true,
+            })
         }
         _ => None,
     }
@@ -556,7 +604,7 @@ pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {
                 })?
         };
         rest = after;
-        let (fixed, max, numeric) =
+        let AiShape { fixed, max, numeric } =
             ai_shape(ai).ok_or_else(|| Error::new(format!("unsupported GS1 application identifier {ai}")))?;
         let len = if hri {
             rest.find('(').unwrap_or(rest.len())
@@ -630,7 +678,7 @@ pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {
         human.push_str(&e.application_identifier);
         human.push(')');
         human.push_str(&e.value);
-        if i + 1 < elements.len() && ai_shape(&e.application_identifier).is_some_and(|s| s.0.is_none()) {
+        if i + 1 < elements.len() && ai_shape(&e.application_identifier).is_some_and(|shape| shape.fixed.is_none()) {
             raw.push(char::from(29));
         }
     }

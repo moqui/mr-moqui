@@ -28,6 +28,8 @@
 pub mod outline;
 pub mod tokenize;
 
+use std::ops::Range;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
@@ -137,25 +139,26 @@ pub fn apply(text: &str, ops: &[Op]) -> Result<Applied, Error> {
     for (index, op) in ops.iter().enumerate() {
         let doc = Doc::parse(&current)?;
         let mut edits = edits_of(&doc, op).map_err(|err| Error::new(format!("operation {}: {err}", index + 1)))?;
-        edits.sort_by_key(|edit| edit.0);
-        for pair in edits.windows(2) {
-            if pair[0].1 > pair[1].0 {
-                return Err(Error::new(format!("operation {}: its edits overlap", index + 1)));
-            }
+        edits.sort_by_key(|edit| edit.range.start);
+        if edits
+            .windows(2)
+            .any(|pair| matches!(pair, [a, b] if a.range.end > b.range.start))
+        {
+            return Err(Error::new(format!("operation {}: its edits overlap", index + 1)));
         }
         let mut next = String::with_capacity(current.len() + 64);
         let mut at = 0;
         let mut step = Vec::with_capacity(edits.len());
-        for (from, to, replacement) in edits {
-            next.push_str(&current[at..from]);
-            next.push_str(&replacement);
-            at = to;
+        for Splice { range, text } in edits {
+            next.push_str(&current[at..range.start]);
+            next.push_str(&text);
+            at = range.end;
             step.push(Edit {
-                from,
-                to,
-                from16: utf16_len(&current[..from]),
-                to16: utf16_len(&current[..to]),
-                text: replacement,
+                from: range.start,
+                to: range.end,
+                from16: utf16_len(&current[..range.start]),
+                to16: utf16_len(&current[..range.end]),
+                text,
             });
         }
         next.push_str(&current[at..]);
@@ -169,7 +172,20 @@ fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
 }
 
-type Edits = Vec<(usize, usize, String)>;
+/// One replacement an operation makes: the bytes `range` of the text before it become `text`.
+struct Splice {
+    range: Range<usize>,
+    text: String,
+}
+
+fn splice(range: Range<usize>, text: impl Into<String>) -> Splice {
+    Splice {
+        range,
+        text: text.into(),
+    }
+}
+
+type Edits = Vec<Splice>;
 
 fn edits_of(doc: &Doc<'_>, op: &Op) -> Result<Edits, Error> {
     let style = Style::of(doc.text);
@@ -186,8 +202,7 @@ fn edits_of(doc: &Doc<'_>, op: &Op) -> Result<Edits, Error> {
         Op::RenameAttribute { at, name, to } => {
             let element = locate(doc, at)?;
             let attr = find_attr(doc, element, name)?;
-            let range = doc.nodes[element].attrs[attr].name.clone();
-            Ok(vec![(range.start, range.end, to.clone())])
+            Ok(vec![splice(doc.nodes[element].attrs[attr].name.clone(), to.clone())])
         }
         Op::Insert { at, position, xml } => {
             let element = locate(doc, at)?;
@@ -218,8 +233,10 @@ fn edits_of(doc: &Doc<'_>, op: &Op) -> Result<Edits, Error> {
         Op::Replace { at, xml } => {
             let element = locate(doc, at)?;
             let indent = indent_of(doc, &style, element);
-            let span = doc.nodes[element].span.clone();
-            Ok(vec![(span.start, span.end, reindent(xml, &indent, &style))])
+            Ok(vec![splice(
+                doc.nodes[element].span.clone(),
+                reindent(xml, &indent, &style),
+            )])
         }
         Op::SetText { at, text } => {
             let element = locate(doc, at)?;
@@ -449,10 +466,10 @@ fn dedent(text: &str, indent: &str, style: &Style) -> String {
     out
 }
 
-fn set_attribute(doc: &Doc<'_>, style: &Style, element: usize, name: &str, value: &str) -> (usize, usize, String) {
+fn set_attribute(doc: &Doc<'_>, style: &Style, element: usize, name: &str, value: &str) -> Splice {
     let node = &doc.nodes[element];
     if let Some(attr) = node.attrs.iter().find(|attr| doc.slice(&attr.name) == name) {
-        return (attr.value.start, attr.value.end, escape_attr(value, attr.quote));
+        return splice(attr.value.clone(), escape_attr(value, attr.quote));
     }
     let written = format!("{name}=\"{}\"", escape_attr(value, b'"'));
     match node.attrs.last() {
@@ -463,24 +480,24 @@ fn set_attribute(doc: &Doc<'_>, style: &Style, element: usize, name: &str, value
             if last_line != name_line {
                 let column = &doc.text[last_line..last.span.start];
                 let pad: String = column.chars().map(|ch| if ch == '\t' { '\t' } else { ' ' }).collect();
-                (last.span.end, last.span.end, format!("{}{pad}{written}", style.eol))
+                splice(last.span.end..last.span.end, format!("{}{pad}{written}", style.eol))
             } else {
-                (last.span.end, last.span.end, format!(" {written}"))
+                splice(last.span.end..last.span.end, format!(" {written}"))
             }
         }
-        None => (node.name.end, node.name.end, format!(" {written}")),
+        None => splice(node.name.end..node.name.end, format!(" {written}")),
     }
 }
 
-fn remove_attribute(doc: &Doc<'_>, element: usize, attr: usize) -> (usize, usize, String) {
+fn remove_attribute(doc: &Doc<'_>, element: usize, attr: usize) -> Splice {
     let span = doc.nodes[element].attrs[attr].span.clone();
     // the whitespace before it goes with it
     let start = doc.text[..span.start].trim_end_matches([' ', '\t', '\r', '\n']).len();
-    (start, span.end, String::new())
+    splice(start..span.end, "")
 }
 
 /// The edit that removes an element: its whole line when it is alone on it, else just its span.
-fn remove(doc: &Doc<'_>, element: usize) -> (usize, usize, String) {
+fn remove(doc: &Doc<'_>, element: usize) -> Splice {
     let span = doc.nodes[element].span.clone();
     let start = line_start(doc.text, span.start);
     let before = &doc.text[start..span.start];
@@ -491,11 +508,11 @@ fn remove(doc: &Doc<'_>, element: usize) -> (usize, usize, String) {
         // the last line of the text: take the line break before it instead
         if line_end.is_none() && start > 0 {
             let previous = doc.text[..start - 1].trim_end_matches('\r').len();
-            return (previous, end, String::new());
+            return splice(previous..end, "");
         }
-        return (start, end, String::new());
+        return splice(start..end, "");
     }
-    (span.start, span.end, String::new())
+    splice(span, "")
 }
 
 fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml: &str) -> Result<Edits, Error> {
@@ -511,14 +528,14 @@ fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml:
             let alone = doc.text[line_start(doc.text, start)..start].trim().is_empty();
             Ok(vec![if position == Position::Before {
                 if alone {
-                    (start, start, format!("{fragment}{}{indent}", style.eol))
+                    splice(start..start, format!("{fragment}{}{indent}", style.eol))
                 } else {
-                    (start, start, format!("{fragment} "))
+                    splice(start..start, format!("{fragment} "))
                 }
             } else if alone {
-                (node.span.end, node.span.end, format!("{}{indent}{fragment}", style.eol))
+                splice(node.span.end..node.span.end, format!("{}{indent}{fragment}", style.eol))
             } else {
-                (node.span.end, node.span.end, format!(" {fragment}"))
+                splice(node.span.end..node.span.end, format!(" {fragment}"))
             }])
         }
         Position::First | Position::Last => {
@@ -549,23 +566,21 @@ fn insert(doc: &Doc<'_>, style: &Style, element: usize, position: Position, xml:
                 let close = node.start_tag.end - 2;
                 let trimmed = doc.text[..close].trim_end_matches([' ', '\t']).len();
                 let name = doc.name(element);
-                return Ok(vec![(
-                    trimmed,
-                    node.start_tag.end,
+                return Ok(vec![splice(
+                    trimmed..node.start_tag.end,
                     format!(">{eol}{inner}{fragment}{eol}{indent}</{name}>", eol = style.eol),
                 )]);
             }
             let content = doc.slice(&node.content);
             if content.trim().is_empty() {
-                Ok(vec![(
-                    node.content.start,
-                    node.content.end,
+                Ok(vec![splice(
+                    node.content.clone(),
                     format!("{eol}{inner}{fragment}{eol}{indent}", eol = style.eol),
                 )])
             } else if position == Position::First {
-                Ok(vec![(node.content.start, node.content.start, fragment)])
+                Ok(vec![splice(node.content.start..node.content.start, fragment)])
             } else {
-                Ok(vec![(node.content.end, node.content.end, fragment)])
+                Ok(vec![splice(node.content.end..node.content.end, fragment)])
             }
         }
     }
@@ -585,18 +600,21 @@ fn set_text(doc: &Doc<'_>, style: &Style, element: usize, text: &str) -> Result<
         .find(|child| doc.nodes[**child].kind == Kind::CData)
         .copied();
     if let Some(cdata) = cdata.filter(|_| !text.contains("]]>")) {
-        let span = doc.nodes[cdata].span.clone();
-        return Ok(vec![(span.start + 9, span.end - 3, text.to_string())]);
+        let span = &doc.nodes[cdata].span;
+        return Ok(vec![splice(span.start + 9..span.end - 3, text)]);
     }
     let escaped = escape_text(text);
     if node.self_closing {
         let close = node.start_tag.end - 2;
         let trimmed = doc.text[..close].trim_end_matches([' ', '\t']).len();
         let name = doc.name(element);
-        return Ok(vec![(trimmed, node.start_tag.end, format!(">{escaped}</{name}>"))]);
+        return Ok(vec![splice(
+            trimmed..node.start_tag.end,
+            format!(">{escaped}</{name}>"),
+        )]);
     }
     let _ = style;
-    Ok(vec![(node.content.start, node.content.end, escaped)])
+    Ok(vec![splice(node.content.clone(), escaped)])
 }
 
 fn wrap(doc: &Doc<'_>, style: &Style, element: usize, xml: &str) -> Result<Edits, Error> {
@@ -620,10 +638,8 @@ fn wrap(doc: &Doc<'_>, style: &Style, element: usize, xml: &str) -> Result<Edits
     let indent = indent_of(doc, style, element);
     let inner = format!("{indent}{}", style.unit);
     let body = dedent(doc.slice(&doc.nodes[element].span), &indent, style);
-    let span = doc.nodes[element].span.clone();
-    Ok(vec![(
-        span.start,
-        span.end,
+    Ok(vec![splice(
+        doc.nodes[element].span.clone(),
         format!(
             "{open}>{eol}{inner}{}{eol}{indent}</{name}>",
             reindent(&body, &inner, style),
@@ -644,11 +660,7 @@ fn unwrap(doc: &Doc<'_>, style: &Style, element: usize) -> Result<Edits, Error> 
     let inner = format!("{indent}{}", style.unit);
     let content = doc.slice(&node.content);
     let lifted = dedent(content.trim(), &inner, style);
-    Ok(vec![(
-        node.span.start,
-        node.span.end,
-        reindent(&lifted, &indent, style),
-    )])
+    Ok(vec![splice(node.span.clone(), reindent(&lifted, &indent, style))])
 }
 
 #[cfg(test)]
