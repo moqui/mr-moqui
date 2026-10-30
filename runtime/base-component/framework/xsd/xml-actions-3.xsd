@@ -323,6 +323,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="entity-name" type="name-full" use="required">
                 <xs:annotation><xs:documentation>Name of the entity to find an instance of.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Find with authorization disabled (EntityFind.disableAuthz()), so
+                    record-level filters such as an organization filter do not apply. For a service that checks its
+                    own permission and scope. An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="value-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>Field to put result resulting EntityValue object in.</xs:documentation></xs:annotation>
             </xs:attribute>
@@ -379,6 +384,11 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:sequence>
             <xs:attribute name="entity-name" type="name-full" use="required">
                 <xs:annotation><xs:documentation>Name of entity to find instances of.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Find with authorization disabled (EntityFind.disableAuthz()), so
+                    record-level filters such as an organization filter do not apply. For a service that checks its
+                    own permission and scope. An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="list" type="xs:string" use="optional">
                 <xs:annotation><xs:documentation>Name of the list to put results in. Required unless the entity-find
@@ -647,6 +657,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="entity-name" type="name-full" use="required">
                 <xs:annotation><xs:documentation>Name of entity to search in.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Find with authorization disabled (EntityFind.disableAuthz()), so
+                    record-level filters such as an organization filter do not apply. For a service that checks its
+                    own permission and scope. An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="count-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>Name of the field (variable) to put result of the count in.</xs:documentation></xs:annotation>
             </xs:attribute>
@@ -748,6 +763,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="value-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>The name of the field that contains the EntityValue object.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Run the write with authorization disabled, as a script's
+                    disableAuthz()/enableAuthz() pair would. For a service that checks its own permission and scope.
+                    An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="or-update" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Update value if already exists instead of returning an error,
                     defaults to false.</xs:documentation></xs:annotation>
@@ -761,6 +781,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="value-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>The name of the field that contains the EntityValue object.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Run the write with authorization disabled, as a script's
+                    disableAuthz()/enableAuthz() pair would. For a service that checks its own permission and scope.
+                    An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
+            </xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="entity-delete" substitutionGroup="EntityValueOperations">
@@ -769,6 +794,11 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="value-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>The name of the field that contains the EntityValue object.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Run the write with authorization disabled, as a script's
+                    disableAuthz()/enableAuthz() pair would. For a service that checks its own permission and scope.
+                    An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>
     </xs:element>
@@ -805,6 +835,11 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:sequence>
             <xs:attribute name="entity-name" type="name-full" use="required">
                 <xs:annotation><xs:documentation>The name of the entity to remove instances of.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="disable-authz" type="boolean" default="false">
+                <xs:annotation><xs:documentation>Run the write with authorization disabled, as a script's
+                    disableAuthz()/enableAuthz() pair would. For a service that checks its own permission and scope.
+                    An MR Moqui addition; Moqui Java has it on service-call only.</xs:documentation></xs:annotation>
             </xs:attribute>
         </xs:complexType>
     </xs:element>

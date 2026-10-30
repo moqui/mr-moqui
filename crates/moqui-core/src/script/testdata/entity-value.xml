@@ -3,4 +3,5 @@
     <entity-create value-field="row"/>
     <entity-update value-field="row"/>
     <entity-delete value-field="row"/>
+    <entity-update value-field="row" disable-authz="true"/>
 </actions>

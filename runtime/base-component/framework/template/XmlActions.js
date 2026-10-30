@@ -110,7 +110,8 @@
         has(node, "cache") && `.useCache(${attr(node, "cache")})`,
         has(node, "for-update") && `.forUpdate(${attr(node, "for-update")})`,
         distinct && has(node, "distinct") && `.distinct(${attr(node, "distinct")})`,
-        has(node, "use-clone") && `.useClone(${attr(node, "use-clone")})`
+        has(node, "use-clone") && `.useClone(${attr(node, "use-clone")})`,
+        attr(node, "disable-authz") === "true" && ".disableAuthz()"
     ]);
 
     const findCondition = (kid, cached) => {
@@ -269,8 +270,17 @@
         ]);
     };
 
-    // A statement that calls a method on the value-field entity value.
-    const valueCall = (call) => stmt((node) => `${attr(node, "value-field")}.${call};`);
+    // A statement that calls a method on the value-field entity value. With disable-authz="true" the call runs with
+    // authorization disabled, as a script's `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()`.
+    const withoutAuthz = (node, line) => attr(node, "disable-authz") !== "true" ? line : js`
+        var _xa_was_disabled = ec.artifactExecution.disableAuthz();
+        try {
+            ${line}
+        } finally {
+            if (!_xa_was_disabled) ec.artifactExecution.enableAuthz();
+        }
+    `;
+    const valueCall = (call) => stmt((node) => withoutAuthz(node, `${attr(node, "value-field")}.${call};`));
 
     return {
         // Elements a parent macro reads directly render nothing themselves.
@@ -502,8 +512,8 @@
                 ${setFields}
             `;
         }),
-        "entity-create": stmt((node) =>
-            `${attr(node, "value-field")}.${attr(node, "or-update") === "true" ? "createOrUpdate()" : "create()"};`),
+        "entity-create": stmt((node) => withoutAuthz(node,
+            `${attr(node, "value-field")}.${attr(node, "or-update") === "true" ? "createOrUpdate()" : "create()"};`)),
         "entity-update": valueCall("update()"),
         "entity-delete": valueCall("delete()"),
         "entity-delete-related": stmt((node) =>
