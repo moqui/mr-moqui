@@ -245,7 +245,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- TODO: get fancier with this, crawl screen tree looking for screens that don't require authc, maybe some sort of setting to allow robots or not -->
         <!-- TODO: also generate sitemap XML with paths we want crawled, based on ? -->
         <actions><script><![CDATA[
-            const disallowList = ['apps', 'qapps', 'rest', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'chatAssistCard', 'richTextImage', 'llm', 'a2a', 'mcp']
+            const disallowList = ['apps', 'qapps', 'rest', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'chatAssistCard', 'richTextImage', 'llm', 'a2a', 'mcp', 'rum']
             let robotsText = "user-agent: *\n"
             for (const disPath of disallowList) robotsText += `disallow: /${disPath}\n`
             ec.web.sendTextResponse(robotsText)

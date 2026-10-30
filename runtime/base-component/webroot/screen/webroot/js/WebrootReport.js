@@ -1042,6 +1042,53 @@
                 this.selected ? h("details", { open: true, class: "q-pa-sm" }, [h("summary", this.selected.name), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(this.selected, null, 2))]) : null ]);
         }
     };
+    // A browser session replay (Monitor › Replays): rrweb's Replayer over the events `url` answers, with play, pause and a
+    // seek bar. The recording was masked in the browser; the Replayer draws it in a sandboxed frame that runs no script.
+    components["m-session-replay"] = {
+        props: { url: { type: String, default: "" } },
+        data: () => ({ state: "loading", message: "", playing: false, at: 0, total: 0 }),
+        mounted() {
+            moqui.loadStylesheet("/libs/rrweb/style.min.css");
+            Promise.all([moqui.loadScript("/libs/rrweb/rrweb.umd.min.js", null, () => !!root.rrweb), moqui.request(report.appPath(this.url))])
+                .then(([, result]) => {
+                    const events = (result.json && result.json.events) || [];
+                    if (events.length < 2) { this.state = "empty"; return; }
+                    this.replayer = new root.rrweb.Replayer(events, { root: this.$refs.stage, mouseTail: false, skipInactive: true, showWarning: false });
+                    this.total = this.replayer.getMetaData().totalTime;
+                    this.replayer.on("finish", () => { this.playing = false; });
+                    this.timer = root.setInterval(() => { if (this.replayer && this.playing) this.at = Math.min(this.total, this.replayer.getCurrentTime()); }, 250);
+                    this.state = "ready";
+                }, (error) => { this.state = "failed"; this.message = (error && (error.text || error.message)) || String(error); });
+        },
+        beforeUnmount() {
+            if (this.timer) root.clearInterval(this.timer);
+            if (this.replayer) { try { this.replayer.pause(); this.replayer.destroy && this.replayer.destroy(); } catch (_) { /* gone */ } }
+        },
+        methods: {
+            toggle() {
+                if (!this.replayer) return;
+                if (this.playing) this.replayer.pause(); else this.replayer.play(this.at >= this.total ? 0 : this.at);
+                this.playing = !this.playing;
+            },
+            seek(event) {
+                this.at = Number(event.target.value);
+                if (!this.replayer) return;
+                if (this.playing) this.replayer.play(this.at); else this.replayer.pause(this.at);
+            }
+        },
+        render() {
+            const h = root.Vue.h, seconds = (ms) => (ms / 1000).toFixed(1) + " s";
+            const status = this.state === "loading" ? T("Loading the replay") : this.state === "empty" ? T("This replay has no events.")
+                : this.state === "failed" ? T("The replay could not be loaded: {0}", this.message) : null;
+            return h("div", { class: "m-session-replay" }, [
+                status ? h("p", { role: "status" }, status) : null,
+                this.state === "ready" ? h("div", { class: "row items-center q-gutter-sm" }, [
+                    h("button", { type: "button", class: "q-btn q-pa-xs", onClick: this.toggle }, this.playing ? T("Pause") : T("Play")),
+                    h("input", { type: "range", min: 0, max: this.total, step: 100, value: this.at, onInput: this.seek, "aria-label": T("Position"), style: { flex: "1" } }),
+                    h("span", seconds(this.at) + " / " + seconds(this.total)) ]) : null,
+                h("div", { ref: "stage", class: "m-session-replay-stage", style: { overflow: "auto", maxWidth: "100%" } }) ]);
+        }
+    };
     components["m-report-playlist"] = {
         props: { items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30} },
         data: () => ({ at:0, paused:false, timer:null }),
@@ -1400,6 +1447,6 @@
                 [toolbar, shared, single, !this.kiosk && Object.keys(this.dashboard.datasetFields || {}).length ? h(components["m-dashboard-filters"],{dashboard:this.dashboard,onApply:this.applyFilters}):null, this.kiosk ? h("button", { type: "button", onClick: () => { this.kiosk = false; } }, "Exit kiosk (Esc)") : null, layout(this.dashboard.layout, "root")]);
         }
     };
-    if (moqui.qvt && moqui.qvt.registerLate) Object.entries(components).filter(([name]) => ["m-report-value-filter","m-dashboard-filters","m-report-time-picker","m-report-transform-editor","m-report-field-editor","m-report-variable-editor","m-report-layout-editor","m-report-composition-editor","m-report-querybar", "m-report-playlist", "m-report-panel", "m-dashboard", "m-trace-waterfall", "m-log-tail", "m-report-definition-editor"].includes(name))
+    if (moqui.qvt && moqui.qvt.registerLate) Object.entries(components).filter(([name]) => ["m-report-value-filter","m-dashboard-filters","m-report-time-picker","m-report-transform-editor","m-report-field-editor","m-report-variable-editor","m-report-layout-editor","m-report-composition-editor","m-report-querybar", "m-report-playlist", "m-report-panel", "m-dashboard", "m-trace-waterfall", "m-session-replay", "m-log-tail", "m-report-definition-editor"].includes(name))
         .forEach(([name, component]) => moqui.qvt.registerLate(name, component));
 })(typeof window !== "undefined" ? window : globalThis);

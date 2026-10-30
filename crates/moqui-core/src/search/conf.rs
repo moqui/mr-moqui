@@ -18,6 +18,7 @@
 //! <search-facade backend="postgres"/>
 //! <search-facade backend="postgres"><postgres url="postgresql://host:5432/db" user=".." password=".."/></search-facade>
 //! <search-facade backend="postgres"><postgres url=".." read-url="postgresql://replica:5432/db" read-statement-timeout="30"/></search-facade>
+//! <search-facade backend="postgres"><postgres partition-telemetry="true" partition-days-ahead="3"/></search-facade>
 //! <search-facade backend="opensearch"><cluster url=".." user=".." password=".." index-prefix=".."/></search-facade>
 //! <search-facade><semantic enabled="true" dimensions="1024" representation="halfvec" embedder="hash"/></search-facade>
 //! ```
@@ -47,6 +48,10 @@ pub struct PostgresConf {
     pub text_config: Option<String>,
     /// Fold accents with the `unaccent` extension.
     pub unaccent: bool,
+    /// Day-partition the telemetry tables made from now on (`partition-telemetry`).
+    pub partition_telemetry: bool,
+    /// Day partitions made ahead of today (`partition-days-ahead`). `None` is 3.
+    pub partition_days_ahead: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -105,6 +110,8 @@ impl SearchConf {
                 read_statement_timeout: attr(&child, "read-statement-timeout").and_then(|text| text.parse().ok()),
                 text_config: attr(&child, "text-config"),
                 unaccent: attr(&child, "unaccent").is_some_and(|text| text == "true"),
+                partition_telemetry: attr(&child, "partition-telemetry").is_some_and(|text| text == "true"),
+                partition_days_ahead: attr(&child, "partition-days-ahead").and_then(|text| text.parse().ok()),
             })
             .unwrap_or_default();
         let cluster = match node.first_named("cluster") {

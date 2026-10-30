@@ -20,6 +20,7 @@ use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::document::Document;
 
 mod exponential;
+pub mod browser;
 pub mod ingest;
 pub mod maintenance;
 #[cfg(feature = "http")]
@@ -30,6 +31,7 @@ pub mod scrape;
 pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crate::context::Error> {
     registry.service_function("moqui_core::telemetry::clean", clean)?;
     registry.service_function("moqui_core::telemetry::rollup", rollup)?;
+    registry.service_function("moqui_core::telemetry::partition_tables", partition_tables)?;
     registry.service_function("moqui_core::telemetry::scrape_targets", scrape::scrape_targets)?;
     registry.service_function("moqui_core::telemetry::run_checks", scrape::run_checks)?;
     Ok(())
@@ -41,6 +43,18 @@ pub fn clean(
     _parameters: &crate::native::Parameters,
 ) -> Result<crate::native::Parameters, Error> {
     maintenance::retain(ec.factory()).map(|document| document.into_iter().collect())
+}
+
+pub fn partition_tables(
+    ec: &ExecutionContext,
+    _service: &crate::native::ServiceInfo<'_>,
+    parameters: &crate::native::Parameters,
+) -> Result<crate::native::Parameters, Error> {
+    let index = parameters
+        .get("index")
+        .and_then(Value::as_str)
+        .filter(|index| !index.is_empty());
+    maintenance::partition_tables(ec.factory(), index).map(|document| document.into_iter().collect())
 }
 
 pub fn rollup(

@@ -307,7 +307,8 @@
     <telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
             span-retention-days="7" log-retention-days="7" error-retention-days="90"
-            minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"/>
+            minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"
+            replay-retention-days="7"/>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none. Override per type using
          telemetry/artifact, whose sample-ratio overrides telemetry_sample_ratio above for that type's spans.

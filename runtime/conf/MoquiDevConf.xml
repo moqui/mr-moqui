@@ -63,6 +63,8 @@
     <telemetry>
         <artifact type="AT_XML_SCREEN_CONTENT" spans="true" metrics="true"/>
         <artifact type="AT_ENTITY" spans="false" metrics="true"/>
+        <!-- OTLP over gRPC as well as HTTP, on 4317 -->
+        <receiver grpc-enabled="true"/>
     </telemetry>
 
     <artifact-execution-facade>

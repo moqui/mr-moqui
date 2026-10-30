@@ -3,5 +3,25 @@
     <service verb="get" noun="SourceStatus" type="rust" location="moqui_core::monitor::source_status"><out-parameters><parameter name="counters" type="Map"/><parameter name="sources" type="List"/></out-parameters></service>
     <service verb="list" noun="IngestKeys" type="rust" location="moqui_core::monitor::list_keys"><out-parameters><parameter name="keys" type="List"/></out-parameters></service>
     <service verb="create" noun="IngestKey" type="rust" location="moqui_core::monitor::create_key"><in-parameters><parameter name="source" required="true"/><parameter name="expireDays" type="Double"/></in-parameters><out-parameters><parameter name="keyId"/><parameter name="accessToken"/></out-parameters></service>
+    <service verb="get" noun="BrowserSettings" type="rust" location="moqui_core::monitor::browser_settings">
+        <description>What a signed-in qvt page sends (telemetry/browser): its sample ratios and the replay settings; empty settings when RUM is off or no one is signed in.</description>
+        <out-parameters><parameter name="settings" type="Map"/></out-parameters></service>
+    <service verb="receive" noun="BrowserTelemetry" type="rust" location="moqui_core::monitor::receive_browser">
+        <description>A signed-in page's OTLP/JSON spans or logs, from /rum/traces and /rum/logs (webroot rum.xml). The page's
+            identity is replaced with the session's, and only CLIENT and INTERNAL spans are kept.</description>
+        <in-parameters><parameter name="signal" required="true"/><parameter name="bodyText" required="true" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="rejected" type="Long"/></out-parameters></service>
+    <service verb="receive" noun="BrowserReplay" type="rust" location="moqui_core::monitor::receive_replay">
+        <description>One chunk of masked rrweb events of a signed-in page (replay-enabled), held to the replay's time and size caps.</description>
+        <in-parameters><parameter name="bodyText" required="true" allow-html="any"/></in-parameters></service>
+    <service verb="list" noun="BrowserReplays" type="rust" location="moqui_core::monitor::list_replays">
+        <description>Session replays, newest first; requires MONITOR_REPLAY.</description>
+        <in-parameters><parameter name="userId"/><parameter name="visitId"/><parameter name="fromMillis" type="Long"/><parameter name="limit" type="Integer"/></in-parameters>
+        <out-parameters><parameter name="replays" type="List"/></out-parameters></service>
+    <service verb="get" noun="BrowserReplay" type="rust" location="moqui_core::monitor::get_replay">
+        <description>A session replay's events and context; requires MONITOR_REPLAY. Each read is logged.</description>
+        <in-parameters><parameter name="replayId" required="true"/></in-parameters>
+        <out-parameters><parameter name="events" type="List"/><parameter name="userId"/><parameter name="visitId"/><parameter name="url"/>
+            <parameter name="start"/><parameter name="end"/><parameter name="traceIds" type="List"/></out-parameters></service>
     <service verb="revoke" noun="IngestKey" type="rust" location="moqui_core::monitor::revoke_key"><in-parameters><parameter name="keyId" required="true"/></in-parameters></service>
 </services>

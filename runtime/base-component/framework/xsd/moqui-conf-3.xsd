@@ -175,7 +175,8 @@ along with this software (see the LICENSE.md file). If not, see
                 routes are redacted as the global list's are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="receiver" minOccurs="0"><xs:complexType>
-            <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics, and the
+            <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics (and
+                OTLP/gRPC with grpc-enabled), and the
                 deploy markers at /v1/annotations, each authorized by an ingest key. A request refused before it is
                 decoded (busy, over the rate, too large) answers an error status and is not counted; each record a
                 request rejects, or the queue cannot take, counts as dropped.
@@ -190,6 +191,53 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:annotation></xs:attribute>
             <xs:attribute name="concurrent-requests" type="xs:positiveInteger"><xs:annotation><xs:documentation>
                 Requests decoded at once; more answer 503. Default 8.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-enabled" type="boolean"><xs:annotation><xs:documentation>true opens the
+                OTLP/gRPC receiver (the trace, logs and metrics collector services) in a build with the grpc feature.
+                It takes the same ingest keys (authorization: Bearer or api_key metadata), limits and queue; refusals
+                are gRPC statuses (UNAUTHENTICATED, RESOURCE_EXHAUSTED, UNAVAILABLE, INVALID_ARGUMENT). With the HTTPS
+                listener's certificates it is TLS, else plain h2c. Default false.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="grpc-port" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The gRPC
+                port; 0 is any free port. Default 4317.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the gRPC
+                receiver listens on. Default the HTTP listener's (webapp_http_bind).</xs:documentation></xs:annotation>
+            </xs:attribute>
+        </xs:complexType></xs:element>
+        <xs:element name="browser" minOccurs="0"><xs:complexType>
+            <xs:annotation><xs:documentation>Real-user monitoring from signed-in qvt pages: a page load span with its web
+                vitals, a span per in-app navigation and per request (whose server request joins its trace), and the
+                page's JavaScript errors as logs, posted to /rum/traces and /rum/logs with the session's CSRF token. The server replaces the page's identity with the session's user and visit and keeps
+                only CLIENT and INTERNAL spans. Anonymous pages send nothing. With replay-enabled, a sample of sessions
+                also records an rrweb replay with every input and text masked, viewed on Monitor › Replays by users with
+                MONITOR_REPLAY.</xs:documentation></xs:annotation>
+            <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>Default false.
+                </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="service-name" type="xs:string"><xs:annotation><xs:documentation>The service.name of
+                browser telemetry. Default the server's service name with -browser.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of page
+                sessions, 0 to 1, that send spans. Default 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="error-sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of
+                page sessions that send JavaScript errors. Default 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="body-limit" type="xs:positiveInteger"><xs:annotation><xs:documentation>The largest
+                post in bytes. Default 262144.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="requests-per-minute" type="xs:positiveInteger"><xs:annotation><xs:documentation>
+                Posts per user and visit a minute. Default 120.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-enabled" type="boolean"><xs:annotation><xs:documentation>Record rrweb session
+                replays. Default false.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of
+                page sessions recorded. Default 0.1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-max-minutes" type="xs:positiveInteger"><xs:annotation><xs:documentation>
+                Minutes one replay may run; the page stops recording then and the server refuses more. Default 30.
+                </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-max-bytes" type="xs:positiveInteger"><xs:annotation><xs:documentation>Event
+                bytes one replay may hold. Default 5242880.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-block-selector" type="xs:string"><xs:annotation><xs:documentation>A CSS
+                selector of elements recorded only as an empty box, besides [data-moqui-block], canvas, video and
+                iframe.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-unmask-selector" type="xs:string"><xs:annotation><xs:documentation>A CSS
+                selector whose text is recorded as is (menus and labels, say); all other text and every input is
+                masked.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element></xs:sequence>
         <xs:attribute name="enabled" type="boolean"/>
         <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of traces, 0 to
@@ -217,6 +265,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="log-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="error-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="annotation-retention-days" type="xs:nonNegativeInteger"/>
+        <xs:attribute name="replay-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="minute-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="hour-retention-days" type="xs:nonNegativeInteger"/>
         <xs:attribute name="day-retention-days" type="xs:nonNegativeInteger"/>
@@ -1027,6 +1076,17 @@ along with this software (see the LICENSE.md file). If not, see
                     Fold accents: a copy of text-config with the unaccent extension before its word dictionaries, and
                     folded titles for fuzzy and autocomplete. A change rebuilds the tables.
                 </xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="partition-telemetry" type="boolean" default="false"><xs:annotation>
+                    <xs:documentation>Day-partition the telemetry tables (otel_spans, otel_logs, otel_metrics by
+                    granularity then day, monitor_annotations; not otel_errors) made from now on, so retention drops
+                    whole days instead of deleting rows. A table made before stays unpartitioned, with a warning, until
+                    org.moqui.impl.TelemetryServices.partition#TelemetryTables (Monitor › Sources) moves its rows and
+                    keeps the old table as &lt;table&gt;_unpartitioned to drop.</xs:documentation>
+                </xs:annotation></xs:attribute>
+                <xs:attribute name="partition-days-ahead" type="xs:nonNegativeInteger"><xs:annotation>
+                    <xs:documentation>Day partitions made ahead of today, at first use and by the daily retention
+                    job; a row of a day with no partition goes to the default partition. Default 3.</xs:documentation>
+                </xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
             <xs:element name="cluster" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>The cluster for the opensearch backend.</xs:documentation></xs:annotation>

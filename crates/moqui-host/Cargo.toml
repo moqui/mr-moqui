@@ -19,7 +19,7 @@ dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -54,6 +54,8 @@ xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
+# The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
+grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
@@ -106,6 +108,8 @@ serde_json = { workspace = true }
 flate2 = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
+opentelemetry-proto = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }

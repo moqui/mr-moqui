@@ -228,6 +228,21 @@ impl Server {
         }
     }
 
+    /// The OTLP/gRPC receiver's address, when this build has the `grpc` feature and `<telemetry><receiver
+    /// grpc-enabled="true">` is set.
+    #[must_use]
+    pub fn grpc_address(&self) -> Option<std::net::SocketAddr> {
+        #[cfg(feature = "grpc")]
+        {
+            let factory = self.factory.as_ref()?;
+            *lock(&factory.extension(|_| monitor::grpc::GrpcAddress::default()).0)
+        }
+        #[cfg(not(feature = "grpc"))]
+        {
+            None
+        }
+    }
+
     /// The public HTTPS listener, when one is running (`webapp_https_listen_port`, certificates in `runtime/cert`).
     #[must_use]
     pub fn https_address(&self) -> Option<std::net::SocketAddr> {

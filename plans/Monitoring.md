@@ -1,6 +1,6 @@
 # Monitoring
 
-M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. A third pass on Oct 28 built the Dashboards later items (repeats; funnel, node graph, flame graph and geomap; log patterns; the agent-traces view; Git sync) and pulling (scrape targets and synthetic checks), and closed those follow-ups: received metrics on `/metrics`, SQL spans following their frame's sampling, gzip and merged OTLP export, shared silences matched by label, definition delete, notifications not sent twice, the TUI time picker, panel menu, suggestions and kiosk scrolling, data links that keep the time range, a signed-in `report-embed` test, a shipped latency heatmap, inline search highlights, Dashboards list links that work under BOSS Insights, decimals in TUI props, localization of the widgets and shipped dashboards, `unitField` amounts, and lookup labels without entity grants. The overhead measurements remain. The Later stages are not started. The user guide is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
+M1–M7 were built Oct 26–27, 2026 (commits 735b3860 and 0df8ad3f). A review pass on Oct 27 fixed the bugs it found and listed the gaps it left in [Remaining-Work](Remaining-Work.md#monitoring); a second pass on Oct 27–28 built them (Prometheus text, protobuf export, outbound trace coverage, shared alert items, per-table exports, the report engine and dashboard gaps, the TUI charts, the Monitor screens and access), leaving the overhead measurements and smaller follow-ups there. A third pass on Oct 28 built the Dashboards later items (repeats; funnel, node graph, flame graph and geomap; log patterns; the agent-traces view; Git sync) and pulling (scrape targets and synthetic checks), and closed those follow-ups: received metrics on `/metrics`, SQL spans following their frame's sampling, gzip and merged OTLP export, shared silences matched by label, definition delete, notifications not sent twice, the TUI time picker, panel menu, suggestions and kiosk scrolling, data links that keep the time range, a signed-in `report-embed` test, a shipped latency heatmap, inline search highlights, Dashboards list links that work under BOSS Insights, decimals in TUI props, localization of the widgets and shipped dashboards, `unitField` amounts, and lookup labels without entity grants. The overhead measurements remain. Of the Later stages, browser RUM with session replay, day partitions and the gRPC receiver were built Oct 30; the others are not started. The user guide is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md). A new Monitor app in the tools component, built on OpenTelemetry, replaces ArtifactHit/ArtifactHitBin and the `moqui_logs`/`moqui_http_log` shipping, and takes in OTLP from external systems. Its charts, dashboards, alerts and scheduled reports come from a general reporting tool on the SearchFacade, with its own Dashboards app, that serves business reporting as well ([Dashboards and reports](#dashboards-and-reports)).
 
 ## Objective and scope
 
@@ -99,7 +99,7 @@ Support backend services, browser, mobile and desktop applications, background w
 Decisions, Oct 25, 2026:
 - **SDK:** use the OpenTelemetry SDK directly, with spans made from the artifact stack and no `tracing` bridge.
 - **Storage:** SearchFacade indexes, on the Postgres or OpenSearch backend.
-- **Ingest:** OTLP over HTTP first, with gRPC deferred.
+- **Ingest:** OTLP over HTTP first, with gRPC deferred (built Oct 30: tonic on 4317, behind the `grpc` feature).
 - **Dashboards and reports:** a framework engine (datasets, report queries, frames, panels, dashboards, alerts) with its own Dashboards app in the tools component. Monitor is its first user. Business reporting, app landing pages and BOSS Insights use the same pieces.
 - **Definitions:** dashboards, panels, datasets and rules are saved as JSON in entities, with versions and named references. Components ship them as JSON files, which are read-only until saved as a copy.
 - **Order:** the report tool comes early (M2 and M3), so the Monitor screens are built from panels from the start.
@@ -188,7 +188,7 @@ Internal and external sources share the same documents and the same screens, tol
 | `opentelemetry-otlp` (http-proto) | Not used. The optional external exporter is our own: it posts OTLP protobuf (or JSON, by `otlp-protocol`) through `moqui_lib::http::RestClient` (`telemetry/otlp.rs`), encoded with the `opentelemetry-proto` messages the receiver uses |
 
 - **Versions.** All `opentelemetry*` crates go on one minor version, pinned by `Cargo.lock`.
-- **Not used:** `tracing-subscriber`, `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Spans come from the artifact stack and logs from `LineSubscriber`, so neither needs a `Registry`. tonic is deferred along with gRPC.
+- **Not used:** `tracing-subscriber`, `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Spans come from the artifact stack and logs from `LineSubscriber`, so neither needs a `Registry`. tonic is only the gRPC receiver's server, under moqui-host's `grpc` feature.
 - **Check before adding.** Run `cargo tree` and look for:
   - tonic or a gRPC transport pulled in by the proto features
   - a second hyper or reqwest
@@ -213,7 +213,7 @@ Internal and external sources share the same documents and the same screens, tol
   - read on requests
   - carried in `CallJob` next to `origin`, so async services and pool work join the trace
   - injected by `outbound.rs` and remote services
-  - not carried from the qvt page. The page sends its own trace id as `X-Moqui-Page-Trace` on each fetch, and the request root records it as `moqui.page.trace_id`; each request is its own trace. (Carrying the page's `traceparent`, as first built, made a whole browser session one trace.) Browser spans come later with RUM
+  - not carried from the qvt page. The page sends its own trace id as `X-Moqui-Page-Trace` on each fetch, and the request root records it as `moqui.page.trace_id`; each request is its own trace. (Carrying the page's `traceparent`, as first built, made a whole browser session one trace.) Browser spans came with RUM (built Oct 30): with `<telemetry><browser>` on, each request the page makes is a CLIENT span that sends its own `traceparent`, a child of the in-app navigation it belongs to, so one navigation is one trace and the server's request span is the browser span's child
 - **Sampling.** Head sampling is set in config: `sample-ratio`, 0 by default, decided from the trace id so services with the same ratio agree. An incoming `traceparent` keeps its trace and parent ids, but its sampled flag is not trusted. The local exporter keeps every trace that has an error or a slow root (a simple tail rule) and drops the rest of the unsampled traces.
   - Every request's root span is kept whatever the sampling, as `moqui_http_log` rows and screen ArtifactHits were written for every request. This keeps a visit's request history whole. Sampling and the tail rule apply to the spans below the root, and an unsampled root is marked so.
   - The tail rule holds each unsampled trace's spans in a bounded buffer until the root ends. The buffer caps the number of traces and the spans per trace; past the cap, the head decision stands.
@@ -262,7 +262,7 @@ Internal and external sources share the same documents and the same screens, tol
 
   CI posts deploy markers to `POST /v1/annotations` with an ingest key; signed-in users and scripts can use `monitor/annotations` in `moqui.rest.xml`. Time series panels draw annotations as markers and bands.
 - **Retention.** A daily ServiceJob replaces `clean#ArtifactData`. It deletes by time with `delete_matching`, with separate settings per index and per metric granularity: raw spans and logs for days, minute metrics for days, hour and day metrics for months, and annotations for years.
-- **Later:** a Postgres-backend option to partition these tables by day, so retention drops partitions instead of deleting rows (SkyWalking's day tables).
+- **Day partitions** (built Oct 30): a Postgres-backend option, `<search-facade><postgres partition-telemetry="true">`, partitions these tables by day, so retention drops partitions instead of deleting rows (SkyWalking's day tables). `otel_metrics` is split by granularity first, as each has its own retention; `otel_errors` is upserted across days and is not split. The key becomes `(doc_id, [granularity,] time)`, kept out of the registry signature so an existing table is not refused as a changed mapping; it stays unpartitioned with a warning until `partition#TelemetryTables` (Monitor › Sources) copies it a day at a time and swaps it in under a short lock, keeping the old table to drop (`search/postgres/partitions.rs`, test `tests/it/telemetry_partitions.rs`).
 - **Telemetry config.** It replaces `artifact-stats`. The settings: per-type enable and sampling (keep the artifact-type list), retention, the exporters, and the receiver. `stats-skip-condition` goes away: it is not read, the XSD marks it deprecated, and a conf that sets it gets a startup warning. An `artifact-stats` left in a site or component conf still applies, with a deprecation warning ([Retired and replaced](#retired-and-replaced)).
 
 **SearchFacade additions** for the telemetry screens:
@@ -279,7 +279,7 @@ These go into `Agg` and both backends, with tests on each. The report tool needs
 - **Limits:** body size, rate per key, and a bounded queue that rejects when full and counts what it rejects. Redaction rules run before indexing. One rule for sensitive names (`context/identity.rs`) covers parameters, URL queries and span attributes.
 - **Decoding:** `opentelemetry-proto` decodes into the same documents the local exporter writes, so every screen works on external data unchanged.
 - **Temporality:** many senders, Prometheus-style ones among them, send cumulative points. These become deltas through a bounded per-series cache of the last point, keyed by series fingerprint and start time; a lower value or a new start time is a reset. Exponential histograms became deltas the same way in the completion wave, and are merged for the rollups by scaling down to common buckets (`telemetry/exponential.rs`).
-- **gRPC** (tonic on 4317) is deferred behind a feature.
+- **gRPC** (built Oct 30): tonic on 4317 behind the moqui-host `grpc` feature (in Enterprise and Maximal), opened by `<telemetry><receiver grpc-enabled="true">`. The collector services share the HTTP receiver's key check, rate limit, concurrency budget, decoder and queue (`monitor/receiver.rs`); the request message reaches the decoder through its serde form (`Decoder::decode_value`), as a protobuf body does. TLS uses the HTTPS listener's certificates with ALPN h2; refusals are gRPC statuses (`monitor/grpc.rs`, test `tests/it/monitor_grpc.rs`).
 - **Pulling** (built Oct 28): ServiceJobs scrape Prometheus-text endpoints (`moqui.monitor.ScrapeTarget`) into `otel_metrics` through the same decoder, so cumulative series become deltas, and run synthetic HTTP checks (`moqui.monitor.SyntheticCheck`), each recorded as a kept, fully sampled root span with its request as a CLIENT child (`telemetry/scrape.rs`, Monitor › Checks).
 
 ### Failure tolerance
@@ -324,7 +324,7 @@ Most of its screens are dashboards shipped as files, or Explore presets from the
   - uPlot (MIT, as SigNoz uses) if Chart.js is too slow for dense series
   - gridstack.js (MIT) for dragging and resizing panels in edit mode, if an in-house grid is not enough
   - an in-house flame graph when profiles arrive
-  - `rrweb` for opt-in replay, as below
+  - `rrweb` for opt-in replay, as below (vendored Oct 30: rrweb 2.1.7)
 
 ### Retired and replaced
 
@@ -752,7 +752,7 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
   - Map stable function and location ids to the JS/XML source and the build, and link selected spans and errors to the active trace. Never capture arguments or locals.
   - Gate detailed instrumentation by script or request, and by a time and overhead budget. These timings are wall time, not CPU samples.
   - Native `pprof` (Rust on Linux) cannot resolve interpreted JS frames. True JS CPU or line sampling needs a QuickJS-NG engine-hook prototype or a verified runtime profiler.
-- **Browser RUM** through the same OTLP receiver, and `rrweb` replay that is opt-in, masked and bounded.
+- **Browser RUM** through the same OTLP receiver, and `rrweb` replay that is opt-in, masked and bounded (built Oct 30). The page posts OTLP/JSON to `/rum/traces` and `/rum/logs` (webroot `rum.xml`) under its session and CSRF token, not an ingest key, which a page could not keep secret; the same decoder takes it after `telemetry/browser.rs` replaces the page's identity with the session's and keeps only CLIENT and INTERNAL spans. Signed-in pages only. Replays are on with `replay-enabled` and a sample ratio, masked in the browser, held to their minutes and bytes by the server, stored gzipped in `browser_replays` (day-partitioned with the rest), and read only through the `MONITOR_REPLAY` services, never as a dataset (`moqui-report` `browser.rs`, `js/WebrootRum.js`, Monitor › Browser and Replays; tests `tests/it/monitor_rum.rs`, `WebrootRum.spec.js`).
 - **Business operations.** Stable operation names, with commit, rollback, retry and pending outcomes taken from the transaction hooks (`on_commit` and `on_rollback` in `transaction/manager.rs`). Use authorized correlation references, never document contents or metric labels.
 - **Regressions and incidents.** Persist baselines, regressions, incidents and evidence. Use deterministic comparisons and cause ranking, with sample and data-quality gates and explicit uncertainty. Incident, release and operation screens keep the tenant, build, runtime and time context, with separate diagnostic and recovery permissions and audited access.
 - **Recovery.** A durable state machine (policy, decision, execution, verification) with a deployment-controller adapter.
@@ -760,7 +760,7 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
   - Require compatibility checks and approvals, with cooldowns, deadlines and an emergency stop.
   - Verify against business health.
   - Advisory by default. Never reverse committed business transactions automatically.
-- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver.
+- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver (both built Oct 30).
 - **Dashboards, later:**
   - repeating rows and panels (built Oct 28)
   - node graph, flame graph, funnel and geomap (built Oct 28)

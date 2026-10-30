@@ -404,6 +404,25 @@ pub trait SearchBackend: Send + Sync {
     }
     fn delete_document(&self, mapping: &DocumentMapping, id: &str) -> Result<bool, Error>;
     fn delete_matching(&self, mapping: &DocumentMapping, filter: &Query) -> Result<u64, Error>;
+    /// Drop the time partitions of `mapping` (of `granularity`'s, for metrics) that hold only rows before `before`,
+    /// answering how many. A backend or table without them has none, and retention deletes rows instead.
+    fn drop_partitions_before(
+        &self,
+        _mapping: &DocumentMapping,
+        _granularity: Option<&str>,
+        _before: jiff::Timestamp,
+    ) -> Result<u64, Error> {
+        Ok(0)
+    }
+    /// Make the time partitions ahead that `mapping`'s table will need. Failures are the backend's to log.
+    fn maintain_partitions(&self, _mapping: &DocumentMapping) {}
+    /// Move an existing table of `mapping` into time partitions. `None` when there is nothing to move.
+    fn partition_existing(&self, _mapping: &DocumentMapping) -> Result<Option<postgres::PartitionReport>, Error> {
+        Err(Error::new(format!(
+            "the {} search backend has no table partitions",
+            self.name()
+        )))
+    }
     fn get_document(&self, mapping: &DocumentMapping, id: &str) -> Result<Option<Document>, Error>;
     /// `mappings` are the stores that exist for the target.
     fn search(&self, mappings: &[Arc<DocumentMapping>], request: &SearchRequest) -> Result<SearchPage, Error>;
@@ -836,6 +855,46 @@ impl SearchFacade {
             }
         }
         Ok(count)
+    }
+
+    /// Drop the whole time partitions of a telemetry index before `before` (`granularity`'s, for metrics), as
+    /// retention does before it deletes the rest. Answers how many; none when the store has no partitions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the partitions cannot be listed.
+    pub fn drop_partitions_before(
+        &self,
+        index: &str,
+        granularity: Option<&str>,
+        before: jiff::Timestamp,
+    ) -> Result<u64, Error> {
+        let mapping = self.mapping(index)?;
+        if !self.backend.index_exists(&mapping)? {
+            return Ok(0);
+        }
+        self.backend.drop_partitions_before(&mapping, granularity, before)
+    }
+
+    /// Make the time partitions ahead for a telemetry index whose store exists.
+    pub fn maintain_partitions(&self, index: &str) {
+        match self.mapping(index) {
+            Ok(mapping) if self.backend.index_exists(&mapping).unwrap_or(false) => {
+                self.backend.maintain_partitions(&mapping);
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, index, "no mapping to keep partitions for"),
+        }
+    }
+
+    /// Move a telemetry index's existing table into day partitions (`partition-telemetry`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when partitioning is off, the index cannot be partitioned, or the move fails.
+    pub fn partition_existing(&self, index: &str) -> Result<Option<postgres::PartitionReport>, Error> {
+        let mapping = self.mapping(index)?;
+        self.backend.partition_existing(&mapping)
     }
 
     /// The stored body of one document, without control fields.

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Browser session replays (telemetry/browser replay-enabled): masked rrweb recordings of a sample of signed-in sessions. Only
+    users with MONITOR_REPLAY see them; the services check it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replays" default-menu-index="13">
+    <parameter name="userId"/><parameter name="visitId"/>
+    <transition name="replayDetail"><default-response url="../ReplayDetail"/></transition>
+    <actions><script><![CDATA[
+        replayAllowed = ec.user.hasPermission('MONITOR_REPLAY')
+        replayList = []
+        if (replayAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#BrowserReplays').parameters({userId, visitId, limit: 200}).call()
+            const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString() }
+            replayList = (result.replays || []).map(item => Object.assign({}, item, {start: stamp(item.start), traces: (item.traceIds || []).length}))
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="Session replays" type="h4"/>
+        <section name="NotAllowed" condition="!replayAllowed"><widgets>
+            <label text="Session replays need the MONITOR_REPLAY permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="Masked recordings of sampled signed-in sessions (telemetry browser replay-enabled): inputs and text are masked in the browser before they are sent. Each replay opened is logged." type="p"/>
+            <form-single name="ReplayFilter" transition=".">
+                <field name="userId"><default-field title="User ID"><text-line/></default-field></field>
+                <field name="visitId"><default-field title="Visit ID"><text-line/></default-field></field>
+                <field name="find"><default-field><submit text="Find"/></default-field></field>
+            </form-single>
+            <form-list name="ReplayList" list="replayList" skip-form="true">
+                <field name="start"><default-field title="Started"><link url="replayDetail" text="${start}" parameter-map="{replayId:replayId}" link-type="anchor"/></default-field></field>
+                <field name="userId"><default-field title="User"><display/></default-field></field>
+                <field name="visitId"><default-field title="Visit"><display/></default-field></field>
+                <field name="url"><default-field title="First page"><display/></default-field></field>
+                <field name="traces"><default-field title="Traces"><display/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

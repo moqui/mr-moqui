@@ -192,6 +192,9 @@ pub(crate) async fn listen(
     let address = listener
         .local_addr()
         .map_err(|err| fail(format!("bound listener has no address: {err}")))?;
+    #[cfg(feature = "grpc")]
+    let grpc = crate::monitor::grpc::bind_address(&factory, address)
+        .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
     let secure = match https {
         Some(https) => {
             let listener = TcpListener::bind(https.bind)
@@ -277,6 +280,8 @@ pub(crate) async fn listen(
         telemetry: moqui_core::telemetry::for_factory(&factory),
     };
     let app = app.layer(axum::middleware::from_fn_with_state(request_telemetry, log_http));
+    #[cfg(feature = "grpc")]
+    let grpc_factory = Arc::clone(&factory);
     let app = app
         .layer(tower_http::compression::CompressionLayer::new().compress_when(Compressible))
         .with_state(Arc::new(HttpState {
@@ -291,6 +296,16 @@ pub(crate) async fn listen(
     };
     moqui_core::devtools::restart::set_shutdown(|| RESTART.notify_one());
     let signal = tokio::spawn(shutdown(stop, shutdown_tx));
+    #[cfg(feature = "grpc")]
+    let grpc = grpc.map(|(bind, tls)| {
+        tokio::spawn(crate::monitor::grpc::serve(
+            Arc::clone(&grpc_factory),
+            bind,
+            tls,
+            Arc::clone(&guard),
+            stopped(shutdown_rx.clone()),
+        ))
+    });
     let permits = Arc::new(tokio::sync::Semaphore::new(limits.connections));
     let plain = serve(
         listener,
@@ -317,6 +332,10 @@ pub(crate) async fn listen(
             );
         }
         None => plain.await,
+    }
+    #[cfg(feature = "grpc")]
+    if let Some(grpc) = grpc {
+        let _ = grpc.await;
     }
     let _ = signal.await;
     Ok(())
@@ -1026,10 +1045,12 @@ pub(crate) fn internal_error(detail: &str) -> Response {
 async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, next: Next) -> Response {
     // Instrumenting collector traffic would produce more telemetry for the collector to send back, and probes and
     // deploy markers would fill the request history with polling.
+    // Browser RUM posts (/rum/traces, /rum/logs, /rum/replay) are the same: telemetry about telemetry.
     if matches!(
         request.uri().path(),
         "/v1/traces" | "/v1/logs" | "/v1/metrics" | "/v1/annotations" | "/health" | "/metrics"
-    ) {
+    ) || request.uri().path().starts_with("/rum/")
+    {
         return next.run(request).await;
     }
     use moqui_core::telemetry::{SpanKind, TraceContext};

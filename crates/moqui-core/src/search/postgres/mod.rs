@@ -25,8 +25,11 @@
 
 pub mod agg;
 pub mod compile;
+mod partitions;
 
-use std::collections::HashMap;
+pub use partitions::PartitionReport;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -73,6 +76,14 @@ pub struct PostgresBackend {
     absent: Mutex<HashMap<String, Instant>>,
     /// One `ensure_index` at a time in this process; the advisory lock covers other processes.
     ensuring: Mutex<()>,
+    /// Day partitions for the telemetry tables made from now on (`partition-telemetry`).
+    partitioning: Option<partitions::Partitioning>,
+    /// Whether each telemetry table, by document id, is partitioned, as last read.
+    partitioned: Mutex<HashMap<String, bool>>,
+    /// Telemetry tables whose partitions this process has kept ahead.
+    maintained: Mutex<HashSet<String>>,
+    /// Telemetry tables warned about as not partitioned.
+    warned: Mutex<HashSet<String>>,
 }
 
 /// How embeddings are stored: `halfvec` or `vector`, of `dimensions`.
@@ -208,6 +219,10 @@ impl PostgresBackend {
             known: Mutex::new(HashMap::new()),
             absent: Mutex::new(HashMap::new()),
             ensuring: Mutex::new(()),
+            partitioning: None,
+            partitioned: Mutex::new(HashMap::new()),
+            maintained: Mutex::new(HashSet::new()),
+            warned: Mutex::new(HashSet::new()),
         })
     }
 
@@ -482,9 +497,26 @@ impl PostgresBackend {
 
     fn create_statements(&self, mapping: &DocumentMapping) -> Vec<String> {
         let table = self.table(mapping);
+        let split = self.new_split(mapping);
+        let mut out = self.create_statements_for(mapping, &table, split);
+        if let Some(split) = split {
+            out.extend(self.default_partitions(mapping, &table, split));
+        }
+        out
+    }
+
+    /// The table of `mapping` named `table`; with `split`, partitioned, its key `doc_id` and the split columns.
+    fn create_statements_for(
+        &self,
+        mapping: &DocumentMapping,
+        table: &str,
+        split: Option<partitions::Split>,
+    ) -> Vec<String> {
+        let table = table.to_string();
         let config = literal(&self.text.config);
+        let keys = split.map(|split| split.key_columns()).unwrap_or_default();
         let mut columns = vec![
-            "doc_id text PRIMARY KEY".to_string(),
+            if split.is_some() { "doc_id text NOT NULL" } else { "doc_id text PRIMARY KEY" }.to_string(),
             "indexed_at timestamptz NOT NULL".to_string(),
             "body jsonb NOT NULL".to_string(),
             format!(
@@ -500,7 +532,11 @@ impl PostgresBackend {
                 continue;
             };
             let col = column(name);
-            columns.push(format!("{col} {sql_type}"));
+            if keys.contains(&name.as_str()) {
+                columns.push(format!("{col} {sql_type} NOT NULL"));
+            } else {
+                columns.push(format!("{col} {sql_type}"));
+            }
             match field.kind {
                 FieldKind::Text => {
                     indexes.push(format!(
@@ -563,7 +599,18 @@ impl PostgresBackend {
                 parts.join(" || ")
             ));
         }
-        let mut out = vec![format!("CREATE TABLE {table} ({})", columns.join(", "))];
+        let partition = match split {
+            Some(split) => {
+                columns.push(format!("PRIMARY KEY ({})", split.conflict_target()));
+                format!(
+                    " PARTITION BY {} ({})",
+                    if split.list.is_some() { "LIST" } else { "RANGE" },
+                    column(split.list.unwrap_or(split.day))
+                )
+            }
+            None => String::new(),
+        };
+        let mut out = vec![format!("CREATE TABLE {table} ({}){partition}", columns.join(", "))];
         out.extend(indexes);
         out
     }
@@ -617,8 +664,9 @@ fn insert_columns(mapping: &DocumentMapping) -> Vec<InsertColumn<'_>> {
         .collect()
 }
 
-/// One `INSERT ... ON CONFLICT` of `rows` documents. With `if_newer`, a stored row read later than the one given is kept.
-fn insert_sql(table: &str, columns: &[InsertColumn<'_>], rows: usize, if_newer: bool) -> String {
+/// One `INSERT ... ON CONFLICT` of `rows` documents, on the key `conflict` (`doc_id`, or a partitioned table's key).
+/// With `if_newer`, a stored row read later than the one given is kept.
+fn insert_sql(table: &str, conflict: &str, columns: &[InsertColumn<'_>], rows: usize, if_newer: bool) -> String {
     let mut statement = format!("INSERT INTO {table} (doc_id, indexed_at, body");
     for item in columns {
         statement.push_str(", ");
@@ -637,9 +685,15 @@ fn insert_sql(table: &str, columns: &[InsertColumn<'_>], rows: usize, if_newer: 
         }
         statement.push_str(&row);
     }
-    statement.push_str(" ON CONFLICT (doc_id) DO UPDATE SET indexed_at = EXCLUDED.indexed_at, body = EXCLUDED.body");
+    statement.push_str(&format!(
+        " ON CONFLICT ({conflict}) DO UPDATE SET indexed_at = EXCLUDED.indexed_at, body = EXCLUDED.body"
+    ));
     for item in columns {
         let col = column(item.name);
+        // A key column is the same in the row it conflicts with.
+        if conflict.split(", ").any(|key| key == col) {
+            continue;
+        }
         statement.push_str(&format!(", {col} = EXCLUDED.{col}"));
     }
     if if_newer {
@@ -708,7 +762,7 @@ impl SearchBackend for PostgresBackend {
         let columns = insert_columns(mapping);
         let mut params = Vec::new();
         push_insert_params(mapping, &columns, id, Timestamp::now(), document, &mut params)?;
-        let mut statement = insert_sql(&table, &columns, 1, false);
+        let mut statement = insert_sql(&table, &self.conflict_target(mapping), &columns, 1, false);
         let counter_column = column(counter);
         let key = literal(counter);
         let increment = format!("COALESCE({table}.{counter_column},0) + COALESCE(EXCLUDED.{counter_column},0)");
@@ -893,6 +947,7 @@ impl SearchBackend for PostgresBackend {
     fn ensure_index(&self, mapping: &DocumentMapping) -> Result<(), Error> {
         let signature = self.signature(mapping);
         if self.registered(&mapping.document_id)?.as_deref() == Some(signature.as_str()) {
+            self.maintain(mapping, true);
             return Ok(());
         }
         // Feed workers index documents of one type at once; only one makes the table.
@@ -901,6 +956,7 @@ impl SearchBackend for PostgresBackend {
         lock(&self.absent).remove(&mapping.document_id);
         let current = self.registered(&mapping.document_id)?;
         if current.as_deref() == Some(signature.as_str()) {
+            self.maintain(mapping, true);
             return Ok(());
         }
         let table = self.table(mapping);
@@ -952,6 +1008,8 @@ impl SearchBackend for PostgresBackend {
             })
         })?;
         lock(&self.known).insert(mapping.document_id.clone(), signature);
+        self.forget_partitioning(mapping);
+        self.maintain(mapping, true);
         Ok(())
     }
 
@@ -994,22 +1052,39 @@ impl SearchBackend for PostgresBackend {
             .collect();
         let per_row = 3 + columns.len();
         let chunk_rows = (MAX_INSERT_PARAMS / per_row).clamp(1, MAX_INSERT_ROWS);
-        let mut statements = Vec::new();
+        let mut chunks = Vec::new();
         for chunk in rows.chunks(chunk_rows) {
             let mut params = Vec::with_capacity(chunk.len() * per_row);
             for (id, body) in chunk {
                 push_insert_params(mapping, &columns, id, now, body, &mut params)?;
             }
-            statements.push((insert_sql(&table, &columns, chunk.len(), read_at.is_some()), params));
+            chunks.push((chunk.len(), params));
         }
-        self.tx.run(TransactionAttribute::UseOrBegin, None, || {
-            self.tx.with_connection(|conn| {
-                for (statement, params) in &statements {
-                    conn.execute(statement, params)?;
-                }
-                Ok(())
+        let write = || {
+            let conflict = self.conflict_target(mapping);
+            self.tx.run(TransactionAttribute::UseOrBegin, None, || {
+                self.tx.with_connection(|conn| {
+                    for (rows, params) in &chunks {
+                        conn.execute(
+                            &insert_sql(&table, &conflict, &columns, *rows, read_at.is_some()),
+                            params,
+                        )?;
+                    }
+                    Ok(())
+                })
             })
-        })?;
+        };
+        match write() {
+            // The table was partitioned since its key was read (partition#TelemetryTables swaps it in place).
+            Err(error)
+                if error.message().contains("no unique or exclusion constraint matching")
+                    && !self.tx.in_transaction() =>
+            {
+                self.forget_partitioning(mapping);
+                write()?;
+            }
+            other => other?,
+        }
         Ok(documents.len())
     }
 
@@ -1023,7 +1098,18 @@ impl SearchBackend for PostgresBackend {
         let mut outcomes: Vec<_> = documents.iter().map(|_| super::TelemetryItem::Accepted).collect();
         let mut valid = Vec::new();
         let mut positions = Vec::new();
+        let keys = partitions::Split::of(mapping)
+            .filter(|_| self.is_partitioned(mapping))
+            .map(|split| split.key_columns())
+            .unwrap_or_default();
         for (position, document) in documents.iter().enumerate() {
+            if let Some(key) = keys
+                .iter()
+                .find(|key| document.1.get(**key).is_none_or(|value| matches!(value, Value::Null)))
+            {
+                outcomes[position] = super::TelemetryItem::Rejected(format!("a partitioned record needs {key}"));
+                continue;
+            }
             match push_insert_params(mapping, &columns, &document.0, now, &document.1, &mut Vec::new()) {
                 Ok(()) => {
                     valid.push(document.clone());
@@ -1074,6 +1160,23 @@ impl SearchBackend for PostgresBackend {
         self.tx.run(TransactionAttribute::UseOrBegin, None, || {
             self.tx.with_connection(|conn| conn.execute(&sql.text, &sql.params))
         })
+    }
+
+    fn drop_partitions_before(
+        &self,
+        mapping: &DocumentMapping,
+        granularity: Option<&str>,
+        before: Timestamp,
+    ) -> Result<u64, Error> {
+        self.drop_days_before(mapping, granularity, before)
+    }
+
+    fn maintain_partitions(&self, mapping: &DocumentMapping) {
+        self.maintain(mapping, false);
+    }
+
+    fn partition_existing(&self, mapping: &DocumentMapping) -> Result<Option<PartitionReport>, Error> {
+        self.move_into_partitions(mapping)
     }
 
     fn get_document(&self, mapping: &DocumentMapping, id: &str) -> Result<Option<Document>, Error> {

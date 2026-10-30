@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One session replay: the qvt client plays it with rrweb's Replayer (m-session-replay, which reads the events transition);
+    the terminal client lists its page and the traces it touched. MONITOR_REPLAY is checked by the services. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replay" default-menu-include="false">
+    <parameter name="replayId" required="true"/>
+    <transition name="events" read-only="true" begin-transaction="false">
+        <parameter name="replayId" required="true"/>
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_REPLAY')) { ec.web.sendJsonError(403, 'MONITOR_REPLAY permission is required') } else {
+                const replay = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserReplay').parameters({replayId}).call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+                else ec.web.sendJsonResponse({events: replay.events || []})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="trace"><default-response url="../TraceDetail"/></transition>
+    <actions><script><![CDATA[
+        replayAllowed = ec.user.hasPermission('MONITOR_REPLAY')
+        replayItems = []
+        if (replayAllowed) {
+            const replay = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserReplay').parameters({replayId}).call()
+            const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString() }
+            replayInfo = {userId: replay.userId, visitId: replay.visitId, url: replay.url, start: stamp(replay.start), end: stamp(replay.end), events: (replay.events || []).length}
+            replayItems = [{time: replayInfo.start, title: replayInfo.url || '', text: ec.l10n.localize('{0} events; user {1}, visit {2}').replace('{0}', replayInfo.events).replace('{1}', replay.userId || '').replace('{2}', replay.visitId || ''), kind: 'info'}]
+                .concat((replay.traceIds || []).map(traceId => ({time: '', title: 'Trace ' + traceId, text: '', kind: 'info', url: '/apps/monitor/TraceDetail?traceId=' + traceId})))
+                .concat([{time: replayInfo.end, title: ec.l10n.localize('End'), text: ec.l10n.localize('Playback needs the web client.'), kind: 'info'}])
+            traceLinks = (replay.traceIds || []).map(traceId => ({traceId}))
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="Replay ${replayId}" type="h4"/>
+        <section name="NotAllowed" condition="!replayAllowed"><widgets>
+            <label text="Session replays need the MONITOR_REPLAY permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="${replayInfo.url} · ${replayInfo.userId} · ${replayInfo.start} to ${replayInfo.end}" type="p"/>
+            <render-mode>
+                <text type="qvt"><![CDATA[<m-session-replay url="${WebUtilities.encodeHtml('/apps/monitor/ReplayDetail/events?replayId=' + encodeURIComponent(replayId))}"></m-session-replay>]]></text>
+                <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'timeline',props:{items:replayItems}})}]]></text>
+                <text type="html,html-print,text"><![CDATA[<pre>${WebUtilities.encodeHtml(JSON.stringify(replayItems,null,2))}</pre>]]></text>
+            </render-mode>
+            <form-list name="ReplayTraces" list="traceLinks" skip-form="true">
+                <field name="traceId"><default-field title="Traces this page touched"><link url="trace" text="${traceId}" parameter-map="{traceId:traceId}" link-type="anchor"/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

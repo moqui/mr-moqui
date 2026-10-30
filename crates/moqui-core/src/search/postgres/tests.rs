@@ -115,13 +115,13 @@ fn documents_insert_as_rows_of_one_statement_with_a_cast_per_typed_column() {
              \"f_combinedName\" = EXCLUDED.\"f_combinedName\", \"f_partyCount\" = EXCLUDED.\"f_partyCount\", \
              \"f_active\" = EXCLUDED.\"f_active\"";
     assert_eq!(
-        insert_sql("t", &columns, 2, false),
+        insert_sql("t", "doc_id", &columns, 2, false),
         format!(
             "INSERT INTO t (doc_id, indexed_at, body, \"f_combinedName\", \"f_partyCount\", \"f_active\") \
                  VALUES {row}, {row} {update}"
         )
     );
-    assert!(insert_sql("t", &columns, 1, true).ends_with(" WHERE t.indexed_at <= EXCLUDED.indexed_at"));
+    assert!(insert_sql("t", "doc_id", &columns, 1, true).ends_with(" WHERE t.indexed_at <= EXCLUDED.indexed_at"));
 
     let at: Timestamp = "2026-01-05T10:00:00Z".parse().unwrap();
     let mut body = Document::new();
@@ -339,4 +339,29 @@ fn a_missing_table_is_remembered_until_ensure_or_drop() {
     lock(&backend.absent).insert(party.document_id.clone(), Instant::now() - ABSENT_TTL);
     assert!(!backend.index_exists(&party).unwrap());
     assert_eq!(lookups.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn a_day_partitioned_table_conflicts_on_its_key_and_does_not_set_it() {
+    let spans = crate::search::telemetry::telemetry_mapping("otel_spans").unwrap();
+    let metrics = crate::search::telemetry::telemetry_mapping("otel_metrics").unwrap();
+    let errors = crate::search::telemetry::telemetry_mapping("otel_errors").unwrap();
+    assert!(
+        partitions::Split::of(&errors).is_none(),
+        "errors are upserted across days"
+    );
+    let split = partitions::Split::of(&spans).unwrap();
+    assert_eq!(split.conflict_target(), r#"doc_id, "f_start""#);
+    assert_eq!(
+        partitions::Split::of(&metrics).unwrap().conflict_target(),
+        r#"doc_id, "f_granularity", "f_bucket_start""#
+    );
+    let columns = insert_columns(&spans);
+    let statement = insert_sql("t", &split.conflict_target(), &columns, 1, false);
+    assert!(
+        statement.contains(r#"ON CONFLICT (doc_id, "f_start") DO UPDATE"#),
+        "{statement}"
+    );
+    assert!(!statement.contains(r#""f_start" = EXCLUDED"#), "{statement}");
+    assert!(statement.contains(r#""f_name" = EXCLUDED."f_name""#), "{statement}");
 }

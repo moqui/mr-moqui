@@ -11,6 +11,15 @@
     <transition name="revokeKey" method="post" authz-action="delete">
         <actions><service-call name="org.moqui.monitor.MonitorServices.revoke#IngestKey" in-map="{keyId:keyId}"/></actions><default-response url="."/>
     </transition>
+    <transition name="partitionTables" method="post" authz-action="all">
+        <actions><script><![CDATA[
+            // Moves each telemetry table made before search-facade postgres partition-telemetry was on into day partitions.
+            const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.partition#TelemetryTables').call()
+            for (const failure of result.failed || []) ec.message.addError(failure)
+            if (result.moved) ec.message.addPublic(ec.l10n.localize('Moved {0} telemetry tables ({1} rows) into day partitions. The old tables are kept to drop: {2}').replace('{0}',result.moved).replace('{1}',result.rows).replace('{2}',(result.kept || []).join(', ')),'success')
+            else if (!(result.failed || []).length) ec.message.addPublic(ec.l10n.localize('No telemetry table needed moving.'),'info')
+        ]]></script></actions><default-response url="."/>
+    </transition>
     <actions><script><![CDATA[
         sourceStatus = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#SourceStatus').call()
         sourceList = [];sourceNotices=[]
@@ -70,5 +79,10 @@
             <field name="revoked"><default-field><display/></default-field></field>
             <field name="revoke"><default-field><submit text="Revoke" confirmation="Revoke this ingest key? Sources that send with it are refused from then on."/></default-field></field>
         </form-list>
+        <label text="Day partitions" type="h5"/>
+        <label text="With search-facade postgres partition-telemetry on, retention drops whole days of spans, logs, metrics and annotations. Tables made before it was on stay unpartitioned until they are moved here; the move copies their rows and keeps the old table to drop." type="p"/>
+        <form-single name="PartitionTables" transition="partitionTables">
+            <field name="partition"><default-field><submit text="Move telemetry tables into day partitions" confirmation="Copy each unpartitioned telemetry table into a day-partitioned one? Large tables take a while; writes wait briefly at the swap."/></default-field></field>
+        </form-single>
     </widgets>
 </screen>

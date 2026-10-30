@@ -10,7 +10,7 @@ The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the boun
 and retention), `crates/moqui-report/src/` (datasets, queries, frames, transformations, definitions, alerts,
 annotations, the scheduled reports in `schedule.rs` and the ingest keys in `monitor.rs`),
 `crates/moqui-core/src/search/telemetry.rs` (the index mappings), and the host side in `crates/moqui-host/src/http.rs`
-(request spans) and `crates/moqui-host/src/monitor.rs` (the OTLP receiver). Screens:
+(request spans) and `crates/moqui-host/src/monitor/` (the OTLP receiver: `receiver.rs` over HTTP, `grpc.rs` over gRPC). Screens:
 `runtime/base-component/tools/screen/Monitor/` and `Dashboards/`; widgets in
 `webroot/screen/webroot/js/WebrootReport.js` with TUI twins in `crates/moqui-tui/src/components/report.rs`.
 
@@ -32,8 +32,27 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 - **Logs.** Every INFO and higher log line, with the trace and span ids of the frame that wrote it.
 - **Errors.** Each error span or exception is fingerprinted (type, normalized message, top frames) into `otel_errors`,
   counted once per failing request.
+- **Browser (RUM).** With `<telemetry><browser enabled="true">`, a signed-in qvt page (`js/WebrootRum.js`, loaded by
+  `qapps.xml` only then) sends a `documentLoad` span with its web vitals (`browser.web_vital.ttfb`, `.fcp`, `.lcp`,
+  `.cls`, `.inp`) and a child span per resource slower than a second, a `navigation` span per in-app page change, a
+  CLIENT span per request to the site (which sends a `traceparent`, so the server's request span is its child and one
+  navigation is one trace), and its JavaScript errors (window, promise and Vue) as ERROR logs. Each tab session is in
+  or out by `sample-ratio` (errors by `error-sample-ratio`). The page posts OTLP/JSON to `/rum/traces` and `/rum/logs`
+  every 10 seconds and when it is hidden, with the session's CSRF token; anonymous pages send nothing. The server
+  replaces the page's resource with its own (`service.name` is `service-name`, by default the server's with
+  `-browser`; `user.id` and `moqui.visit.id` from the session; `source.id` `browser`), drops record attributes that
+  name a user, visit, source or service, and keeps only CLIENT and INTERNAL spans, at most 512 records a post, within
+  `body-limit` (256 KiB) and `requests-per-minute` (120) per user and visit. Only URL paths are sent, never queries.
+- **Session replay.** With `replay-enabled="true"` as well, a `replay-sample-ratio` (0.1) of tab sessions records an
+  rrweb replay (`libs/rrweb`, loaded only then): every input and all text masked in the browser, except text under
+  `replay-unmask-selector`; `[data-moqui-block]`, canvas, video, iframes and `replay-block-selector` recorded as empty
+  boxes; no console or network capture. Chunks go to `/rum/replay` until `replay-max-minutes` (30) or
+  `replay-max-bytes` (5 MiB), which the server holds each replay to; it keeps them gzipped in `browser_replays` for
+  `replay-retention-days` (7). Replays are never a report dataset: Monitor › Replays reads them through services that
+  need `MONITOR_REPLAY` (ADMIN has it), and each one opened is logged.
 
-The indexes are `otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors` and `monitor_annotations`.
+The indexes are `otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations` and
+`browser_replays`.
 
 ## Turning it on and sampling
 
@@ -72,6 +91,15 @@ with an `artifact` override and the receiver limits written out:
   on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
+- **Day partitions** (Postgres search backend): `<search-facade><postgres partition-telemetry="true"
+  partition-days-ahead="3"/>` makes new `otel_spans`, `otel_logs`, `otel_metrics` and `monitor_annotations` tables
+  partitioned by UTC day (`<table>_p<yyyymmdd>`, with a `<table>_default` for rows of a day with no partition);
+  `otel_metrics` is split by granularity first (`otel_metrics_minute`, `_hour`, `_day`), since each keeps for its own
+  time. `otel_errors` is not split. Partitions are made from yesterday to the days ahead when a table is first used
+  and by the retention job, which drops the days wholly past retention and then deletes the rows left. A table made
+  before the option was on stays as it is, with a warning, until Monitor › Sources › Move telemetry tables into day
+  partitions (`org.moqui.impl.TelemetryServices.partition#TelemetryTables`) copies its rows into a partitioned table
+  and keeps the old one as `<table>_unpartitioned` to drop.
 - **`interval-seconds`** is for tests; the metric documents are minute documents.
 - A screen with `track-artifact-hit="false"` records no artifact spans or metrics for itself and anything under it.
   Its request span is still written.
@@ -81,10 +109,14 @@ with an `artifact` override and the receiver limits written out:
 ## OTLP in and out
 
 **In.** `POST /v1/traces`, `/v1/logs` and `/v1/metrics` take OTLP/HTTP as `application/x-protobuf` or
-`application/json`, gzip allowed, and answer as OTLP does, with partial success.
+`application/json`, gzip allowed, and answer as OTLP does, with partial success. In a build with the `grpc` feature
+(Enterprise and Maximal), `<telemetry><receiver grpc-enabled="true">` also opens OTLP/gRPC on `grpc-port` (4317) at
+`grpc-bind` (the HTTP listener's address by default); the dev conf turns it on. It is TLS with the HTTPS listener's
+certificates, else plain h2c, takes gzip, and answers refusals as gRPC statuses (`UNAUTHENTICATED`,
+`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INVALID_ARGUMENT`; `OUT_OF_RANGE` over the body limit).
 
 - Each sender needs an ingest key: Monitor › Sources › Create key, which shows the token once. Send it as
-  `Authorization: Bearer <token>` or an `api_key` header. A key names its source, which is recorded on everything it
+  `Authorization: Bearer <token>` or an `api_key` header (gRPC metadata of the same names). A key names its source, which is recorded on everything it
   sends, and belongs to a user who must keep the `MONITOR_INGEST` permission. Keys expire (90 days by default) and
   can be revoked. They cannot sign in.
 - Limits per `telemetry/receiver`: body size (4 MiB), requests per minute per key (600) and concurrent requests (8).
@@ -164,6 +196,8 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Artifacts | Hits, total, min, max, average, p50/p95/p99, std dev, slow hits and last active minute per artifact, by type, sub type and name, plus the same stats over time |
 | Sources | Ingest keys (a new key's token shows once, in a message; the log masks it), the latest data from each source, exporter status and loss counters |
 | Checks | Synthetic checks and Prometheus scrape targets: add, edit, enable, run now, last result, and links to each check's runs and last trace, a target's metrics and the checks dashboard |
+| Browser | Page loads and p75 largest contentful paint over time; slowest pages with p75 load, LCP, INP and CLS; in-app navigations; the browser's requests (p95 by path); JavaScript errors by page and type |
+| Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
 export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
@@ -356,4 +390,4 @@ take the index refresh interval to appear.
 ## Not built
 
 The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
-Browser RUM, profiling, incidents and recovery are the Later stages of the plan.
+Profiling, business operations, regressions, incidents and recovery are the Later stages of the plan.

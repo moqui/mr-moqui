@@ -12,6 +12,7 @@ moqui_core::extension::submit! {
         register_native: |registry| {
             register(registry)?;
             monitor::register(registry)?;
+            browser::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -25,6 +26,7 @@ moqui_core::extension::submit! {
 
 pub mod alert;
 pub mod annotations;
+pub mod browser;
 pub mod definitions;
 pub mod frame;
 pub mod git_sync;
@@ -148,6 +150,11 @@ fn authorize_dataset(id: &str) -> Result<(), Error> {
     if !moqui_core::user::context_entered() {
         return Err(fail("a report requires an entered viewer context"));
     }
+    // Session replays are read only through the replay services, which need MONITOR_REPLAY; never through a report,
+    // an alert or an agent's report tools.
+    if id == search::telemetry::REPLAYS || id.strip_prefix("index:") == Some(search::telemetry::REPLAYS) {
+        return Err(fail("browser replays are not a dataset"));
+    }
     moqui_core::user::authorize_own("AT_SERVICE", &format!("org.moqui.report.dataset.{id}"), "view").map_err(fail)
 }
 
@@ -224,6 +231,9 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
         .ok_or_else(|| fail("entity facade is unavailable"))?;
     let mut allowed = Vec::new();
     for document in metadata(ec, || facade.target_documents(&target))? {
+        if document == search::telemetry::REPLAYS {
+            return Err(fail("browser replays are not a dataset"));
+        }
         if search::telemetry::is_telemetry_index(&document) {
             if body.get("rowFilter").is_none()
                 && body["contextFilters"]
@@ -2964,6 +2974,7 @@ mod tests {
         let mut registry = moqui_core::native::NativeRegistry::default();
         register(&mut registry).unwrap();
         crate::monitor::register(&mut registry).unwrap();
+        crate::browser::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");

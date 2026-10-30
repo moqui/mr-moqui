@@ -113,7 +113,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "415e3932d70b36488ebcf759949f923694d1b8b5685d4f3217980019d0721f4d"
+    "sha256": "09d7fb5911939f7c754bf5215f34daff118e71f6216be99e9bfaaa4545420627"
   },
   "libraries": [
     {
@@ -639,6 +639,30 @@
           "from": "build/pdf.worker.min.mjs",
           "size": 1264342,
           "sha256": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18"
+        }
+      ]
+    },
+    {
+      "id": "rrweb",
+      "name": "rrweb",
+      "version": "2.1.7",
+      "license": "MIT",
+      "note": "The UMD bundle includes rrweb-snapshot, rrdom, @rrweb/types, @rrweb/utils, mitt, base64-arraybuffer and @xstate/fsm, all MIT.",
+      "source": "https://registry.npmjs.org/rrweb/-/rrweb-2.1.7.tgz",
+      "npm": "rrweb@2.1.7",
+      "tarballIntegrity": "sha512-UZzK43vVmbtBt5WyEVO/CO8q9hKi38LRZDQS5C+X+FYgpVLK4vhWyUzzi1K0iXzHFb3MOVaTak5TAsdK5K6V6Q==",
+      "files": [
+        {
+          "path": "rrweb/rrweb.umd.min.js",
+          "from": "dist/rrweb.umd.min.cjs",
+          "size": 265815,
+          "sha256": "2007712c70cd4a098e079dd71fdfacf4bbe6e9f4b401fa321df1ffb53b075834"
+        },
+        {
+          "path": "rrweb/style.min.css",
+          "from": "dist/style.min.css",
+          "size": 1965,
+          "sha256": "334d222824ebab92111f7db3231829847443a86ae26326cf4f68d5c5fdee40f9"
         }
       ]
     },

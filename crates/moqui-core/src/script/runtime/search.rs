@@ -120,11 +120,22 @@ fn number(value: Option<&Value>, default: usize) -> usize {
 }
 
 fn target_of(ctx: &Ctx<'_>, map: &indexmap::IndexMap<String, Value>) -> rquickjs::Result<Target> {
+    // Session replays are read only through the replay services, which need MONITOR_REPLAY (moqui-report browser.rs).
+    let replays = |ctx: &Ctx<'_>| {
+        Exception::throw_message(
+            ctx,
+            "browser replays are read through the replay services, not ec.search",
+        )
+    };
     let documents = text_list(map.get("documentType").or_else(|| map.get("documentTypes")));
     if !documents.is_empty() {
+        if documents.iter().any(|id| id == crate::search::telemetry::REPLAYS) {
+            return Err(replays(ctx));
+        }
         return Ok(Target::Documents(documents));
     }
     match map.get("indexName").map(moqui_lib::object::to_plain_string) {
+        Some(name) if name == crate::search::telemetry::REPLAYS => Err(replays(ctx)),
         Some(name) if !name.is_empty() => Ok(Target::Index(name)),
         _ => Err(Exception::throw_message(
             ctx,

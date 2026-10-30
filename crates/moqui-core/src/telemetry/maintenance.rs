@@ -14,18 +14,25 @@ const HOUR: i64 = 3_600_000;
 const DAY: i64 = 24 * HOUR;
 const MAX_GROUPS: usize = 100_000;
 
-/// Delete each independent index/granularity even if one retention operation fails.
+/// Delete each independent index/granularity even if one retention operation fails. A day-partitioned table first
+/// drops the days wholly past retention, then deletes the rows left (the default partition and the cutoff's own day),
+/// and has its partitions ahead made.
 pub fn retain(factory: &ExecutionContextFactory) -> Result<Document, Error> {
     let facade = crate::search::installed(factory).ok_or_else(|| Error::new("search is not installed"))?;
     let _suppressed = super::suppress();
     let now = crate::user::now_millis();
     let mut deleted = 0_u64;
+    let mut dropped = 0_u64;
     let mut failed = 0_i64;
+    for index in crate::search::telemetry::TELEMETRY_INDEXES {
+        facade.maintain_partitions(index);
+    }
     for (index, time, setting, default, granularity) in [
         ("otel_spans", "start", "span-retention-days", 7, None),
         ("otel_logs", "timestamp", "log-retention-days", 7, None),
         ("otel_errors", "last_seen", "error-retention-days", 90, None),
         ("monitor_annotations", "time", "annotation-retention-days", 730, None),
+        ("browser_replays", "start", "replay-retention-days", 7, None),
         (
             "otel_metrics",
             "bucket_start",
@@ -40,11 +47,22 @@ pub fn retain(factory: &ExecutionContextFactory) -> Result<Document, Error> {
         if days <= 0 {
             continue;
         }
-        let mut filters = vec![Query::range(
-            time,
-            None,
-            Some(Value::I64(now.saturating_sub(days.saturating_mul(DAY)))),
-        )];
+        let cutoff = now.saturating_sub(days.saturating_mul(DAY));
+        match jiff::Timestamp::from_millisecond(cutoff)
+            .map_err(|error| Error::new(error.to_string()))
+            .and_then(|before| facade.drop_partitions_before(index, granularity, before))
+        {
+            Ok(count) => dropped += count,
+            Err(error) => {
+                failed += 1;
+                tracing::error!(
+                    index,
+                    ?granularity,
+                    "telemetry retention could not drop partitions: {error}"
+                );
+            }
+        }
+        let mut filters = vec![Query::range(time, None, Some(Value::I64(cutoff)))];
         if let Some(granularity) = granularity {
             filters.push(Query::eq("granularity", Value::string(granularity)));
         }
@@ -58,7 +76,53 @@ pub fn retain(factory: &ExecutionContextFactory) -> Result<Document, Error> {
     }
     Ok(Document::from_iter([
         ("deleted".into(), Value::I64(deleted.min(i64::MAX as u64) as i64)),
+        (
+            "droppedPartitions".into(),
+            Value::I64(dropped.min(i64::MAX as u64) as i64),
+        ),
         ("failed".into(), Value::I64(failed)),
+    ]))
+}
+
+/// Move each unpartitioned telemetry table (or only `index`) into day partitions, with `partition-telemetry` on. A
+/// table that fails is logged and the others go on. Answers the tables moved, their rows, and the old tables kept for
+/// the operator to drop.
+pub fn partition_tables(factory: &ExecutionContextFactory, index: Option<&str>) -> Result<Document, Error> {
+    let facade = crate::search::installed(factory).ok_or_else(|| Error::new("search is not installed"))?;
+    let _suppressed = super::suppress();
+    let mut moved = 0_i64;
+    let mut rows = 0_u64;
+    let mut kept = Vec::new();
+    let mut failed = Vec::new();
+    for name in crate::search::telemetry::TELEMETRY_INDEXES {
+        if index.is_some_and(|wanted| wanted != *name) || crate::search::telemetry::partition_by(name).is_none() {
+            continue;
+        }
+        match facade.partition_existing(name) {
+            Ok(Some(report)) => {
+                moved += 1;
+                rows += report.rows;
+                kept.push(Value::String(report.kept));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(index = name, "could not partition the telemetry table: {error}");
+                failed.push(Value::String(format!("{name}: {error}")));
+            }
+        }
+    }
+    if let Some(wanted) = index {
+        if crate::search::telemetry::partition_by(wanted).is_none() {
+            return Err(Error::new(format!(
+                "{wanted} is not a telemetry index that is partitioned by day"
+            )));
+        }
+    }
+    Ok(Document::from_iter([
+        ("moved".into(), Value::I64(moved)),
+        ("rows".into(), Value::I64(rows.min(i64::MAX as u64) as i64)),
+        ("kept".into(), Value::List(kept)),
+        ("failed".into(), Value::List(failed)),
     ]))
 }
 
