@@ -954,7 +954,7 @@ impl Wire {
     pub(super) fn query(
         &mut self,
         statement: &str,
-        columns: &Arc<[Column]>,
+        columns: &[Column],
         formats: &[i16],
         count: usize,
         encode: Encode<'_>,
@@ -1119,7 +1119,7 @@ fn columns_of(body: &RowDescriptionBody) -> Result<Arc<[Column]>, Error> {
     Ok(columns.into())
 }
 
-fn row_of(body: &DataRowBody, columns: &Arc<[Column]>, decode: Decode<'_>) -> Result<DbRow, Error> {
+fn row_of(body: &DataRowBody, columns: &[Column], decode: Decode<'_>) -> Result<DbRow, Error> {
     let buffer = body.buffer();
     let mut ranges = body.ranges();
     let mut cells = Vec::with_capacity(columns.len());
