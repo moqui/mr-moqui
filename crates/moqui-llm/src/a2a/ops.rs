@@ -985,15 +985,16 @@ pub struct Follow {
 }
 
 impl Follow {
-    /// A stream of `task` from where its snapshot stands.
-    pub fn of(task: &TaskRow, base_url: &str, close_on_pause: bool, text: bool) -> Self {
+    /// A stream of `task` from where its snapshot stands, that goes on through a pause and sends no text chunks; a
+    /// caller that wants either sets `close_on_pause` or `text` with `Follow { .., ..Follow::of(..) }`.
+    pub fn of(task: &TaskRow, base_url: &str) -> Self {
         Self {
             run_id: task.id().to_string(),
             context_id: task.run.conversation_id.clone(),
             base_url: base_url.to_string(),
             after: task.last_event_seq,
-            close_on_pause,
-            text,
+            close_on_pause: false,
+            text: false,
         }
     }
 }
@@ -1207,7 +1208,10 @@ pub fn wait_settled(
     if !settled(factory, task) {
         follow(
             factory,
-            &Follow::of(task, base_url, true, false),
+            &Follow {
+                close_on_pause: true,
+                ..Follow::of(task, base_url)
+            },
             Some(Instant::now() + wait),
             stop,
             &mut |_| true,

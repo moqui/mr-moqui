@@ -239,7 +239,11 @@ fn render(
 fn lists_of(document: &Json) -> Vec<Json> {
     fn walk(value: &Json, out: &mut Vec<Json>) {
         match value {
-            Json::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            Json::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
             Json::Object(map) => {
                 if map.get("t").and_then(Json::as_str) == Some("formList") {
                     out.push(value.clone());

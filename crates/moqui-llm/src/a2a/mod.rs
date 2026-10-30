@@ -457,7 +457,11 @@ pub(crate) fn stream_answer(
             if task.run.state.is_terminal() || (task.run.state.is_paused() && close_on_pause) {
                 return;
             }
-            let follow = ops::Follow::of(&task, &base_url, close_on_pause, true);
+            let follow = ops::Follow {
+                close_on_pause,
+                text: true,
+                ..ops::Follow::of(&task, &base_url)
+            };
             let mut emit = |response: Option<Json>| match response {
                 Some(response) => sink(Some(&frame(&response))),
                 None => sink(None),

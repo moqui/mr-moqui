@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use serde_json::{json, Map, Value as Json};
 
 use super::conf::{EndpointConf, ProtocolId};
@@ -330,7 +331,7 @@ pub const QUICK_TIMEOUT: Duration = Duration::from_secs(8);
 static OPEN_BREAKERS: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 
 fn breaker_open(name: &str) -> Option<Instant> {
-    let mut open = OPEN_BREAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut open = lock(&OPEN_BREAKERS);
     let open = open.get_or_insert_with(HashMap::new);
     let now = Instant::now();
     open.retain(|_, until| *until > now);
@@ -338,7 +339,7 @@ fn breaker_open(name: &str) -> Option<Instant> {
 }
 
 fn open_breaker(name: &str) {
-    let mut open = OPEN_BREAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut open = lock(&OPEN_BREAKERS);
     open.get_or_insert_with(HashMap::new)
         .insert(name.to_string(), Instant::now() + BREAKER);
 }
@@ -458,14 +459,14 @@ impl LlmEmbedder {
             )));
         }
         let missing: Vec<String> = {
-            let kept = self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let kept = lock(&self.kept);
             let mut missing: Vec<String> = texts.iter().filter(|text| !kept.contains_key(*text)).cloned().collect();
             missing.dedup();
             missing
         };
         let batches = self.llm.embed_batches(&self.facade, &target, &missing, timeout)?;
         {
-            let mut kept = self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut kept = lock(&self.kept);
             if kept.len() + batches.vectors.len() > KEPT {
                 kept.clear();
             }
@@ -479,7 +480,7 @@ impl LlmEmbedder {
             }
             return Err(embed_error(&target, error));
         }
-        let kept = self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let kept = lock(&self.kept);
         let vectors: Vec<Vec<f32>> = texts
             .iter()
             .map(|text| kept.get(text).cloned())
@@ -527,7 +528,7 @@ pub fn bound_embedder(factory: &ExecutionContextFactory) -> Option<Arc<LlmEmbedd
     let facade = factory.entity()?;
     let target = llm.registry(&facade).resolve_feature("embed").ok()?;
     let slot = factory.extension(|_| BoundEmbedder::default());
-    let mut held = slot.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut held = lock(&slot.0);
     let name = name_of(&target);
     if held.as_ref().is_none_or(|embedder| embedder.name != name) {
         *held = Some(Arc::new(LlmEmbedder::new(

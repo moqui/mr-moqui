@@ -47,6 +47,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as Json};
@@ -1572,7 +1573,7 @@ impl Slot {
             return Ok(Some(Self { key: None }));
         };
         let key = target.endpoint.id.clone();
-        let mut slots = SLOTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slots = lock(&SLOTS);
         loop {
             let used = slots.get_or_insert_with(HashMap::new).entry(key.clone()).or_insert(0);
             if *used < limit {
@@ -1599,7 +1600,7 @@ impl Slot {
 impl Drop for Slot {
     fn drop(&mut self) {
         if let Some(key) = &self.key {
-            let mut slots = SLOTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut slots = lock(&SLOTS);
             if let Some(used) = slots.get_or_insert_with(HashMap::new).get_mut(key) {
                 *used = used.saturating_sub(1);
             }

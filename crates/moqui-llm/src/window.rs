@@ -835,7 +835,11 @@ fn collect_ids(value: &Json, out: &mut Vec<String>) {
                 }
             }
         }
-        Json::Array(items) => items.iter().for_each(|item| collect_ids(item, out)),
+        Json::Array(items) => {
+            for item in items {
+                collect_ids(item, out);
+            }
+        }
         _ => {}
     }
 }

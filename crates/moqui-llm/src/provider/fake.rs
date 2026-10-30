@@ -33,6 +33,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use serde_json::{json, Map, Value as Json};
 
 use super::sse::Frame;
@@ -136,7 +137,7 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 const KEPT_REQUESTS: usize = 64;
 
 fn with_state<T>(work: impl FnOnce(&mut State) -> T) -> T {
-    let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut state = lock(&STATE);
     work(state.get_or_insert_with(State::default))
 }
 
@@ -184,16 +185,13 @@ const GATE_WAIT: Duration = Duration::from_secs(60);
 
 /// Open the gate `name`: the reply waiting at its [`Step::Gate`] (or the next one to reach it) goes on.
 pub fn open_gate(name: &str) {
-    GATES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(name.to_string());
+    lock(&GATES).push(name.to_string());
     GATE_OPENED.notify_all();
 }
 
 fn wait_for_gate(name: &str) {
     let deadline = std::time::Instant::now() + GATE_WAIT;
-    let mut gates = GATES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut gates = lock(&GATES);
     loop {
         if let Some(at) = gates.iter().position(|gate| gate == name) {
             gates.remove(at);

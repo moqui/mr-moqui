@@ -604,7 +604,7 @@ fn project_config(
     let base_url = settings(&config)
         .1
         .unwrap_or_else(|| super::card::base_url(factory, &Origin::default()));
-    let mut projector = Projector::new(Follow::of(task, &base_url, false, false));
+    let mut projector = Projector::new(Follow::of(task, &base_url));
     let mut last = cursor;
     for event in events.values() {
         let stored = run::events::StoredEvent::of(event);
