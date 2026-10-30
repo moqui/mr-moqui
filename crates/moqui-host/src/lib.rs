@@ -1917,7 +1917,14 @@ struct EmptyDbLoadFrame;
 impl EmptyDbLoadFrame {
     fn push() -> Result<Self, moqui_lib::error::Error> {
         let pushed = moqui_core::context::ExecutionContext::with_current(|ctx| {
-            ctx.push_checked("AT_OTHER", "loadDataEmptyDb", "all", false, true, None)?;
+            ctx.push_checked(
+                "AT_OTHER",
+                "loadDataEmptyDb",
+                "all",
+                moqui_core::context::Authz::NotRequired,
+                moqui_core::context::Tarpit::Count,
+                None,
+            )?;
             ctx.set_anonymous_authorized(true, "");
             moqui_core::user::login_anonymous()?;
             Ok::<(), moqui_core::context::Error>(())

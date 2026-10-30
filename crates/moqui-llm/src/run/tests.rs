@@ -1757,11 +1757,24 @@ fn on_a_single_slot_server_the_intent_hint_costs_the_prefix_cache() {
 #[test]
 fn external_harness_runs_are_never_claimed_or_recovered_by_the_native_engine() {
     let bed = bed("external-harness");
-    row(&bed.facade, RUN, &[
-        ("runId", "external-run"), ("userId", USER),
-        ("statusId", "AgrWorking"), ("externalHarnessId", "steward-t3"),
-    ]);
-    let mut run = bed.facade.find(RUN).unwrap().eq("runId", Value::string("external-run")).one().unwrap().unwrap();
+    row(
+        &bed.facade,
+        RUN,
+        &[
+            ("runId", "external-run"),
+            ("userId", USER),
+            ("statusId", "AgrWorking"),
+            ("externalHarnessId", "steward-t3"),
+        ],
+    );
+    let mut run = bed
+        .facade
+        .find(RUN)
+        .unwrap()
+        .eq("runId", Value::string("external-run"))
+        .one()
+        .unwrap()
+        .unwrap();
     run.set("submittedDate", stamp(now_millis() - 600_000));
     run.set("leaseExpireDate", stamp(now_millis() - 600_000));
     run.update(&bed.facade).unwrap();

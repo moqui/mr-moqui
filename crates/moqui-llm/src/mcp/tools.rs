@@ -48,7 +48,7 @@ use crate::run::{self, in_tx, quietly, AgentDef, Budget, Change, EventSink, RunS
 use crate::tools::catalog::{Catalog, Entry};
 use crate::tools::{self, caps, AgentTool, Classification, ClientCaps, ToolInput, ToolOutcome, ToolPolicy};
 use crate::{flag_of, text_of};
-use moqui_core::context::{AgentOrigin, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{AgentOrigin, Authz, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use moqui_core::entity::EntityFacade;
 
 /// The registry's tools the server lists by their own names.
@@ -433,7 +433,7 @@ pub fn tool_result(text: &str, is_error: bool) -> Json {
 fn count_hit(name: &str) -> Result<(), McpError> {
     let artifact = format!("mcp:{name}");
     let counted = ExecutionContext::with_current(|ec| {
-        let pushed = ec.push_checked("AT_LLM", &artifact, "view", false, true, None);
+        let pushed = ec.push_checked("AT_LLM", &artifact, "view", Authz::NotRequired, Tarpit::Count, None);
         if pushed.is_ok() {
             let _ = ec.pop();
         }

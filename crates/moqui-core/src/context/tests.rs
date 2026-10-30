@@ -18,7 +18,7 @@ use std::time::SystemTime;
 use moqui_lib::env;
 use moqui_lib::node::MNode;
 
-use super::ExecutionContextFactory;
+use super::{Authz, ExecutionContextFactory, Tarpit};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -407,7 +407,7 @@ fn artifact_stack_allows_and_authz_depth_follows_the_guard() {
     let context = factory.new_context();
     assert!(!context.authz_disabled());
     context
-        .push_checked("AT_XML_SCREEN", "tools", "view", true, false, None)
+        .push_checked("AT_XML_SCREEN", "tools", "view", Authz::Required, Tarpit::Skip, None)
         .unwrap();
     {
         let guard = context.disable_authz();

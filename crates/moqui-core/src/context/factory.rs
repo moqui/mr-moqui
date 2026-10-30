@@ -30,7 +30,7 @@ use moqui_lib::env;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::{lock, read, write};
 
-use super::artifact::{ArtifactStack, AuthzGuard};
+use super::artifact::{ArtifactStack, Authz, AuthzGuard, Tarpit};
 
 thread_local! {
     /// The entered contexts, innermost last, one entry per live guard. Each entry is a handle that
@@ -897,9 +897,8 @@ impl ExecutionContext {
 
     /// Decide an artifact against the frame below it, then push it. A denied artifact is not pushed.
     ///
-    /// `requires_authz` false pushes the frame whatever the records say, so that it can still
-    /// inherit. `count_tarpit` counts the hit against the tarpits (Java's `pushInternal` argument), unless
-    /// [`Self::disable_tarpit`] is in force. `parameters` feed the `filterMap` of an authorization record.
+    /// `authz` and `tarpit` say whether the frame needs an authorization record and counts against the tarpits.
+    /// `parameters` feed the `filterMap` of an authorization record.
     ///
     /// # Errors
     ///
@@ -909,8 +908,8 @@ impl ExecutionContext {
         artifact_type: &str,
         name: &str,
         action: &str,
-        requires_authz: bool,
-        count_tarpit: bool,
+        authz: Authz,
+        tarpit: Tarpit,
         parameters: Option<&std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     ) -> Result<(), Error> {
         let StackAuthz {
@@ -926,9 +925,9 @@ impl ExecutionContext {
             name,
             action,
             &crate::user::Permit {
-                requires_authz,
+                requires_authz: authz == Authz::Required,
                 authz_disabled,
-                count_tarpit: count_tarpit && !self.tarpit_disabled(),
+                count_tarpit: tarpit == Tarpit::Count && !self.tarpit_disabled(),
                 is_access,
                 parameters,
             },

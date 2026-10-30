@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use moqui_lib::object::Value;
 
-use crate::context::{ExecutionContext, Executor};
+use crate::context::{Authz, ExecutionContext, Executor, Tarpit};
 use crate::telemetry::{ContextGuard, Span, SpanKind, Telemetry};
 use moqui_entity::hooks::{EntityHooks, Guard, StatementTrace};
 
@@ -55,7 +55,7 @@ moqui_entity::hooks::submit! {
         disable_authz: || ExecutionContext::with_current(|ec| Box::new(ec.disable_authz()) as Guard),
         push_entity: |name, action, requires_authz, sub_type| {
             ExecutionContext::with_current(|ec| {
-                ec.push_checked("AT_ENTITY", name, action, requires_authz, false, None)?;
+                ec.push_checked("AT_ENTITY", name, action, Authz::required_if(requires_authz), Tarpit::Skip, None)?;
                 ec.set_hit_detail(Some(sub_type), None);
                 Ok(())
             })

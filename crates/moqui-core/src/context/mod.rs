@@ -26,7 +26,7 @@ mod message;
 mod resource;
 pub mod status;
 
-pub use artifact::AuthzGuard;
+pub use artifact::{Authz, AuthzGuard, Tarpit};
 pub use cache::CacheFacade;
 pub use component::{component_entity_dirs, discover_components, ComponentInfo};
 pub use conf::{load_merged_conf, merge_component_confs, merge_conf};

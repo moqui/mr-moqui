@@ -371,6 +371,35 @@ impl ArtifactStack {
     }
 }
 
+/// Whether a frame pushed by [`super::ExecutionContext::push_checked`] needs an authorization record (Java's
+/// `requiresAuthz`). `NotRequired` pushes the frame whatever the records say, so that it can still inherit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Authz {
+    Required,
+    NotRequired,
+}
+
+impl Authz {
+    /// `Required` when `required`, for a caller that holds the answer as a bool (a service's or screen's
+    /// authentication).
+    #[must_use]
+    pub fn required_if(required: bool) -> Self {
+        if required {
+            Self::Required
+        } else {
+            Self::NotRequired
+        }
+    }
+}
+
+/// Whether a push counts against the tarpits (Java's `pushInternal` argument), unless
+/// [`super::ExecutionContext::disable_tarpit`] is in force.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tarpit {
+    Count,
+    Skip,
+}
+
 /// Decrements the authorization-disabled depth when dropped.
 #[must_use = "dropping the guard re-enables authorization checks"]
 pub struct AuthzGuard {

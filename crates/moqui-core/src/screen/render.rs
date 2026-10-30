@@ -40,7 +40,7 @@ use super::definition::{
 use super::dispatch;
 use super::gate::{self, HeldWrite, RenderOptions, RenderOrigin, TransitionGate, TransitionOutcome};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
-use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use crate::script::{self, ContextFrame};
 use crate::user;
 use crate::web::{self, WebRequest};
@@ -1395,7 +1395,7 @@ impl Frames {
         }
     }
 
-    /// Push a frame. `count_tarpit` counts it against the tarpits, as Java's `pushInternal` does only for a screen's
+    /// Push a frame. `Tarpit::Count` counts it against the tarpits, as Java's `pushInternal` does only for a screen's
     /// render (`ScreenDefinition.render`) and a transition's run (`TransitionItem.run`); the authorization gate then
     /// counts a screen only when authorization is required of it, that is the target screen requiring authentication.
     pub(super) fn push(
@@ -1403,11 +1403,11 @@ impl Frames {
         artifact_type: &str,
         name: &str,
         action: &str,
-        requires_authz: bool,
-        count_tarpit: bool,
+        authz: Authz,
+        tarpit: Tarpit,
     ) -> Result<(), Error> {
         ExecutionContext::with_current(|ec| {
-            ec.push_checked(artifact_type, name, action, requires_authz, count_tarpit, None)?;
+            ec.push_checked(artifact_type, name, action, authz, tarpit, None)?;
             if self.untracked {
                 ec.untrack_hit();
             }
@@ -1434,7 +1434,13 @@ impl Frames {
     }
 
     pub(super) fn push_screen(&mut self, def: &ScreenDef, requires_authz: bool) -> Result<(), Error> {
-        self.push("AT_XML_SCREEN", &def.location, "view", requires_authz, false)
+        self.push(
+            "AT_XML_SCREEN",
+            &def.location,
+            "view",
+            Authz::required_if(requires_authz),
+            Tarpit::Skip,
+        )
     }
 
     /// Push a screen's frame, with authorization required only for the last screen of the path
@@ -1462,8 +1468,8 @@ impl Frames {
             "AT_XML_SCREEN",
             &def.location,
             "view",
-            is_target && def.authentication == Authentication::Required,
-            true,
+            Authz::required_if(is_target && def.authentication == Authentication::Required),
+            Tarpit::Count,
         )?;
         self.apply_anonymous(def)
     }
@@ -1748,8 +1754,8 @@ fn run_transition_steps(
         "AT_XML_SCREEN_TRANS",
         &format!("{}/{}", screen.location, transition.name),
         &transition_authz_action(transition),
-        screen.authentication == Authentication::Required,
-        true,
+        Authz::required_if(screen.authentication == Authentication::Required),
+        Tarpit::Count,
     )?;
     frames.hit_detail(Some(&state.content_type), true);
 

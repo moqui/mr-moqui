@@ -196,7 +196,14 @@ pub(super) fn transcribe(caller: &Caller, params: &Params) -> Answer {
 fn count_hit(call: &str) -> Result<(), DrawerError> {
     let name = format!("assist:{call}");
     moqui_core::context::ExecutionContext::with_current(|ec| -> Result<(), moqui_core::context::Error> {
-        ec.push_checked("AT_LLM", &name, "view", false, true, None)?;
+        ec.push_checked(
+            "AT_LLM",
+            &name,
+            "view",
+            moqui_core::context::Authz::NotRequired,
+            moqui_core::context::Tarpit::Count,
+            None,
+        )?;
         let _ = ec.pop();
         Ok(())
     })

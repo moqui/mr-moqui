@@ -2,6 +2,7 @@
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 use crate::common;
 use moqui_core::{
+    context::{Authz, Tarpit},
     entity::{document::Document, EntityFacade},
     native::{Parameters, ServiceInfo},
     search,
@@ -651,8 +652,8 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
             "AT_SERVICE",
             "org.moqui.report.ReportServices.query#Documents",
             "view",
-            true,
-            false,
+            Authz::Required,
+            Tarpit::Skip,
             None,
         )
         .unwrap();

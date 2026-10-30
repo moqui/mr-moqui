@@ -25,7 +25,7 @@ use moqui_lib::sync::{lock, read, write};
 use super::define::{Authenticate, ServiceDef, ServiceKind};
 use super::util::has_error;
 use super::validate;
-use crate::context::{Error, ExecutionContext};
+use crate::context::{Authz, Error, ExecutionContext, Tarpit};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
 
@@ -340,8 +340,8 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
             "AT_SERVICE",
             &def.name,
             verb_action(&def.verb),
-            def.authenticate == Authenticate::Required,
-            true,
+            Authz::required_if(def.authenticate == Authenticate::Required),
+            Tarpit::Count,
             None,
         )?;
         ctx.untrack_hit();
@@ -619,14 +619,14 @@ impl ServiceFrame {
                 anonymous: false,
             });
         }
-        let requires_authz = def.authenticate == Authenticate::Required;
+        let authz = Authz::required_if(def.authenticate == Authenticate::Required);
         let outcome = crate::context::ExecutionContext::with_current(|ctx| {
             ctx.push_checked(
                 "AT_SERVICE",
                 &def.name,
                 auth_action(def),
-                requires_authz,
-                true,
+                authz,
+                Tarpit::Count,
                 Some(parameters),
             )?;
             let remembered = (!def.no_remember_parameters && !no_remember).then_some(parameters);

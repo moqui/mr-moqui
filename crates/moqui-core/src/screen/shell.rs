@@ -36,7 +36,7 @@ use super::menu;
 use super::render::RenderState;
 use super::sri::{self, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
 use super::url::ScreenUrlInfo;
-use crate::context::{Error, ExecutionContext};
+use crate::context::{Authz, Error, ExecutionContext, Tarpit};
 use crate::{l10n, user, web};
 
 type Item = IndexMap<String, Value>;
@@ -1147,7 +1147,14 @@ fn run_source_in_app(
     // The app's frame is a check, not a hit: untracked before the source runs, so the source's spans are children of
     // the request's.
     ExecutionContext::with_current(|ec| {
-        ec.push_checked("AT_XML_SCREEN", &app.def.location, "view", required, false, None)?;
+        ec.push_checked(
+            "AT_XML_SCREEN",
+            &app.def.location,
+            "view",
+            Authz::required_if(required),
+            Tarpit::Skip,
+            None,
+        )?;
         ec.untrack_hit();
         Ok::<(), crate::context::Error>(())
     })

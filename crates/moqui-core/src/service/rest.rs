@@ -27,7 +27,7 @@ use moqui_lib::sync::{lock, read, write};
 
 use super::call;
 use super::define::{ParamDef, Required};
-use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use crate::entity::{sensitive, EntityFacade};
 
 /// The REST resources of a factory, read once from its components' `service/*.rest.xml` files.
@@ -461,7 +461,11 @@ impl Node {
         // The frame for this path, checked only when it is the last and requires authentication, as Java
         // `visitChildOrRun`. It is popped, and an anonymous login undone, when the guard drops.
         let mut frame = PathFrame::default();
-        frame.push(self, method, !more && auth_required(&self.require_authentication))?;
+        frame.push(
+            self,
+            method,
+            Authz::required_if(!more && auth_required(&self.require_authentication)),
+        )?;
         frame.apply_anonymous(&self.require_authentication)?;
         if more {
             let segment = path[next];
@@ -541,14 +545,14 @@ struct PathFrame {
 impl PathFrame {
     /// Push the frame, not counted as an artifact hit. A denied push is an authentication error when no one is
     /// logged in, so the client is asked to log in: the Java sent 403 there.
-    fn push(&mut self, node: &Node, method: &str, requires_authz: bool) -> Result<(), Error> {
+    fn push(&mut self, node: &Node, method: &str, authz: Authz) -> Result<(), Error> {
         let outcome = ExecutionContext::with_current(|ec| {
             ec.push_checked(
                 "AT_REST_PATH",
                 &node.full_path,
                 action_from_method(method),
-                requires_authz,
-                true,
+                authz,
+                Tarpit::Count,
                 None,
             )?;
             ec.untrack_hit();

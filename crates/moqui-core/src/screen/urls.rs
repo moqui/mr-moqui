@@ -29,7 +29,7 @@ use super::render::parameter_value;
 use super::sri::{self, active_screen_path, NodeLit};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
 use super::RenderState;
-use crate::context::{Error, ErrorKind};
+use crate::context::{Authz, Error, ErrorKind, Tarpit};
 use crate::{script, web};
 
 /// A URL for a link, with the parameters added to it.
@@ -216,8 +216,8 @@ impl UrlInstance {
                 "AT_XML_SCREEN_TRANS",
                 &format!("{}/{}", target.location, transition.name),
                 &super::render::transition_authz_action(transition),
-                required,
-                false,
+                Authz::required_if(required),
+                Tarpit::Skip,
             )
             .is_ok()
     }
@@ -285,7 +285,15 @@ fn service_permitted(target: &ScreenDef, service: &str) -> bool {
         _ => false,
     };
     let mut frames = super::render::Frames::untracked();
-    frames.push("AT_SERVICE", service, &action, !allowed, false).is_ok()
+    frames
+        .push(
+            "AT_SERVICE",
+            service,
+            &action,
+            Authz::required_if(!allowed),
+            Tarpit::Skip,
+        )
+        .is_ok()
 }
 
 fn join_query(mut base: String, query: &str) -> String {
