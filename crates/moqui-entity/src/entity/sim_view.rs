@@ -117,7 +117,11 @@ fn view_plan(view: &EntityDefinition, model: &EntityModel) -> ViewPlan {
             continue;
         }
         let pk_fields: Vec<String> = entity.pk_field_names().iter().map(|name| (*name).to_string()).collect();
-        // As the view SQL joins: a `related` that is not a member field is the member's single key.
+        // As the view SQL joins: a `related` that is not a member field is the member's single key, with one key map.
+        let fallback_pk = match (pk_fields.as_slice(), member.key_map.len()) {
+            ([pk], 1) => Some(pk),
+            _ => None,
+        };
         let keys = member
             .key_map
             .iter()
@@ -127,8 +131,8 @@ fn view_plan(view: &EntityDefinition, model: &EntityModel) -> ViewPlan {
                     .clone()
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| key.field_name.clone());
-                if !entity.has_field(&related) && pk_fields.len() == 1 && member.key_map.len() == 1 {
-                    related.clone_from(&pk_fields[0]);
+                if let Some(pk) = fallback_pk.filter(|_| !entity.has_field(&related)) {
+                    related.clone_from(pk);
                 }
                 (key.field_name.clone(), related)
             })

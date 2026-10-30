@@ -854,12 +854,16 @@ fn related_entities(facade: &EntityFacade, primary: &str, paths: &[String]) -> V
     let mut names: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for path in paths {
         let parts: Vec<&str> = path.split(':').collect();
-        if parts.len() < 2 {
+        // The relationships, before the field.
+        let Some((_, relationships)) = parts
+            .split_last()
+            .filter(|(_, relationships)| !relationships.is_empty())
+        else {
             continue;
-        }
+        };
         let mut current = primary.to_string();
         let mut steps: Vec<(String, String)> = Vec::new();
-        for rel_name in &parts[..parts.len() - 1] {
+        for rel_name in relationships {
             let next = facade
                 .with_entity(&current, |entity, _, _| {
                     Ok(entity.relationship(rel_name).map(|rel| rel.related.clone()))
@@ -918,18 +922,19 @@ fn xmin_query(facade: &EntityFacade, entity_name: &str) -> Result<Option<(String
         if entity.is_view || !dialect.name.to_ascii_lowercase().starts_with("postgres") {
             return Ok(None);
         }
-        let names: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
-        if names.is_empty() {
+        // Not a view, so its primary key names are those of its primary key fields.
+        let pk_fields: Vec<_> = entity.fields.iter().filter(|field| field.is_pk).collect();
+        if pk_fields.is_empty() {
             return Ok(None);
         }
-        let columns = names
+        let names: Vec<String> = pk_fields.iter().map(|field| field.name.clone()).collect();
+        let columns = pk_fields
             .iter()
-            .map(|name| {
-                let field = entity.field(name).expect("primary key field");
+            .map(|field| {
                 format!(
                     "{} AS {}",
                     quote_column(dialect, &field.column_name),
-                    quote_ident(dialect, name)
+                    quote_ident(dialect, &field.name)
                 )
             })
             .collect::<Vec<_>>()

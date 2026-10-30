@@ -668,8 +668,10 @@ impl LocalizedMemo {
 }
 
 fn plain_targets(entity: &EntityDefinition) -> Vec<LocalTarget> {
-    let pk_names = entity.pk_field_names();
-    let pk_column = (pk_names.len() == 1).then(|| pk_names[0].to_string());
+    let pk_column = match entity.pk_field_names().as_slice() {
+        [pk] => Some(pk.to_string()),
+        _ => None,
+    };
     entity
         .fields
         .iter()
@@ -741,11 +743,10 @@ fn member_entity_name(view: &EntityDefinition, alias: &str) -> Option<String> {
 }
 
 fn member_pk_column(view: &EntityDefinition, member: &EntityDefinition, entity_alias: &str) -> Option<String> {
-    let pk_names = member.pk_field_names();
-    if pk_names.len() != 1 {
-        return None;
-    }
-    let pk = pk_names[0].to_string();
+    let pk = match member.pk_field_names().as_slice() {
+        [pk] => pk.to_string(),
+        _ => return None,
+    };
     for alias in &view.aliases {
         if alias.function.is_some() || alias.entity_alias.as_deref() != Some(entity_alias) {
             continue;

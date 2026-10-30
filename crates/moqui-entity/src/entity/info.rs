@@ -182,10 +182,7 @@ pub fn name_prefix(name: &str, levels: usize) -> String {
         let from = last.map_or(0, |at| at + 1);
         last = name.get(from..).and_then(|rest| rest.find('.')).map(|at| from + at);
     }
-    match last {
-        Some(at) => name[..at].to_string(),
-        None => name.to_string(),
-    }
+    last.and_then(|at| name.get(..at)).unwrap_or(name).to_string()
 }
 
 /// `getPrettyName(title, baseName)`: the entity name split at capitals, without the parts of `base_name`, then the title.

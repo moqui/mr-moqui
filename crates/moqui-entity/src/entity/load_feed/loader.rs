@@ -582,9 +582,9 @@ fn prepare_fields(facade: &EntityFacade, shape: &Shape, fields: &mut FieldMap, o
     let absent = |name: &Arc<str>| fields.get(&**name).is_none_or(Value::is_null);
     let missing = names.iter().any(absent);
     // Every key but the last given: the last is a secondary sequence (`setSequencedIdSecondary`).
-    let only_last = names.len() > 1
-        && names.last().is_some_and(absent)
-        && names[..names.len() - 1].iter().all(|name| !absent(name));
+    let only_last = names
+        .split_last()
+        .is_some_and(|(last, before)| !before.is_empty() && absent(last) && before.iter().all(|name| !absent(name)));
     let single = names.len() == 1;
     if only_last && !only_create {
         let mut value = value_from(facade, &shape.full_name, fields)?;

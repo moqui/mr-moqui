@@ -197,7 +197,10 @@ fn key_pairs(relationship: &Relationship, related: &EntityDefinition) -> Result<
         return Ok(pairs);
     }
     let related_fields: HashSet<&str> = related.fields.iter().map(|field| field.name.as_str()).collect();
-    let related_pk = related.pk_field_names();
+    let single_pk = match related.pk_field_names().as_slice() {
+        &[pk] => Some(pk),
+        _ => None,
+    };
     let mut pairs = Vec::with_capacity(relationship.key_map.len());
     for key in &relationship.key_map {
         let mut target = key
@@ -206,10 +209,10 @@ fn key_pairs(relationship: &Relationship, related: &EntityDefinition) -> Result<
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| key.field_name.clone());
         let related_missing = key.related.as_deref().unwrap_or("").is_empty();
-        let use_single_pk = related_pk.len() == 1
-            && ((relationship.key_map.len() == 1 && related_missing) || !related_fields.contains(target.as_str()));
-        if use_single_pk {
-            target = related_pk[0].to_string();
+        let use_single_pk =
+            (relationship.key_map.len() == 1 && related_missing) || !related_fields.contains(target.as_str());
+        if let Some(pk) = single_pk.filter(|_| use_single_pk) {
+            target = pk.to_string();
         }
         pairs.push((key.field_name.clone(), target));
     }

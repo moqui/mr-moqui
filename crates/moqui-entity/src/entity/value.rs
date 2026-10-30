@@ -1364,15 +1364,15 @@ impl EntityFacade {
     pub(crate) fn next_secondary_id(&self, entity_name: &str, values: &FieldMap) -> Result<(String, String), Error> {
         let (seq_field, pad, keys) = self.with_entity(entity_name, |entity, _, _| {
             let pks = entity.pk_field_names();
-            if pks.len() < 2 {
+            let Some((seq_field, primary)) = pks.split_last().filter(|(_, primary)| !primary.is_empty()) else {
                 return Err(Error::new(format!(
                     "cannot call set_sequenced_id_secondary on {}, it needs at least 2 primary key fields",
                     entity.full_name
                 )));
-            }
-            let seq_field = pks[pks.len() - 1].to_string();
+            };
+            let seq_field = seq_field.to_string();
             let mut keys = Vec::new();
-            for pk in &pks[..pks.len() - 1] {
+            for pk in primary {
                 let value = values
                     .get(*pk)
                     .filter(|value| !value.is_null())
@@ -1677,15 +1677,13 @@ enum FieldDefault {
 
 impl FieldDefault {
     fn parse(entity: &EntityDefinition, default: &str) -> Self {
-        let bytes = default.as_bytes();
-        let quote = bytes[0];
-        if bytes.len() >= 2 && (quote == b'\'' || quote == b'"') && bytes[bytes.len() - 1] == quote {
-            let inner = &default[1..default.len() - 1];
-            if !inner.contains(['\'', '"', '\\', '$']) {
-                return Self::Literal(Value::string(inner));
-            }
+        let quoted = ['\'', '"']
+            .into_iter()
+            .find_map(|quote| default.strip_prefix(quote)?.strip_suffix(quote));
+        if let Some(inner) = quoted.filter(|inner| !inner.contains(['\'', '"', '\\', '$'])) {
+            return Self::Literal(Value::string(inner));
         }
-        if (quote.is_ascii_digit() || quote == b'-') && default.parse::<f64>().is_ok() {
+        if default.starts_with(|ch: char| ch.is_ascii_digit() || ch == '-') && default.parse::<f64>().is_ok() {
             return Self::Literal(Value::string(default));
         }
         match default {

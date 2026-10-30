@@ -451,8 +451,9 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchHunk>, Error> {
                 return Err(Error::new(format!("patch ends inside hunk {}", hunk.header)));
             };
             index += 1;
-            let (sign, text) = match raw.chars().next() {
-                Some(sign @ (' ' | '-' | '+' | '\\')) => (sign, &raw[1..]),
+            let mut chars = raw.chars();
+            let (sign, text) = match chars.next() {
+                Some(sign @ (' ' | '-' | '+' | '\\')) => (sign, chars.as_str()),
                 // A blank context line some tools write without its leading space.
                 Some('\n') => (' ', *raw),
                 _ => {
@@ -521,7 +522,7 @@ fn strip_newline(line: Option<&mut String>) {
 fn parse_header(header: &str) -> Result<(usize, usize, usize), Error> {
     let bad = || Error::new(format!("bad hunk header: {header}"));
     let body = header.strip_prefix("@@ ").ok_or_else(bad)?;
-    let body = &body[..body.find(" @@").ok_or_else(bad)?];
+    let (body, _) = body.split_once(" @@").ok_or_else(bad)?;
     let (old, new) = body.split_once(' ').ok_or_else(bad)?;
     let (old_start, old_count) = parse_range(old.strip_prefix('-').ok_or_else(bad)?).ok_or_else(bad)?;
     let (_, new_count) = parse_range(new.strip_prefix('+').ok_or_else(bad)?).ok_or_else(bad)?;
@@ -619,6 +620,15 @@ mod tests {
             round_trip(&text, &next_text);
             text = next_text;
         }
+    }
+
+    #[test]
+    fn a_hunk_header_may_name_its_context_and_a_body_line_needs_a_sign() {
+        let patch = "@@ -1,2 +1,2 @@ fn main\n a\n-b\n+B\n";
+        assert_eq!(apply_unified("a\nb\n", patch).unwrap(), "a\nB\n");
+        assert_eq!(apply_unified("a\nb\n", "@@ -1 +1 @@\n-a\n+é\n").unwrap(), "é\nb\n");
+        let err = apply_unified("a\nb\n", "@@ -1,2 +1,2 @@\n a\né\n").unwrap_err();
+        assert!(err.to_string().contains("bad line"), "{err}");
     }
 
     #[test]

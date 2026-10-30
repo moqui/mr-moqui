@@ -99,8 +99,8 @@ fn range_dates(period: &str, offset: i32, basis: Date) -> Result<(Date, Date), E
         period.trim().to_ascii_lowercase()
     };
     let numbered = period.chars().next().is_some_and(|ch| ch.is_ascii_digit());
-    if numbered && period.ends_with('d') {
-        let days = days_of(&period)?;
+    if let Some(count) = period.strip_suffix('d').filter(|_| numbered) {
+        let days = days_of(&period, count)?;
         return if offset < 0 {
             Ok((add_days(basis, offset.saturating_mul(days))?, add_days(basis, 1)?))
         } else {
@@ -108,8 +108,8 @@ fn range_dates(period: &str, offset: i32, basis: Date) -> Result<(Date, Date), E
             Ok((basis, add_days(basis, count.saturating_mul(days))?))
         };
     }
-    if numbered && period.ends_with('r') {
-        let days = days_of(&period)?;
+    if let Some(count) = period.strip_suffix('r').filter(|_| numbered) {
+        let days = days_of(&period, count)?;
         let around = offset
             .checked_abs()
             .ok_or_else(|| offset_error(offset))?
@@ -168,8 +168,9 @@ fn offset_error(offset: i32) -> Error {
     Error::new(format!("period offset {offset} is out of range"))
 }
 
-fn days_of(period: &str) -> Result<i32, Error> {
-    period[..period.len() - 1]
+/// The number of days `count` names, the part of `period` before its unit letter.
+fn days_of(period: &str, count: &str) -> Result<i32, Error> {
+    count
         .parse::<i32>()
         .map_err(|_| Error::new(format!("period {period} does not start with a number of days")))
 }

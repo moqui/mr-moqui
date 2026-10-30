@@ -64,8 +64,8 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
     let name = entity_name.trim();
-    let simple = match name.rfind('.') {
-        Some(dot) if dot + 1 < name.len() => &name[dot + 1..],
+    let simple = match name.rsplit_once('.') {
+        Some((_, simple)) if !simple.is_empty() => simple,
         _ => name,
     };
     simple.to_ascii_lowercase()
@@ -126,8 +126,17 @@ mod tests {
 
     use super::{
         is_identity_admin_entity, is_restricted_generic_entity, is_secret_config_entity, is_user_account_entity,
-        strip_user_account_secrets,
+        simple_entity_key, strip_user_account_secrets,
     };
+
+    #[test]
+    fn the_simple_key_is_the_name_after_the_last_dot() {
+        assert_eq!(simple_entity_key(" moqui.security.UserLoginKey "), "userloginkey");
+        assert_eq!(simple_entity_key("UserLoginKey"), "userloginkey");
+        assert_eq!(simple_entity_key("moqui.Été"), "Été".to_ascii_lowercase());
+        // A trailing dot leaves the whole name.
+        assert_eq!(simple_entity_key("moqui.security."), "moqui.security.");
+    }
 
     /// Java's `SecurityMisconfigTests` names that this port still classifies, plus the other keys
     /// `is_identity_admin_entity` lists. `UserAccount`, `users`, `Enumeration` and an empty name stay unrestricted.

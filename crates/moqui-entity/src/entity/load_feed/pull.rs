@@ -132,10 +132,10 @@ impl<R: BufRead> Pull<R> {
                 let Some(n) = scan(text, eof)? else {
                     return Ok(None);
                 };
-                if n > text.len() || !text.is_char_boundary(n) {
+                let Some(taken) = text.get(..n) else {
                     return Err(Error::new("scan left the buffer"));
-                }
-                Ok(Some((n, text[..n].to_string())))
+                };
+                Ok(Some((n, taken.to_string())))
             },
             label,
         )

@@ -478,9 +478,9 @@ fn after_key(names: &[String], last: &[Value]) -> Condition {
 }
 
 fn ids_condition(info: &DocumentInfo, ids: &[String]) -> Result<Condition, Error> {
-    if info.primary_pk.len() == 1 {
+    if let [pk] = info.primary_pk.as_slice() {
         let values = ids.iter().map(Value::string).collect();
-        return Ok(Condition::is_in(FieldRef::new(pk_alias(&info.primary_pk[0])), values));
+        return Ok(Condition::is_in(FieldRef::new(pk_alias(pk)), values));
     }
     let mut ors = Vec::with_capacity(ids.len());
     for id in ids {
@@ -716,12 +716,13 @@ pub fn field_path_to_list(path: &str) -> Vec<String> {
         None => path.split(':').map(str::to_string).collect(),
         Some(0) => vec![path.to_string()],
         Some(open) => {
-            let mut out: Vec<String> = path[..open]
+            let (relationships, expression) = path.split_at(open);
+            let mut out: Vec<String> = relationships
                 .trim_end_matches(':')
                 .split(':')
                 .map(str::to_string)
                 .collect();
-            out.push(path[open..].to_string());
+            out.push(expression.to_string());
             out
         }
     }

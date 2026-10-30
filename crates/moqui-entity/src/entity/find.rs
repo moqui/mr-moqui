@@ -629,10 +629,10 @@ impl EntityFind {
 
     /// The find's own conditions, before the user's authorization filters.
     fn unfiltered(&self) -> Option<Condition> {
-        match self.conditions.len() {
-            0 => None,
-            1 => Some(self.conditions[0].clone()),
-            _ => Some(Condition::and(self.conditions.clone())),
+        match self.conditions.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            all => Some(Condition::and(all.to_vec())),
         }
     }
 
@@ -650,10 +650,10 @@ impl EntityFind {
             limit: self.limit,
             offset: self.offset,
         };
-        let having = match self.having.len() {
-            0 => None,
-            1 => Some(self.having[0].clone()),
-            _ => Some(Condition::and(self.having.clone())),
+        let having = match self.having.as_slice() {
+            [] => None,
+            [one] => Some(one.clone()),
+            all => Some(Condition::and(all.to_vec())),
         };
         let use_clone = self.use_clone && !self.for_update;
         self.facade

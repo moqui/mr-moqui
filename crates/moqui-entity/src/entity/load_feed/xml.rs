@@ -647,22 +647,20 @@ fn read_attr_value(text: &str, i: usize, eof: bool) -> Result<Option<(String, us
     }
 }
 
-fn decode_xml_entities(raw: &str) -> Result<String, Error> {
+pub(super) fn decode_xml_entities(raw: &str) -> Result<String, Error> {
     if !raw.contains('&') {
         return Ok(raw.to_string());
     }
     let mut out = String::new();
     let mut rest = raw;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at + 1..];
-        let Some(end) = rest.find(';') else {
-            return Err(Error::new(format!("unterminated entity '&{rest}'")));
+    while let Some((text, after)) = rest.split_once('&') {
+        out.push_str(text);
+        let Some((body, after)) = after.split_once(';') else {
+            return Err(Error::new(format!("unterminated entity '&{after}'")));
         };
-        let body = &rest[..end];
         let ch = decode_xml_entity(body).ok_or_else(|| Error::new(format!("unknown entity '&{body};'")))?;
         out.push(ch);
-        rest = &rest[end + 1..];
+        rest = after;
     }
     out.push_str(rest);
     Ok(out)

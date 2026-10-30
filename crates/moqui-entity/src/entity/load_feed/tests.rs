@@ -28,6 +28,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use super::feed::{probe_query, Touch, TOUCHES};
+use super::xml::decode_xml_entities;
 use super::{
     conf_data_locations, eca_rules, error_chain, feed_service_names, load_entity_data, match_rules,
     register_feed_insert, LoadOptions,
@@ -888,4 +889,16 @@ fn eca_rule_entities_are_full_names_and_rules_with_no_id_come_first() {
     let matched = match_rules(&facade, "moqui.test.TestEntity", "create");
     facade.rollback("moqui.test.TestEntity").unwrap();
     assert_eq!(matched, ["", "ShortName"]);
+}
+
+#[test]
+fn xml_entities_decode_between_text_and_name_the_bad_one() {
+    assert_eq!(decode_xml_entities("plain é").unwrap(), "plain é");
+    assert_eq!(
+        decode_xml_entities("a &lt;b&gt; &amp;&#233;&#x41;é&quot;").unwrap(),
+        "a <b> &éAé\""
+    );
+    let error = |raw: &str| decode_xml_entities(raw).unwrap_err().to_string();
+    assert_eq!(error("x &amp y"), "unterminated entity '&amp y'");
+    assert_eq!(error("x &nbsp; y"), "unknown entity '&nbsp;'");
 }

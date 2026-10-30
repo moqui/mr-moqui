@@ -268,8 +268,7 @@ impl<'a> FieldEnums<'a> {
     /// that fails is logged and the field has no `enum`.
     pub fn of(&mut self, entity: &EntityDefinition, field_name: &str) -> Option<Vec<Value>> {
         let relationship = entity.relationships.iter().find(|relationship| {
-            relationship.key_pairs.len() == 1
-                && relationship.key_pairs[0].0 == field_name
+            matches!(relationship.key_pairs.as_slice(), [(field, _)] if field == field_name)
                 && relationship.relationship_type == "one"
                 && !relationship.is_auto_reverse
         })?;
