@@ -57,15 +57,18 @@ fn sealed_permission_create_is_denied_without_the_permission() {
         Some("plain"),
         "current_username cannot see the logged-in user"
     );
-    reset_sealed_grant();
-    let err = permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
-        .create(&facade)
-        .expect_err("sealed permission");
-    let text = err.to_string();
-    assert!(text.contains("authorized"), "{text}");
-    assert!(text.contains("ADMIN_PASSWORD"), "{text}");
-    assert!(sealed_grant_entered());
-    assert_eq!(permission_count(&facade, "ADMIN", "ADMIN_PASSWORD"), 0);
+    // LlmGatewayUse too: the gateway's permission, sealed by that name
+    for permission in ["ADMIN_PASSWORD", "LlmGatewayUse"] {
+        reset_sealed_grant();
+        let err = permission_row(&facade, "ADMIN", permission)
+            .create(&facade)
+            .expect_err("sealed permission");
+        let text = err.to_string();
+        assert!(text.contains("authorized"), "{text}");
+        assert!(text.contains(permission), "{text}");
+        assert!(sealed_grant_entered());
+        assert_eq!(permission_count(&facade, "ADMIN", permission), 0);
+    }
 }
 
 #[test]
@@ -269,23 +272,26 @@ fn privileged_group_membership_is_denied_to_a_non_member() {
         seed_user(&facade, "plain", "Secret-12");
     }
     login_user("plain", "Secret-12").expect("login");
-    let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
-    row.set("userGroupId", Value::string("ADMIN"));
-    row.set("userId", Value::string("U1"));
-    row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
-    let err = row.create(&facade).expect_err("privileged group");
-    let text = err.to_string();
-    assert!(
-        text.contains("not authorized to change membership of group ADMIN"),
-        "{text}"
-    );
-    let members = facade
-        .find("moqui.security.UserGroupMember")
-        .unwrap()
-        .eq("userGroupId", Value::string("ADMIN"))
-        .list()
-        .unwrap();
-    assert_eq!(members.len(), 0);
+    // SYSMSG_RECEIVE too: its members call receive#IncomingSystemMessage as a remote system.
+    for group in ["ADMIN", "SYSMSG_RECEIVE"] {
+        let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
+        row.set("userGroupId", Value::string(group));
+        row.set("userId", Value::string("U1"));
+        row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+        let err = row.create(&facade).expect_err("privileged group");
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!("not authorized to change membership of group {group}")),
+            "{text}"
+        );
+        let members = facade
+            .find("moqui.security.UserGroupMember")
+            .unwrap()
+            .eq("userGroupId", Value::string(group))
+            .list()
+            .unwrap();
+        assert_eq!(members.len(), 0, "{group}");
+    }
 }
 
 #[test]

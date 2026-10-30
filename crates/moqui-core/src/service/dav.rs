@@ -119,17 +119,20 @@ fn get_sync_addresses(
     let ssh_port = Some(ssh_setting("public-port", "ssh_public_port"))
         .filter(|port| !port.is_empty())
         .unwrap_or_else(|| ssh_setting("port", "ssh_port"));
-    let sftp =
-        (!ssh_port.is_empty() && ssh_port != "0" && factory.conf_flag("dav-server", "sftp-drives", true)).then(|| {
-            let ssh_host = Some(ssh_setting("public-host", "ssh_public_host"))
-                .filter(|host| !host.is_empty())
-                .unwrap_or_else(|| host.split(':').next().unwrap_or_default().to_string());
-            if ssh_port == "22" {
-                format!("sftp://{user}@{ssh_host}/")
-            } else {
-                format!("sftp://{user}@{ssh_host}:{ssh_port}/")
-            }
-        });
+    let sftp = (factory.conf_flag("ssh-server", "enabled", true)
+        && !ssh_port.is_empty()
+        && ssh_port != "0"
+        && factory.conf_flag("dav-server", "sftp-drives", true))
+    .then(|| {
+        let ssh_host = Some(ssh_setting("public-host", "ssh_public_host"))
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| host.split(':').next().unwrap_or_default().to_string());
+        if ssh_port == "22" {
+            format!("sftp://{user}@{ssh_host}/")
+        } else {
+            format!("sftp://{user}@{ssh_host}:{ssh_port}/")
+        }
+    });
     let enabled = factory.conf_flag("dav-server", "enabled", true);
     let mut out = BTreeMap::new();
     let mut put = |key: &str, value: Value| {

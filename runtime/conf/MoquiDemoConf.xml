@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- A public demo server: the production conf with the demo component (runtime/dev-component/demo/README.md), which
+    keeps the apps usable with the john.doe login and locks down the tools and servers. instance_purpose stays
+    production: on dev the Dev AIDE would load too.
+        ./moq load -c conf/MoquiDemoConf.xml               all data, the demo users and the lock-down
+        ./moq run-production -c conf/MoquiDemoConf.xml -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <!-- a first start on an empty database loads the demo data too, with the john.doe login -->
+    <default-property name="entity_empty_db_load" value="all"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true">
+        <!-- add datasource elements here to configure databases -->
+    </entity-facade>
+
+    <!-- named here, the component loads on a production instance; its own component.xml leaves it off -->
+    <component-list>
+        <component name="demo" location="dev-component/demo"/>
+    </component-list>
+</moqui-conf>

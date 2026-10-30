@@ -99,7 +99,7 @@ These Java HTTP tests have no port. The reason is the behavior they call.
 
 | Java test | Reason |
 | --- | --- |
-| Six `/groovysh` tests (HTTP GET, anonymous upgrade, admin eval, anonymous-after-admin, VIEW-only, same-origin admin) | No Groovy shell and no `/groovysh` route. The conf still has an endpoint element `path="/groovysh"` `enabled="true"`. The listener does not register it. |
+| Six `/groovysh` tests (HTTP GET, anonymous upgrade, admin eval, anonymous-after-admin, VIEW-only, same-origin admin) | No Groovy shell, no `/groovysh` route and no conf endpoint for it. |
 | Eight JSON-RPC tests, including `api_key` in a JSON body, array bodies, and `reset#Password` over `/rpc/json` | `/rpc/json` is 404 on purpose (`SecurityAccess`). |
 | `test_entity_sync_put_needs_all_authz`, `test_entity_sync_put_with_all_authz_stores`, `test_entity_sync_put_does_not_store_user_group_permission` | Those proofs call `put#EntitySyncData` over `/rpc/json`. No REST stand-in was added. |
 | `test_rest_schema_anonymous_is_401`, `test_rest_schema_does_not_set_acao_wildcard` | Both hit `/rest/entity.swagger`, which 404s before auth. Swagger 2 is not built. The schema gate is the `/rest/entity.json` rows in `SecurityRest`. |

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use moqui_lib::error::Error;
+use moqui_lib::node::MNode;
 
 use crate::ListenBind;
 
@@ -29,8 +30,8 @@ struct Holder {
 pub(crate) fn hook(bind: ListenBind, runtime_dir: PathBuf) -> moqui_core::context::BeforeInit {
     // The message alone: a converted error keeps itself as its source and prints twice.
     let plain = |err: Error| moqui_core::context::Error::new(err.message());
-    Arc::new(move || {
-        let targets = targets(&bind, &runtime_dir).map_err(plain)?;
+    Arc::new(move |conf: &MNode| {
+        let targets = targets(&bind, &runtime_dir, conf).map_err(plain)?;
         check(&targets).map_err(plain)?;
         let ports: Vec<String> = targets.iter().map(|target| target.port.to_string()).collect();
         tracing::info!("Ports available: {}", ports.join(", "));
@@ -38,9 +39,11 @@ pub(crate) fn hook(bind: ListenBind, runtime_dir: PathBuf) -> moqui_core::contex
     })
 }
 
-/// The HTTP, HTTPS, cluster and SSH listeners, resolved as each listener resolves its own. SMTP is not here: a
-/// listener that cannot start is logged and the server goes on.
-fn targets(bind: &ListenBind, runtime_dir: &Path) -> Result<Vec<Target>, Error> {
+/// The HTTP, HTTPS, cluster and SSH listeners, resolved as each listener resolves its own (SSH from the merged `conf`,
+/// so not while `ssh-server` `enabled` is false). SMTP is not here: a listener that cannot start is logged and the server
+/// goes on.
+#[cfg_attr(not(feature = "ssh"), allow(unused_variables))]
+fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Target>, Error> {
     let http = crate::listen_address(bind)?;
     let mut targets = vec![Target {
         name: "webapp_http_port",
@@ -60,7 +63,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path) -> Result<Vec<Target>, Error> 
         port: crate::cluster_edge::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?,
     });
     #[cfg(feature = "ssh")]
-    if let Some((host, port)) = crate::ssh::server::listen_target()? {
+    if let Some((host, port)) = crate::ssh::server::listen_target(conf)? {
         targets.push(Target {
             name: "ssh_port",
             host,

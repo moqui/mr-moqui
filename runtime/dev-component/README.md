@@ -7,6 +7,7 @@ their own (`./moq component-get --dev`, `./moq component-create --dev`).
 
 | Directory | What it is |
 | --- | --- |
+| `demo/` | Locks a server down for a public demo: the apps with the john.doe login, not the sharp tools. Off by default; a demo server names it in its conf (`runtime/conf/MoquiDemoConf.xml`), which loads it on a production instance. |
 | `dev-aide/` | Dev AIDE, the assisted IDE at `/qapps/dev` ([plans/design-dev-aide.md](../../plans/design-dev-aide.md)). |
 | `example/` | Rust in a component, and the screen archetype gallery at `/qapps/gallery`. |
 | `template/` | The component template that `./moq component-create` and the Dev AIDE's New component copy. Not a component: its `component.xml` is `disabled="true"`, so it never loads. |

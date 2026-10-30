@@ -20,6 +20,7 @@
 # repositories of their own.
 /runtime/dev-component/*
 !/runtime/dev-component/README.md
+!/runtime/dev-component/demo/
 !/runtime/dev-component/dev-aide/
 !/runtime/dev-component/example/
 !/runtime/dev-component/template/

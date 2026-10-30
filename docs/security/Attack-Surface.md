@@ -33,7 +33,7 @@ Seed grants, from `runtime/base-component/tools/data/ToolsSecurityData.xml`:
 | `MOQUI_API` | `/moqui`, `AT_REST_PATH`, `inheritAuthz` Y | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
 | `MOQUI_API_GIT` | `/moqui/git`, `inheritAuthz` Y | `ALL_USERS`, `AUTHZT_ALLOW`, `AUTHZA_ALL`. The services still check `AT_GIT_REPOSITORY` |
 
-`user-facade` `authz` sets the privileged groups to `ADMIN` and `ADMIN_ADV`. Creating, updating, or deleting membership in those groups is allowed only when the caller is already a member. Seed and install, and a call with authorization disabled, skip that check. The sealed permissions are `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, `ADMIN_LOGIN_AS`, `ADMIN_PASSWORD`, `SearchRemote`, `DashboardRemote`, `REST_SCHEMA`, and `LlmGateway`. A `UserGroupPermission` row for one of those can be written only by a caller who already has that permission.
+`user-facade` `authz` sets the privileged groups to `ADMIN`, `ADMIN_ADV` and `SYSMSG_RECEIVE`. Creating, updating, or deleting membership in those groups is allowed only when the caller is already a member. Seed and install, and a call with authorization disabled, skip that check. `SYSMSG_RECEIVE` is there because its members call `receive#IncomingSystemMessage` as a remote system, and a party screen that adds memberships by posted `userGroupId` would otherwise let a user join it. The sealed permissions are `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, `ADMIN_LOGIN_AS`, `ADMIN_PASSWORD`, `SearchRemote`, `DashboardRemote`, `REST_SCHEMA`, and `LlmGatewayUse`. A `UserGroupPermission` row for one of those can be written only by a caller who already has that permission.
 
 From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring](../tools/Monitoring.md#security)), all granted to `ADMIN` only:
 
@@ -178,7 +178,7 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 
 `search_backend` defaults to `postgres`, so both proxies answer 404 on a default install after authentication. Each proxy's `max-body` is `100m`. Hop-by-hop headers are stripped, and so are `host`, `authorization`, `cookie`, and `content-length`. The client's `Authorization` and cookies are not forwarded. Upstream Basic is the servlet's user and password init-params (`elasticsearch_user` / `elasticsearch_password` for search; the dashboard init-params for Kibana). The proxy timeout is 120 seconds. HTTP request spans are recorded by the factory-scoped telemetry middleware.
 
-There is no axum route for `/groovysh`, `/rpc`, `/elastic`, `/kibana`, `/htmlr`, `/vapps`, or `/h2`. `/fop`, `/search`, and `/dashboard` are servlet patterns on the fallback. `/status` is a screen transition. The conf still has an endpoint `path="/groovysh"` `enabled="true"`. That element is a leftover: the listener never registers the path, and the Groovy Shell screen says this port has no Groovy and no script console.
+There is no axum route for `/groovysh`, `/rpc`, `/elastic`, `/kibana`, `/htmlr`, `/vapps`, or `/h2`. `/fop`, `/search`, and `/dashboard` are servlet patterns on the fallback. `/status` is a screen transition. The conf has no `/groovysh` endpoint, and the Groovy Shell screen says this port has no Groovy and no script console.
 
 ## Screen tree
 
@@ -445,6 +445,25 @@ A production install keeps the default conf's closed switches and does not publi
 - Leave inbound SMTP off unless a gateway and a non-empty allow-list are in place. An empty allow-list does not start the listener.
 - Per-client web protection is off until `webapp_trusted_proxies` is set or `webapp_web_protection` is `true`. Set the proxy list when a reverse proxy is in front, so the client address and the per-client rules see the client rather than the proxy.
 
+## Public demo server
+
+A public demo breaks one rule above on purpose: it loads the demo users, and anyone can log in as `john.doe`, an
+`ADMIN`. The demo component (`runtime/dev-component/demo`, loaded by `runtime/conf/MoquiDemoConf.xml`) narrows what
+that login reaches:
+
+- Data Import, Data Export, Data Snapshot, Speed Test, SQL Runner, SQL Script Runner, Service Run, Service Load Runner and
+  ElFinder are replaced by a screen that says they are disabled.
+- `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, git repositories,
+  report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
+  `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.
+- SSH (`ssh-server enabled="false"`), DAV, the MCP server and client, A2A both ways and the gateway are off, and mail
+  connects only to `localhost`.
+- Password changes and resets, sign-in factors, and username, disabled and require-password-change changes are refused
+  for the shared login, so one visitor cannot lock the others out.
+
+Visitors can still change any business data, and `john.doe` can view every entity in Tools. Restore the database on a
+schedule, and keep real keys out of it. Its README has the rest.
+
 ## How to use this for review
 
 Walk each surface in the deployment you have: is it enabled, is it reachable from the networks you care about, how does it authenticate, what authorization (including inherit) applies, and what untrusted input does it accept. Application components add screens, services, and REST roots, and they need their own pass.
@@ -459,7 +478,7 @@ This file maps the surface. It does not prove the controls. The proof catalog is
 | H2 TCP server and the H2 console | No `/h2` route. No `H2Console` in `runtime/conf`. `entity_ds_db_conf=h2` is the embedded database name. Parity notes say the H2 console was removed and `H2ServerToolFactory` is not ported. Port 9092 is not a bind. | Embedded Postgres, Unix socket, no TCP. On Windows, TCP to `127.0.0.1` on an ephemeral port. |
 | Jackrabbit on 8081 | The repository element is commented XML in the dev conf. `JackrabbitRunToolFactory` is not ported. | No process listens on 8081 for it. (`8081` elsewhere is an example HTTP port.) |
 | SubEtha SMTP | No SubEtha code. The entity comment still names `SubEthaSmtpToolFactory`. Parity mapping says that factory is not ported. | Inbound SMTP, off until `smtp_listen_port` and a non-empty allow-list are set. Mail from anywhere but the gateway is refused. |
-| `/groovysh` | Conf endpoint `enabled="true"`. `http.rs` does not route it. `Tools/GroovyShell.xml` says there is no Groovy and no eval endpoint. | The conf element only. |
+| `/groovysh` | No conf endpoint. `http.rs` does not route it. `Tools/GroovyShell.xml` says there is no Groovy and no eval endpoint. | The path is 404. |
 | `/rpc/json` | No host route. No `rpc.xml` under webroot. No file named `rpc.xml` in the tree. | The path is 404. |
 | `/elastic`, `/kibana` | No routes and no servlet patterns with those paths. | `/search` (`SearchRemote`) and `/dashboard` (`DashboardRemote`). |
 | `/htmlr` | No route. The client-suite README says there is no `/htmlr` mapping. | The path is not served. |

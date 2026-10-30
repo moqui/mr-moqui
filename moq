@@ -530,6 +530,8 @@ exits 1 when any failed:
   scripts/moq-test.sh               the tests of this script
   moqui test                        the specs of every component with test/*.spec.js, including the
                                     database-free screen template specs
+  moqui test demo                   the demo component's specs, with -D demo_disabled=false (it is off
+                                    by default, so moqui test leaves it out)
   moqui test-client webroot --offline
   moqui test-client runtime/dev-component/dev-aide --offline
                                     the offline client specs: pages at https://moqui.test, no server
@@ -1349,6 +1351,7 @@ task_test_all() {
     fi
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
     suite "moqui test" "$MOQ" test "${moq_opts[@]}"
+    suite "moqui test demo" "$MOQ" test "${moq_opts[@]}" --nobuild -D demo_disabled=false demo
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
     suite "moqui test-client webroot --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- webroot --offline
     suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- runtime/dev-component/dev-aide --offline

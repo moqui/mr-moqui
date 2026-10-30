@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- its own transaction: its error rolls that back, and the caller's stays unmarked, so the visitor sees only the
+        error below and not also a failed commit -->
+    <service verb="refuse" noun="SharedAccountChange" authenticate="false" allow-remote="false" transaction="force-new">
+        <description>Called before an account service runs (service/Demo.secas.xml): an error, which stops that
+            service, when its user is a shared demo login (the property demo_shared_user_ids). One visitor would
+            otherwise lock every other out by changing the password, adding a sign-in factor, or renaming or disabling
+            the account. The user is found as update#Password and reset#Password find it: by userId, else by username
+            (exactly, then as an email address), else the current user.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="username"><description>The user, or with accountUpdate the new
+                username.</description></parameter>
+            <parameter name="accountUpdate" type="Boolean" default="false"><description>From update#UserAccount: refuse
+                only a change to who can log in (username, disabled, requirePasswordChange); the name, email address,
+                locale and time zone may change.</description></parameter>
+            <parameter name="disabled"/>
+            <parameter name="requirePasswordChange"/>
+        </in-parameters>
+        <actions>
+            <set field="sharedIds" from="String(System.getProperty('demo_shared_user_ids') ?? '').split(',').map(id => id.trim()).filter(id => id)"/>
+            <if condition="!sharedIds.length"><return/></if>
+
+            <if condition="userId"><then>
+                <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
+            </then><else-if condition="username">
+                <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
+                    <field-map field-name="username"/></entity-find-one>
+                <if condition="userAccount == null">
+                    <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
+                        <field-map field-name="emailAddress" from="username"/></entity-find-one>
+                </if>
+            </else-if><else>
+                <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
+                    <field-map field-name="userId" from="ec.user.userId"/></entity-find-one>
+            </else></if>
+            <if condition="userAccount == null || !sharedIds.includes(userAccount.get('userId'))"><return/></if>
+
+            <if condition="!accountUpdate || (username &amp;&amp; username != userAccount.get('username')) || disabled == 'Y' || requirePasswordChange == 'Y'">
+                <return error="true" message="The demo login cannot be changed on this demo server."/></if>
+        </actions>
+    </service>
+</services>

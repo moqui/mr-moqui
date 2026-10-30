@@ -42,6 +42,7 @@ use std::time::Duration;
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
+use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 use russh::keys::{HashAlg, PrivateKey, PublicKey};
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
@@ -138,13 +139,16 @@ pub fn host_key(text: &str) -> Result<PrivateKey, Error> {
     Ok(PrivateKey::from(keypair))
 }
 
-/// The host and port the SSH server binds by the properties `ssh_host` (default `127.0.0.1`) and `ssh_port`, for the
-/// port check before the conf is read. None while `ssh_port` is empty, which leaves the server off.
-pub(crate) fn listen_target() -> Result<Option<(String, u16)>, Error> {
-    listen_target_of(
-        &moqui_lib::env::get_prop_or_env("ssh_port"),
-        &moqui_lib::env::get_prop_or_env("ssh_host"),
-    )
+/// The host and port the SSH server will bind by the merged conf, for the port check before the framework is built:
+/// read as [`start`] reads them, so None while `ssh-server` `enabled` is false or the port is empty.
+pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error> {
+    let node = conf.first_named("ssh-server");
+    configured_target(&|name: &str| {
+        node.as_ref()
+            .and_then(|node| node.attribute(name))
+            .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw).trim().to_string())
+            .unwrap_or_default()
+    })
 }
 
 /// The host and port of `port_text` and `host_text` (default `127.0.0.1`); None when `port_text` is empty.
@@ -163,10 +167,10 @@ fn listen_target_of(port_text: &str, host_text: &str) -> Result<Option<(String, 
     Ok(Some((host, port)))
 }
 
-/// An attribute of the conf's `ssh-server`, or the property `property` when the conf leaves it out or it expands to
-/// nothing.
-fn setting(factory: &ExecutionContextFactory, name: &str, property: &str) -> String {
-    let configured = factory.conf_setting("ssh-server", name);
+/// An attribute of the conf's `ssh-server` (`attr`, expanded), or the property `property` when the conf leaves it out
+/// or it expands to nothing.
+fn setting(attr: &dyn Fn(&str) -> String, name: &str, property: &str) -> String {
+    let configured = attr(name);
     if configured.is_empty() {
         moqui_lib::env::get_prop_or_env(property).trim().to_string()
     } else {
@@ -174,7 +178,26 @@ fn setting(factory: &ExecutionContextFactory, name: &str, property: &str) -> Str
     }
 }
 
-/// Start the server when the conf's `ssh-server` `port` (`ssh_port`) is set (`0` binds an ephemeral port).
+/// [`listen_target_of`], or None when the conf's `ssh-server` `enabled` is false, whatever the port.
+fn conf_listen_target(enabled: bool, port_text: &str, host_text: &str) -> Result<Option<(String, u16)>, Error> {
+    if !enabled {
+        return Ok(None);
+    }
+    listen_target_of(port_text, host_text)
+}
+
+/// [`conf_listen_target`] by the conf's `ssh-server` attributes (`attr`, expanded) and the `ssh_port` and `ssh_host`
+/// properties; `enabled` is on unless it is `false`, as `conf_flag` reads it.
+fn configured_target(attr: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
+    conf_listen_target(
+        attr("enabled") != "false",
+        &setting(attr, "port", "ssh_port"),
+        &setting(attr, "host", "ssh_host"),
+    )
+}
+
+/// Start the server when the conf's `ssh-server` `port` (`ssh_port`) is set (`0` binds an ephemeral port) and its
+/// `enabled` is not false.
 ///
 /// # Errors
 ///
@@ -186,14 +209,11 @@ pub fn start(
 ) -> Result<Option<SshServer>, Error> {
     moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, "");
     moqui_lib::env::set_property(moqui_core::cluster::SSH_ADDRESS_PROPERTY, "");
-    let Some((host, port)) = listen_target_of(
-        &setting(factory, "port", "ssh_port"),
-        &setting(factory, "host", "ssh_host"),
-    )?
-    else {
+    let attr = |name: &str| factory.conf_setting("ssh-server", name);
+    let Some((host, port)) = configured_target(&attr)? else {
         return Ok(None);
     };
-    let key = host_key(&setting(factory, "host-key", "ssh_host_key"))?;
+    let key = host_key(&setting(&attr, "host-key", "ssh_host_key"))?;
     let root = match factory.conf_setting("ssh-server", "sftp-root").as_str() {
         "" => "runtime://sftp".to_string(),
         other => other.to_string(),
@@ -1286,7 +1306,31 @@ mod tests {
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::{interactive, Counts, Slot, MAX_LINE, MAX_PREAUTH};
+    use super::{conf_listen_target, interactive, listen_target, Counts, Slot, MAX_LINE, MAX_PREAUTH};
+
+    #[test]
+    fn enabled_false_keeps_the_server_off_with_a_port_set() {
+        assert_eq!(conf_listen_target(false, "2222", "").unwrap(), None);
+        assert_eq!(
+            conf_listen_target(true, "2222", "").unwrap(),
+            Some(("127.0.0.1".to_string(), 2222))
+        );
+        assert_eq!(conf_listen_target(true, "", "").unwrap(), None);
+    }
+
+    #[test]
+    fn the_port_check_reads_the_conf_as_the_server_does() {
+        let conf =
+            |ssh: &str| moqui_lib::node::MNode::parse_text("conf", &format!("<moqui-conf>{ssh}</moqui-conf>")).unwrap();
+        assert_eq!(
+            listen_target(&conf(r#"<ssh-server port="2223" host="127.0.0.2"/>"#)).unwrap(),
+            Some(("127.0.0.2".to_string(), 2223))
+        );
+        assert_eq!(
+            listen_target(&conf(r#"<ssh-server enabled="false" port="2223"/>"#)).unwrap(),
+            None
+        );
+    }
 
     #[tokio::test]
     async fn an_overlong_shell_line_or_js_block_is_refused() {

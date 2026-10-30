@@ -255,8 +255,8 @@ runs the scripted TUI screens, which `cargo test` leaves out. A gate that only o
 there.
 
 `./moq test-all` runs every suite in turn and lists which passed: `cargo test`, the opt-in host tests (Gate 3, the
-browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component, and
-the client specs. `./moq help test-all` lists them.
+browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component, the demo component's specs (it is
+off by default, so the suite turns it on), and the client specs. `./moq help test-all` lists them.
 
 ## Component specs
 

@@ -27,9 +27,9 @@ use super::util::now_stamp;
 use crate::context::ExecutionContext;
 use crate::entity::{EntityFacade, EntityValue};
 
-const DEFAULT_PRIVILEGED_GROUPS: &str = "ADMIN,ADMIN_ADV";
+const DEFAULT_PRIVILEGED_GROUPS: &str = "ADMIN,ADMIN_ADV,SYSMSG_RECEIVE";
 const DEFAULT_SEALED_PERMISSIONS: &str =
-    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA";
+    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse";
 
 /// How many times `UserSecurityChecks` ran on this thread, for a load report to show the ECAs fired.
 pub fn security_checks_run() -> u64 {

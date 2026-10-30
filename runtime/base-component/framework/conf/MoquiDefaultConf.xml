@@ -91,7 +91,8 @@
     <default-property name="pdf_chromium_path" value=""/>
 
     <!--
-        The built-in SSH server (ssh-server below). Off while ssh_port is empty; 0 binds an ephemeral port.
+        The built-in SSH server (ssh-server below). Off while ssh_port is empty or ssh-server enabled is false; 0 binds an
+        ephemeral port.
         ssh_host_key is the base64 of a 32-byte Ed25519 seed (generated into runtime/.env) or an OpenSSH private key.
         ssh_public_host and ssh_public_port are the SSH host and port git clone URLs show; webapp_http_host and ssh_port
         when empty.
@@ -397,7 +398,6 @@
             <!-- The browser terminal: the terminal client on the /termws WebSocket, opened from the account menu's Terminal
                 UI (/qapps/Terminal) by any signed in user; enabled="false" turns the socket and the menu item off. -->
             <endpoint path="/termws" enabled="true"/>
-            <endpoint path="/groovysh" class="org.moqui.impl.webapp.GroovyShellEndpoint" timeout="900000" enabled="true"/>
 
             <!-- Default response headers, for override keyed on type+name -->
             <response-header type="web-resource-inline" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
@@ -493,10 +493,11 @@
         <login-key encrypt-hash-type="SHA-256" expire-hours="144"/><!-- default expire 6 days, 144 hours -->
         <login max-failures="3" disable-minutes="5" history-store="true"/>
         <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
-            already a member (seed/install and disableAuthz skip the check). sealed-permissions: UserGroupPermission
+            already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call
+            receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
             create/update/delete for these IDs is allowed only if the caller already has that permission. -->
-        <authz privileged-groups="ADMIN,ADMIN_ADV"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGateway"/>
+        <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="true" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -816,15 +817,16 @@
             oauth-redirect-uri="${email_oauth_redirect_uri}"/>
 
     <!--
-        The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. port, host,
-        host-key, public-host and public-port: see the ssh_ properties. sftp-root: the resource location SFTP serves
+        The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. enabled: false keeps
+        it off whatever the port (the demo component sets it). port, host, host-key, public-host and public-port: see the
+        ssh_ properties. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
         most connections at once. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
         password; by key only when false. login-dialog: a client with no key is let in with no user and gets the
         terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
         password at the SSH level or not at all.
     -->
-    <ssh-server port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
+    <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
             public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             git-password-auth="false" login-dialog="true"/>
     <!-- The terminal client's sessions, over SSH and in the browser together: max-sessions at once, and

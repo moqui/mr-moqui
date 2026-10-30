@@ -677,9 +677,10 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="authz">
         <xs:annotation><xs:documentation>Grants that only a holder may make. No Java counterpart.</xs:documentation></xs:annotation>
         <xs:complexType>
-            <xs:attribute name="privileged-groups" type="xs:string" default="ADMIN,ADMIN_ADV"><xs:annotation><xs:documentation>
+            <xs:attribute name="privileged-groups" type="xs:string" default="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"><xs:annotation><xs:documentation>
                 Comma separated UserGroup IDs. UserGroupMember create, update and delete for these groups is allowed
-                only if the caller is already a member (seed/install and disableAuthz skip the check).
+                only if the caller is already a member (seed/install and disableAuthz skip the check). An administrator
+                who is not a member puts a remote system's user in SYSMSG_RECEIVE with a data load, not from a screen.
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sealed-permissions" type="xs:string"><xs:annotation><xs:documentation>
                 Comma separated UserPermission IDs. UserGroupPermission create, update and delete for these IDs is
@@ -1389,6 +1390,7 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="ssh-server">
         <xs:annotation><xs:documentation>The built-in SSH server: the terminal client, SFTP, git and the admin shell.</xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:attribute name="enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>False keeps the server off whatever the port, and git clone and sync addresses show no SSH.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="port" type="xs:string"><xs:annotation><xs:documentation>The port to bind; empty leaves the server off, 0 binds an ephemeral port.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The address to bind.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host-key" type="xs:string"><xs:annotation><xs:documentation>The base64 of a 32-byte Ed25519 seed, or an OpenSSH private key.</xs:documentation></xs:annotation></xs:attribute>

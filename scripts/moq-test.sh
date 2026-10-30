@@ -392,6 +392,7 @@ check "help test-all" 0 'every test suite' -- "$M" help test-all
 check "test-all dry run" 0 'moqui test-client --serve$' -- dry "$M" test-all
 check "test-all dry run offline webroot" 0 'moqui test-client webroot --offline$' -- dry "$M" test-all
 check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/dev-component/dev-aide --offline$' -- dry "$M" test-all
+check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false demo$' -- dry "$M" test-all
 lacks "test-all dry run has no node suite" 'node --test' -- dry "$M" test-all
 check "test-all dry run runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test gate3_browser' -- dry "$M" test-all
 check "test-all slow" 0 'cargo test-slow' -- dry "$M" test-all --slow

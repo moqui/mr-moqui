@@ -139,6 +139,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Cluster | More capacity, or a member that can fail | Enterprise (`--enterprise`) | One external Postgres for all members | [Cluster](#cluster) |
 | PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
 | Dev instances with a dev group server | A team: shared repositories, tasks and models | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
+| Public demo server | The apps for anyone to try with the `john.doe` login | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
 
 ## Production checklist
 
@@ -191,7 +192,8 @@ The runtime conf is the first of these that is found:
 
 `./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. Conf merges add
 components but never remove one. To leave a component out, keep it out of `runtime/component`. The example dev
-component is the exception: `example_disabled=true` leaves it out.
+component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
+`demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
 ### Properties
 
@@ -235,6 +237,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
+| `demo_disabled` | `true` | `false` loads the demo lock-down on a dev instance; a demo server names the component in its conf instead |
 | `llm_openai_url`, `llm_openai_api_key`, `llm_openai_model` | `https://api.openai.com`, empty, empty | The default model endpoint for Assist and the LLM services (the dev conf points it at `http://127.0.0.1:1234`) |
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
@@ -512,6 +515,24 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
 | SSH | `ssh_port`, with `ssh_host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
+
+## Public demo server
+
+A server where anyone can try the apps with the `john.doe` / `moqui` login. It runs on the production purpose with
+`conf/MoquiDemoConf.xml`, which loads the demo component (`runtime/dev-component/demo`) and loads all data, demo users
+included, on the first start:
+
+```sh
+./moq load --release -c conf/MoquiDemoConf.xml
+./moq save-db --release demo                    # the database to go back to
+./moq run-production --release -c conf/MoquiDemoConf.xml
+```
+
+The component keeps the apps writable and takes away running code or SQL, bulk import and export, the file manager,
+writes in Tools and System, SSH, WebDAV, MCP, A2A, the LLM gateway, mail to other hosts, and changes that would lock
+visitors out of the shared login ([its README](../runtime/dev-component/demo/README.md)). Restore the saved database on
+a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
+the Dev AIDE loads there.
 
 ## Cluster
 
@@ -842,8 +863,9 @@ mr-moqui/
   runtime/            the runtime directory (runtime/README.md)
     base-component/   framework, tools, webroot
     component/        components from ./moq component-get (not in git)
-    dev-component/    components that load only on a dev instance: dev-aide, example; template for component-create
-    conf/             MoquiDevConf.xml, MoquiProductionConf.xml
+    dev-component/    components that load only on a dev instance: dev-aide, example, demo (off until a conf names
+                      it); template for component-create
+    conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml
     cert/ db/ log/ .env   per-instance files (not in git)
   podman/             the image, compose stacks and Quadlet units
   systemd/            the unit, sysusers file and drop-ins

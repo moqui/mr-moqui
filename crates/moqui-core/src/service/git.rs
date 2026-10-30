@@ -531,7 +531,8 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 }
 
 /// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<id>.git`), and `sshUrl` when the SSH
-/// server is on (`ssh-server` `port`), with the current user's username, as the SSH server logs in Moqui users.
+/// server is on (`ssh-server` `port`, and `enabled` not false), with the current user's username, as the SSH server logs
+/// in Moqui users.
 fn get_clone_urls(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -554,7 +555,9 @@ fn get_clone_urls(
     let ssh_port = Some(ssh_setting("public-port", "ssh_public_port"))
         .filter(|port| !port.is_empty())
         .unwrap_or_else(|| ssh_setting("port", "ssh_port"));
-    let ssh = (!ssh_port.is_empty() && ssh_port != "0").then(|| {
+    let ssh_enabled =
+        ExecutionContext::with_current(|ec| ec.factory().conf_flag("ssh-server", "enabled", true)).unwrap_or(true);
+    let ssh = (ssh_enabled && !ssh_port.is_empty() && ssh_port != "0").then(|| {
         let host = [
             ssh_setting("public-host", "ssh_public_host"),
             property("webapp_http_host"),
