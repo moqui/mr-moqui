@@ -418,7 +418,7 @@ impl WebappScripts {
             if servlet
                 .patterns
                 .iter()
-                .any(|pattern| *pattern == Pattern::Exact(path.to_string()))
+                .any(|pattern| matches!(pattern, Pattern::Exact(exact) if exact == path))
             {
                 return Some(found(servlet, path, None));
             }

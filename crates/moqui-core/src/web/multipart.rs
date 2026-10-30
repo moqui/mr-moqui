@@ -60,7 +60,7 @@ pub struct UploadedFile {
 
 #[derive(Clone, Debug)]
 enum Content {
-    Memory(Arc<Vec<u8>>),
+    Memory(Arc<[u8]>),
     Spooled(Arc<SpoolFile>),
 }
 
@@ -85,7 +85,7 @@ impl UploadedFile {
             size: bytes.len() as u64,
             head: bytes[..bytes.len().min(HEAD_BYTES)].to_vec(),
             sha256: None,
-            content: Content::Memory(Arc::new(bytes)),
+            content: Content::Memory(bytes.into()),
         }
     }
 
@@ -117,7 +117,7 @@ impl UploadedFile {
     /// Returns an error when the spool file cannot be read.
     pub fn read_bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
         match &self.content {
-            Content::Memory(bytes) => Ok(bytes.as_ref().clone()),
+            Content::Memory(bytes) => Ok(bytes.to_vec()),
             Content::Spooled(file) => std::fs::read(&file.0).map_err(|err| {
                 moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
             }),
@@ -131,7 +131,7 @@ impl UploadedFile {
     /// Returns an error when the spool file is gone.
     pub fn source(&self) -> Result<Arc<dyn ByteSource>, moqui_lib::error::Error> {
         Ok(match &self.content {
-            Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.as_ref().clone())),
+            Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.to_vec())),
             Content::Spooled(file) => Arc::new(SpooledSource {
                 file: FileSource::open(&file.0)?,
                 _keep: Arc::clone(file),
@@ -146,7 +146,7 @@ impl UploadedFile {
     /// Returns an error when the spool file cannot be opened.
     pub fn reader(&self) -> Result<Box<dyn Read + Send>, moqui_lib::error::Error> {
         Ok(match &self.content {
-            Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes).as_ref().clone())),
+            Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes))),
             Content::Spooled(file) => Box::new(SpooledReader {
                 file: std::fs::File::open(&file.0).map_err(|err| {
                     moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
@@ -584,7 +584,7 @@ impl MultipartReader {
                         file.flush().map_err(|err| MultipartError::Io(err.to_string()))?;
                         Content::Spooled(spooled)
                     }
-                    None => Content::Memory(Arc::new(part.memory)),
+                    None => Content::Memory(part.memory.into()),
                 };
                 self.parsed.files.push(UploadedFile {
                     field_name: part.name,

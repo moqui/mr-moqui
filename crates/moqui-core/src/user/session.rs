@@ -47,8 +47,8 @@ use crate::entity::{cache, EntityFacade, EntityValue};
 pub(crate) struct AuthzCache {
     pub(crate) generation: u64,
     pub(crate) groups: Option<Arc<std::collections::HashSet<String>>>,
-    pub(crate) checks: Option<Arc<Vec<Arc<AuthzCheck>>>>,
-    pub(crate) tarpit: BTreeMap<String, Arc<Vec<TarpitCheck>>>,
+    pub(crate) checks: Option<Arc<[Arc<AuthzCheck>]>>,
+    pub(crate) tarpit: BTreeMap<String, Arc<[TarpitCheck]>>,
 }
 
 /// One tarpit rule for an artifact type, for the user's groups.
@@ -1236,7 +1236,7 @@ fn presented_id(session_cookie: Option<&str>) -> Result<Option<String>, Error> {
     }
 }
 
-fn resolve_id(factory: &Arc<ExecutionContextFactory>, presented: Option<&str>) -> Result<(String, bool), Error> {
+fn resolve_id(factory: &ExecutionContextFactory, presented: Option<&str>) -> Result<(String, bool), Error> {
     if let Some(id) = presented {
         if adopt_presented(factory, id)? {
             return Ok((id.to_string(), false));
@@ -1551,7 +1551,7 @@ fn refresh_from_account() -> Result<(), Error> {
     Ok(())
 }
 
-fn ensure_visit(factory: &Arc<ExecutionContextFactory>, visitor_cookie: Option<&str>) -> Result<(), Error> {
+fn ensure_visit(factory: &ExecutionContextFactory, visitor_cookie: Option<&str>) -> Result<(), Error> {
     if NO_VISIT.with(std::cell::Cell::get) || visit_id()?.is_some() {
         return Ok(());
     }

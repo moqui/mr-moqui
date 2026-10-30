@@ -176,12 +176,12 @@ struct FilterSetCache {
 #[derive(Default)]
 struct GenerationSets {
     generation: u64,
-    sets: HashMap<String, Arc<Vec<FilterSet>>>,
+    sets: HashMap<String, Arc<[FilterSet]>>,
 }
 
 /// The filter sets of `authz_id`, from the cache of this factory. Sets read while the generation moved are returned
 /// but not kept.
-fn filter_sets(authz_id: &str) -> Result<Arc<Vec<FilterSet>>, Error> {
+fn filter_sets(authz_id: &str) -> Result<Arc<[FilterSet]>, Error> {
     let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
         .ok_or_else(|| Error::new("no execution context"))?;
     let cache = factory.extension(|_| FilterSetCache::default());
@@ -194,7 +194,7 @@ fn filter_sets(authz_id: &str) -> Result<Arc<Vec<FilterSet>>, Error> {
             }
         }
     }
-    let sets = Arc::new(read_filter_sets(authz_id)?);
+    let sets: Arc<[FilterSet]> = read_filter_sets(authz_id)?.into();
     let mut guard = cache.by_authz.lock().unwrap_or_else(PoisonError::into_inner);
     if generation() == loaded_at {
         if guard.generation != loaded_at {

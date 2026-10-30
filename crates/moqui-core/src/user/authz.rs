@@ -676,7 +676,7 @@ fn load_user_groups(facade: &EntityFacade) -> Result<Arc<HashSet<String>>, Error
     Ok(Arc::new(groups))
 }
 
-fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn user_checks(facade: &EntityFacade) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     if let Some(checks) = with_session(|session| session.authz.checks.clone()) {
         return Ok(checks);
     }
@@ -686,7 +686,7 @@ fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error
 }
 
 /// One `ArtifactAuthzCheckView` read per group, as Java's `getArtifactAuthzCheckList`.
-fn load_user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn load_user_checks(facade: &EntityFacade) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     let groups = user_groups(facade)?;
     let ordered: Vec<&String> = groups.iter().collect();
     load_group_checks(facade, ordered)
@@ -749,7 +749,7 @@ pub fn group_permits(groups: &[String], artifact_type: &str, name: &str, action:
 }
 
 /// The `ArtifactAuthzCheckView` rows of `groups`, one read per group in name order.
-fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     ordered.sort();
     ordered.dedup();
     let mut checks = Vec::new();
@@ -778,10 +778,10 @@ fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result
             }));
         }
     }
-    Ok(Arc::new(checks))
+    Ok(checks.into())
 }
 
-fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<TarpitCheck>>, Error> {
+fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<[TarpitCheck]>, Error> {
     cached(
         |cache| cache.tarpit.get(artifact_type).cloned(),
         || load_tarpit_checks(facade, artifact_type),
@@ -792,7 +792,7 @@ fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<T
 }
 
 /// One `ArtifactTarpitCheckView` read per group for the type, as Java's `getArtifactTarpitCheckList`.
-fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<TarpitCheck>>, Error> {
+fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<[TarpitCheck]>, Error> {
     let groups = user_groups(facade)?;
     let mut ordered: Vec<&String> = groups.iter().collect();
     ordered.sort();
@@ -813,7 +813,7 @@ fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<
             });
         }
     }
-    Ok(Arc::new(checks))
+    Ok(checks.into())
 }
 
 fn membership_open(row: &EntityValue, now: &Value) -> bool {

@@ -1094,21 +1094,26 @@ fn json_envelope(
     };
     let path_list: Vec<String> = info.full_path.iter().map(|name| strip(name)).collect();
     let render_modes: Vec<String> = target.render_modes.iter().map(|mode| strip(mode)).collect();
-    serde_json::json!({
-        "v": 1,
-        "screen": {
+    // `json!` would serialize the rendered nodes, the parameters and the messages again by reference, a deep copy of
+    // the document; they are moved in.
+    let mut envelope = serde_json::Map::new();
+    envelope.insert("v".to_string(), 1.into());
+    envelope.insert(
+        "screen".to_string(),
+        serde_json::json!({
             "path": strip(&screen_path(info)),
             "pathList": path_list,
             "extraPathCount": extra_path_count,
             "title": strip(title),
             "renderModes": render_modes,
             "standalone": info.render_path_difference,
-        },
-        "parameters": parameters,
-        "messages": messages,
-        "focus": strip(focus),
-        "c": nodes,
-    })
+        }),
+    );
+    envelope.insert("parameters".to_string(), parameters);
+    envelope.insert("messages".to_string(), messages);
+    envelope.insert("focus".to_string(), strip(focus).into());
+    envelope.insert("c".to_string(), nodes);
+    serde_json::Value::Object(envelope)
 }
 
 fn screen_path(info: &ScreenUrlInfo) -> String {
@@ -1706,8 +1711,8 @@ fn implicit_response(url: &str) -> ResponseDef {
 
 fn run_transition_steps(
     job: &Job<'_>,
-    info: &Arc<ScreenUrlInfo>,
-    state: &Rc<RenderState>,
+    info: &ScreenUrlInfo,
+    state: &RenderState,
     transition: &TransitionDef,
 ) -> Result<Step, Error> {
     // Screens above the transition are only on the stack, so they inherit but are not decided; a screen limited to a

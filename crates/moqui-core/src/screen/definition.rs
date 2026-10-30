@@ -1328,9 +1328,9 @@ fn pull_section_include(
         );
         return Ok(());
     }
-    if let Some((path, section)) = from.clone().split_once('#') {
-        from = path.to_string();
+    if let Some((path, section)) = from.split_once('#') {
         name = section.to_string();
+        from = path.to_string();
     }
     let other = facade.screen_def_at(factory, &from, depth + 1)?;
     let Some(section) = other.sections.get(&name) else {

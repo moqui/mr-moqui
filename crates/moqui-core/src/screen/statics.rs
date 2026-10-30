@@ -185,7 +185,7 @@ fn structure_reasons(
 pub fn eligibility_of(
     facade: &super::ScreenFacade,
     factory: &ExecutionContextFactory,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     macro_location: &str,
     force: bool,
 ) -> Arc<Eligibility> {
@@ -558,7 +558,7 @@ fn unwrap_map(map: &IndexMap<String, Value>) -> serde_json::Value {
 }
 
 /// The names of the forms that are lists, with the list each shows.
-fn list_forms(state: &RenderState, def: &Arc<ScreenDef>) -> Vec<(String, Arc<form::FormInstance>)> {
+fn list_forms(state: &RenderState, def: &ScreenDef) -> Vec<(String, Arc<form::FormInstance>)> {
     let mut out = Vec::new();
     for (name, definition) in &def.forms {
         if !definition.list || definition.dynamic {
@@ -574,7 +574,7 @@ fn list_forms(state: &RenderState, def: &Arc<ScreenDef>) -> Vec<(String, Arc<for
 
 /// Run the data preparation of a screen as the render does, without writing anything: the root actions, then the actions of
 /// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
-fn prepare_screen(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error> {
+fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
     if let Some(actions) = &def.root.actions {
         script::run_actions(&actions.xml)?;
     }
@@ -586,7 +586,7 @@ fn prepare_screen(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error
 
 const MAX_WALK_DEPTH: usize = 12;
 
-fn walk_widgets(state: &RenderState, owner: &Arc<ScreenDef>, node: &MNode, depth: usize) -> Result<(), Error> {
+fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usize) -> Result<(), Error> {
     if depth > MAX_WALK_DEPTH {
         return Err(Error::new(format!(
             "sections of {} are nested too deeply",
@@ -647,12 +647,7 @@ fn walk_widgets(state: &RenderState, owner: &Arc<ScreenDef>, node: &MNode, depth
     Ok(())
 }
 
-fn prepare_section(
-    state: &RenderState,
-    owner: &Arc<ScreenDef>,
-    section: &SectionDef,
-    depth: usize,
-) -> Result<(), Error> {
+fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef, depth: usize) -> Result<(), Error> {
     if let SectionKind::Iterate {
         list,
         entry,
@@ -794,7 +789,7 @@ pub fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
 /// its drop-downs from lookups, and the fields its `set` elements make. They are kept under `mqExtra_{form}`.
 fn single_form_extras(
     state: &RenderState,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     name: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>, Error> {
     let instance = form::assemble(&state.facade, &state.factory, def, name)?;
@@ -905,7 +900,7 @@ fn collect_widget(
 }
 
 /// `GET {screen}/actions`.
-fn screen_package(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error> {
+fn screen_package(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
     prepare_screen(state, def)?;
     let mut package = unwrap_context();
     for (name, definition) in &def.forms {
@@ -972,7 +967,7 @@ pub const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thr
 
 /// Whether the template has a form or a link with `pass-through-parameters="true"`, including an inlined include-screen.
 /// A screen that does not use the attribute does not get the package key. A failed lookup is logged and skipped.
-fn wants_pass_through(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
+fn wants_pass_through(state: &RenderState, def: &ScreenDef) -> bool {
     let mut seen = BTreeSet::new();
     match screen_wants_pass_through(state, def, 0, &mut seen) {
         Ok(found) => found,
@@ -985,7 +980,7 @@ fn wants_pass_through(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
 
 fn screen_wants_pass_through(
     state: &RenderState,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     depth: usize,
     seen: &mut BTreeSet<String>,
 ) -> Result<bool, Error> {
@@ -1060,7 +1055,7 @@ fn node_wants_pass_through(
 }
 
 /// `GET {screen}/actions/{formName}`.
-fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result<(), Error> {
+fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), Error> {
     let Some(definition) = def.forms.get(name) else {
         if let Some(tree) = def.trees.get(name) {
             let nodes = super::tree::sub_node_json(state, tree, &def.location)?;

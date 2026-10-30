@@ -151,7 +151,7 @@ pub(crate) fn saved_find_location(location: &str, dynamic: bool, key: &FindKeySo
 
 /// The `#` suffix of a dynamic saved find. Empty when none of the three sources has one.
 fn form_location_extension(key: &FindKeySource) -> String {
-    if let Some(text) = present_extension(context_text("formLocationExtension")) {
+    if let Some(text) = present_extension(&context_text("formLocationExtension")) {
         return text;
     }
     for raw in &key.0 {
@@ -162,14 +162,14 @@ fn form_location_extension(key: &FindKeySource) -> String {
                 String::new()
             }
         };
-        if let Some(text) = present_extension(expanded) {
+        if let Some(text) = present_extension(&expanded) {
             return text;
         }
     }
     String::new()
 }
 
-fn present_extension(text: String) -> Option<String> {
+fn present_extension(text: &str) -> Option<String> {
     let text = text.trim();
     if text.is_empty() || text == "null" {
         None

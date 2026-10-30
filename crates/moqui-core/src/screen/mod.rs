@@ -261,7 +261,7 @@ fn handle(
         &guard,
         presented.as_deref(),
         visitor_cookie.as_deref(),
-        token_before,
+        token_before.as_deref(),
     )?;
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
@@ -674,7 +674,7 @@ fn attach_session(
     guard: &user::SessionGuard,
     presented: Option<&str>,
     visitor_cookie: Option<&str>,
-    token_before: Option<String>,
+    token_before: Option<&str>,
 ) -> Result<WebResponse, Error> {
     if presented != Some(guard.session_id().as_str()) {
         response
@@ -687,7 +687,7 @@ fn attach_session(
         }
     }
     let token_after = user::csrf_token()?;
-    if presented != Some(guard.session_id().as_str()) || token_before.as_deref() != Some(token_after.as_str()) {
+    if presented != Some(guard.session_id().as_str()) || token_before != Some(token_after.as_str()) {
         response
             .headers
             .push(("moquiSessionToken".to_string(), token_after.clone()));
