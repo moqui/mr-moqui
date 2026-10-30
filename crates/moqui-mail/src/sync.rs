@@ -705,15 +705,13 @@ pub(super) fn decode_mutf7(text: &str) -> String {
     use base64::Engine;
     let mut out = String::new();
     let mut rest = text;
-    while let Some(start) = rest.find('&') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('-') else {
+    while let Some((plain, after)) = rest.split_once('&') {
+        out.push_str(plain);
+        let Some((encoded, next)) = after.split_once('-') else {
             out.push('&');
             out.push_str(after);
             return out;
         };
-        let encoded = &after[..end];
         if encoded.is_empty() {
             out.push('&');
         } else {
@@ -737,7 +735,7 @@ pub(super) fn decode_mutf7(text: &str) -> String {
                 }
             }
         }
-        rest = &after[end + 1..];
+        rest = next;
     }
     out.push_str(rest);
     out
@@ -2280,8 +2278,9 @@ fn sync_folder(
 fn header_message_id(headers: &str) -> String {
     let value = store::header_value(headers, "message-id");
     let value = value.trim();
-    match (value.find('<'), value.rfind('>')) {
-        (Some(start), Some(end)) if start < end => value[start..=end].to_string(),
+    // from the first `<` to the last `>` after it
+    match value.split_once('<').and_then(|(_, rest)| rest.rsplit_once('>')) {
+        Some((inside, _)) => format!("<{inside}>"),
         _ if !value.is_empty() => format!("<{}>", value.trim_matches(['<', '>'])),
         _ => String::new(),
     }
@@ -2942,6 +2941,8 @@ mod tests {
         assert_eq!(decode_mutf7("Tom &- Jerry"), "Tom & Jerry");
         assert_eq!(encode_mutf7("Tom & Jerry"), "Tom &- Jerry");
         assert_eq!(decode_mutf7(&encode_mutf7("Entwürfe")), "Entwürfe");
+        assert_eq!(decode_mutf7("a&b"), "a&b", "an unclosed shift is kept");
+        assert_eq!(decode_mutf7("&!!-x"), "&!!-x", "an undecodable one too");
     }
 
     #[test]
@@ -2964,6 +2965,9 @@ mod tests {
     fn small_parsers() {
         assert_eq!(header_message_id("Message-ID: <a@b>\r\n\r\n"), "<a@b>");
         assert_eq!(header_message_id("Message-Id:\r\n <c@d>\r\n"), "<c@d>");
+        assert_eq!(header_message_id("Message-ID: x <a@b> y>\r\n"), "<a@b> y>");
+        assert_eq!(header_message_id("Message-ID: a@b\r\n"), "<a@b>");
+        assert_eq!(header_message_id("Message-ID: >a@b<\r\n"), "<a@b>");
         assert_eq!(imap_date(0), "1-Jan-1970");
         assert_eq!(label_keyword("Follow up!"), "Follow_up!");
         // a label cannot pass for a system keyword such as $Junk

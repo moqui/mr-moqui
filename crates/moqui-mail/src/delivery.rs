@@ -77,8 +77,11 @@ pub fn find_recipient(facade: &EntityFacade, address: &str, delimiters: &str) ->
         return Ok(None);
     }
     let mut candidates = vec![address.clone()];
-    if let Some(at) = local.find(|ch| delimiters.contains(ch)).filter(|at| *at > 0) {
-        candidates.push(format!("{}@{domain}", &local[..at]));
+    if let Some((base, _)) = local
+        .split_once(|ch| delimiters.contains(ch))
+        .filter(|(base, _)| !base.is_empty())
+    {
+        candidates.push(format!("{base}@{domain}"));
     }
     for candidate in &candidates {
         if let Some(id) = by_account_address(facade, candidate)? {

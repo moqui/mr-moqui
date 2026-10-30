@@ -941,3 +941,17 @@ fn allowed_domains_match_the_domain_or_below_and_a_display_name_is_an_address() 
         Some("Named")
     );
 }
+
+#[test]
+fn bare_addresses_and_message_ids() {
+    assert_eq!(super::bare_address(" Ann <a@b.c> "), "a@b.c");
+    assert_eq!(super::bare_address("<x> Ann < a@b.c >"), "a@b.c");
+    assert_eq!(super::bare_address("Ann <a@b.c"), "Ann <a@b.c");
+    assert_eq!(super::bare_address("a@b.c> <é"), "a@b.c> <é");
+    assert!(super::is_message_id("<a@b.c>"));
+    assert!(!super::is_message_id("<@b>"));
+    assert!(!super::is_message_id("a@b.c"));
+    assert!(!super::is_message_id("<a b@c.d>"));
+    assert!(!super::is_message_id("<ab.cd>"));
+    assert!(!super::is_message_id("<é@b.c>"));
+}

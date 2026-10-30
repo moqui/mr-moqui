@@ -1540,12 +1540,10 @@ fn issuer_matches(pattern: &str, actual: &str) -> bool {
     let (pattern, actual) = (bare(pattern), bare(actual));
     match pattern.split_once("{tenantid}") {
         None => pattern == actual,
-        Some((before, after)) => {
-            actual.len() > before.len() + after.len()
-                && actual.starts_with(before)
-                && actual.ends_with(after)
-                && !actual[before.len()..actual.len() - after.len()].contains('/')
-        }
+        Some((before, after)) => actual
+            .strip_prefix(before)
+            .and_then(|rest| rest.strip_suffix(after))
+            .is_some_and(|tenant| !tenant.is_empty() && !tenant.contains('/')),
     }
 }
 
@@ -2393,6 +2391,8 @@ mod tests {
         ));
         assert!(!issuer_matches(microsoft, "https://login.microsoftonline.com/v2.0"));
         assert!(!issuer_matches(microsoft, "https://login.microsoftonline.com/a/b/v2.0"));
+        assert!(!issuer_matches(microsoft, "https://login.microsoftonline.com//v2.0"));
+        assert!(!issuer_matches(microsoft, "https://login.microsoftonline.com/v2"));
         assert!(scope_granted(
             "openid https://mail.google.com/ email",
             "https://mail.google.com/"

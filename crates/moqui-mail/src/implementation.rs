@@ -779,9 +779,10 @@ fn domain_allowed(address: &str, domains: &[String]) -> bool {
 /// The address in `Name <address>`, or the text as it is.
 fn bare_address(text: &str) -> &str {
     let text = text.trim();
-    match (text.rfind('<'), text.rfind('>')) {
-        (Some(open), Some(close)) if close > open => text[open + 1..close].trim(),
-        _ => text,
+    // the text between the last `<` and a `>` after it
+    match text.rsplit_once('<').and_then(|(_, rest)| rest.rsplit_once('>')) {
+        Some((address, _)) => address.trim(),
+        None => text,
     }
 }
 
@@ -1209,12 +1210,13 @@ pub(super) struct ThreadFields {
 }
 
 fn is_message_id(value: &str) -> bool {
+    let Some(inside) = value.strip_prefix('<').and_then(|rest| rest.strip_suffix('>')) else {
+        return false;
+    };
     value.len() > 4
         && value.len() < 250
-        && value.starts_with('<')
-        && value.ends_with('>')
-        && value[1..value.len() - 1].contains('@')
-        && value[1..value.len() - 1]
+        && inside.contains('@')
+        && inside
             .bytes()
             .all(|byte| byte.is_ascii_graphic() && !b"<>\\\",:;[]".contains(&byte))
 }

@@ -566,16 +566,16 @@ fn expunge_uid(conn: &mut ImapConn, uid: u32) -> Result<(), imap::Error> {
 
 /// The UID a COPYUID response code gives the message at `source` UID.
 fn copy_uid(response: &[u8], source: u32) -> Option<u32> {
-    let text = String::from_utf8_lossy(response);
-    let start = text.to_ascii_uppercase().find("[COPYUID ")?;
-    let rest = &text[start + 9..];
-    let end = rest.find(']')?;
-    let parts: Vec<&str> = rest[..end].split_whitespace().collect();
-    if parts.len() < 3 {
+    // the code is matched in any case; its parts are numbers and UID sets, which upper case does not change
+    let text = String::from_utf8_lossy(response).to_ascii_uppercase();
+    let (_, rest) = text.split_once("[COPYUID ")?;
+    let (code, _) = rest.split_once(']')?;
+    let parts: Vec<&str> = code.split_whitespace().collect();
+    let [_, sources, targets, ..] = parts.as_slice() else {
         return None;
-    }
-    let sources = super::sync::expand_set(parts[1]);
-    let targets = super::sync::expand_set(parts[2]);
+    };
+    let sources = super::sync::expand_set(sources);
+    let targets = super::sync::expand_set(targets);
     let position = sources.iter().position(|uid| *uid == source)?;
     targets.get(position).copied()
 }
@@ -1040,8 +1040,11 @@ fn apply_rename_folder(
     force_new(facade, || {
         update_folder(facade, &folder_id, &[("folderPath", Value::string(&new_path))])?;
         // the server moved the folders under it too
-        for child in folders.iter().filter(|known| known.path.starts_with(&prefix)) {
-            let moved = format!("{new_path}{delimiter}{}", &child.path[prefix.len()..]);
+        for child in folders.iter() {
+            let Some(below) = child.path.strip_prefix(&prefix) else {
+                continue;
+            };
+            let moved = format!("{new_path}{delimiter}{below}");
             update_folder(facade, &child.id, &[("folderPath", Value::string(&moved))])?;
         }
         Ok(())
@@ -1061,5 +1064,8 @@ mod tests {
         );
         assert_eq!(copy_uid(b"a1 OK [COPYUID 1 5 9] done", 5), Some(9));
         assert_eq!(copy_uid(b"a1 OK done", 5), None);
+        assert_eq!(copy_uid(b"a1 ok [copyuid 1 5:6 8:9] done", 6), Some(9));
+        assert_eq!(copy_uid(b"a1 OK [COPYUID 1 5] done", 5), None);
+        assert_eq!(copy_uid(b"a1 OK [COPYUID 1 5 9", 5), None);
     }
 }
