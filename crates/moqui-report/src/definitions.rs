@@ -519,7 +519,9 @@ pub fn copy_definition(
     let mut definition = read(ec, text(&params, "definitionId", ""))?;
     definition["id"] = params["newDefinitionId"].clone();
     definition["readOnly"] = json!(false);
-    definition.as_object_mut().unwrap().remove("version");
+    if let Some(map) = definition.as_object_mut() {
+        map.remove("version");
+    }
     if params["title"].is_string() {
         definition["title"] = params["title"].clone();
     }

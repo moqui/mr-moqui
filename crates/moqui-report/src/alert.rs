@@ -101,8 +101,11 @@ impl Condition {
     }
 }
 
-fn stamp(millis: i64) -> Value {
-    Value::Timestamp(jiff::Timestamp::from_millisecond(millis).unwrap())
+/// A stored time. `now` may be an effective time a caller set, so one outside the range of a timestamp is an error.
+fn stamp(millis: i64) -> Result<Value, Error> {
+    jiff::Timestamp::from_millisecond(millis)
+        .map(Value::Timestamp)
+        .map_err(fail)
 }
 fn millis(value: Option<&Value>) -> i64 {
     value
@@ -487,9 +490,11 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
             return true;
         }
     }
-    let time = jiff::Timestamp::from_millisecond(now)
-        .unwrap()
-        .to_zoned(moqui_core::l10n::time_zone());
+    // no mute timing matches a time outside the range of a timestamp
+    let Ok(time) = jiff::Timestamp::from_millisecond(now) else {
+        return false;
+    };
+    let time = time.to_zoned(moqui_core::l10n::time_zone());
     let weekday = time.date().weekday().to_monday_zero_offset() as u64;
     for timing in body["muteTimings"].as_array().into_iter().flatten() {
         if timing["weekdays"]
@@ -582,7 +587,9 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
                 .into_iter()
                 .flat_map(|map| map.iter())
             {
-                let property = property.as_str().unwrap();
+                let Some(property) = property.as_str() else {
+                    return Err(fail("webhook headerProperties values must be property names"));
+                };
                 let value = moqui_lib::env::get_property(property)
                     .ok_or_else(|| fail(format!("webhook header property {property} is not configured")))?;
                 if value.contains(['\r', '\n']) {
@@ -704,7 +711,7 @@ fn notify(
                         ("contactId", Value::string(&contact_id)),
                         ("groupId", Value::string(&group)),
                         ("stateHash", Value::string(&hash)),
-                        ("firstPending", stamp(first)),
+                        ("firstPending", stamp(first)?),
                         ("payloadJson", Value::string(payload.to_string())),
                     ] {
                         row.set(k, v);
@@ -717,7 +724,7 @@ fn notify(
                     // fails, the retry finds this group's state already sent and does not send it again. A failed send
                     // puts the previous record back, so it is retried.
                     let previous = (row.get("lastSent").cloned(), row.get("lastSentHash").cloned());
-                    row.set("lastSent", stamp(now));
+                    row.set("lastSent", stamp(now)?);
                     row.set("lastSentHash", Value::string(&hash));
                     record_notification(ec, &entity, &row)?;
                     if let Err(error) = send_contact(contact, &payload) {
@@ -1049,7 +1056,7 @@ fn finish(
                 for row in &outcome.saved {
                     row.create_or_update(entity)?;
                 }
-                lock.set("lastEvaluated", stamp(now));
+                lock.set("lastEvaluated", stamp(now)?);
             }
             lock.set("claimToken", Value::Null);
             lock.set("claimedUntil", Value::Null);
@@ -1269,8 +1276,8 @@ fn evaluate_claimed(
             ("definitionId", Value::string(id)),
             ("seriesId", Value::string(&key)),
             ("state", moqui_lib::json::from_json(&state)),
-            ("stateSince", stamp(instance.since)),
-            ("lastEvaluated", stamp(now)),
+            ("stateSince", stamp(instance.since)?),
+            ("lastEvaluated", stamp(now)?),
             (
                 "previouslyFiring",
                 Value::string(if instance.previously_firing { "Y" } else { "N" }),
@@ -1283,7 +1290,7 @@ fn evaluate_claimed(
         outcome.saved.push(row);
         if changed {
             outcome.changed += 1;
-            let annotation = json!({"_id":format!("alert:{id}:{key}:{now}"),"time":jiff::Timestamp::from_millisecond(now).unwrap().to_string(),"source":"alert","text":format!("{}: {}",text(definition,"title",id),state.as_str().unwrap_or("Error")),"scope":"dashboard","dashboard":body["dashboardId"],"panel":body["panelId"],"rule_id":id,"series_id":key,"state":state,"labels":labels});
+            let annotation = json!({"_id":format!("alert:{id}:{key}:{now}"),"time":jiff::Timestamp::from_millisecond(now).map_err(fail)?.to_string(),"source":"alert","text":format!("{}: {}",text(definition,"title",id),state.as_str().unwrap_or("Error")),"scope":"dashboard","dashboard":body["dashboardId"],"panel":body["panelId"],"rule_id":id,"series_id":key,"state":state,"labels":labels});
             if let Value::Map(document) = moqui_lib::json::from_json(&annotation) {
                 outcome.annotations.push(document);
             }

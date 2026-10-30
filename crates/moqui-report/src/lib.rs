@@ -318,15 +318,41 @@ fn identity_filter_value(ec: &ExecutionContext, key: &str) -> Result<Value, Erro
         .map_err(fail)?
         .filter(|user| !user.is_empty())
         .ok_or_else(|| fail("dataset identity filters require an authenticated viewer"))?;
-    match key{
-        "userId"=>Ok(Value::string(user)),
-        "username"=>moqui_core::user::current_username().map_err(fail)?.map(Value::string).ok_or_else(||fail("authenticated username is unavailable")),
-        "userGroupIds"=>Ok(Value::List(moqui_core::user::user_group_ids(Some(&user)).map_err(fail)?.into_iter().map(Value::string).collect())),
-        key if key.starts_with("userAccount.")=>{let field=&key[12..];if field.is_empty()||!field.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_')||moqui_core::context::secret_parameter(field){return Err(fail("dataset userAccount filter field is not permitted"));}
-            let entity=ec.factory().entity().ok_or_else(||fail("entity facade is unavailable"))?;let account=metadata(ec,||entity.find("moqui.security.UserAccount")?.eq("userId",Value::string(&user)).one())?.ok_or_else(||fail("authenticated user account is unavailable"))?;
-            account.get(field).cloned().filter(|value|!value.is_null()).ok_or_else(||fail(format!("authenticated userAccount field {field} is unavailable")))
+    match (key, key.strip_prefix("userAccount.")) {
+        ("userId", _) => Ok(Value::string(user)),
+        ("username", _) => moqui_core::user::current_username()
+            .map_err(fail)?
+            .map(Value::string)
+            .ok_or_else(|| fail("authenticated username is unavailable")),
+        ("userGroupIds", _) => Ok(Value::List(
+            moqui_core::user::user_group_ids(Some(&user))
+                .map_err(fail)?
+                .into_iter()
+                .map(Value::string)
+                .collect(),
+        )),
+        (_, Some(field)) => {
+            if field.is_empty()
+                || !field.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                || moqui_core::context::secret_parameter(field)
+            {
+                return Err(fail("dataset userAccount filter field is not permitted"));
+            }
+            let entity = ec.factory().entity().ok_or_else(|| fail("entity facade is unavailable"))?;
+            let account = metadata(ec, || {
+                entity
+                    .find("moqui.security.UserAccount")?
+                    .eq("userId", Value::string(&user))
+                    .one()
+            })?
+            .ok_or_else(|| fail("authenticated user account is unavailable"))?;
+            account
+                .get(field)
+                .cloned()
+                .filter(|value| !value.is_null())
+                .ok_or_else(|| fail(format!("authenticated userAccount field {field} is unavailable")))
         }
-        _=>Err(fail(format!("untrusted dataset contextKey {key}; use userId, username, userGroupIds, userAccount.<field>, or an administrator-defined rowFilterService"))),
+        _ => Err(fail(format!("untrusted dataset contextKey {key}; use userId, username, userGroupIds, userAccount.<field>, or an administrator-defined rowFilterService"))),
     }
 }
 
@@ -340,10 +366,15 @@ fn constraints(ec: &ExecutionContext, options: &Json, dataset: &Dataset, now: i6
     if thru.saturating_sub(from) > 3660_i64 * 86_400_000 {
         return Err(fail("report time range exceeds ten years"));
     }
-    let stamp = |millis| Value::String(jiff::Timestamp::from_millisecond(millis).unwrap().to_string());
+    // `from` and `thru` come from the request, and may be outside the range a timestamp can hold
+    let stamp = |millis| {
+        jiff::Timestamp::from_millisecond(millis)
+            .map(|time| Value::String(time.to_string()))
+            .map_err(fail)
+    };
     let mut all = vec![
         dataset.filter.clone(),
-        Query::range(&dataset.time_field, Some(stamp(from)), Some(stamp(thru))),
+        Query::range(&dataset.time_field, Some(stamp(from)?), Some(stamp(thru)?)),
     ];
     let metric_source = match &dataset.target {
         Target::Index(index) => index == "otel_metrics",
@@ -361,24 +392,28 @@ fn constraints(ec: &ExecutionContext, options: &Json, dataset: &Dataset, now: i6
         let age = now.saturating_sub(from).max(thru.saturating_sub(from));
         let hour = now.div_euclid(3_600_000) * 3_600_000;
         let day = now.div_euclid(86_400_000) * 86_400_000;
-        let branch = |granularity: &str, start: Option<i64>, end: Option<i64>| {
-            Query::all(vec![
+        let branch = |granularity: &str, start: Option<i64>, end: Option<i64>| -> Result<Query, Error> {
+            Ok(Query::all(vec![
                 Query::eq("granularity", Value::string(granularity)),
-                Query::range(&dataset.time_field, start.map(stamp), end.map(stamp)),
-            ])
+                Query::range(
+                    &dataset.time_field,
+                    start.map(stamp).transpose()?,
+                    end.map(stamp).transpose()?,
+                ),
+            ]))
         };
         if age <= minute_days.saturating_mul(86_400_000) {
             all.push(Query::eq("granularity", Value::string("minute")));
         } else if age <= hour_days.saturating_mul(86_400_000) {
             all.push(Query::any(vec![
-                branch("hour", None, Some(hour)),
-                branch("minute", Some(hour), None),
+                branch("hour", None, Some(hour))?,
+                branch("minute", Some(hour), None)?,
             ]));
         } else {
             all.push(Query::any(vec![
-                branch("day", None, Some(day)),
-                branch("hour", Some(day), Some(hour)),
-                branch("minute", Some(hour), None),
+                branch("day", None, Some(day))?,
+                branch("hour", Some(day), Some(hour))?,
+                branch("minute", Some(hour), None)?,
             ]));
         }
     }
@@ -481,12 +516,20 @@ fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Res
                 .filter_map(|name| SortField::parse(&name))
                 .collect()
         })
-        .unwrap_or_else(|| vec![SortField::parse(&format!("-{}", dataset.time_field)).unwrap()]);
+        .unwrap_or_else(|| {
+            vec![SortField {
+                field: dataset.time_field.trim().to_string(),
+                descending: true,
+            }]
+        });
     if mode != "lexical" && options.get("sort").is_none() {
         request.sort.clear();
     }
     if mode == "lexical" && request.sort.last().is_none_or(|s| s.field != "__cursor") {
-        request.sort.push(SortField::parse("__cursor").unwrap());
+        request.sort.push(SortField {
+            field: "__cursor".into(),
+            descending: false,
+        });
     }
     if let Some(cursor) = options.get("cursor").filter(|v| !v.is_null()) {
         if mode != "lexical" {
@@ -955,21 +998,15 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             json!({"frames":[],"notices":[{"level":"info","code":"no_data","message":"No matching telemetry observations"}],"sourceCount":0,"range":range}),
         );
     }
-    let mut result = Json::Object(
-        result
-            .into_iter()
-            .map(|(k, v)| (k, moqui_lib::json::to_json(&v)))
-            .collect(),
-    );
+    let mut result: serde_json::Map<String, Json> = result
+        .into_iter()
+        .map(|(k, v)| (k, moqui_lib::json::to_json(&v)))
+        .collect();
     let subtotals = options["subtotals"] == true;
     if subtotals {
-        result
-            .as_object_mut()
-            .unwrap()
-            .entry("count")
-            .or_insert_with(|| json!(population));
+        result.entry("count").or_insert_with(|| json!(population));
     }
-    let mut frame = frame::tabify_with_subtotals(&result, subtotals);
+    let mut frame = frame::tabify_with_subtotals(&Json::Object(result), subtotals);
     let mut date_fields = std::collections::BTreeSet::new();
     fn dates(aggs: &IndexMap<String, search::Agg>, prefix: &str, fields: &mut std::collections::BTreeSet<String>) {
         for (name, agg) in aggs {
@@ -1272,8 +1309,10 @@ fn restore_bucket_filters(
             });
             display.push(labels.get(&key).cloned().unwrap_or(Json::Null));
         }
-        field.config.get_mut("bucket").unwrap()["filters"] = json!(filters);
-        field.config.get_mut("bucket").unwrap()["labels"] = json!(display);
+        if let Some(bucket) = field.config.get_mut("bucket") {
+            bucket["filters"] = json!(filters);
+            bucket["labels"] = json!(display);
+        }
     }
     Ok(())
 }
@@ -1530,8 +1569,10 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
         Ok(false)
     }
     let has_service = capable(ec, options)?;
-    let from = time::parse(range["from"].as_str().unwrap(), 0)?;
-    let thru = time::parse(range["thru"].as_str().unwrap(), 0)?;
+    let (Some(from), Some(thru)) = (range["from"].as_str(), range["thru"].as_str()) else {
+        return Err(fail("comparison requires a from and thru time"));
+    };
+    let (from, thru) = (time::parse(from, 0)?, time::parse(thru, 0)?);
     let width = thru
         .checked_sub(from)
         .filter(|v| *v > 0)
@@ -1913,18 +1954,12 @@ fn partial_histograms(aggs: &IndexMap<String, search::Agg>) -> Result<Vec<Partia
 }
 
 fn normalize_intervals(options: &mut Json, range: &Json, notices: &mut Vec<Json>) -> Result<(), Error> {
-    let from = range["from"]
-        .as_str()
-        .unwrap()
-        .parse::<jiff::Timestamp>()
-        .map_err(fail)?
-        .as_millisecond();
-    let thru = range["thru"]
-        .as_str()
-        .unwrap()
-        .parse::<jiff::Timestamp>()
-        .map_err(fail)?
-        .as_millisecond();
+    let (Some(from), Some(thru)) = (range["from"].as_str(), range["thru"].as_str()) else {
+        return Err(fail("date_histogram intervals need a from and thru time"));
+    };
+    let from: jiff::Timestamp = from.parse().map_err(fail)?;
+    let thru: jiff::Timestamp = thru.parse().map_err(fail)?;
+    let (from, thru) = (from.as_millisecond(), thru.as_millisecond());
     let width = thru.saturating_sub(from);
     fn visit(params: &mut Json, from: i64, thru: i64, width: i64, notices: &mut Vec<Json>) -> Result<(), Error> {
         if !params.is_object() && !params.is_null() {

@@ -165,8 +165,8 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
                 );
             } else if contains_buckets(value) {
                 branches.push((name, value));
-            } else if value.is_object() {
-                for (k, v) in value.as_object().unwrap() {
+            } else if let Some(map) = value.as_object() {
+                for (k, v) in map {
                     if !v.is_array() && !v.is_object() {
                         row.insert(format!("{name}.{k}"), v.clone());
                     }
@@ -270,9 +270,13 @@ pub(crate) fn reduce(values: &[Value], calculation: &str) -> Value {
         "mean" | "avg" => numeric(nums.iter().sum::<f64>() / nums.len() as f64),
         "min" => numeric(nums.iter().copied().fold(f64::INFINITY, f64::min)),
         "max" => numeric(nums.iter().copied().fold(f64::NEG_INFINITY, f64::max)),
-        "delta" => numeric(nums.last().unwrap() - nums.first().unwrap()),
+        "delta" => match (nums.first(), nums.last()) {
+            (Some(first), Some(last)) => numeric(last - first),
+            _ => Value::Null,
+        },
         name if name.starts_with('p') => {
-            let Some(p) = name[1..].parse::<f64>().ok().filter(|p| (0.0..=100.0).contains(p)) else {
+            let percentile = name.strip_prefix('p').and_then(|p| p.parse::<f64>().ok());
+            let Some(p) = percentile.filter(|p| (0.0..=100.0).contains(p)) else {
                 return Value::Null;
             };
             let mut nums = nums;

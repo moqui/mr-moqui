@@ -91,22 +91,18 @@ fn substitute(text: &str, pins: &Map<String, Json>) -> String {
     for (name, value) in pins {
         out = out.replace(&format!("${{{name}}}"), &value_text(value));
         let bare = format!("${name}");
-        let mut at = 0;
-        while let Some(found) = out[at..].find(&bare) {
-            let start = at + found;
-            let end = start + bare.len();
-            let continues = out[end..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_');
-            if continues {
-                at = end;
-            } else {
-                let replacement = value_text(value);
-                out.replace_range(start..end, &replacement);
-                at = start + replacement.len();
-            }
+        let replacement = value_text(value);
+        let mut replaced = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some((before, after)) = rest.split_once(bare.as_str()) {
+            replaced.push_str(before);
+            // `$name` followed by more of a name is another name
+            let continues = after.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            replaced.push_str(if continues { &bare } else { &replacement });
+            rest = after;
         }
+        replaced.push_str(rest);
+        out = replaced;
     }
     out
 }
@@ -443,5 +439,17 @@ mod tests {
         );
         assert_eq!(selected_values(Some(&json!(["x"])), options), vec![json!("x")]);
         assert_eq!(selected_values(None, options), vec![json!("a"), json!("b")]);
+    }
+
+    #[test]
+    fn substitute_replaces_whole_names_only() {
+        let pins = json!({"a":"X","n":3}).as_object().unwrap().clone();
+        assert_eq!(
+            substitute("$a and ${a}, not $ab or $a_ but $a. $n€ $", &pins),
+            "X and X, not $ab or $a_ but X. 3€ $"
+        );
+        let pins = json!({"a":"$a"}).as_object().unwrap().clone();
+        assert_eq!(substitute("$a$a", &pins), "$a$a", "a replacement is not replaced again");
+        assert_eq!(substitute("€$a€", &pins), "€$a€");
     }
 }
