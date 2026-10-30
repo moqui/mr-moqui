@@ -1011,6 +1011,8 @@ fn load_with_factory(
         }
     };
     factory.init_tools().map_err(moqui_lib::error::Error::from)?;
+    // Data-loading services may issue documents, including work delivered by their commit workers.
+    let _pdf = install_pdf(factory);
     let context = factory.new_context();
     let entered = context.enter();
     let authz = context.disable_authz();
