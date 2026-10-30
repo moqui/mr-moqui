@@ -438,6 +438,8 @@ fn safe_key(key: &str) -> bool {
             | "user.id"
             | "moqui.visit.id"
             | "http.route"
+            | "moqui.operation.name"
+            | "moqui.operation.outcome"
     )
 }
 
@@ -472,7 +474,11 @@ fn attribute_key(key: &str) -> opentelemetry::Key {
         "gen_ai.usage.input_tokens",
         "gen_ai.usage.output_tokens",
         "gen_ai.response.finish_reasons",
-        "exception.message"
+        "exception.message",
+        "exception.fingerprint",
+        "moqui.operation.name",
+        "moqui.operation.outcome",
+        "moqui.operation.ref"
     )
 }
 
@@ -555,6 +561,7 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
     "http.response.status_code",
     "db.system.name",
     "outcome",
+    "moqui.operation.name",
 ];
 
 fn metric_attributes(attributes: Document) -> Vec<KeyValue> {

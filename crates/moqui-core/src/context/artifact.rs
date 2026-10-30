@@ -212,6 +212,12 @@ impl ArtifactStack {
         self.frames.last_mut().map(|frame| &mut frame.hit)
     }
 
+    pub(super) fn set_top_attribute(&mut self, key: &str, value: Value) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.telemetry_span.set_attribute(key, value);
+        }
+    }
+
     /// The top frame is not an artifact hit: no span or metric of its own. What runs under it records as children of
     /// its parent.
     pub(super) fn untrack_top(&mut self) {

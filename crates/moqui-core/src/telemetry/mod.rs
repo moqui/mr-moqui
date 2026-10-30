@@ -23,6 +23,7 @@ mod exponential;
 pub mod browser;
 pub mod ingest;
 pub mod maintenance;
+pub mod operation;
 #[cfg(feature = "http")]
 pub mod otlp;
 pub mod received;
@@ -294,6 +295,8 @@ pub struct Config {
     pub artifact_sample_ratios: HashMap<String, f64>,
     /// The attributes an instrument keeps (telemetry/metric attributes), in place of the global list.
     pub metric_attributes: HashMap<String, Vec<String>>,
+    /// Which service calls are business operations (telemetry/operations).
+    pub operations: operation::Conf,
     pub capacity: Capacity,
     /// Configuration problems, logged once when the factory's telemetry starts.
     warnings: Vec<String>,
@@ -313,6 +316,7 @@ impl Default for Config {
             ]),
             artifact_sample_ratios: HashMap::new(),
             metric_attributes: HashMap::new(),
+            operations: operation::Conf::default(),
             capacity: Capacity::default(),
             warnings: Vec::new(),
             legacy_slow_types: HashSet::new(),
@@ -404,6 +408,9 @@ impl Config {
                         .map(str::to_string)
                         .collect(),
                 );
+            }
+            if let Some(operations) = node.first_named("operations") {
+                config.operations = operation::Conf::from_node(&operations, &mut config.warnings);
             }
             // Metric documents are minute documents: the rollups and the dashboards' buckets assume it, so another
             // interval is for tests.
@@ -596,6 +603,7 @@ struct Shared {
     slow: Mutex<HashMap<u64, RunningStats>>,
     /// Running totals of received metrics, for `/metrics`.
     received: Mutex<received::Received>,
+    operations: operation::Registry,
 }
 
 pub struct Telemetry {
@@ -622,6 +630,7 @@ impl Telemetry {
             gauges_registered: AtomicBool::new(false),
             slow: Mutex::default(),
             received: Mutex::default(),
+            operations: operation::Registry::default(),
         });
         let worker = if shared.config.enabled {
             let state = Arc::clone(&shared);
@@ -799,6 +808,34 @@ impl Telemetry {
             }
         }
         let _ = (name, value, attributes);
+    }
+
+    /// The business operation a call of `service` is (telemetry/operations), when telemetry records. `declared` and
+    /// `declared_ref` are the service's `operation` and `operation-ref`.
+    pub fn operation(
+        &self,
+        service: &str,
+        declared: Option<&str>,
+        declared_ref: Option<&str>,
+    ) -> Option<Arc<operation::Operation>> {
+        if !self.shared.config.enabled || is_suppressed() {
+            return None;
+        }
+        self.shared
+            .operations
+            .operation(&self.shared.config.operations, service, declared, declared_ref)
+    }
+
+    /// One run of an operation: `moqui.operation.runs`, and `moqui.operation.duration` for a run that ended.
+    pub fn record_operation(&self, name: &str, outcome: operation::Outcome, seconds: Option<f64>) {
+        if let Some(seconds) = seconds {
+            self.record_duration(
+                "moqui.operation.duration",
+                seconds,
+                operation::attributes(name, outcome),
+            );
+        }
+        self.add_counter("moqui.operation.runs", 1, operation::attributes(name, outcome));
     }
 
     /// Callbacks must use weak factory references so observation never extends its lifetime.
@@ -1654,17 +1691,23 @@ fn export_batch(
     shared: &Shared,
     exporter: &dyn Exporter,
     index: &'static str,
-    batch: Vec<Document>,
+    mut batch: Vec<Document>,
     local: bool,
     counted_errors: &mut Recent,
 ) {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     if index == "otel_spans" || index == "otel_logs" {
-        for document in &batch {
+        for document in &mut batch {
             if !has_exception(document) {
                 continue;
             }
             let error = error_document(document);
+            // The span names its error group, so a group's traces and a regression's new errors can be found from it.
+            if index == "otel_spans" {
+                if let Some(fingerprint) = error.get("fingerprint") {
+                    document.insert("exception.fingerprint".into(), fingerprint.clone());
+                }
+            }
             // An error is one occurrence per trace, though every frame it unwinds through and the request root
             // carry it, and they may reach the worker in different batches.
             let trace = string_field(document, "trace_id");

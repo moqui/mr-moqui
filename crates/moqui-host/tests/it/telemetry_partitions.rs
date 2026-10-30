@@ -279,3 +279,106 @@ fn day_partitions_take_rows_drop_expired_days_and_move_an_unpartitioned_table() 
     assert_eq!(again["moved"], Value::I64(0), "{again:?}");
     assert_eq!(again["failed"], Value::List(Vec::new()), "{again:?}");
 }
+
+/// A telemetry table whose mapping only gained fields gets their columns and keeps its rows, partitioned or not; a
+/// table with a column the mapping no longer has is refused as before, so no history is dropped (plans/Monitoring.md,
+/// Later: Business operations).
+#[test]
+fn a_telemetry_mapping_that_gained_fields_adds_columns_and_keeps_rows() {
+    if !common::own_process() {
+        return;
+    }
+    let gate = common::start_with_conf_properties(
+        "telemetry-additions",
+        None,
+        r#"<search-facade><postgres partition-telemetry="true" partition-days-ahead="1"/></search-facade>"#,
+        &[],
+    );
+    let factory = gate.server.factory();
+    let facade = search::installed(factory).unwrap();
+    let tx = factory
+        .entity()
+        .unwrap()
+        .transactions_for("moqui.entity.document.DataDocument")
+        .unwrap();
+    let now = jiff::Timestamp::now().as_millisecond();
+    facade
+        .index_entries("otel_spans", vec![span("before-operations", now)])
+        .unwrap();
+    // As a table made before the operation fields were in the mapping.
+    exec(
+        &tx,
+        r#"ALTER TABLE search.otel_spans DROP COLUMN "f_moqui.operation.name""#,
+    );
+    exec(
+        &tx,
+        r#"ALTER TABLE search.otel_spans DROP COLUMN "f_exception.fingerprint""#,
+    );
+    exec(
+        &tx,
+        "UPDATE search.document_index SET signature = 'before' WHERE document_id = 'otel_spans'",
+    );
+    // A server started after the upgrade, which has not seen the table yet.
+    let mapping = search::telemetry::telemetry_mapping("otel_spans").unwrap();
+    let upgraded = search::postgres::PostgresBackend::open(tx.clone(), None).unwrap();
+    search::SearchBackend::ensure_index(&upgraded, &mapping).unwrap();
+    let columns = "SELECT count(*)::text AS v FROM information_schema.columns WHERE table_schema = 'search' \
+         AND table_name = 'otel_spans' AND column_name IN ('f_moqui.operation.name', 'f_exception.fingerprint')";
+    assert_eq!(scalar(&tx, columns).as_deref(), Some("2"));
+    assert_ne!(
+        scalar(
+            &tx,
+            "SELECT signature AS v FROM search.document_index WHERE document_id = 'otel_spans'"
+        )
+        .as_deref(),
+        Some("before")
+    );
+    assert_eq!(
+        scalar(
+            &tx,
+            "SELECT count(*)::text AS v FROM search.otel_spans WHERE doc_id = 'before-operations'"
+        )
+        .as_deref(),
+        Some("1"),
+        "the rows are kept"
+    );
+    let mut later = span("after-operations", now);
+    later.insert(
+        "attributes".into(),
+        Value::Map(indexmap::IndexMap::from_iter([(
+            "moqui.operation.name".to_string(),
+            Value::string("order.place"),
+        )])),
+    );
+    later.insert("moqui.operation.name".into(), Value::string("order.place"));
+    search::SearchBackend::index_documents(&upgraded, &mapping, &[("after-operations".to_string(), later)]).unwrap();
+    assert_eq!(
+        scalar(
+            &tx,
+            r#"SELECT doc_id AS v FROM search.otel_spans WHERE "f_moqui.operation.name" = 'order.place'"#
+        )
+        .as_deref(),
+        Some("after-operations")
+    );
+
+    // A column the mapping does not have is not an addition: refused, and the table left as it is.
+    exec(
+        &tx,
+        r#"ALTER TABLE search.otel_spans ADD COLUMN "f_retired.field" text"#,
+    );
+    exec(
+        &tx,
+        "UPDATE search.document_index SET signature = 'retired' WHERE document_id = 'otel_spans'",
+    );
+    let restarted = search::postgres::PostgresBackend::open(tx.clone(), None).unwrap();
+    let refused = search::SearchBackend::ensure_index(&restarted, &mapping).unwrap_err();
+    assert!(refused.to_string().contains("mapping changed"), "{refused}");
+    assert_eq!(
+        scalar(
+            &tx,
+            "SELECT count(*)::text AS v FROM search.otel_spans WHERE doc_id IN ('before-operations', 'after-operations')"
+        )
+        .as_deref(),
+        Some("2")
+    );
+}

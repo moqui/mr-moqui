@@ -24,4 +24,98 @@
         <out-parameters><parameter name="events" type="List"/><parameter name="userId"/><parameter name="visitId"/><parameter name="url"/>
             <parameter name="start"/><parameter name="end"/><parameter name="traceIds" type="List"/></out-parameters></service>
     <service verb="revoke" noun="IngestKey" type="rust" location="moqui_core::monitor::revoke_key"><in-parameters><parameter name="keyId" required="true"/></in-parameters></service>
+    <!-- Regressions and incidents (plans/Monitoring.md, Later: Regressions and incidents). The views and changes need
+         MONITOR_INCIDENT and are logged on moqui.monitor.audit. -->
+    <service verb="detect" noun="Regressions" type="rust" location="moqui_core::monitor::detect_regressions" transaction="ignore">
+        <description>One pass of the regression detector (telemetry/regressions), under a lease so one server runs it at a
+            time: each service version with request metrics in the window is compared with its baseline; regressions are
+            kept open or resolved, and one at incident-severity opens or joins the service's incident.</description>
+        <out-parameters><parameter name="compared" type="Integer"/><parameter name="regressions" type="Integer"/>
+            <parameter name="resolved" type="Integer"/><parameter name="incidents" type="Integer"/><parameter name="failed" type="List"/>
+            <parameter name="skipped"/></out-parameters></service>
+    <service verb="list" noun="Releases" type="rust" location="moqui_core::monitor::list_releases">
+        <description>Each service's released versions, newest first, with the instances on each now and their regressions.</description>
+        <in-parameters><parameter name="serviceName"/></in-parameters>
+        <out-parameters><parameter name="releases" type="List"/></out-parameters></service>
+    <service verb="get" noun="Release" type="rust" location="moqui_core::monitor::get_release">
+        <in-parameters><parameter name="serviceName" required="true"/><parameter name="version" required="true"/></in-parameters>
+        <out-parameters><parameter name="release" type="Map"/><parameter name="regressions" type="List"/><parameter name="newErrors" type="List"/></out-parameters></service>
+    <service verb="list" noun="Regressions" type="rust" location="moqui_core::monitor::list_regressions">
+        <in-parameters><parameter name="serviceName"/><parameter name="statusId"/><parameter name="incidentId"/></in-parameters>
+        <out-parameters><parameter name="regressions" type="List"/></out-parameters></service>
+    <service verb="update" noun="Regression" type="rust" location="moqui_core::monitor::update_regression">
+        <description>Dismiss a regression, or open a dismissed one again.</description>
+        <in-parameters><parameter name="regressionId" required="true"/><parameter name="statusId" required="true"/></in-parameters>
+        <out-parameters><parameter name="regression" type="Map"/></out-parameters></service>
+    <service verb="list" noun="Incidents" type="rust" location="moqui_core::monitor::list_incidents">
+        <in-parameters><parameter name="statusId"><description>open (the default: Open, Mitigating, Monitoring and
+            Reopened), all, or one status</description></parameter><parameter name="serviceName"/></in-parameters>
+        <out-parameters><parameter name="incidents" type="List"/></out-parameters></service>
+    <service verb="get" noun="Incident" type="rust" location="moqui_core::monitor::get_incident">
+        <description>An incident with its timeline, ranked causes, regressions and recovery.</description>
+        <in-parameters><parameter name="incidentId" required="true"/></in-parameters>
+        <out-parameters><parameter name="incident" type="Map"/><parameter name="evidence" type="List"/><parameter name="causes" type="List"/>
+            <parameter name="regressions" type="List"/><parameter name="recovery" type="Map"/></out-parameters></service>
+    <service verb="create" noun="Incident" type="rust" location="moqui_core::monitor::create_incident">
+        <in-parameters><parameter name="title" required="true"/><parameter name="severity"/><parameter name="serviceName"/>
+            <parameter name="instanceId"/><parameter name="version"/><parameter name="summary"/><parameter name="onsetDate" type="Timestamp"/></in-parameters>
+        <out-parameters><parameter name="incidentId"/><parameter name="incident" type="Map"/></out-parameters></service>
+    <service verb="update" noun="Incident" type="rust" location="moqui_core::monitor::update_incident">
+        <in-parameters><parameter name="incidentId" required="true"/><parameter name="statusId"/><parameter name="severity"/>
+            <parameter name="title"/><parameter name="summary"/><parameter name="confirmCauseSeqId"/><parameter name="rejectCauseSeqId"/></in-parameters>
+        <out-parameters><parameter name="incident" type="Map"/></out-parameters></service>
+    <service verb="add" noun="IncidentNote" type="rust" location="moqui_core::monitor::add_incident_note">
+        <in-parameters><parameter name="incidentId" required="true"/><parameter name="text" required="true"/></in-parameters>
+        <out-parameters><parameter name="incidentId"/></out-parameters></service>
+    <!-- Recovery (plans/Monitoring.md, Later: Recovery). Approving, refusing, completing, cancelling and reverting need
+         MONITOR_RECOVER; policies, adapters and the emergency stop MONITOR_RECOVER_ADMIN. -->
+    <service verb="run" noun="Recovery" type="rust" location="moqui_core::monitor::run_recovery" transaction="ignore">
+        <description>One pass of the recovery state machine (telemetry/recovery): move active actions on, verify the
+            actions whose verify time has come, and record a decision for each open incident whose matching policy
+            would now decide differently, running it when approved. Escalation always runs; nothing else runs while
+            the emergency stop is on.</description>
+        <out-parameters><parameter name="decisions" type="Integer"/><parameter name="advanced" type="Integer"/>
+            <parameter name="failed" type="List"/><parameter name="skipped"/></out-parameters></service>
+    <service verb="approve" noun="RecoveryDecision" type="rust" location="moqui_core::monitor::approve_decision">
+        <description>Run a proposed or waiting decision, if the incident still calls for it; a changed incident
+            supersedes it with a new decision.</description>
+        <in-parameters><parameter name="decisionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="decision" type="Map"/></out-parameters></service>
+    <service verb="refuse" noun="RecoveryDecision" type="rust" location="moqui_core::monitor::refuse_decision">
+        <in-parameters><parameter name="decisionId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="decision" type="Map"/></out-parameters></service>
+    <service verb="complete" noun="RecoveryAction" type="rust" location="moqui_core::monitor::complete_action">
+        <description>Mark an action done or failed by hand: a manual action, or one whose controller did not report.</description>
+        <in-parameters><parameter name="actionId" required="true"/><parameter name="outcome" required="true"><description>done or failed</description></parameter>
+            <parameter name="note"/></in-parameters>
+        <out-parameters><parameter name="action" type="Map"/></out-parameters></service>
+    <service verb="cancel" noun="RecoveryAction" type="rust" location="moqui_core::monitor::cancel_action">
+        <in-parameters><parameter name="actionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="action" type="Map"/></out-parameters></service>
+    <service verb="revert" noun="RecoveryAction" type="rust" location="moqui_core::monitor::revert_action">
+        <description>Undo an in-process action that took effect: resume the job or rule, remove the deny, bring the
+            instance back.</description>
+        <in-parameters><parameter name="actionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="action" type="Map"/></out-parameters></service>
+    <service verb="set" noun="RecoveryStop" type="rust" location="moqui_core::monitor::set_recovery_stop">
+        <in-parameters><parameter name="stopped" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="stopped" type="Boolean"/></out-parameters></service>
+    <service verb="list" noun="Recovery" type="rust" location="moqui_core::monitor::list_recovery">
+        <out-parameters><parameter name="policies" type="List"/><parameter name="adapters" type="List"/>
+            <parameter name="actions" type="List"/><parameter name="stopped" type="Boolean"/></out-parameters></service>
+    <service verb="store" noun="RecoveryPolicy" type="rust" location="moqui_core::monitor::store_policy">
+        <in-parameters><parameter name="policyId"/><parameter name="description"/><parameter name="enabled"/>
+            <parameter name="sequenceNum" type="Integer"/><parameter name="serviceName"/><parameter name="minSeverity"/>
+            <parameter name="mode"/><parameter name="ladderJson" allow-html="any"/><parameter name="adapterId"/>
+            <parameter name="contactJson" allow-html="any"/><parameter name="minConfidence" type="BigDecimal"/>
+            <parameter name="cooldownMinutes" type="Integer"/><parameter name="maxActionsPerDay" type="Integer"/>
+            <parameter name="deadlineMinutes" type="Integer"/><parameter name="verifyMinutes" type="Integer"/>
+            <parameter name="maxRollbackRate" type="BigDecimal"/></in-parameters>
+        <out-parameters><parameter name="policyId"/></out-parameters></service>
+    <service verb="store" noun="RecoveryAdapter" type="rust" location="moqui_core::monitor::store_adapter">
+        <in-parameters><parameter name="adapterId" required="true"/><parameter name="description"/>
+            <parameter name="adapterType" required="true"/><parameter name="url"/><parameter name="urlProperty"/>
+            <parameter name="statusUrl"/><parameter name="secretProperty"/><parameter name="headerPropertiesJson" allow-html="any"/>
+            <parameter name="allowInternal"/><parameter name="instructions"/></in-parameters>
+        <out-parameters><parameter name="adapterId"/></out-parameters></service>
 </services>

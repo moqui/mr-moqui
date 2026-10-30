@@ -308,7 +308,13 @@
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
             span-retention-days="7" log-retention-days="7" error-retention-days="90"
             minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"
-            replay-retention-days="7"/>
+            replay-retention-days="7">
+        <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
+             outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
+        <operations record="default" max-names="500">
+            <operation service="org\.moqui\..*" record="false"/>
+        </operations>
+    </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none. Override per type using
          telemetry/artifact, whose sample-ratio overrides telemetry_sample_ratio above for that type's spans.
@@ -1004,6 +1010,7 @@
         <load-data location="component://framework/data/UnitData.xml"/>
         <load-data location="component://framework/data/MoquiSetupData.xml"/>
         <load-data location="component://framework/data/TelemetryData.xml"/>
+        <load-data location="component://framework/data/RecoverySetupData.xml"/>
         <load-data location="component://framework/data/ReportSetupData.xml"/>
         <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>

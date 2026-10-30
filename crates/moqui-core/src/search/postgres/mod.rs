@@ -505,6 +505,70 @@ impl PostgresBackend {
         out
     }
 
+    /// The indexes of the typed column of the root field `name`.
+    fn column_indexes(&self, table: &str, name: &str, kind: FieldKind) -> Vec<String> {
+        let col = column(name);
+        match kind {
+            FieldKind::Text => {
+                let config = literal(&self.text.config);
+                let mut out = vec![format!(
+                    "CREATE INDEX ON {table} USING gin (to_tsvector({config}, {col}))"
+                )];
+                if self.trigram {
+                    out.push(format!("CREATE INDEX ON {table} USING gin ({col} gin_trgm_ops)"));
+                }
+                out
+            }
+            FieldKind::Keyword | FieldKind::Date | FieldKind::Long | FieldKind::Double => {
+                vec![format!("CREATE INDEX ON {table} ({col})")]
+            }
+            FieldKind::Boolean | FieldKind::Binary => Vec::new(),
+        }
+    }
+
+    /// A telemetry table whose mapping only gained root fields gets their typed columns and indexes, keeping its rows:
+    /// the statements, or None when a column it has is gone or changed type, or nothing was added, so the change is
+    /// not additive. Rows written before the change have the new columns empty.
+    fn telemetry_additions(
+        &self,
+        conn: &mut dyn DbConnection,
+        mapping: &DocumentMapping,
+        table: &str,
+    ) -> Result<Option<Vec<String>>, Error> {
+        let rows = conn.query(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+            &[Value::string(&self.schema), Value::string(&mapping.physical_name)],
+        )?;
+        let have: HashMap<String, String> = rows
+            .iter()
+            .filter_map(|row| {
+                let name = to_plain_string(row.get("column_name")?);
+                let kind = to_plain_string(row.get("data_type")?);
+                name.starts_with("f_").then_some((name, kind))
+            })
+            .collect();
+        let mut statements = Vec::new();
+        let mut kept = 0;
+        for (name, field) in &mapping.root.fields {
+            let Some(sql_type) = column_type(field.kind) else {
+                continue;
+            };
+            let catalog_type = match sql_type {
+                "timestamptz" => "timestamp with time zone",
+                other => other,
+            };
+            match have.get(&format!("f_{name}")) {
+                Some(kind) if kind == catalog_type => kept += 1,
+                Some(_) => return Ok(None),
+                None => {
+                    statements.push(format!("ALTER TABLE {table} ADD COLUMN {} {sql_type}", column(name)));
+                    statements.extend(self.column_indexes(table, name, field.kind));
+                }
+            }
+        }
+        Ok((kept == have.len() && !statements.is_empty()).then_some(statements))
+    }
+
     /// The table of `mapping` named `table`; with `split`, partitioned, its key `doc_id` and the split columns.
     fn create_statements_for(
         &self,
@@ -537,20 +601,7 @@ impl PostgresBackend {
             } else {
                 columns.push(format!("{col} {sql_type}"));
             }
-            match field.kind {
-                FieldKind::Text => {
-                    indexes.push(format!(
-                        "CREATE INDEX ON {table} USING gin (to_tsvector({config}, {col}))"
-                    ));
-                    if self.trigram {
-                        indexes.push(format!("CREATE INDEX ON {table} USING gin ({col} gin_trgm_ops)"));
-                    }
-                }
-                FieldKind::Keyword | FieldKind::Date | FieldKind::Long | FieldKind::Double => {
-                    indexes.push(format!("CREATE INDEX ON {table} ({col})"));
-                }
-                FieldKind::Boolean | FieldKind::Binary => {}
-            }
+            indexes.extend(self.column_indexes(&table, name, field.kind));
         }
         let compiler = Compiler::with_text(mapping, &self.text);
         if let Some(title) = compiler.title_field() {
@@ -963,6 +1014,17 @@ impl SearchBackend for PostgresBackend {
         let registry = format!("{}.document_index", ident(&self.schema));
         let statements = self.create_statements(mapping);
         let advisory = format!("{}.{}", self.schema, mapping.physical_name);
+        let register = format!(
+            "INSERT INTO {registry} (document_id, index_name, physical_name, signature) VALUES (?, ?, ?, ?) \
+             ON CONFLICT (document_id) DO UPDATE SET index_name = EXCLUDED.index_name, \
+             physical_name = EXCLUDED.physical_name, signature = EXCLUDED.signature, created_at = now()"
+        );
+        let register_params = [
+            Value::string(&mapping.document_id),
+            mapping.index_name.clone().map_or(Value::Null, Value::String),
+            Value::string(&mapping.physical_name),
+            Value::string(&signature),
+        ];
         // True when this call made the table; false when another made it first.
         self.tx.with_reserve(|conn| {
             ddl_transaction(conn, &table, |conn| {
@@ -977,9 +1039,31 @@ impl SearchBackend for PostgresBackend {
                 {
                     return Ok(false);
                 }
-                if super::telemetry::is_telemetry_index(&mapping.document_id)||super::telemetry::is_telemetry_index(&mapping.physical_name){
-                    let exists=conn.query("SELECT to_regclass(?)::text AS existing",&[Value::string(&table)])?.first().and_then(|row|row.get("existing")).is_some_and(|value|!value.is_null());
-                    if !rows.is_empty()||exists{return Err(Error::new(format!("telemetry index {} mapping changed; existing history is preserved. Apply an explicit non-destructive schema migration and update the search registry before retrying",mapping.document_id)));}
+                if super::telemetry::is_telemetry_index(&mapping.document_id)
+                    || super::telemetry::is_telemetry_index(&mapping.physical_name)
+                {
+                    let exists = conn
+                        .query("SELECT to_regclass(?)::text AS existing", &[Value::string(&table)])?
+                        .first()
+                        .and_then(|row| row.get("existing"))
+                        .is_some_and(|value| !value.is_null());
+                    if exists {
+                        // Telemetry history is never dropped: a mapping that only gained fields gets their columns.
+                        if let Some(additions) = self.telemetry_additions(conn, mapping, &table)? {
+                            for statement in &additions {
+                                conn.execute(statement, &[])?;
+                            }
+                            conn.execute(&register, &register_params)?;
+                            tracing::info!(document = %mapping.document_id, columns = additions.len(), "telemetry index gained fields");
+                            return Ok(true);
+                        }
+                    }
+                    if !rows.is_empty() || exists {
+                        return Err(Error::new(format!(
+                            "telemetry index {} mapping changed; existing history is preserved. Apply an explicit non-destructive schema migration and update the search registry before retrying",
+                            mapping.document_id
+                        )));
+                    }
                 }
                 if current.is_some() {
                     tracing::warn!(
@@ -991,19 +1075,7 @@ impl SearchBackend for PostgresBackend {
                 for statement in &statements {
                     conn.execute(statement, &[])?;
                 }
-                conn.execute(
-                    &format!(
-                        "INSERT INTO {registry} (document_id, index_name, physical_name, signature) VALUES (?, ?, ?, ?) \
-                         ON CONFLICT (document_id) DO UPDATE SET index_name = EXCLUDED.index_name, \
-                         physical_name = EXCLUDED.physical_name, signature = EXCLUDED.signature, created_at = now()"
-                    ),
-                    &[
-                        Value::string(&mapping.document_id),
-                        mapping.index_name.clone().map_or(Value::Null, Value::String),
-                        Value::string(&mapping.physical_name),
-                        Value::string(&signature),
-                    ],
-                )?;
+                conn.execute(&register, &register_params)?;
                 Ok(true)
             })
         })?;

@@ -34,6 +34,12 @@
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INGEST" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_REPLAY" description="See browser session replays (Monitor › Replays)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_REPLAY" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_INCIDENT" description="See and work on regressions and incidents (Monitor › Releases and Incidents)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INCIDENT" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_RECOVER" description="Approve, refuse, mark done and cancel recovery actions"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_RECOVER_ADMIN" description="Manage recovery policies and adapters and the recovery emergency stop"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER_ADMIN" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="REPORT_SAVE_LOCATION" description="Write scheduled report files to configured server resource locations"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_SAVE_LOCATION" fromDate="0"/>
     <moqui.security.ArtifactGroup artifactGroupId="REPORT_ALERT_EVALUATION" description="Evaluate alert rules for all owners"/>

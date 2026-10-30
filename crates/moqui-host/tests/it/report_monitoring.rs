@@ -218,9 +218,10 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
     }
     assert_eq!(seen.len(), 10_025);
     let original = facade.mapping("otel_logs").unwrap();
+    // A field whose type changed is refused; one only added would be added in place (telemetry_partitions).
     let mut changed = (*original).clone();
     changed.root.fields.insert(
-        "future_column".into(),
+        "severity_number".into(),
         search::FieldMapping {
             kind: search::FieldKind::Keyword,
             sortable: true,

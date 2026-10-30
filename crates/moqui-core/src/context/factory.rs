@@ -1027,6 +1027,11 @@ impl ExecutionContext {
         }
     }
 
+    /// An attribute on the top frame's span, when it records one.
+    pub(crate) fn set_top_span_attribute(&self, key: &str, value: moqui_lib::object::Value) {
+        self.state.artifacts.borrow_mut().set_top_attribute(key, value);
+    }
+
     /// Java's `setTrackArtifactHit(false)`: the top frame records no span or metric of its own, and what runs under it
     /// (a REST path's service, a screen's always-actions) records as children of its parent.
     pub(crate) fn untrack_hit(&self) {

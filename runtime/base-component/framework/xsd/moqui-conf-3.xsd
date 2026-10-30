@@ -174,6 +174,80 @@ along with this software (see the LICENSE.md file). If not, see
                 attribute names; empty keeps none. Values of names the framework does not set from artifact names and
                 routes are redacted as the global list's are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
+        <xs:element name="operations" minOccurs="0"><xs:complexType>
+            <xs:annotation><xs:documentation>Business operations (plans/Monitoring.md, Later: Business operations).
+                A service call that owns its transaction (the outermost or a force-new one) is an operation, named by
+                the service unless the service declares operation or a rule here names it. Each run counts as
+                moqui.operation.runs, and its time as moqui.operation.duration, by moqui.operation.name and outcome:
+                commit, rollback, retry (rolled back, and a scheduled job or a SystemMessage retry will run it again)
+                or pending (queued for a worker). The service's span carries the name, the outcome and the
+                correlation reference (moqui.operation.ref).</xs:documentation></xs:annotation>
+            <xs:sequence>
+                <xs:element name="operation" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
+                    <xs:annotation><xs:documentation>A rule for the services whose full names match a pattern; the
+                        first rule that matches applies. A component's rule replaces the framework's of the same
+                        service pattern.</xs:documentation></xs:annotation>
+                    <xs:attribute name="service" type="xs:string" use="required"><xs:annotation><xs:documentation>
+                        A regular expression matched against the whole service name.</xs:documentation>
+                    </xs:annotation></xs:attribute>
+                    <xs:attribute name="name" type="xs:string"><xs:annotation><xs:documentation>The operation name, in
+                        place of the service's operation attribute or its name.</xs:documentation></xs:annotation>
+                    </xs:attribute>
+                    <xs:attribute name="ref" type="xs:string"><xs:annotation><xs:documentation>The in-parameter whose
+                        value is the correlation reference, in place of the service's operation-ref. Name an id,
+                        never a parameter that carries document contents.</xs:documentation></xs:annotation>
+                    </xs:attribute>
+                    <xs:attribute name="record" type="boolean"><xs:annotation><xs:documentation>false: these services
+                        are not operations. Default true.</xs:documentation></xs:annotation></xs:attribute>
+                </xs:complexType></xs:element>
+            </xs:sequence>
+            <xs:attribute name="record"><xs:annotation><xs:documentation>default: every call that owns its
+                transaction, unless a rule says not; declared: only services that declare operation or that a rule
+                matches; none: no operations.</xs:documentation></xs:annotation>
+                <xs:simpleType><xs:restriction base="xs:token">
+                    <xs:enumeration value="default"/><xs:enumeration value="declared"/><xs:enumeration value="none"/>
+                </xs:restriction></xs:simpleType></xs:attribute>
+            <xs:attribute name="max-names" type="xs:positiveInteger"><xs:annotation><xs:documentation>The most
+                operation names recorded, to bound the series; later names are recorded as other. Default
+                500.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType></xs:element>
+        <xs:element name="regressions" minOccurs="0"><xs:complexType>
+            <xs:annotation><xs:documentation>The regression detector (plans/Monitoring.md, Later: Regressions and
+                incidents), the detect_Regressions_5min job. Each service version with request metrics in the last
+                window is compared with its baseline: the previous version over lookback-hours before the release while
+                the release is under watch-hours old, else the same version historical-offset-hours earlier. Error rate
+                (5xx), p95 request latency and the operation rollback rate are compared; too few samples give no
+                verdict, and gaps or lost telemetry mark a verdict degraded, never healthy. A regression at
+                incident-severity opens or joins the service's incident.</xs:documentation></xs:annotation>
+            <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>false stops the detector. Default true.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="window-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The candidate window. Default 60.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="watch-hours" type="xs:decimal"><xs:annotation><xs:documentation>How long after a release its version is compared with the previous version. Default 24.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="lookback-hours" type="xs:decimal"><xs:annotation><xs:documentation>The previous version's window before a release, and how long before an onset a change counts as a cause. Default 24.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="historical-offset-hours" type="xs:decimal"><xs:annotation><xs:documentation>How much earlier the historical baseline window is. Default 24.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="min-samples" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>Requests (or operation runs) each side needs for a verdict. Default 200.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="min-coverage" type="xs:decimal"><xs:annotation><xs:documentation>The share of a window's minutes that must have metrics, below which a verdict is degraded. Default 0.8.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="alpha" type="xs:decimal"><xs:annotation><xs:documentation>The one-sided p-value under which a difference counts. Default 0.01.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="rate-delta" type="xs:decimal"><xs:annotation><xs:documentation>The least rise of a rate that is a regression; 0.01 is one point. Default 0.01.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="latency-ratio" type="xs:decimal"><xs:annotation><xs:documentation>The least p95 ratio that is a regression, when the p95 is in a higher bucket. Default 1.5.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="critical-rate" type="xs:decimal"><xs:annotation><xs:documentation>A rate rise from which a regression is critical. Default 0.10.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="critical-ratio" type="xs:decimal"><xs:annotation><xs:documentation>A p95 ratio from which a regression is critical. Default 3.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="resolve-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>How long an incident whose regressions resolved is watched before it is resolved. Default 30.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="incident-severity"><xs:annotation><xs:documentation>The least severity of a regression
+                that opens an incident: major (the default) or critical.</xs:documentation></xs:annotation>
+                <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="major"/><xs:enumeration value="critical"/></xs:restriction></xs:simpleType></xs:attribute>
+        </xs:complexType></xs:element>
+        <xs:element name="recovery" minOccurs="0"><xs:complexType>
+            <xs:annotation><xs:documentation>Recovery (plans/Monitoring.md, Later: Recovery): for an open incident, the
+                matching RecoveryPolicy picks the least disruptive allowed action of its ladder, which is recorded as a
+                decision. Advisory by default: an action runs only with approval (MONITOR_RECOVER) or under an automatic
+                policy when allow-automatic is true, through its adapter (in-process, webhook or manual), one active
+                action per scope, and is verified against the policy's checks. No action reverses committed business
+                transactions.</xs:documentation></xs:annotation>
+            <xs:attribute name="enabled" type="boolean"><xs:annotation><xs:documentation>false stops new decisions. Default true.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="allow-automatic" type="boolean"><xs:annotation><xs:documentation>true lets a policy in automatic mode run its actions without approval. Default false: automatic policies wait for approval as approval policies do.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="verify-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>How long after an action takes effect its checks are read before it is verified, when its policy does not say. Default 15.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deadline-minutes" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>How long an action may run before it is timed out and escalated, when its policy does not say. Default 30.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType></xs:element>
         <xs:element name="receiver" minOccurs="0"><xs:complexType>
             <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics (and
                 OTLP/gRPC with grpc-enabled), and the

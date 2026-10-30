@@ -29,6 +29,15 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 - **Metrics.** `http.server.request.duration`, `moqui.artifact.duration` (by type, name and action),
   `db.client.operation.duration`, `moqui.job.runs` (by outcome) and process gauges, written once a minute as one
   document per active series, then rolled up to hours and days.
+- **Business operations.** A service call that owns its transaction (the outermost, or a `force-new` one) is an
+  operation, named by the service, by its `operation` attribute, or by a `telemetry/operations` rule. Each run counts
+  as `moqui.operation.runs`, and its time as `moqui.operation.duration`, by `moqui.operation.name` and `outcome`, taken
+  from the transaction's commit and rollback hooks: `commit`, `rollback`, `retry` (rolled back, and a scheduled
+  ServiceJob or a SystemMessage send or consume under its retry limit will run it again) or `pending` (queued for a
+  worker, counted once when queued). A call that joins its caller's transaction counts nothing of its own, and a
+  `transaction="ignore"` service is never an operation. The service's span carries `moqui.operation.name`,
+  `.outcome` and `.ref`, the correlation reference `parameter:value` from `operation-ref` (an id, never document
+  contents, and never a metric label). The framework's own `org.moqui.*` services are left out by the default conf.
 - **Logs.** Every INFO and higher log line, with the trace and span ids of the frame that wrote it.
 - **Errors.** Each error span or exception is fingerprinted (type, normalized message, top frames) into `otel_errors`,
   counted once per failing request.
@@ -87,6 +96,14 @@ with an `artifact` override and the receiver limits written out:
   keeps its statements; other child spans follow the global ratio.
 - **`metric`** sets the attributes kept on one instrument, replacing the global allow-list for it; `attributes=""`
   keeps none. Instruments without one keep the global list.
+- **`operations`** chooses the business operations: `record="default"` (every call that owns its transaction),
+  `"declared"` (only services with `operation`, or that a rule matches) or `"none"`, and `max-names` (500; later names
+  are recorded as `other`). Each `<operation service="regex" name="..." ref="..." record="false"/>` rule applies to
+  the services whose full names match; the first match wins, and a component's rule replaces the framework's of the
+  same pattern. A service declares its own with `operation="order.place" operation-ref="orderId"`.
+- **New fields.** A telemetry index whose mapping only gained fields gets their columns (Postgres) or properties
+  (OpenSearch) added in place when the server starts; rows written before have them empty. Any other change to a
+  telemetry mapping is refused, so history is never dropped.
 - **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
   on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
@@ -186,6 +203,7 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Screen | What it shows |
 | --- | --- |
 | Overview | Request rate and duration, job runs, top error groups and telemetry loss |
+| Operations | Business operations: runs ended, commits, rollbacks, retries and pending per operation, with average and p50/p95/p99 duration; outcomes over time, rollbacks and retries by operation, and duration percentiles. An operation narrows the dashboard to it |
 | Services | Services, endpoints and instances (with version) as tables that narrow the dashboard when clicked; request rate, 5xx errors and duration percentiles over time; the busiest artifacts, linking to Artifacts |
 | Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes, a flame graph of self time by span path, and the trace's logs |
 | Logs | Explore over `otel_logs`: query, filters, paging both ways, context lines, a live tail, the trace link per line, CSV, and log patterns |
@@ -197,6 +215,9 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Sources | Ingest keys (a new key's token shows once, in a message; the log masks it), the latest data from each source, exporter status and loss counters |
 | Checks | Synthetic checks and Prometheus scrape targets: add, edit, enable, run now, last result, and links to each check's runs and last trace, a target's metrics and the checks dashboard |
 | Browser | Page loads and p75 largest contentful paint over time; slowest pages with p75 load, LCP, INP and CLS; in-app navigations; the browser's requests (p95 by path); JavaScript errors by page and type |
+| Releases | With `MONITOR_INCIDENT`: each service's versions from its release markers, newest first, with the instances reporting each now, its open regressions and a link to Compare with the version before; ReleaseDetail lists the regressions (baseline and candidate values, change, confidence, severity, data quality, where) and the error groups first seen since the release |
+| Incidents | With `MONITOR_INCIDENT`: open incidents (or all, or of a status or service), New incident; IncidentDetail shows severity, status, onset and the cause's status, the ranked causes with what supports and contradicts each (Confirm, Reject), one timeline (releases and changes, regressions, new errors, failing traces, missing telemetry, alerts, decisions, actions, verifications and notes, with links to traces and error groups), the recovery panel (the next safe action, its blast radius, why automation stopped, Approve and Refuse; actions with Mark done, Mark failed, Cancel and Revert) and the regressions |
+| Recovery | The emergency stop, the recovery policies and adapters (changed with `MONITOR_RECOVER_ADMIN`), and the newest actions |
 | Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
@@ -321,6 +342,116 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
   location needs `REPORT_SAVE_LOCATION`.
 
+## Regressions and incidents
+
+The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
+last `window-minutes` with a baseline:
+- **The version before**, over `lookback-hours` before the release marker, while the release is under `watch-hours`
+  old. These stats are kept (`moqui.monitor.MonitorBaseline`), so the comparison does not drift as raw telemetry
+  ages out.
+- **The same version** `historical-offset-hours` earlier, after the watch period, or for the first version.
+
+It compares three metrics:
+- the error rate (5xx over requests), by a one-sided two-proportion test with Wilson intervals
+- p95 request latency, from the merged duration buckets; the p95 must reach a higher bucket, at `latency-ratio` or
+  more, with a chi-square test over the buckets
+- the operations' rollback rate (rollbacks and retries over runs)
+
+Verdicts:
+- A rise counts when its p-value is under `alpha` and it is at least `rate-delta` (one point by default). It is
+  critical from `critical-rate` or `critical-ratio`.
+- Fewer than `min-samples` on a side gives no verdict.
+- A window with fewer than `min-coverage` of its minutes reported, or telemetry the candidate dropped, marks the
+  verdict degraded. Neither is ever read as healthy.
+- Each instance of the version is compared too: a rise on every instance is version-wide, on some while others are
+  healthy an instance fault, and on one instance alone unknown.
+
+A regression stays open while it lasts and is resolved only by good data. One at `incident-severity` (major) opens an
+incident, or joins the service's open one. Each service has one open incident at a time.
+
+The incident's timeline is filled with:
+- the regression
+- the release, deploy and config markers within the lookback before the onset
+- error groups first seen near the onset
+- sample failing requests of the version
+- a missing-telemetry row when the data was degraded
+
+Its causes are ranked by how close each came before the onset, how its scope fits the affected and healthy instances
+(instances still on the old version that also regressed contradict the release), and how much of the deviation it
+explains. A cause is a hypothesis until an operator confirms it. When every regression of the incident has resolved,
+the incident is Monitoring, and after `resolve-minutes` (30) Resolved; a regression back in that time reopens it.
+
+An alert rule with the label `incident="true"` opens an incident, or joins the open one, when a series starts firing.
+Each incident view and change is logged on the `moqui.monitor.audit` target.
+
+```xml
+<telemetry><regressions window-minutes="60" watch-hours="24" lookback-hours="24" min-samples="200"
+        alpha="0.01" rate-delta="0.01" latency-ratio="1.5" incident-severity="major" resolve-minutes="30"/></telemetry>
+```
+
+## Recovery
+
+The `run_Recovery_minute` job (`run#Recovery`) applies the first enabled `RecoveryPolicy`, by order, whose service
+pattern and least severity fit each open incident.
+
+A policy's ladder of steps is tried least disruptive first:
+- `observe`
+- `escalate`
+- `pause-alert-rule`
+- `pause-job`
+- `disable-artifact` (a deny for `ALL_USERS` on an artifact group)
+- `isolate-instance`, `pause-rollout` and `promote`
+- `restart`
+- `rollback` to the version before
+
+A step is refused, with its reason recorded, when:
+- the regressions' confidence is under `minConfidence` (0.99)
+- the evidence is degraded, for the disruptive steps
+- the step does not fit the locality: isolating needs an instance fault on fewer than half the instances, and a
+  rollback needs a version-wide regression
+- a rollback's versions have different entity schemas (each release marker records `moqui.schema.hash`) or unknown
+  ones
+- another action is active in the service's scope
+- another action finished inside `cooldownMinutes`, or the step would reverse one
+- the scope has had `maxActionsPerDay` actions today
+- the step was already tried for this incident
+- the emergency stop is on
+
+The first step allowed is the decision. If none is allowed, the decision is to escalate (or to observe, after a
+recent escalation), with the refusals as why automation stopped.
+
+What happens to a decision depends on the policy's mode:
+- **Advisory** (the default) records it.
+- **Approval** waits for Approve on the incident, which needs `MONITOR_RECOVER`.
+- **Automatic** runs it only with `<telemetry><recovery allow-automatic="true">`, and a rollback only when the release
+  is the first-ranked cause with a score of 0.5 or more.
+
+Escalation, which changes nothing, always runs. An approval is bound to the decision: if the incident changed, it is
+superseded by a new decision.
+
+An action is saved before it runs, with an idempotency key, while it holds the scope's lease. Each adapter type runs it
+differently:
+- **in-process** pauses a ServiceJob or alert rule, denies an artifact group, or drains an instance (`/health`
+  answers 503 with `draining` so a load balancer stops sending it requests, while it still serves those that reach
+  it). Each can be reverted.
+- **webhook** posts a signed JSON request (action, target, idempotency key, and in the first attempt a callback
+  token) to a deployment controller. It is tried again, with the same key, up to five times. The controller answers
+  at once, reports on `POST /v1/recovery` with an ingest key and the token, or is polled at `statusUrl`.
+- **manual** waits for an operator to mark the action done or failed.
+
+An action past its deadline is timed out and escalated.
+
+`verifyMinutes` after the action took effect, the service since then is compared with each regression's baseline,
+the operations' rollback rate is held to `maxRollbackRate`, and a rollback must show its instances on the target
+version:
+- Verified moves the incident to Monitoring.
+- Failed escalates, so the next step can be decided.
+- Too little data is Inconclusive until twice the verify time, then escalated, and never Verified.
+
+The shipped `DEFAULT` policy is advisory and only escalates major and critical incidents to the ADMIN group (its
+`contactJson` takes a contact point as alert rules do). No action reverses committed business transactions. The
+public demo ends `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN`.
+
 ## Security
 
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
@@ -334,6 +465,9 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   the report may read.
 - Queries have row, bucket and time limits, and a timeout. Exports and scheduled deliveries are logged to the
   `moqui.report.audit` target, so they show in Monitor Logs.
+- Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
+  recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
+  all three. Their views and changes are logged on the `moqui.monitor.audit` target.
 
 ## Capacity and loss
 
@@ -375,8 +509,15 @@ take the index refresh interval to appear.
 - **Old data** is not migrated or dropped. After a backup, and only once you no longer need the old rows, Postgres
   installations may drop the tables with `DROP TABLE IF EXISTS artifact_hit;` and
   `DROP TABLE IF EXISTS artifact_hit_bin;` (adjust schema and names). Startup never runs these.
-- **Telemetry mappings** are checked at start; a changed mapping is refused rather than rebuilt over existing data.
-  Back up and migrate, or point at a fresh prefixed store, before upgrading across a mapping change.
+- **Telemetry mappings** are checked at start. A mapping that only gained fields gets them added in place, as
+  `moqui.operation.*` and `exception.fingerprint` were on `otel_spans` and `moqui.operation.name` on `otel_metrics`
+  (rows written before have them empty); a server of an older build then refuses the grown table until it is
+  upgraded too. Any other change is refused rather than rebuilt over existing data: back up and migrate, or point at a
+  fresh prefixed store, before upgrading across one.
+- **Regressions, incidents and recovery** add the `detect_Regressions_5min` and `run_Recovery_minute` jobs to
+  `TelemetryData.xml`, the `MONITOR_INCIDENT`, `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN` permissions to
+  `MonitoringSecurityData.xml`, and the shipped recovery policy and adapters in `RecoverySetupData.xml`
+  (`seed-initial`, so the changes an administrator makes are kept). On an existing database, load those three files.
 - **Alert notifications.** The `ReportAlert` topic ships with `receiveNotifications="Y"`; a database that loaded it
   before the review pass has `N`, which delivers to nobody who has not opted in. Reload `ReportSetupData.xml` or edit
   the topic.
@@ -390,4 +531,4 @@ take the index refresh interval to appear.
 ## Not built
 
 The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
-Profiling, business operations, regressions, incidents and recovery are the Later stages of the plan.
+Server-JS profiling is the Later stage of the plan not yet built.

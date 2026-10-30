@@ -711,7 +711,10 @@ async fn health(State(state): State<Arc<HttpState>>, ConnectInfo(peer): ConnectI
     ) {
         return plain(404, "not found");
     }
-    if readiness(&state.factory) {
+    // A drained instance (the isolate-instance recovery action) is taken out of the load balancer but still serves.
+    if moqui_core::drain::is_draining(&state.factory) {
+        json(503, "{\"ready\":false,\"draining\":true}")
+    } else if readiness(&state.factory) {
         json(200, "{\"ready\":true}")
     } else {
         json(503, "{\"ready\":false}")
@@ -1048,7 +1051,7 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
     // Browser RUM posts (/rum/traces, /rum/logs, /rum/replay) are the same: telemetry about telemetry.
     if matches!(
         request.uri().path(),
-        "/v1/traces" | "/v1/logs" | "/v1/metrics" | "/v1/annotations" | "/health" | "/metrics"
+        "/v1/traces" | "/v1/logs" | "/v1/metrics" | "/v1/annotations" | "/v1/recovery" | "/health" | "/metrics"
     ) || request.uri().path().starts_with("/rum/")
     {
         return next.run(request).await;

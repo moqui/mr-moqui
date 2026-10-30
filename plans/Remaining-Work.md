@@ -40,7 +40,7 @@ Guides [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Mail-OAuth](../docs/
 
 ## Monitoring
 
-Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stages (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC).
+Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stage server-JS profiling (the others were built Oct 30).
 
 | Area | Item | Source |
 |---|---|---|

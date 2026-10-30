@@ -448,3 +448,22 @@ feature("the Browser dashboard and the session replay screens render", {
         page.text().includes("Move telemetry tables into day partitions")
     },
 })
+feature("the Operations dashboard and the Releases, Incidents and Recovery screens render", {
+    expect() {
+        const page = monitoringPage()
+        page.goto("/qapps/monitor/Operations?from=now-1d&thru=now").status == 200
+        page.waitFor(() => !!document.querySelector(".m-report-dashboard"))
+        page.text().includes("Business operations")
+        page.text().includes("Outcomes over time")
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto("/apps/monitor/Releases").status == 200
+        page.text().includes("Each version a service started with")
+        page.goto("/apps/monitor/Incidents?statusId=all").status == 200
+        page.text().includes("New incident")
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto("/apps/monitor/Recovery").status == 200
+        page.text().includes("Advisory by default")
+        page.text().includes("Escalate major and critical incidents")
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+    },
+})

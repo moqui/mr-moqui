@@ -77,10 +77,39 @@ pub fn record_release(factory: &moqui_core::context::ExecutionContextFactory) ->
     if search.get_document("monitor_annotations", &id)?.is_some() {
         return Ok(());
     }
-    let annotation = json!({"_id":id,"time":jiff::Timestamp::now().to_string(),"source":"release","scope":"service","service.name":resource.service_name,"service.instance.id":resource.instance_id,"service.version":resource.version,"vcs.ref.head.revision":resource.revision,"attribution_uncertain":resource.attribution_uncertain,"text":format!("{} {} ({})",resource.service_name,resource.version,resource.revision),"tags":["release"]});
+    let mut annotation = json!({"_id":id,"time":jiff::Timestamp::now().to_string(),"source":"release","scope":"service","service.name":resource.service_name,"service.instance.id":resource.instance_id,"service.version":resource.version,"vcs.ref.head.revision":resource.revision,"attribution_uncertain":resource.attribution_uncertain,"text":format!("{} {} ({})",resource.service_name,resource.version,resource.revision),"tags":["release"]});
+    if let Some(entity) = factory.entity() {
+        annotation["moqui.schema.hash"] = json!(schema_hash(&entity));
+    }
     let Value::Map(document) = moqui_lib::json::from_json(&annotation) else {
         unreachable!()
     };
     search.index_entries("monitor_annotations", vec![document])?;
     Ok(())
+}
+
+/// A fingerprint of the entity tables, columns and types: two releases with the same one read and write the same
+/// schema, which a recovery rollback between them needs (plans/Monitoring.md, Later: Recovery).
+pub fn schema_hash(entity: &moqui_core::entity::EntityFacade) -> String {
+    use sha2::{Digest, Sha256};
+    let mut tables: Vec<String> = entity.with_model(|model| {
+        model
+            .entities()
+            .iter()
+            .filter(|definition| definition.member_entities.is_empty())
+            .map(|definition| {
+                let mut columns: Vec<String> = definition
+                    .fields
+                    .iter()
+                    .map(|field| format!("{}:{}", field.column_name, field.field_type))
+                    .collect();
+                columns.sort();
+                format!("{}({})", definition.table_name, columns.join(","))
+            })
+            .collect()
+    });
+    tables.sort();
+    let mut hash = format!("{:x}", Sha256::digest(tables.join(";").as_bytes()));
+    hash.truncate(32);
+    hash
 }

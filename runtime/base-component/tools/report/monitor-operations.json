@@ -1,0 +1,530 @@
+{
+  "id": "monitor-operations",
+  "type": "dashboard",
+  "title": "Business operations",
+  "body": {
+    "folder": "Monitor",
+    "panels": {
+      "summary": {
+        "title": "Operations (an operation narrows the dashboard to it)",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.duration\"",
+            "aggregations": [
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "runs",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "count"
+                }
+              },
+              {
+                "id": "total",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\"",
+            "aggregations": [
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "commits",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "outcome",
+                  "op": "eq",
+                  "value": "commit"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\"",
+            "aggregations": [
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "rollbacks",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "outcome",
+                  "op": "eq",
+                  "value": "rollback"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\"",
+            "aggregations": [
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "retries",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "outcome",
+                  "op": "eq",
+                  "value": "retry"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          },
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\"",
+            "aggregations": [
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 100,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "pending",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "field": {
+                  "name": "outcome",
+                  "op": "eq",
+                  "value": "pending"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "transformations": [
+          {
+            "type": "join",
+            "fields": [
+              "operation"
+            ]
+          },
+          {
+            "type": "calculate",
+            "left": "total",
+            "right": "runs",
+            "operator": "/",
+            "name": "avg"
+          },
+          {
+            "type": "organize",
+            "hide": [
+              "count",
+              "count.2",
+              "count.3",
+              "count.4",
+              "count.5",
+              "total",
+              "latency.stddev",
+              "latency.bucket.0",
+              "latency.bucket.1",
+              "latency.bucket.2",
+              "latency.bucket.3",
+              "latency.bucket.4",
+              "latency.bucket.5",
+              "latency.bucket.6",
+              "latency.bucket.7",
+              "latency.bucket.8",
+              "latency.bucket.9",
+              "latency.bucket.10",
+              "latency.bucket.11",
+              "latency.bucket.12",
+              "latency.bucket.13",
+              "latency.bucket.14"
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "regex": "^(avg|latency\\.p[0-9]+)$"
+              },
+              "config": {
+                "unit": "s",
+                "decimals": 4
+              }
+            },
+            {
+              "match": {
+                "regex": "^(commits|rollbacks|retries|pending)$"
+              },
+              "config": {
+                "noValue": "0"
+              }
+            },
+            {
+              "match": {
+                "name": "runs"
+              },
+              "config": {
+                "displayName": "Runs ended"
+              }
+            },
+            {
+              "match": {
+                "name": "operation"
+              },
+              "config": {
+                "displayName": "Operation",
+                "link": "/apps/monitor/Operations?var-operation=${operation}&from=${__from}&thru=${__thru}"
+              }
+            }
+          ]
+        }
+      },
+      "outcomes": {
+        "title": "Outcomes over time",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "outcome",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "outcome",
+                  "size": 4
+                }
+              },
+              {
+                "id": "runs",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "failed": {
+        "title": "Rollbacks and retries by operation",
+        "visualization": "timeSeries",
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.runs\" AND (outcome:rollback OR outcome:retry)",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "operation",
+                "type": "terms",
+                "role": "series",
+                "params": {
+                  "field": "moqui.operation.name",
+                  "size": 10,
+                  "missing": "__missing"
+                }
+              },
+              {
+                "id": "runs",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "sum"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "duration": {
+        "title": "Duration percentiles",
+        "visualization": "timeSeries",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "decimals": 3
+          }
+        },
+        "queries": [
+          {
+            "datasetId": "otel_metrics",
+            "metricGranularity": "auto",
+            "queryString": "name:\"moqui.operation.duration\"",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "bucket_start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "latency",
+                "type": "histogram_merge",
+                "role": "metric",
+                "params": {
+                  "bounds": [
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.075,
+                    0.1,
+                    0.25,
+                    0.5,
+                    0.75,
+                    1,
+                    2.5,
+                    5,
+                    7.5,
+                    10
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count",
+                  "latency.stddev",
+                  "latency.bucket.0",
+                  "latency.bucket.1",
+                  "latency.bucket.2",
+                  "latency.bucket.3",
+                  "latency.bucket.4",
+                  "latency.bucket.5",
+                  "latency.bucket.6",
+                  "latency.bucket.7",
+                  "latency.bucket.8",
+                  "latency.bucket.9",
+                  "latency.bucket.10",
+                  "latency.bucket.11",
+                  "latency.bucket.12",
+                  "latency.bucket.13",
+                  "latency.bucket.14"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "variables": [
+      {
+        "name": "operation",
+        "label": "Operation",
+        "kind": "query",
+        "datasetId": "otel_metrics",
+        "field": "moqui.operation.name",
+        "multi": false,
+        "includeAll": true
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "kind": "query",
+        "datasetId": "otel_metrics",
+        "field": "service.name",
+        "multi": false,
+        "includeAll": true
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "kind": "query",
+        "datasetId": "otel_metrics",
+        "field": "service.instance.id",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  }
+}

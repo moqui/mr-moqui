@@ -103,6 +103,10 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("exception.type", Keyword),
             ("exception.message", Text),
             ("exception.stacktrace", Text),
+            ("exception.fingerprint", Keyword),
+            ("moqui.operation.name", Keyword),
+            ("moqui.operation.outcome", Keyword),
+            ("moqui.operation.ref", Keyword),
         ],
         LOGS => &[
             ("timestamp", Date),
@@ -143,6 +147,7 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("moqui.artifact.name", Keyword),
             ("moqui.artifact.action", Keyword),
             ("moqui.artifact.sub_type", Keyword),
+            ("moqui.operation.name", Keyword),
         ],
         ERRORS => &[
             ("fingerprint", Keyword),

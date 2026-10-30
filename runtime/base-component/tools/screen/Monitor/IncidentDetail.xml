@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One incident (plans/Monitoring.md, Later: Regressions and incidents; the 3 a.m. incident): what failed and since when,
+    its status and severity, the ranked causes with what supports and contradicts each, one timeline of the changes,
+    regressions, errors, failing traces, missing telemetry, decisions and notes, its regressions, and its recovery.
+    MONITOR_INCIDENT is checked by the services, and each view is logged. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Incident" default-menu-include="false">
+    <parameter name="incidentId" required="true"/>
+    <transition name="updateIncident">
+        <service-call name="org.moqui.monitor.MonitorServices.update#Incident"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="confirmCause">
+        <service-call name="org.moqui.monitor.MonitorServices.update#Incident" in-map="{incidentId:incidentId, confirmCauseSeqId:causeSeqId}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="rejectCause">
+        <service-call name="org.moqui.monitor.MonitorServices.update#Incident" in-map="{incidentId:incidentId, rejectCauseSeqId:causeSeqId}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="addNote">
+        <service-call name="org.moqui.monitor.MonitorServices.add#IncidentNote"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="approveDecision">
+        <service-call name="org.moqui.monitor.MonitorServices.approve#RecoveryDecision" in-map="{decisionId:decisionId}"/>
+        <default-response url="." parameter-map="{incidentId:incidentId}"/>
+    </transition>
+    <transition name="refuseDecision">
+        <service-call name="org.moqui.monitor.MonitorServices.refuse#RecoveryDecision" in-map="{decisionId:decisionId}"/>
+        <default-response url="." parameter-map="{incidentId:incidentId}"/>
+    </transition>
+    <transition name="completeAction">
+        <service-call name="org.moqui.monitor.MonitorServices.complete#RecoveryAction" in-map="{actionId:actionId, outcome:outcome}"/>
+        <default-response url="." parameter-map="{incidentId:incidentId}"/>
+    </transition>
+    <transition name="cancelAction">
+        <service-call name="org.moqui.monitor.MonitorServices.cancel#RecoveryAction" in-map="{actionId:actionId}"/>
+        <default-response url="." parameter-map="{incidentId:incidentId}"/>
+    </transition>
+    <transition name="revertAction">
+        <service-call name="org.moqui.monitor.MonitorServices.revert#RecoveryAction" in-map="{actionId:actionId}"/>
+        <default-response url="." parameter-map="{incidentId:incidentId}"/>
+    </transition>
+    <transition name="releaseDetail"><default-response url="../ReleaseDetail"/></transition>
+    <transition name="traces"><default-response url="../Traces"/></transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        incident = {}
+        causeList = []
+        evidenceList = []
+        regressionList = []
+        decisionList = []
+        actionList = []
+        recoveryStopped = false
+        recoverAllowed = ec.user.hasPermission('MONITOR_RECOVER')
+        if (incidentAllowed) {
+            // Decimals from the entities are not JavaScript numbers.
+            const num = value => value == null ? null : typeof value == 'object' && value.toNumber ? value.toNumber() : Number(value)
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#Incident').parameters({incidentId}).call()
+            incident = result.incident || {}
+            const linkOf = row => row.kind == 'trace' ? '/apps/monitor/TraceDetail?traceId=' + encodeURIComponent(row.refId)
+                : row.kind == 'error' ? '/apps/monitor/ErrorDetail?fingerprint=' + encodeURIComponent(row.refId) : ''
+            evidenceList = (result.evidence || []).map(row => Object.assign({}, row, {link: linkOf(row)}))
+            causeList = (result.causes || []).map(row => Object.assign({}, row, {
+                support: (row.supporting || []).join('; '), against: (row.contradicting || []).join('; '),
+                scoreText: row.score == null ? '' : num(row.score).toFixed(3)}))
+            const shown = (metric, value) => value == null ? '' : metric == 'latency_p95' ? num(value).toFixed(3) + ' s' : (num(value) * 100).toFixed(2) + '%'
+            regressionList = (result.regressions || []).map(row => Object.assign({}, row, {
+                change: shown(row.metric, row.baselineValue) + ' → ' + shown(row.metric, row.candidateValue)}))
+            const recovery = result.recovery || {}
+            recoveryStopped = !!recovery.stopped
+            decisionList = (recovery.decisions || []).map(row => Object.assign({}, row, {
+                waiting: row.statusId == 'Proposed' || row.statusId == 'AwaitingApproval'}))
+            actionList = (recovery.actions || []).map(row => Object.assign({}, row, {
+                active: ['Persisted', 'Running', 'AwaitingOperator'].includes(row.statusId),
+                revertible: row.statusId == 'Succeeded' && !!row.undoJson}))
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="${incident.title || incidentId}" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Incidents need the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="${incident.severity || ''} · ${incident.statusId || ''} · ${incident.serviceName || ''} ${incident.version || ''} · onset ${incident.onsetDate || ''} · detected ${incident.detectedDate || ''} · cause ${incident.causeStatus || ''}" type="p"/>
+            <label text="${incident.summary || ''}" type="p" condition="incident.summary"/>
+            <form-single name="UpdateIncident" transition="updateIncident" map="incident">
+                <field name="incidentId"><default-field><hidden/></default-field></field>
+                <field name="statusId"><default-field title="Status"><drop-down>
+                    <option key="Open"/><option key="Mitigating"/><option key="Monitoring"/><option key="Reopened"/><option key="Resolved"/>
+                </drop-down></default-field></field>
+                <field name="severity"><default-field title="Severity"><drop-down>
+                    <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
+                </drop-down></default-field></field>
+                <field name="submit"><default-field><submit text="Update"/></default-field></field>
+            </form-single>
+
+            <label text="Probable causes (hypotheses until confirmed)" type="h5"/>
+            <form-list name="CauseList" list="causeList" skip-form="true">
+                <field name="causeRank"><default-field title="#"><display/></default-field></field>
+                <field name="title"><default-field title="Cause"><display/></default-field></field>
+                <field name="scoreText"><default-field title="Score"><display/></default-field></field>
+                <field name="support"><default-field title="Supporting"><display/></default-field></field>
+                <field name="against"><default-field title="Contradicting"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="confirm"><default-field title="">
+                    <link url="confirmCause" text="Confirm" condition="statusId == 'hypothesis'" parameter-map="{incidentId:incidentId, causeSeqId:causeSeqId}"/>
+                    <link url="rejectCause" text="Reject" condition="statusId == 'hypothesis'" parameter-map="{incidentId:incidentId, causeSeqId:causeSeqId}"/>
+                </default-field></field>
+            </form-list>
+
+            <label text="Timeline" type="h5"/>
+            <form-list name="EvidenceList" list="evidenceList" skip-form="true">
+                <field name="evidenceDate"><default-field title="When"><display/></default-field></field>
+                <field name="kind"><default-field title="What"><display/></default-field></field>
+                <field name="summary"><default-field title="Detail"><display/></default-field></field>
+                <field name="refId"><default-field title="Link">
+                    <link url="${link}" url-type="plain" text="${refId}" condition="link" link-type="anchor"/>
+                </default-field></field>
+            </form-list>
+            <form-single name="AddNote" transition="addNote">
+                <field name="incidentId"><default-field><hidden/></default-field></field>
+                <field name="text"><default-field title="Note"><text-area rows="2" cols="80"/></default-field></field>
+                <field name="submit"><default-field><submit text="Add note"/></default-field></field>
+            </form-single>
+
+            <label text="Recovery" type="h5"/>
+            <label text="The emergency stop is on: no recovery action runs." type="p" condition="recoveryStopped"/>
+            <form-list name="DecisionList" list="decisionList" skip-form="true">
+                <field name="decidedDate"><default-field title="Decided"><display/></default-field></field>
+                <field name="action"><default-field title="Next safe action"><display/></default-field></field>
+                <field name="target"><default-field title="Target"><display/></default-field></field>
+                <field name="blastRadius"><default-field title="Blast radius"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="blockedReason"><default-field title="Why automation stopped"><display/></default-field></field>
+                <field name="approve"><default-field title="">
+                    <link url="approveDecision" text="Approve" condition="waiting &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, decisionId:decisionId}" confirmation="Run ${action} ${target || ''} now?"/>
+                    <link url="refuseDecision" text="Refuse" condition="waiting &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, decisionId:decisionId}"/>
+                </default-field></field>
+            </form-list>
+            <form-list name="ActionList" list="actionList" skip-form="true">
+                <field name="createdDate"><default-field title="Started"><display/></default-field></field>
+                <field name="action"><default-field title="Action"><display/></default-field></field>
+                <field name="target"><default-field title="Target"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="resultingState"><default-field title="Result"><display/></default-field></field>
+                <field name="verificationStatus"><default-field title="Verification"><display/></default-field></field>
+                <field name="manage"><default-field title="">
+                    <link url="completeAction" text="Mark done" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId, outcome:'done'}"/>
+                    <link url="completeAction" text="Mark failed" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId, outcome:'failed'}"/>
+                    <link url="cancelAction" text="Cancel" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId}"/>
+                    <link url="revertAction" text="Revert" condition="revertible &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId}" confirmation="Revert ${action} ${target || ''}?"/>
+                </default-field></field>
+            </form-list>
+
+            <label text="Regressions" type="h5"/>
+            <form-list name="RegressionList" list="regressionList" skip-form="true">
+                <field name="metric"><default-field title="Metric"><display/></default-field></field>
+                <field name="candidateVersion"><default-field title="Version">
+                    <link url="releaseDetail" text="${candidateVersion}" parameter-map="{serviceName:serviceName, version:candidateVersion}" link-type="anchor"/>
+                </default-field></field>
+                <field name="baselineVersion"><default-field title="Against"><display/></default-field></field>
+                <field name="change"><default-field title="Baseline → candidate"><display/></default-field></field>
+                <field name="dataQuality"><default-field title="Data"><display/></default-field></field>
+                <field name="locality"><default-field title="Where"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

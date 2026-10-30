@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Recovery (plans/Monitoring.md, Later: Recovery): the emergency stop, the policies (which incidents, which actions least
+    disruptive first, advisory, approval or automatic), the adapters that carry actions out, and the newest actions.
+    Seeing it needs MONITOR_INCIDENT; changing policies, adapters and the stop MONITOR_RECOVER_ADMIN, which the services check. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Recovery" default-menu-index="17">
+    <transition name="setStop">
+        <service-call name="org.moqui.monitor.MonitorServices.set#RecoveryStop"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="storePolicy">
+        <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryPolicy"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="storeAdapter">
+        <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryAdapter"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="incident"><default-response url="../IncidentDetail"/></transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        adminAllowed = ec.user.hasPermission('MONITOR_RECOVER_ADMIN')
+        policyList = []
+        adapterList = []
+        actionList = []
+        recoveryStopped = false
+        if (incidentAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Recovery').call()
+            policyList = result.policies || []
+            adapterList = result.adapters || []
+            actionList = result.actions || []
+            recoveryStopped = !!result.stopped
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="Recovery" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Recovery needs the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="Advisory by default: an action runs only when approved on its incident (MONITOR_RECOVER), or under an automatic policy when telemetry recovery allow-automatic is true. Escalation always runs. No action reverses committed business transactions." type="p"/>
+            <section name="Stop" condition="recoveryStopped"><widgets>
+                <label text="The emergency stop is on: no recovery action runs or starts." type="p"/>
+                <link url="setStop" text="Turn the emergency stop off" condition="adminAllowed" parameter-map="{stopped:'N'}"/>
+            </widgets><fail-widgets>
+                <container-dialog id="StopDialog" button-text="Emergency stop" condition="adminAllowed">
+                    <form-single name="StopRecovery" transition="setStop">
+                        <field name="stopped"><default-field><hidden default-value="Y"/></default-field></field>
+                        <field name="reason"><default-field title="Reason"><text-line size="60"/></default-field></field>
+                        <field name="submit"><default-field><submit text="Stop all recovery actions"/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </fail-widgets></section>
+
+            <label text="Policies" type="h5"/>
+            <container-dialog id="PolicyDialog" button-text="Add or change a policy" condition="adminAllowed">
+                <form-single name="StorePolicy" transition="storePolicy">
+                    <field name="policyId"><default-field title="Policy ID (empty for a new one)"><text-line/></default-field></field>
+                    <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                    <field name="enabled"><default-field title="Enabled"><drop-down no-current-selected-key="Y"><option key="Y" text="Yes"/><option key="N" text="No"/></drop-down></default-field></field>
+                    <field name="sequenceNum"><default-field title="Order"><text-line size="5"/></default-field></field>
+                    <field name="serviceName"><default-field title="Service pattern"><text-line/></default-field></field>
+                    <field name="minSeverity"><default-field title="Least severity"><drop-down no-current-selected-key="major">
+                        <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
+                    </drop-down></default-field></field>
+                    <field name="mode"><default-field title="Mode"><drop-down no-current-selected-key="advisory">
+                        <option key="advisory" text="Advisory"/><option key="approval" text="Approval"/><option key="automatic" text="Automatic"/>
+                    </drop-down></default-field></field>
+                    <field name="ladderJson"><default-field title="Steps (JSON list of {action, target, adapterId})"><text-area rows="4" cols="80"/></default-field></field>
+                    <field name="adapterId"><default-field title="Adapter"><drop-down allow-empty="true">
+                        <list-options list="adapterList" key="${adapterId}" text="${adapterId}"/>
+                    </drop-down></default-field></field>
+                    <field name="contactJson"><default-field title="Escalate to (contact point JSON)"><text-area rows="2" cols="80"/></default-field></field>
+                    <field name="minConfidence"><default-field title="Least confidence"><text-line size="6"/></default-field></field>
+                    <field name="cooldownMinutes"><default-field title="Cooldown minutes"><text-line size="6"/></default-field></field>
+                    <field name="maxActionsPerDay"><default-field title="Actions per day"><text-line size="6"/></default-field></field>
+                    <field name="deadlineMinutes"><default-field title="Deadline minutes"><text-line size="6"/></default-field></field>
+                    <field name="verifyMinutes"><default-field title="Verify after minutes"><text-line size="6"/></default-field></field>
+                    <field name="submit"><default-field><submit text="Save policy"/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <form-list name="PolicyList" list="policyList" skip-form="true">
+                <field name="policyId"><default-field title="Policy"><display/></default-field></field>
+                <field name="description"><default-field title="Description"><display/></default-field></field>
+                <field name="enabled"><default-field title="Enabled"><display/></default-field></field>
+                <field name="serviceName"><default-field title="Service"><display/></default-field></field>
+                <field name="minSeverity"><default-field title="Least severity"><display/></default-field></field>
+                <field name="mode"><default-field title="Mode"><display/></default-field></field>
+                <field name="ladderJson"><default-field title="Steps"><display/></default-field></field>
+                <field name="adapterId"><default-field title="Adapter"><display/></default-field></field>
+            </form-list>
+
+            <label text="Adapters" type="h5"/>
+            <container-dialog id="AdapterDialog" button-text="Add or change an adapter" condition="adminAllowed">
+                <form-single name="StoreAdapter" transition="storeAdapter">
+                    <field name="adapterId"><default-field title="Adapter ID"><text-line/></default-field></field>
+                    <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                    <field name="adapterType"><default-field title="Type"><drop-down>
+                        <option key="webhook" text="Webhook"/><option key="manual" text="Manual"/><option key="in-process" text="In process"/>
+                    </drop-down></default-field></field>
+                    <field name="url"><default-field title="URL"><text-line size="60"/></default-field></field>
+                    <field name="urlProperty"><default-field title="URL property"><text-line/></default-field></field>
+                    <field name="statusUrl"><default-field title="Status URL"><text-line size="60"/></default-field></field>
+                    <field name="secretProperty"><default-field title="Signing secret property"><text-line/></default-field></field>
+                    <field name="allowInternal"><default-field title="May reach private addresses"><drop-down no-current-selected-key="N"><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
+                    <field name="instructions"><default-field title="Instructions (manual)"><text-area rows="2" cols="80"/></default-field></field>
+                    <field name="submit"><default-field><submit text="Save adapter"/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <form-list name="AdapterList" list="adapterList" skip-form="true">
+                <field name="adapterId"><default-field title="Adapter"><display/></default-field></field>
+                <field name="adapterType"><default-field title="Type"><display/></default-field></field>
+                <field name="description"><default-field title="Description"><display/></default-field></field>
+                <field name="url"><default-field title="URL"><display/></default-field></field>
+                <field name="allowInternal"><default-field title="Private addresses"><display/></default-field></field>
+            </form-list>
+
+            <label text="Newest actions" type="h5"/>
+            <form-list name="ActionList" list="actionList" skip-form="true">
+                <field name="createdDate"><default-field title="Started"><display/></default-field></field>
+                <field name="action"><default-field title="Action"><display/></default-field></field>
+                <field name="target"><default-field title="Target"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="verificationStatus"><default-field title="Verification"><display/></default-field></field>
+                <field name="incidentId"><default-field title="Incident"><link url="incident" text="${incidentId}" parameter-map="{incidentId:incidentId}" link-type="anchor"/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

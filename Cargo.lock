@@ -4460,6 +4460,7 @@ dependencies = [
  "croner",
  "flate2",
  "getrandom 0.3.4",
+ "hmac 0.12.1",
  "indexmap",
  "jiff",
  "moqui-core",
