@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use moqui_lib::node::MNode;
+use moqui_lib::sync::lock;
 use serde::Serialize;
 
 /// The root elements of Moqui XML files and the XSD that defines each.
@@ -122,16 +123,13 @@ pub fn digest(xsd_dir: &Path, root: &str) -> Option<Arc<Digest>> {
     let stamp = xsd_stamp(xsd_dir);
     let key = (xsd_dir.to_path_buf(), root.to_string());
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some((kept, digest)) = cache.lock().unwrap_or_else(|err| err.into_inner()).get(&key) {
+    if let Some((kept, digest)) = lock(cache).get(&key) {
         if *kept == stamp {
             return Some(Arc::clone(digest));
         }
     }
     let made = Arc::new(build(xsd_dir, file, root)?);
-    cache
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .insert(key, (stamp, Arc::clone(&made)));
+    lock(cache).insert(key, (stamp, Arc::clone(&made)));
     Some(made)
 }
 

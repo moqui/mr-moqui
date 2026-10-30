@@ -564,7 +564,7 @@ impl Reader<'_> {
 
     /// The service and entity names in the string literals of a script's calls.
     fn script_refs(&mut self, from: &str, text: &str, first_line: u32) {
-        for (kind, name, offset) in script_names(text) {
+        for ScriptName { kind, name, offset } in script_names(text) {
             let line = first_line + u32::try_from(text[..offset].matches('\n').count()).unwrap_or(0);
             self.reference(from, kind, &name, "", "script", line, 0);
         }
@@ -618,22 +618,33 @@ static ENTITY_CALL: LazyLock<Regex> = LazyLock::new(|| {
         .expect("entity call pattern")
 });
 
+/// A service or entity name in a string literal of a script.
+#[derive(Debug, PartialEq)]
+pub struct ScriptName {
+    pub kind: ToKind,
+    pub name: String,
+    /// The byte offset of the name in the script.
+    pub offset: usize,
+}
+
 /// The names in the string literals of a script's service and entity calls (`ec.service.sync().name("…")`,
-/// `ec.entity.find("…")`, `makeValue("…")`), with their byte offsets.
+/// `ec.entity.find("…")`, `makeValue("…")`), in the order they come.
 #[must_use]
-pub fn script_names(text: &str) -> Vec<(ToKind, String, usize)> {
-    let mut found: Vec<(ToKind, String, usize)> = SERVICE_CALL
-        .captures_iter(text)
-        .filter_map(|captures| captures.get(1))
-        .map(|name| (ToKind::Service, name.as_str().to_string(), name.start()))
-        .chain(
-            ENTITY_CALL
-                .captures_iter(text)
+pub fn script_names(text: &str) -> Vec<ScriptName> {
+    let calls = [(ToKind::Service, &*SERVICE_CALL), (ToKind::Entity, &*ENTITY_CALL)];
+    let mut found: Vec<ScriptName> = calls
+        .into_iter()
+        .flat_map(|(kind, call)| {
+            call.captures_iter(text)
                 .filter_map(|captures| captures.get(1))
-                .map(|name| (ToKind::Entity, name.as_str().to_string(), name.start())),
-        )
+                .map(move |name| ScriptName {
+                    kind,
+                    name: name.as_str().to_string(),
+                    offset: name.start(),
+                })
+        })
         .collect();
-    found.sort_by_key(|(_, _, offset)| *offset);
+    found.sort_by_key(|found| found.offset);
     found
 }
 

@@ -37,6 +37,7 @@ use std::sync::{Arc, Mutex};
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use serde::Serialize;
 
 pub use self::extract::{ArtifactRow, FileIndex, FileInfo, RefRow, ToKind};
@@ -571,10 +572,6 @@ struct IndexState {
 
 fn state(factory: &ExecutionContextFactory) -> Arc<IndexState> {
     factory.extension(|_| IndexState::default())
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Whether the index keeps rows on this instance: a dev instance with a database.

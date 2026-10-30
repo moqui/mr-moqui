@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use moqui_lib::node::MNode;
+use moqui_lib::sync::lock;
 use serde::Serialize;
 
 use crate::Problem;
@@ -691,8 +692,4 @@ fn now_millis() -> i64 {
         .ok()
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .unwrap_or(0)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|err| err.into_inner())
 }

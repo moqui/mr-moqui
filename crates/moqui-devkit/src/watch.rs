@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
 use moqui_core::context::ExecutionContextFactory;
+use moqui_lib::sync::lock;
 
 /// Directory names never watched, anywhere in a component.
 const SKIPPED: &[&str] = &[
@@ -251,10 +252,6 @@ fn ignored_name(path: &Path) -> bool {
         || name.ends_with(".tmp")
         || name == "4913"
         || (name.starts_with('.') && name.contains(".moqui-save"))
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 #[cfg(test)]
