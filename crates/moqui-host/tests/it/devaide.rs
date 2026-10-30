@@ -687,6 +687,20 @@ fn the_index_follows_reloads_and_extensions() {
     let again = json(&again, "report");
     assert_eq!(again["read"], 0, "{again}");
 
+    // a full rebuild over the rows reads every file again: its deletes commit before the rows are written again, so the
+    // writes do not wait on the service's transaction (which hung `moqui test` at dev-aide's ArtifactIndex spec)
+    let started = std::time::Instant::now();
+    let full = call(
+        &factory,
+        "john.doe",
+        &format!("{DT}rebuild#ArtifactIndex"),
+        &[("full", "true")],
+    )
+    .unwrap();
+    let full = json(&full, "report");
+    assert_eq!(full["read"], report["read"], "{full}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(30), "{full}");
+
     // the upstream screen renames its form: the reload replaces that file's rows, and the site's extension of the old
     // name is broken
     let detail = gate.runtime.join("component/upstream-app/screen/UpApp/Detail.xml");

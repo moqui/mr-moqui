@@ -642,6 +642,10 @@ pub fn ensure(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
 
 /// Remove every row of the index, so the next build reads every file.
 ///
+/// The deletes commit in a transaction of their own. The build writes its rows in transactions of their own too
+/// (`apply`), so deletes left in a caller's transaction (`rebuild#ArtifactIndex` runs in one) would hold the rows that
+/// build writes again, and its inserts would wait on the caller's transaction, which waits on the build.
+///
 /// # Errors
 ///
 /// Returns an error when the rows cannot be removed.
@@ -653,9 +657,14 @@ pub fn clear(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     let _authz = entered.disable_authz();
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let _lifted = fence::lift();
-    for entity in [REF, ARTIFACT, FILE] {
-        facade.find(entity)?.disable_authz().delete_all()?;
-    }
+    facade
+        .transactions_for(ARTIFACT)?
+        .run(TransactionAttribute::ForceNew, None, || {
+            for entity in [REF, ARTIFACT, FILE] {
+                facade.find(entity)?.disable_authz().delete_all()?;
+            }
+            Ok(())
+        })?;
     *lock(&state.resolver) = Resolver::default();
     Ok(())
 }
