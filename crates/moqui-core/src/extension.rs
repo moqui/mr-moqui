@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework crates on top of this one (moqui-git, plans/Crate-Split.md). Each submits one [`Extension`], which the
+//! The framework crates on top of this one (moqui-git, moqui-mail, plans/Crate-Split.md). Each submits one [`Extension`], which the
 //! framework calls to register the crate's Rust services and native implementations. A binary that does not link a
 //! crate has no entry for it: a service at one of its locations still loads, and a call reports that the feature is
 //! not built into this host ([`missing_feature`]).
@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 pub use inventory::submit;
 
-use crate::context::Error;
+use crate::context::{Error, ExecutionContextFactory};
 use crate::native::NativeRegistry;
 pub use crate::service::rust_services::RustServiceFn;
 
@@ -39,6 +39,8 @@ pub struct Extension {
     pub register_services: fn(&mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String>,
     /// Add the crate's tools, resource providers, runners and template renderers.
     pub register_native: fn(&mut NativeRegistry) -> Result<(), Error>,
+    /// Stop what the crate runs, at the start of the factory's shutdown, before the service workers stop.
+    pub before_shutdown: fn(&ExecutionContextFactory),
 }
 inventory::collect!(Extension);
 
@@ -48,12 +50,20 @@ impl Extension {
         features: &[],
         register_services: |_| Ok(()),
         register_native: |_| Ok(()),
+        before_shutdown: |_| {},
     };
 }
 
 /// The framework crates' service locations by path prefix, with the feature each is; the first prefix that matches
-/// decides.
-const LOCATIONS: &[(&str, &str)] = &[("moqui_git::", "git")];
+/// decides. moqui-mail is `smtp`, with the receive half under its `imap` feature.
+const LOCATIONS: &[(&str, &str)] = &[
+    ("moqui_git::", "git"),
+    ("moqui_mail::send_template", "smtp"),
+    ("moqui_mail::send_message", "smtp"),
+    ("moqui_mail::test_server", "smtp"),
+    ("moqui_mail::push_remote_changes", "smtp"),
+    ("moqui_mail::", "imap"),
+];
 
 /// The linked framework crates.
 pub fn linked() -> impl Iterator<Item = &'static Extension> {

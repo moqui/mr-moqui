@@ -36,9 +36,9 @@
 //!
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
-//! `RCPT TO` is answered from the accounts ([`moqui_core::service::mail_inbound::find_recipient`]): an address of a
+//! `RCPT TO` is answered from the accounts ([`moqui_mail::delivery::find_recipient`]): an address of a
 //! hosted or shared account is accepted, any other refused with 550 there, so nothing is accepted that would bounce
-//! later. After `DATA` the message is stored once per account ([`moqui_core::service::mail_inbound::deliver`]); a store
+//! later. After `DATA` the message is stored once per account ([`moqui_mail::delivery::deliver`]); a store
 //! that fails, or no request worker free, answers 451 so the gateway tries again, and the accounts that took it the
 //! first time do not store it twice. Both run on a request worker with authorization disabled.
 //!
@@ -54,8 +54,8 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
-use moqui_core::service::mail_inbound::{self as inbound, Envelope, Options, Outcome, RecipientDsn, Recipients};
 use moqui_lib::error::Error;
+use moqui_mail::delivery::{self as inbound, Envelope, Options, Outcome, RecipientDsn, Recipients};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;

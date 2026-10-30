@@ -32,6 +32,9 @@ use moqui_llm as _;
 // git:// locations and the git services. Naming it keeps its moqui_core::extension entry in the binary.
 #[cfg(feature = "git")]
 use moqui_git as _;
+// The email services, the same way.
+#[cfg(feature = "smtp")]
+use moqui_mail as _;
 
 pub mod chromium;
 pub mod db;
@@ -1454,7 +1457,8 @@ fn boot_server_factory(
         tracing::warn!(%error, "could not record release annotation");
     }
     // the mail client's IMAP IDLE workers, started on the scheduler's tick (email-client idle-enabled)
-    moqui_core::service::start_mail_idle(&factory);
+    #[cfg(feature = "imap")]
+    moqui_mail::start_idle(&factory);
     // the agent run engine: the lease keeper and the recovery sweep, after the cluster so leases name its instance
     #[cfg(feature = "llm")]
     moqui_llm::start(&factory);

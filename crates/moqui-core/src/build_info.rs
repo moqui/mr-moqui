@@ -28,8 +28,6 @@ pub const GIT_REVISION: &str = env!("MOQUI_GIT_REVISION");
 #[must_use]
 pub fn core_features() -> Vec<&'static str> {
     [
-        ("smtp", cfg!(feature = "smtp")),
-        ("imap", cfg!(feature = "imap")),
         ("http", cfg!(feature = "http")),
         ("cluster-tls", cfg!(feature = "cluster-tls")),
         ("image", cfg!(feature = "image")),

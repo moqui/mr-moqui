@@ -42,9 +42,9 @@ use super::sync::{
     connection_lost, encode_mutf7, label_keyword, load_account, load_folders, quoted, run_sync, search_message_id,
     select, update_folder, value_millis, value_number, FolderInfo, ImapConn, SyncFailure, SyncOptions, CHANGE, FOLDER,
 };
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::service::util::{field_text, now_millis, param_text};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, now_millis, param_text};
 
 /// Tries before a change that keeps failing is dropped.
 pub(super) const MAX_ATTEMPTS: i64 = 10;

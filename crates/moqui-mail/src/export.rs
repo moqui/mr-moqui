@@ -36,9 +36,9 @@ use super::implementation::{
 };
 use super::store::{HEADERS_MAX, MESSAGE};
 use super::sync::{value_millis, value_number};
-use crate::context::ExecutionContext;
-use crate::entity::{EntityFacade, EntityValue};
-use crate::service::util::{field_text, has_error, param_text};
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, has_error, param_text};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 
@@ -93,7 +93,7 @@ fn may_read(message: &EntityValue) -> Result<bool, LibError> {
     }
     let mut access_in = BTreeMap::new();
     access_in.insert("emailAccountId".to_string(), Value::string(&account_id));
-    let access = crate::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
+    let access = moqui_core::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
         .map_err(|err| LibError::new(err.message()))?;
     Ok(!has_error() && value_number(access.get("level")).unwrap_or(0) >= 1)
 }

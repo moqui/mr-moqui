@@ -1,8 +1,9 @@
 # Crate Split
 
-Status 2026-10-30: Phases 0 and 1 done (`moqui_core::extension`, `moqui-git`); Phase 2 next. Splits `moqui-core` along hook seams, above it for the tool subsystems and
-below it for the entity facade, and then the host, so an edit rebuilds less and more of the build runs in parallel. It
-revises [Crate-Layout](archive/Crate-Layout.md), whose "few, larger crates" rule this replaces
+Status 2026-10-30: Phases 0 to 2 done (`moqui_core::extension`, `moqui-git`, `moqui-mail`); Phase 3 next. Splits
+`moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
+so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
+whose "few, larger crates" rule this replaces
 ([Practices-Rust §1, §8](../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes)).
 
 ## Why
@@ -22,8 +23,10 @@ frontend.
 
 - A crate above core reaches it through `pub` items and registers through `moqui_core::extension` (Phase 1): an
   inventory entry with the features it is, its Rust services and its native registrations (tools, resource providers,
-  runners). A crate that needs a boot or shutdown step (mail's IDLE stop, the shipped reports) adds that hook to
-  `Extension` when it moves; the others start from `Extension::EMPTY`. The binary links it with `use crate_name as _;`
+  runners), and a step at the start of the factory's shutdown (`before_shutdown`: mail's IDLE workers). A crate that
+  needs a boot step (the shipped reports) adds that hook to `Extension` when it moves; the others start from
+  `Extension::EMPTY`. A start the host makes once after boot is a direct call under the host feature, as
+  `moqui_llm::start` and `moqui_mail::start_idle`. The binary links it with `use crate_name as _;`
   under the host feature, as `moqui_llm`.
 - A service of a framework crate the binary does not link still loads and reports that the feature is not built into
   this host, as a service of a feature left out does now (`service/rust_services.rs` `missing_feature`).
@@ -41,7 +44,7 @@ frontend.
 |---|---|---|---|---|
 | 0 | | baseline, this plan, the SMTP listener's build without SSH | | |
 | 1 | `moqui-git` | core `resource/git/`, `service/git.rs`, `service/git_hosting.rs` | 17,500 | `moqui_core::extension` (new): services, the `git://` resource provider |
-| 2 | `moqui-mail` | core `service/mail/` except `contacts.rs` | 13,400 | services, idle stop at shutdown |
+| 2 | `moqui-mail` | core `service/mail/` except `contacts.rs` (now `service/contacts.rs`) | 13,200 | services, idle stop at shutdown (`before_shutdown`) |
 | 3 | `moqui-entity` (below core) | core `entity/`, `transaction/`, `driver.rs`, `testing.rs`, `context/error.rs`, `resource/{blob,source,textdiff}.rs` | 31,000 | `EntityHooks`: ambient, authz, script, services (EECA run), observers |
 | 4 | `moqui-report` | core `report/`, `report_schedule.rs`, `monitor.rs` | 10,700 | native registrations, shipped reports after boot |
 | 5 | `moqui-collab`, `moqui-dav`, `moqui-devkit` | core `collab/`; `dav/`, `pim/`, elFinder; devtools, typegen, the lint and convert tools, testkit | 1,900; 8,000; 14,000 | services, tools |
@@ -74,21 +77,22 @@ shared host-edge crate (the edge runtime, TLS, the cluster edge, the request-wor
 ## Measuring
 
 The touch set: one probe edit (a dead private function appended, then the file restored) in each of core
-`entity/value.rs`, `service/call.rs`, `screen/render.rs`, `resource/git/mod.rs`, `service/mail/sync.rs`, host
-`http.rs` and `db/pgwire.rs`, each rebuilt twice with `cargo build --profile develop --no-default-features --features
+`entity/value.rs`, `service/call.rs`, `screen/render.rs`, `resource/git/mod.rs`, `service/mail/implementation.rs`
+(the send path; `sync.rs` is `imap`, which the Dev package leaves out), host `http.rs` and `db/pgwire.rs`, each rebuilt
+twice with `cargo build --profile develop --no-default-features --features
 dev -p moqui` (the Dev package, `./moq build`), on a warm cache with no other build running. A file that moved is
 probed at its new path.
 
-| Edit in | Before (2026-10-29) | After Phase 1 |
-|---|---|---|
-| core `entity/value.rs` | 16.4 s, 15.2 s | 13.1 s, 13.0 s |
-| core `service/call.rs` | 15.5 s, 15.5 s | 13.5 s, 13.4 s |
-| core `screen/render.rs` | 15.1 s, 14.8 s | 13.0 s, 13.0 s |
-| git `lib.rs` (core `resource/git/mod.rs` before) | 15.1 s, 15.0 s | 2.5 s, 2.5 s |
-| core `service/mail/sync.rs` | 0.2 s (`imap` is not in the Dev package, so the file is not compiled) | |
-| host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s |
-| host `db/pgwire.rs` | 2.5 s, 2.3 s | |
-| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s |
+| Edit in | Before (2026-10-29) | After Phase 1 | After Phase 2 |
+|---|---|---|---|
+| core `entity/value.rs` | 16.4 s, 15.2 s | 13.1 s, 13.0 s | 13.7 s, 13.7 s |
+| core `service/call.rs` | 15.5 s, 15.5 s | 13.5 s, 13.4 s | 13.7 s, 13.6 s |
+| core `screen/render.rs` | 15.1 s, 14.8 s | 13.0 s, 13.0 s | 13.8 s, 13.7 s |
+| git `lib.rs` (core `resource/git/mod.rs` before) | 15.1 s, 15.0 s | 2.5 s, 2.5 s | 2.5 s, 2.5 s |
+| mail `implementation.rs` (core `service/mail/implementation.rs` before) | | 13.2 s, 13.1 s | 2.2 s, 2.2 s |
+| host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s | 2.0 s, 2.0 s |
+| host `db/pgwire.rs` | 2.5 s, 2.3 s | | |
+| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s | |
 
 Where a core edit's 15 s goes (`--timings`, `service/call.rs`): `moqui-core` 14.5 s, its metadata ready at about 5 s, so
 `moqui-llm` (2.1 s) and `moqui-host` (3.1 s) finish while core is still in codegen, and the binary links (0.3 s) after
@@ -97,6 +101,11 @@ core. Core's own compile is the whole critical path; a host edit is 2 s. Measure
 
 After Phase 1, the same edit: `moqui-core` 12.6 s, then `moqui-git` (1.0 s), `moqui-llm` (3.3 s) and `moqui-host`
 (1.9 s) beside its codegen, and the binary link (0.3 s).
+
+After Phase 2, the same edit: `moqui-core` 13.3 s, then `moqui-mail` (0.2 s), `moqui-git` (0.6 s), `moqui-llm` (2.4 s)
+and `moqui-host` (3.0 s) beside its codegen, and the binary link (0.3 s). The Dev package has only mail's send half,
+so a core edit there is unchanged within the spread of these runs; what the phase buys is an edit in mail (13.2 s to
+2.2 s), and core no longer compiles lettre, imap and mail-parser, nor the receive half in the packages with `imap`.
 
 So the host splits of Phase 6 save little on an edit (the host is 2 s) and are for modularity and the clean build;
 they wait on the numbers after Phase 3.

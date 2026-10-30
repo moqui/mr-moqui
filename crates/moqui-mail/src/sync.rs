@@ -56,9 +56,9 @@ use super::inbound::{
     use_tls, wrap_tls, Net, Pop3, StoreSettings, StoredMessage,
 };
 use super::store::{self, parse_message, update_fields, Placement, MESSAGE};
-use crate::context::ExecutionContext;
-use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::service::util::{field_text, now_millis, param_text, take_errors_string};
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, now_millis, param_text, take_errors_string};
 
 pub(super) const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 pub(super) const FOLDER: &str = "moqui.basic.email.EmailFolder";
@@ -845,7 +845,7 @@ pub(super) fn sync_account_service(
         note_error("Email sync is disabled in LLM sim session");
         return Ok(BTreeMap::new());
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "sync#EmailAccount")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "sync#EmailAccount")?;
     let account_id = param_text(parameters, "emailAccountId");
     let flag = |name: &str| match parameters.get(name) {
         Some(Value::Bool(on)) => *on,
@@ -856,9 +856,9 @@ pub(super) fn sync_account_service(
     if !authz_off {
         let mut access_in = BTreeMap::new();
         access_in.insert("emailAccountId".to_string(), Value::string(&account_id));
-        let access = crate::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
+        let access = moqui_core::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
             .map_err(|err| LibError::new(err.message()))?;
-        if crate::service::util::has_error() {
+        if moqui_core::service::util::has_error() {
             return Ok(BTreeMap::new());
         }
         let level = value_number(access.get("level")).unwrap_or(0);
@@ -996,7 +996,7 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
     .unwrap_or_else(|payload| {
         Err(SyncFailure::Connect(format!(
             "the sync stopped: {}",
-            crate::service::pool::panic_text(payload.as_ref())
+            moqui_core::service::pool::panic_text(payload.as_ref())
         )))
     });
     record_outcome(facade, &account, &result, &mut report, options);
@@ -1138,10 +1138,10 @@ pub(super) struct Progress {
 impl Progress {
     pub(super) fn new(facade: &EntityFacade, account_id: &str) -> Self {
         let shutting_down = ExecutionContext::with_current(|ec| ec.factory().is_shutting_down()).unwrap_or(true);
-        let on = crate::service::shell::would_deliver(
+        let on = moqui_core::service::shell::would_deliver(
             shutting_down,
-            crate::notify::has_listeners(crate::notify::NOTIFICATION_MESSAGE),
-            crate::cluster::is_linked(facade),
+            moqui_core::notify::has_listeners(moqui_core::notify::NOTIFICATION_MESSAGE),
+            moqui_core::cluster::is_linked(facade),
         );
         Self {
             account_id: account_id.to_string(),
@@ -1255,7 +1255,7 @@ impl Progress {
         }
         self.last = Some(now);
         self.sent_any = true;
-        let sent = crate::notify::NotificationMessage::new()
+        let sent = moqui_core::notify::NotificationMessage::new()
             .topic(PROGRESS_TOPIC)
             .user_ids(users)
             .message_map(message)
@@ -1309,7 +1309,7 @@ pub(super) fn publish_counts(account_id: &str) {
         "emailAccountIdList".to_string(),
         Value::List(vec![Value::string(account_id)]),
     );
-    if let Err(err) = crate::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &parameters) {
+    if let Err(err) = moqui_core::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &parameters) {
         tracing::warn!("Could not publish the counts of email account {account_id}: {err}");
     }
     let _ = take_errors_string();
@@ -2574,7 +2574,7 @@ fn remove_vanished(session: &mut Session<'_>, report: &mut SyncReport) {
         }
         let mut parameters = BTreeMap::new();
         parameters.insert("emailMessageIdList".to_string(), Value::List(vec![Value::string(&id)]));
-        let deleted = crate::service::sync(&format!("{SERVICES}.delete#LocalMessages"), &parameters);
+        let deleted = moqui_core::service::sync(&format!("{SERVICES}.delete#LocalMessages"), &parameters);
         let failed = match deleted {
             Err(err) => Some(err.message().to_string()),
             Ok(_) => take_errors_string(),
@@ -2584,7 +2584,7 @@ fn remove_vanished(session: &mut Session<'_>, report: &mut SyncReport) {
                 "Email message {id} of account {} left the server and is kept, a record refers to it: {text}",
                 session.account.id
             );
-            let detached = crate::service::sync(&format!("{SERVICES}.detach#LocalMessages"), &parameters);
+            let detached = moqui_core::service::sync(&format!("{SERVICES}.detach#LocalMessages"), &parameters);
             if let Some(text) = detached
                 .err()
                 .map(|err| err.message().to_string())
@@ -2627,7 +2627,7 @@ pub(super) fn run_rules(account_id: &str, ids: &[String]) {
         "emailMessageIdList".to_string(),
         Value::List(ids.iter().map(Value::string).collect()),
     );
-    if let Err(err) = crate::service::sync(&format!("{SERVICES}.run#EmailRules"), &parameters) {
+    if let Err(err) = moqui_core::service::sync(&format!("{SERVICES}.run#EmailRules"), &parameters) {
         tracing::error!("Email rules of account {account_id} failed: {err}");
     }
     if let Some(text) = take_errors_string() {
@@ -2649,7 +2649,7 @@ pub(super) fn after_new_mail(account_id: &str, ids: &[String]) {
             "emailMessageIdList".to_string(),
             Value::List(ids.iter().map(Value::string).collect()),
         );
-        if let Err(err) = crate::service::sync(&format!("{SERVICES}.{service}"), &parameters) {
+        if let Err(err) = moqui_core::service::sync(&format!("{SERVICES}.{service}"), &parameters) {
             tracing::error!("{service} on the new mail of email account {account_id} failed: {err}");
         }
         if let Some(text) = take_errors_string() {
@@ -2803,7 +2803,7 @@ pub(super) fn open_pop(
     server: &ServerInfo,
     settings: &StoreSettings,
 ) -> Result<Pop3, SyncFailure> {
-    let classify = |err: crate::context::Error| {
+    let classify = |err: moqui_core::context::Error| {
         let text = err.message().to_string();
         if text.starts_with("mail server rejected the command") {
             SyncFailure::Auth(format!("POP3 {} refused the sign-in: {text}", server.host))
@@ -2869,7 +2869,7 @@ pub(super) fn sync_due_accounts(
     if facade.sim_active() {
         return Ok(out);
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "sync#DueEmailAccounts")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "sync#DueEmailAccounts")?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let default_interval = property_number("sync-interval", 5);
     let rows = facade

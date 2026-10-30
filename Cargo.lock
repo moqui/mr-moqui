@@ -4152,12 +4152,9 @@ dependencies = [
  "hmac 0.12.1",
  "html5ever",
  "image",
- "imap",
  "indexmap",
  "inventory",
  "jiff",
- "lettre",
- "mail-parser",
  "md-5 0.10.6",
  "memchr",
  "moqui-db",
@@ -4178,7 +4175,6 @@ dependencies = [
  "regex",
  "rquickjs",
  "rust_xlsxwriter",
- "rustls",
  "serde",
  "serde_json",
  "sha1 0.10.7",
@@ -4187,7 +4183,6 @@ dependencies = [
  "tar",
  "totp-rs",
  "tracing",
- "webpki-roots",
  "yrs",
  "zip",
 ]
@@ -4255,6 +4250,7 @@ dependencies = [
  "moqui-git",
  "moqui-lib",
  "moqui-llm",
+ "moqui-mail",
  "moqui-tui",
  "mysql",
  "p256",
@@ -4326,6 +4322,28 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tracing",
+]
+
+[[package]]
+name = "moqui-mail"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "calamine",
+ "getrandom 0.3.4",
+ "imap",
+ "indexmap",
+ "jiff",
+ "lettre",
+ "mail-parser",
+ "moqui-core",
+ "moqui-lib",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "webpki-roots",
 ]
 
 [[package]]

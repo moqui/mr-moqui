@@ -33,7 +33,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::service::util::{field_text, map_text, now_stamp, param_text};
+use moqui_core::service::util::{field_text, map_text, now_stamp, param_text};
 
 use indexmap::IndexMap;
 use moqui_lib::codec::hex_encode;
@@ -42,10 +42,10 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 #[cfg(test)]
 use moqui_lib::sync::lock;
 
-use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
-use crate::entity::{EntityFacade, EntityValue};
-use crate::screen::{make_render, PdfRenderer, ScreenFacade};
-use crate::transaction::TransactionAttribute;
+use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::screen::{make_render, PdfRenderer, ScreenFacade};
+use moqui_core::transaction::TransactionAttribute;
 
 const TEMPLATE: &str = "moqui.basic.email.EmailTemplate";
 pub(super) const SERVER: &str = "moqui.basic.email.EmailServer";
@@ -62,13 +62,13 @@ pub(super) fn send_template(
     if facade.sim_active() {
         return Ok(ids("SIM", ""));
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "send#EmailTemplate")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "send#EmailTemplate")?;
     let template_id = param_text(parameters, "emailTemplateId");
     let Some(template) = find_one(facade, TEMPLATE, "emailTemplateId", &template_id)? else {
         return fail(format!("No EmailTemplate record found for ID [{template_id}]"));
     };
     // The script's context: the parameters, then the bodyParameters over them, then the template values.
-    let _frame = crate::script::ContextFrame::push();
+    let _frame = moqui_core::script::ContextFrame::push();
     for (name, value) in parameters {
         put_context(name, value.clone())?;
     }
@@ -241,7 +241,7 @@ pub(super) fn send_message(
     if facade.sim_active() {
         return Ok(ids("SIM", ""));
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "send#EmailMessage")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "send#EmailMessage")?;
     let Some(message) = find_one(facade, MESSAGE, "emailMessageId", &email_message_id)? else {
         return fail(format!("No EmailMessage record found for ID {email_message_id}"));
     };
@@ -448,13 +448,13 @@ struct Expanded {
 }
 
 fn expand_headers(template: &EntityValue, parameters: Option<&IndexMap<String, Value>>) -> Result<Expanded, LibError> {
-    let _frame = crate::script::ContextFrame::push();
+    let _frame = moqui_core::script::ContextFrame::push();
     if let Some(map) = parameters {
         for (name, value) in map {
-            crate::script::set_context_name(name, value.clone()).map_err(|err| LibError::new(err.message()))?;
+            moqui_core::script::set_context_name(name, value.clone()).map_err(|err| LibError::new(err.message()))?;
         }
     }
-    let expand = |text: &str| crate::script::expand(text).map_err(|err| LibError::new(err.message()));
+    let expand = |text: &str| moqui_core::script::expand(text).map_err(|err| LibError::new(err.message()));
     Ok(Expanded {
         from_address: expand(&field_text(template, "fromAddress"))?,
         from_name: expand(&field_text(template, "fromName"))?,
@@ -603,7 +603,7 @@ fn send_error(err: &Error, email_message_id: &str, template_id: &str) -> BTreeMa
 }
 
 fn put_context(name: &str, value: Value) -> Result<(), LibError> {
-    crate::script::set_context_name(name, value).map_err(|err| LibError::new(err.message()))
+    moqui_core::script::set_context_name(name, value).map_err(|err| LibError::new(err.message()))
 }
 
 fn create_message(parameters: &BTreeMap<String, Value>) -> bool {
@@ -636,7 +636,7 @@ fn insert_draft(
     };
     let mut from_user = param_text(parameters, "fromUserId");
     if from_user.is_empty() {
-        from_user = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+        from_user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     }
     let to_user = param_text(parameters, "toUserId");
     let to = param_text(parameters, "toAddresses");
@@ -923,7 +923,7 @@ fn push_stored_attachment(out: &mut Vec<AttachmentBytes>, row: &EntityValue, env
     let filename = field_text(row, "fileName");
     let condition = field_text(row, "attachmentCondition");
     if !condition.is_empty() {
-        let holds = crate::script::eval_condition(&condition)
+        let holds = moqui_core::script::eval_condition(&condition)
             .map_err(|err| Error::new(format!("attachmentCondition of {filename}: {}", err.message())))?;
         if !holds {
             return Ok(());
@@ -941,7 +941,7 @@ fn push_stored_attachment(out: &mut Vec<AttachmentBytes>, row: &EntityValue, env
         if for_each_in.is_empty() {
             return render_attachment(out, &screen, env);
         }
-        let entries = match crate::script::eval_value(&for_each_in)
+        let entries = match moqui_core::script::eval_value(&for_each_in)
             .map_err(|err| Error::new(format!("forEachIn of {filename}: {}", err.message())))?
         {
             Value::List(items) => items,
@@ -949,15 +949,16 @@ fn push_stored_attachment(out: &mut Vec<AttachmentBytes>, row: &EntityValue, env
             other => return Err(Error::new(format!("forEachIn of {filename} is not a list: {other:?}"))),
         };
         for entry in entries {
-            let _frame = crate::script::ContextFrame::push();
+            let _frame = moqui_core::script::ContextFrame::push();
             match entry {
                 Value::Map(map) => {
                     for (name, value) in map {
-                        crate::script::set_context_name(&name, value).map_err(|err| Error::new(err.message()))?;
+                        moqui_core::script::set_context_name(&name, value).map_err(|err| Error::new(err.message()))?;
                     }
                 }
                 other => {
-                    crate::script::set_context_name("forEachEntry", other).map_err(|err| Error::new(err.message()))?;
+                    moqui_core::script::set_context_name("forEachEntry", other)
+                        .map_err(|err| Error::new(err.message()))?;
                 }
             }
             render_attachment(out, &screen, env)?;
@@ -1070,11 +1071,11 @@ fn render_attachment(
 }
 
 fn expand_text(text: &str) -> Result<String, Error> {
-    crate::script::expand(text).map_err(|err| Error::new(err.message()))
+    moqui_core::script::expand(text).map_err(|err| Error::new(err.message()))
 }
 
 fn read_location(location: &str) -> Result<Vec<u8>, Error> {
-    let path = crate::context::locate(location).map_err(|err| Error::new(err.message()))?;
+    let path = moqui_core::context::locate(location).map_err(|err| Error::new(err.message()))?;
     std::fs::read(&path).map_err(|err| Error::new(format!("could not read attachment {location}: {err}")))
 }
 
@@ -1368,8 +1369,8 @@ fn captured(letter: &Letter) -> bool {
         return true;
     }
     // mail_capture_sends (moqui test): kept for the spec instead of sent (service/mail_capture.rs)
-    if crate::service::mail_capture::enabled() {
-        crate::service::mail_capture::record(crate::service::mail_capture::CapturedMail {
+    if moqui_core::service::mail_capture::enabled() {
+        moqui_core::service::mail_capture::record(moqui_core::service::mail_capture::CapturedMail {
             subject: letter.subject.clone(),
             from_address: letter.from_address.clone(),
             from_name: letter.from_name.clone(),
@@ -1508,7 +1509,7 @@ fn smtp_transport(
 ) -> Result<lettre::SmtpTransport, Error> {
     let host = field_text(server, "smtpHost");
     // Every SMTP connection starts here, so nothing reaches a mail server under the read fence.
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, &host)?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &host)?;
     let port = parse_port(&field_text(server, "smtpPort"), 25)?;
     // smtpSsl is TLS from the start. smtpStartTls upgrades when the server offers it, as Java's setStartTLSEnabled
     // (not required), so a server without STARTTLS still takes the mail. Both trust `email-client` `tls-ca-file` too.
@@ -1833,7 +1834,7 @@ pub(super) fn test_server(
     if facade.sim_active() {
         return fail("Email server test is disabled in LLM sim session");
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "test#EmailServer")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "test#EmailServer")?;
     let server_id = param_text(parameters, "emailServerId");
     let Some(mut server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));

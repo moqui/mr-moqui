@@ -22,9 +22,9 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 [Crate-Split](../../plans/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-tui (optional features)
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features)
               moqui-host → moqui-core → moqui-db → moqui-lib
-moqui-llm, moqui-git → moqui-core
+moqui-llm, moqui-git, moqui-mail → moqui-core
 moqui-browser → moqui-core (default-features = false)
 ```
 
@@ -35,6 +35,7 @@ moqui-browser → moqui-core (default-features = false)
 | `moqui-core` | The framework: the ExecutionContext and facades, screens, services, scripts. Synchronous, on `std::thread`. |
 | `moqui-llm` | The agent runtime and model providers. Core reaches it only through the hook traits in `moqui_core::llm_hooks`, so an edit here does not rebuild the framework. |
 | `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/Crate-Split.md)). |
+| `moqui-mail` | The email services: outbound SMTP and, under its `imap` feature, IMAP and POP3, the mail client's sync, IDLE, import and OAuth sign-in, and the delivery of mail the host's SMTP listener received. A framework crate, as `moqui-git`. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), drivers, process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
@@ -47,7 +48,8 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 - Put code in the lowest crate that can hold it. A helper that needs no ExecutionContext goes in `moqui-lib`.
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the
   lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm`. A crate
-  that only adds services, tools and resource providers submits a `moqui_core::extension::Extension` (`moqui-git`).
+  that only adds services, tools and resource providers submits a `moqui_core::extension::Extension` (`moqui-git`,
+  `moqui-mail`).
 - Do not move code between crates as part of other work; a new crate or a move needs its own plan
   ([Crate-Split](../../plans/Crate-Split.md) is the current one, with the seam rules and the files a new crate touches).
 - A feature-gated module has an off stub with the same API, so callers need no `cfg` of their own:

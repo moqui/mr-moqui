@@ -55,8 +55,8 @@ use super::implementation::{find_one, force_new};
 use super::inbound::{run_stored_ecas, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
 use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, ACCOUNT};
-use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::service::util::{field_text, now_millis};
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, now_millis};
 
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
 /// The account kinds the listener delivers to.
@@ -565,7 +565,7 @@ fn step(account_id: &str, name: &str, run: impl FnOnce()) {
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
         tracing::error!(
             "The {name} step on new mail of email account {account_id} failed: {}",
-            crate::service::pool::panic_text(payload.as_ref())
+            moqui_core::service::pool::panic_text(payload.as_ref())
         );
     }
 }

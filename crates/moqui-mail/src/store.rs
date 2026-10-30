@@ -24,9 +24,9 @@ use moqui_lib::object::Value;
 
 pub(super) use super::implementation::header_value;
 use super::inbound::{address_text, stamp_millis};
-use crate::context::ExecutionContext;
-use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::service::util::{field_text, now_millis};
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, now_millis};
 
 pub(super) const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 pub(super) const ATTACHMENT: &str = "moqui.basic.email.EmailMessageAttachment";

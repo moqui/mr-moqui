@@ -30,8 +30,8 @@ use super::sync_tests::{
     alice, by_message_id, call, errors, field, folder_id, imap_account, login, mail, now, ok, one, out_number,
     out_text, row, rows, setup, setup_with, stamp, sync, text, update, user,
 };
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
 
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 const SERVER: &str = "moqui.basic.email.EmailServer";
@@ -73,7 +73,7 @@ const STUBS: &str = r#"<services>
 
 /// The mail services and, with `stubs`, the contact hooks (test.MailStub) from a directory of the test's own.
 fn install_with(stubs: Option<&std::path::Path>) {
-    let framework = crate::context::framework_dir().join("service/org/moqui");
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let mut paths = vec![
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
@@ -83,7 +83,7 @@ fn install_with(stubs: Option<&std::path::Path>) {
     if let Some(dir) = stubs {
         paths.push(dir.join("service/test/MailStub.xml"));
     }
-    let failures = crate::service::lint(&paths).unwrap();
+    let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
 
@@ -190,7 +190,7 @@ fn server_of(facade: &EntityFacade, account: &str) -> String {
 /// user SMTP signs in as the store does again (a server made before has none, so it works as it did).
 #[test]
 fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install_with(None);
@@ -265,7 +265,7 @@ fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
             ("bodyText", text("Hello Bob")),
         ],
     );
-    let sent = crate::service::sync(
+    let sent = moqui_core::service::sync(
         "org.moqui.impl.EmailServices.send#EmailMessage",
         &BTreeMap::from([("emailMessageId".to_string(), text("SMTP_SEND"))]),
     )
@@ -326,7 +326,7 @@ fn kind_and_filing(facade: &EntityFacade, account: &str) -> (String, String) {
 /// (an account with no owner goes to its last member); the filing policy follows the kind unless given.
 #[test]
 fn the_account_kind_changes_between_personal_and_shared() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install_with(None);
@@ -447,7 +447,7 @@ fn the_account_kind_changes_between_personal_and_shared() {
 /// placeholder made with the account goes; an unsubscribed folder is not read; the Inbox stays.
 #[test]
 fn a_folder_kind_a_user_chose_holds_and_an_unsubscribed_folder_is_not_synced() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install_with(None);
@@ -622,7 +622,7 @@ fn a_folder_kind_a_user_chose_holds_and_an_unsubscribed_folder_is_not_synced() {
 /// or of the property, which wins; every sender with no hook, none outside with a failing one), or internal only.
 #[test]
 fn the_automatic_reply_goes_to_its_audience() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     let dir = stub_dir("audience");
@@ -647,7 +647,7 @@ fn the_automatic_reply_goes_to_its_audience() {
             ("emailAddress", text("orders@acme.example.com")),
         ],
     );
-    let sink = crate::service::SinkGuard::install();
+    let sink = crate::SinkGuard::install();
     let mut round = 0;
     let mut answered = |audience: &str| -> Vec<String> {
         ok(
@@ -778,7 +778,7 @@ fn the_automatic_reply_goes_to_its_audience() {
 /// a reader too, but a saved rule only by one who may change it.
 #[test]
 fn a_rule_is_tried_on_recent_mail_without_acting() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install_with(None);
@@ -970,7 +970,7 @@ fn a_rule_is_tried_on_recent_mail_without_acting() {
 /// the rule's other actions go on; an action no app makes is skipped; an unknown action is refused in a rule.
 #[test]
 fn an_app_action_of_a_rule_runs_the_service_its_enumeration_names() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     let dir = stub_dir("rule-actions");
@@ -1121,7 +1121,7 @@ fn an_app_action_of_a_rule_runs_the_service_its_enumeration_names() {
 /// A removed account whose mail was kept is listed to its owner only (includeRemoved) and deleted by them, with its mail.
 #[test]
 fn a_removed_account_is_deleted_by_its_owner_only() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install_with(None);
@@ -1191,7 +1191,7 @@ type Seen = (std::time::Instant, IndexMap<String, Value>, Vec<String>);
 /// with nothing to fetch sends none.
 #[test]
 fn a_sync_sends_its_progress() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     // two a session: the first sync fetches two of the three, the next the third
     let (ctx, facade) = setup_with(r#"<moqui-conf><email-client sync-batch="2"/></moqui-conf>"#);
     let _entered = ctx.enter();
@@ -1217,9 +1217,9 @@ fn a_sync_sends_its_progress() {
     let seen: Arc<Mutex<Vec<Seen>>> = Arc::new(Mutex::new(Vec::new()));
     let kept = Arc::clone(&seen);
     let wanted = account.clone();
-    let subscription = crate::notify::subscribe(
-        crate::notify::NOTIFICATION_MESSAGE,
-        Arc::new(move |message: &crate::notify::TopicMessage| {
+    let subscription = moqui_core::notify::subscribe(
+        moqui_core::notify::NOTIFICATION_MESSAGE,
+        Arc::new(move |message: &moqui_core::notify::TopicMessage| {
             let Value::Map(body) = moqui_lib::json::from_json(&message.body) else {
                 return;
             };
@@ -1232,7 +1232,7 @@ fn a_sync_sends_its_progress() {
             if progress.get("emailAccountId").map(to_plain_string).as_deref() != Some(wanted.as_str()) {
                 return;
             }
-            let users = match body.get(crate::notify::ROUTE_USER_IDS) {
+            let users = match body.get(moqui_core::notify::ROUTE_USER_IDS) {
                 Some(Value::List(items)) => items.iter().map(to_plain_string).collect(),
                 _ => Vec::new(),
             };

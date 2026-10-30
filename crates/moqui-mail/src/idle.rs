@@ -36,9 +36,9 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
 use super::sync::{account_info, connect_imap, run_sync, select, ImapConn, SyncFailure, SyncOptions, ACCOUNT};
-use crate::context::ExecutionContextFactory;
-use crate::entity::{Condition, EntityFacade};
-use crate::service::util::field_text;
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::entity::{Condition, EntityFacade};
+use moqui_core::service::util::field_text;
 
 /// How long one IDLE waits before it is renewed (RFC 2177 says under 29 minutes).
 const IDLE_RENEW: Duration = Duration::from_secs(10 * 60);
@@ -274,7 +274,7 @@ fn run_worker(
         .unwrap_or_else(|payload| {
             Ended::Retry(format!(
                 "the worker stopped: {}",
-                crate::service::pool::panic_text(payload.as_ref())
+                moqui_core::service::pool::panic_text(payload.as_ref())
             ))
         });
         drop(strong);
@@ -474,7 +474,7 @@ fn changes(line: &str) -> bool {
 
 /// An Inbox sync in a context of its own; one already running is waited for a little, so this change is not missed.
 fn sync_inbox(factory: &Arc<ExecutionContextFactory>, account_id: &str, stop: &AtomicBool) {
-    let _cleanup = crate::service::pool::WorkCleanup::new(Some(Arc::clone(factory)));
+    let _cleanup = moqui_core::service::pool::WorkCleanup::new(Some(Arc::clone(factory)));
     let ctx = factory.new_context();
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();

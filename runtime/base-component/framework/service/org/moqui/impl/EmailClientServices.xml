@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     Search: the MoquiEmailMessage document (data/MailSearchData.xml, index moqui_mail) is fed on every change of a message;
     find#Messages searches its free text there (parse#SearchText takes out the operators), else with LIKE.
 
-    Sign-in with Google or Microsoft (M5e, Rust in moqui_core::service::mail::oauth; docs/interfaces/Mail-OAuth.md): instead of a
+    Sign-in with Google or Microsoft (M5e, Rust in moqui_mail::oauth; docs/interfaces/Mail-OAuth.md): instead of a
     password, an account's own server signs in with XOAUTH2 (authTypeEnumId EatOAuth2) for IMAP and SMTP, with access
     tokens made from the refresh token stored encrypted on the EmailServer. start#OAuthSignIn begins the provider's
     sign-in in a popup (PKCE, state and nonce kept in the session), the webroot transition /emailOAuth/callback runs
@@ -1866,7 +1866,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="push" noun="RemoteChanges" type="rust" location="moqui_core::service::mail::push_remote_changes"
+    <service verb="push" noun="RemoteChanges" type="rust" location="moqui_mail::push_remote_changes"
             allow-remote="false">
         <description>Internal (authorization disabled): queue the server side of a local change of an account with an
             IMAP server, as EmailRemoteChange rows in the caller's transaction; nothing for any other account or for a
@@ -1892,7 +1892,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Sync, autodiscover and import (Rust: moqui_core::service::mail) ========== -->
 
-    <service verb="sync" noun="EmailAccount" type="rust" location="moqui_core::service::mail::sync_account"
+    <service verb="sync" noun="EmailAccount" type="rust" location="moqui_mail::sync_account"
             transaction="ignore" allow-remote="false">
         <description>
             Sync an account with its IMAP or POP3 server now: a user's "Sync now" (one who reaches the account), or the
@@ -1942,7 +1942,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="folderErrorList" type="List"/>
         </out-parameters>
     </service>
-    <service verb="sync" noun="DueEmailAccounts" type="rust" location="moqui_core::service::mail::sync_due_accounts"
+    <service verb="sync" noun="DueEmailAccounts" type="rust" location="moqui_mail::sync_due_accounts"
             transaction="ignore" authenticate="anonymous-all" allow-remote="false">
         <description>The ServiceJob sync_EmailAccounts_frequent: sync each account with an incoming server whose last sync
             is older than its interval (syncIntervalMinutes, else email-client sync-interval in the conf, 5 minutes; three times
@@ -1955,7 +1955,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="busyCount" type="Integer"/>
         </out-parameters>
     </service>
-    <service verb="discover" noun="EmailServer" type="rust" location="moqui_core::service::mail::discover_server"
+    <service verb="discover" noun="EmailServer" type="rust" location="moqui_mail::discover_server"
             transaction="ignore" allow-remote="false">
         <description>The servers for an address, for the MailAccounts wizard, within a few seconds: Thunderbird autoconfig
             (autoconfig.domain, the domain's .well-known URL, then the ISPDB; email-client autoconfig-urls replaces the list),
@@ -1982,9 +1982,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outgoingList" type="List"><parameter name="server" type="Map"/></parameter>
         </out-parameters>
     </service>
-    <!-- ========== Sign-in with a provider (OAuth 2.0; Rust: moqui_core::service::mail::oauth, docs/interfaces/Mail-OAuth.md) ========== -->
+    <!-- ========== Sign-in with a provider (OAuth 2.0; Rust: moqui_mail::oauth, docs/interfaces/Mail-OAuth.md) ========== -->
 
-    <service verb="start" noun="OAuthSignIn" type="rust" location="moqui_core::service::mail::start_oauth_sign_in"
+    <service verb="start" noun="OAuthSignIn" type="rust" location="moqui_mail::start_oauth_sign_in"
             transaction="ignore" allow-remote="false">
         <description>Begin the sign-in with Google or Microsoft for a mail account, in a popup (moqui.oauthPopup). For an
             account the user manages (emailAccountId; its own server, or one is made with the provider's servers) or for
@@ -2022,7 +2022,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expiresIn" type="Integer"><description>Seconds the sign-in may take</description></parameter>
         </out-parameters>
     </service>
-    <service verb="complete" noun="OAuthSignIn" type="rust" location="moqui_core::service::mail::complete_oauth_sign_in"
+    <service verb="complete" noun="OAuthSignIn" type="rust" location="moqui_mail::complete_oauth_sign_in"
             transaction="ignore" authenticate="anonymous-all" allow-remote="false">
         <description>Internal: the provider's callback, run by the webroot transition /emailOAuth/callback (sendPage sends
             the popup's page). The state is taken once from the session (unknown, used, another session's or another
@@ -2051,7 +2051,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expectedAddress"/>
         </out-parameters>
     </service>
-    <service verb="get" noun="OAuthStatus" type="rust" location="moqui_core::service::mail::get_oauth_status"
+    <service verb="get" noun="OAuthStatus" type="rust" location="moqui_mail::get_oauth_status"
             transaction="ignore" allow-remote="false">
         <description>With signInId, how a sign-in of this session ended: status pending, success or error (errorCode and
             message as complete#OAuthSignIn; unknown when it is gone or another session's or user's), with emailAccountId,
@@ -2079,7 +2079,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="signInDate" type="Timestamp"/>
         </out-parameters>
     </service>
-    <service verb="get" noun="OAuthProviders" type="rust" location="moqui_core::service::mail::get_oauth_providers"
+    <service verb="get" noun="OAuthProviders" type="rust" location="moqui_mail::get_oauth_providers"
             transaction="ignore" allow-remote="false">
         <description>The OAuth providers (EmailOAuthProvider) and whether this server is set up for each (a client id and
             secret, not disabled, and a redirect URI), for the wizard's account kinds, with how an address is known to be
@@ -2093,7 +2093,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="redirectUri"/>
         </out-parameters>
     </service>
-    <service verb="find" noun="OAuthProvider" type="rust" location="moqui_core::service::mail::find_oauth_provider"
+    <service verb="find" noun="OAuthProvider" type="rust" location="moqui_mail::find_oauth_provider"
             transaction="ignore" allow-remote="false">
         <description>The EmailOAuthProvider whose mail an address is, as discover#EmailServer finds it but with no network:
             the address's domain in addressDomains (gmail.com, outlook.com), else storeHost under a hostSuffixes entry (a
@@ -2113,7 +2113,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="matchedBy"/>
         </out-parameters>
     </service>
-    <service verb="revoke" noun="OAuthSignIn" type="rust" location="moqui_core::service::mail::revoke_oauth_sign_in"
+    <service verb="revoke" noun="OAuthSignIn" type="rust" location="moqui_mail::revoke_oauth_sign_in"
             allow-remote="false">
         <description>Sign an account (manage permission) out of its provider: the refresh token is revoked there when
             the provider has a revocation endpoint (Google; Microsoft has none), after the commit, best effort and logged,
@@ -2122,7 +2122,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
     </service>
-    <service verb="revoke" noun="OAuthToken" type="rust" location="moqui_core::service::mail::revoke_oauth_token"
+    <service verb="revoke" noun="OAuthToken" type="rust" location="moqui_mail::revoke_oauth_token"
             allow-remote="false">
         <description>Internal (authorization disabled), for delete#EmailAccount and update#EmailAccount: revoke the
             sign-in of a server at its provider after the commit (not while another server here signs in as the same
@@ -2135,7 +2135,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
     </service>
 
-    <service verb="import" noun="EmailMessages" type="rust" location="moqui_core::service::mail::import_messages"
+    <service verb="import" noun="EmailMessages" type="rust" location="moqui_mail::import_messages"
             transaction="ignore" allow-remote="false">
         <description>Import .eml files (a message each) and .mbox files into a folder of an account the user may send from
             (local or synced): file or fileList (uploads), location or locationList (resource locations), or messageText.
@@ -2157,7 +2157,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="errorList" type="List"/>
         </out-parameters>
     </service>
-    <service verb="export" noun="EmailMessage" type="rust" location="moqui_core::service::mail::export_message"
+    <service verb="export" noun="EmailMessage" type="rust" location="moqui_mail::export_message"
             allow-remote="false">
         <description>A stored message as an RFC 5322 file (.eml) to download, with its EmailMessageAttachment files (inline
             ones by Content-ID beside the HTML): the mail client keeps no raw message, so the MIME is made again by the
@@ -4240,7 +4240,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="filter" noun="ContactAddresses" type="rust" location="moqui_core::service::mail::filter_contact_addresses"
+    <service verb="filter" noun="ContactAddresses" type="rust" location="moqui_core::service::contacts::filter_contact_addresses"
             transaction="ignore" allow-remote="false">
         <description>Which of these addresses are contacts of a user (the current user; another user only with authorization
             disabled), for an automatic reply to contacts only. The framework keeps no contacts (they are the app's, such as

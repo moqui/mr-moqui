@@ -44,8 +44,8 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::implementation::note_error;
-use crate::entity::EntityFacade;
-use crate::service::util::param_text;
+use moqui_core::entity::EntityFacade;
+use moqui_core::service::util::param_text;
 
 const HTTP_BUDGET: Duration = Duration::from_millis(3500);
 const DNS_BUDGET: Duration = Duration::from_millis(1500);
@@ -123,7 +123,8 @@ pub(super) fn discover_server(
         return Ok(out);
     }
     let providers = {
-        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+        let _authz =
+            moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
         super::oauth::load_providers(facade).unwrap_or_else(|err| {
             tracing::error!("discover#EmailServer: the OAuth providers could not be read: {err}");
             Vec::new()
@@ -131,7 +132,7 @@ pub(super) fn discover_server(
     };
     let by_domain = super::oauth::detect(&providers, &domain, &[], &[]);
     let offline = facade.sim_active()
-        || crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "discover#EmailServer");
+        || moqui_core::entity::fence::refuses(moqui_core::entity::fence::Effect::RemoteCall, "discover#EmailServer");
     let mut suggestion = if offline {
         None
     } else {
@@ -295,12 +296,12 @@ fn autoconfig(address: &str, local: &str, domain: &str) -> Option<Suggestion> {
         // the ISPDB is Thunderbird's; the domain's own URLs only to public addresses
         let deny_internal = !own_list && !url.starts_with("https://autoconfig.thunderbird.net/");
         // the fetch's CLIENT span is a child of this thread's trace
-        let telemetry = crate::telemetry::current();
-        let parent = crate::telemetry::capture();
+        let telemetry = moqui_core::telemetry::current();
+        let parent = moqui_core::telemetry::capture();
         let spawned = std::thread::Builder::new()
             .name("moqui-email-autoconfig".to_string())
             .spawn(move || {
-                let _trace = crate::telemetry::attach(parent);
+                let _trace = moqui_core::telemetry::attach(parent);
                 let _ = thread_sender.send((index, fetch_text(&url, deny_internal, HTTP_BUDGET, telemetry)));
             });
         if spawned.is_err() {
@@ -348,14 +349,13 @@ fn first_in_order(answers: &[Option<Option<String>>], local: &str, domain: &str,
 }
 
 /// The telemetry of the thread that asked for a fetch, for its span.
-type Telemetry = Option<std::sync::Arc<crate::telemetry::Telemetry>>;
+type Telemetry = Option<std::sync::Arc<moqui_core::telemetry::Telemetry>>;
 
-#[cfg(feature = "http")]
 fn fetch_text(url: &str, deny_internal: bool, timeout: Duration, telemetry: Telemetry) -> Option<String> {
     let client = moqui_lib::http::RestClient::new()
         .deny_internal_addresses(deny_internal)
         .timeout(timeout);
-    let mut traced = crate::outbound::ClientCall::start_on(telemetry, "GET", url);
+    let mut traced = moqui_core::outbound::ClientCall::start_on(telemetry, "GET", url);
     let mut request = client.get(url).timeout(timeout);
     for (name, value) in traced.headers() {
         request = request.header(name, value);
@@ -381,11 +381,6 @@ fn fetch_text(url: &str, deny_internal: bool, timeout: Duration, telemetry: Tele
             None
         }
     }
-}
-
-#[cfg(not(feature = "http"))]
-fn fetch_text(_url: &str, _deny_internal: bool, _timeout: Duration, _telemetry: Telemetry) -> Option<String> {
-    None
 }
 
 /// A `clientConfig` document (config-v1.1.xml).
@@ -788,18 +783,17 @@ mod tests {
     use super::{parse_config, srv_answers, srv_query, valid_domain};
 
     /// An autoconfig fetch on a thread of its own is still a CLIENT span of the asking request's trace.
-    #[cfg(all(feature = "http", feature = "telemetry"))]
     #[test]
     fn an_autoconfig_fetch_on_its_own_thread_joins_the_trace() {
-        use crate::outbound::trace_tests::{assert_client_span, stub, traced};
+        use moqui_core::outbound::trace_tests::{assert_client_span, stub, traced};
         let (address, requests) = stub();
         let url = format!("{address}/mail/config-v1.1.xml");
         let (root, spans) = traced(|| {
-            let telemetry = crate::telemetry::current();
-            let parent = crate::telemetry::capture();
+            let telemetry = moqui_core::telemetry::current();
+            let parent = moqui_core::telemetry::capture();
             let url = url.clone();
             let body = std::thread::spawn(move || {
-                let _trace = crate::telemetry::attach(parent);
+                let _trace = moqui_core::telemetry::attach(parent);
                 super::fetch_text(&url, false, std::time::Duration::from_secs(5), telemetry)
             })
             .join()

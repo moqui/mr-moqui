@@ -13,12 +13,11 @@
  */
 
 //! The second factor through the `rest.xml` transitions (`login`, `sendOtp`, `verifyOtp`) and the
-//! password reset of `UserServices.xml`, with mail from the service worker kept by the shared sink.
+//! password reset of `UserServices.xml`. The tests that read the mail sent (the email code, the reset password) are in
+//! moqui-mail.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-#[cfg(feature = "smtp")]
-use std::time::Duration;
 
 use moqui_lib::object::Value;
 
@@ -27,12 +26,7 @@ use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
 use crate::screen::serve_at;
 use crate::service::ServicePools;
-#[cfg(feature = "smtp")]
-use crate::service::SharedSinkGuard;
 use crate::web::WebResponse;
-
-#[cfg(feature = "smtp")]
-const MAIL_WAIT: Duration = Duration::from_secs(10);
 
 /// A factory with the framework services, two service workers for the async mail, an SMTP server
 /// row, and the seed email templates.
@@ -172,16 +166,6 @@ fn json(response: &WebResponse) -> serde_json::Value {
     serde_json::from_str(&response.body_text()).unwrap_or_else(|err| panic!("{err}: {}", response.body_text()))
 }
 
-/// The text after `marker` in a mail body, up to the next tag or space.
-#[cfg(feature = "smtp")]
-fn after(body: &str, marker: &str) -> String {
-    let start = body.find(marker).unwrap_or_else(|| panic!("no {marker:?} in {body}")) + marker.len();
-    body[start..]
-        .chars()
-        .take_while(|ch| !ch.is_whitespace() && *ch != '<')
-        .collect()
-}
-
 fn current_totp(secret: &str) -> String {
     let bytes = totp_rs::Secret::try_from_base32(secret).unwrap();
     totp_rs::Builder::new()
@@ -260,123 +244,6 @@ fn rest_login_with_totp_needs_the_code_and_verify_otp_finishes_it() {
     // Without a pre-authenticated user there is nothing to verify.
     let response = flow.post("/rest/verifyOtp", "code=123456", &mut Session::default());
     assert_eq!(response.status, 401, "{}", response.body_text());
-}
-
-#[test]
-#[cfg(feature = "smtp")]
-fn rest_login_with_an_email_code_sends_it_and_verify_otp_takes_it_once() {
-    let flow = Flow::open();
-    flow.user("bob", "bob-otp@example.com");
-    flow.row(
-        "moqui.security.UserGroup",
-        &[("userGroupId", "STRICT"), ("requireAuthcFactor", "Y")],
-    );
-    let mut member = flow.facade.make_value("moqui.security.UserGroupMember").unwrap();
-    member.set("userGroupId", Value::string("STRICT"));
-    member.set("userId", Value::string("bob"));
-    member.set("fromDate", crate::user::stamp_value(1));
-    member.create(&flow.facade).unwrap();
-
-    let mut session = Session::default();
-    let response = flow.post("/rest/login", "username=bob&password=Secret1!", &mut session);
-    assert_eq!(response.status, 200, "{}", response.body_text());
-    let info = json(&response);
-    assert_eq!(info["secondFactorRequired"], true, "{info}");
-    // No factor of his own, so the code goes to the account email.
-    let sendable = &info["sendableFactors"][0];
-    assert_eq!(sendable["factorId"], "UserAccountEmail", "{info}");
-    assert_eq!(sendable["factorOption"], "bob-otp@example.com", "{info}");
-
-    let sink = SharedSinkGuard::install();
-    let response = flow.post("/rest/sendOtp", "factorId=UserAccountEmail", &mut session);
-    assert_eq!(response.status, 200, "{}", response.body_text());
-    assert!(
-        json(&response)["singleUseFactorId"].is_string(),
-        "{}",
-        response.body_text()
-    );
-    assert!(!response.body_text().contains("\"code\""), "{}", response.body_text());
-    let sent = sink.wait_for("bob-otp@example.com", MAIL_WAIT);
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].subject, "Single Use Code");
-    let code = after(&sent[0].body, "Your single use code is: ");
-    assert_eq!(code.len(), 6, "{}", sent[0].body);
-    drop(sink);
-
-    let response = flow.post("/rest/verifyOtp", &format!("code={code}"), &mut session);
-    assert_eq!(response.status, 200, "{}", response.body_text());
-    assert_eq!(json(&response)["loggedIn"], true);
-    let response = flow.post("/rest/logout", "", &mut session);
-    assert_eq!(response.body_text(), "successful");
-
-    // The code is single use.
-    let mut session = Session::default();
-    flow.post("/rest/login", "username=bob&password=Secret1!", &mut session);
-    let response = flow.post("/rest/verifyOtp", &format!("code={code}"), &mut session);
-    assert_eq!(response.status, 403, "{}", response.body_text());
-}
-
-#[test]
-#[cfg(feature = "smtp")]
-fn password_reset_mails_a_reset_password_that_changes_the_password() {
-    let flow = Flow::open();
-    flow.user("cy", "cy-reset@example.com");
-    let sink = SharedSinkGuard::install();
-    let messages = flow.as_user(None, || {
-        let parameters = BTreeMap::from([("username".to_string(), Value::string("cy"))]);
-        crate::service::sync("org.moqui.impl.UserServices.reset#Password", &parameters).unwrap();
-        let unknown = BTreeMap::from([("username".to_string(), Value::string("nobody"))]);
-        crate::service::sync("org.moqui.impl.UserServices.reset#Password", &unknown).unwrap();
-        crate::context::ExecutionContext::with_current(|ec| {
-            assert!(ec.message().errors().is_empty(), "{:?}", ec.message().errors());
-            ec.message().messages().to_vec()
-        })
-        .unwrap()
-    });
-    // The same answer for a known and an unknown user.
-    assert_eq!(messages.len(), 2, "{messages:?}");
-    assert_eq!(messages[0], messages[1]);
-    let sent = sink.wait_for("cy-reset@example.com", MAIL_WAIT);
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].subject, "Password Reset");
-    let reset = after(&sent[0].body, "Your reset password has been set to: ");
-    assert_eq!(reset.len(), 12, "{}", sent[0].body);
-    drop(sink);
-    let stored = flow.row_text("moqui.security.UserAccount", "userId", "cy", "resetPassword");
-    assert!(stored.starts_with("$argon2id$"), "{stored}");
-
-    // The current password still logs in; the reset password does not, it only changes it.
-    flow.as_user(None, || {
-        crate::user::login_user("cy", &reset).unwrap_err();
-        crate::user::login_user("cy", "Secret1!").unwrap();
-        crate::user::logout().unwrap();
-    });
-    let out = flow.as_user(None, || {
-        let parameters = BTreeMap::from([
-            ("username".to_string(), Value::string("cy")),
-            ("oldPassword".to_string(), Value::string(&reset)),
-            ("newPassword".to_string(), Value::string("Changed2!")),
-            ("newPasswordVerify".to_string(), Value::string("Changed2!")),
-        ]);
-        let out = crate::service::sync("org.moqui.impl.UserServices.update#Password", &parameters).unwrap();
-        let errors = crate::context::ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap();
-        assert!(errors.is_empty(), "{errors:?}");
-        out
-    });
-    assert_eq!(out.get("updateSuccessful"), Some(&Value::Bool(true)), "{out:?}");
-    assert_eq!(
-        flow.row_text("moqui.security.UserAccount", "userId", "cy", "resetPassword"),
-        ""
-    );
-    flow.as_user(None, || {
-        crate::user::login_user("cy", "Secret1!").unwrap_err();
-        crate::user::login_user("cy", "Changed2!").unwrap();
-        assert_eq!(crate::user::current_username().unwrap().as_deref(), Some("cy"));
-    });
-    // The old password went into the history.
-    assert!(!flow
-        .row_text("moqui.security.UserPasswordHistory", "userId", "cy", "password")
-        .is_empty());
 }
 
 /// Seed `resetPassword` and `resetPasswordSetDate` so a later service call does not send mail.

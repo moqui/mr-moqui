@@ -468,8 +468,11 @@ impl ExecutionContextFactory {
     /// Stop request/service workers before closing tools. The host calls this after its listeners stop.
     pub fn shutdown(&self) {
         self.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
-        // the mail IDLE workers first: each holds the factory and a connection while it waits
-        crate::service::stop_mail_idle(self);
+        // the framework crates' steps first, such as moqui-mail's IDLE workers: each holds the factory and a connection
+        // while it waits
+        for extension in crate::extension::linked() {
+            (extension.before_shutdown)(self);
+        }
         self.requests.shutdown();
         self.pools.shutdown();
         crate::telemetry::for_factory(self).shutdown();

@@ -28,10 +28,10 @@ use moqui_lib::sync::lock;
 use serde_json::json;
 
 use super::fake_servers::{fake_dns_with_mx, fake_http, FakeCode, FakeImap, FakePop, FakeProvider, FakeSmtp};
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::crypto::CryptConfig;
-use crate::entity::{EntityFacade, EntityValue};
-use crate::user::session::{session_attribute, set_session_attribute};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::crypto::CryptConfig;
+use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::user::session::{session_attribute, set_session_attribute};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 const PROVIDER: &str = "moqui.basic.email.EmailOAuthProvider";
@@ -81,10 +81,10 @@ fn setup() -> (ExecutionContext, EntityFacade) {
 fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
         conf,
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     facade.assume_db_tables();
     facade.set_crypt(
         CryptConfig {
@@ -100,14 +100,14 @@ fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
 }
 
 fn install() {
-    let framework = crate::context::framework_dir().join("service/org/moqui");
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ];
-    let failures = crate::service::lint(&paths).unwrap();
+    let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
 
@@ -164,7 +164,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
 
 fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -177,7 +177,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     } else {
         format!("{SERVICES}.{name}")
     };
-    crate::service::sync(&name, &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
+    moqui_core::service::sync(&name, &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
 
 fn errors() -> String {
@@ -234,7 +234,7 @@ fn provider_row(facade: &EntityFacade, id: &str, fake: &FakeProvider, servers: (
 /// The query of an authorization URL.
 fn query(url: &str) -> HashMap<String, String> {
     let (_, query) = url.split_once('?').expect("a query");
-    crate::web::form_pairs(query).into_iter().collect()
+    moqui_core::web::form_pairs(query).into_iter().collect()
 }
 
 /// start#OAuthSignIn: the authorization URL's query and the sign-in id.
@@ -312,7 +312,7 @@ fn assert_no_token(fake: &FakeProvider, what: &str, shown: &str) {
 #[test]
 fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -464,7 +464,7 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
     assert!(refresh.starts_with("rt-"), "{refresh}");
     assert!(!field(&server, "oauthSignInDate").is_empty());
     // stored encrypted: what the row holds is not the token
-    let raw = crate::entity::info::run_sql(
+    let raw = moqui_core::entity::info::run_sql(
         &facade,
         "transactional",
         "SELECT \"email_server_id\", \"oauth_refresh_token\" FROM \"email_server\"",
@@ -479,7 +479,7 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
         .expect("the server row");
     assert!(!stored.is_empty() && !stored.contains(&refresh), "{stored}");
     assert_eq!(
-        crate::entity::crypto::decrypt(&stored, &facade.crypt().unwrap().0).unwrap(),
+        moqui_core::entity::crypto::decrypt(&stored, &facade.crypt().unwrap().0).unwrap(),
         refresh
     );
 
@@ -551,11 +551,11 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
     login("alice");
 
     // the popup's page: the outcome posted to this origin and the channel, a CSP with a nonce, no token
-    let _web = crate::web::install(BTreeMap::new());
+    let _web = moqui_core::web::install(BTreeMap::new());
     let (started, sign_in_id) = begin(&[("emailAccountId", text(&account_id))]);
     let code = code_for(&fake, &started, claims(&started, "bob@gmail.test"), MAIL_SCOPE);
     callback(&[("state", &started["state"]), ("code", &code), ("sendPage", "true")]);
-    let (status, headers, body, _) = crate::web::take_output();
+    let (status, headers, body, _) = moqui_core::web::take_output();
     let page = String::from_utf8(body).unwrap();
     assert_eq!(status, 200);
     let header = |name: &str| {
@@ -579,7 +579,7 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
     );
     assert_no_token(&fake, "the popup's page", &page);
     // an error from the provider is shown escaped
-    crate::web::clear_output();
+    moqui_core::web::clear_output();
     let (started, _) = begin(&[("emailAccountId", text(&account_id))]);
     callback(&[
         ("state", &started["state"]),
@@ -587,7 +587,7 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
         ("errorDescription", "</script><script>alert(1)</script>"),
         ("sendPage", "true"),
     ]);
-    let page = String::from_utf8(crate::web::take_output().2).unwrap();
+    let page = String::from_utf8(moqui_core::web::take_output().2).unwrap();
     assert!(!page.contains("<script>alert(1)"), "{page}");
     assert!(page.contains("&lt;/script&gt;"), "{page}");
 }
@@ -598,7 +598,7 @@ fn the_code_exchange_checks_state_pkce_scope_nonce_and_address() {
 #[test]
 fn a_new_account_from_a_sign_in_starts_paused_with_a_sync_window() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -702,7 +702,7 @@ fn a_new_account_from_a_sign_in_starts_paused_with_a_sync_window() {
 #[test]
 fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -822,7 +822,7 @@ fn refresh_once_at_a_time_and_a_revoked_sign_in_marks_only_its_account() {
 #[test]
 fn the_access_token_is_stored_for_the_other_servers_of_a_cluster() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -841,7 +841,7 @@ fn the_access_token_is_stored_for_the_other_servers_of_a_cluster() {
     super::oauth::forget(&facade, &server_id);
     let first = super::oauth::access_token(&facade, &server_id, None).unwrap();
     assert_eq!(refreshes(), 1);
-    let raw = crate::entity::info::run_sql(
+    let raw = moqui_core::entity::info::run_sql(
         &facade,
         "transactional",
         "SELECT \"email_server_id\", \"access_token\" FROM \"email_server_access_token\"",
@@ -856,7 +856,7 @@ fn the_access_token_is_stored_for_the_other_servers_of_a_cluster() {
         .expect("the stored token");
     assert!(!stored.is_empty() && !stored.contains(&first), "{stored}");
     assert_eq!(
-        crate::entity::crypto::decrypt(&stored, &facade.crypt().unwrap().0).unwrap(),
+        moqui_core::entity::crypto::decrypt(&stored, &facade.crypt().unwrap().0).unwrap(),
         first
     );
 
@@ -911,7 +911,7 @@ fn the_access_token_is_stored_for_the_other_servers_of_a_cluster() {
 #[test]
 fn xoauth2_for_the_sync_the_server_test_and_a_send() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -1105,7 +1105,7 @@ fn xoauth2_for_the_sync_the_server_test_and_a_send() {
 fn pop3_signs_in_with_xoauth2_and_the_pop_scope() {
     const POP_SCOPE: &str = "https://mail.example.test/pop";
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -1219,7 +1219,7 @@ fn pop3_signs_in_with_xoauth2_and_the_pop_scope() {
 fn a_new_pop3_account_from_a_sign_in_is_made_on_the_providers_pop_server() {
     const POP_SCOPE: &str = "https://mail.example.test/pop";
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -1317,7 +1317,7 @@ fn a_new_pop3_account_from_a_sign_in_is_made_on_the_providers_pop_server() {
 #[test]
 fn remove_sign_out_and_a_password_revoke_the_sign_in() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
@@ -1429,7 +1429,7 @@ fn remove_sign_out_and_a_password_revoke_the_sign_in() {
 #[test]
 fn discover_names_the_provider_by_domain_or_mx() {
     let _serial = serial();
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let _properties = Properties::set();
     let http = fake_http(HashMap::new());
     let mut mx = HashMap::new();

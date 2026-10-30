@@ -253,7 +253,7 @@ The same phase numbers. Component Groovy that this table used to call missing is
 | `service/rest.rs` | `RestApi.groovy` request path, `impl/ServiceServices.xml`. JSON-RPC, Swagger, and RAML excluded. | 8a |
 | `service/remote.rs` | `RemoteRestServiceRunner.groovy`. `RemoteJsonRpcServiceRunner` excluded. | 8a |
 | `service/tools.rs` | `PrintServices.xml` (moqui-cups), `impl/EntityServices.xml` encrypted-field rewrite, data-document notification | 8a |
-| `service/mail/implementation.rs`, `service/mail/mod.rs` | `EmailServices.xml` (both), `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | 8b |
+| `moqui-mail/src/implementation.rs`, `moqui-mail/src/lib.rs` | `EmailServices.xml` (both), `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | 8b |
 | `service/sso.rs` | `moqui-sso` `AuthServices.xml`, `AuthenticationFlow.groovy`, `MoquiSecurityGrantedAccessAdapter.groovy` | 8c |
 | `service/elfinder.rs` | `ElFinderServices.xml`, `ElFinderConnector.groovy` | 8c |
 | `service/system_sync/mod.rs`, `service/system_sync/entity_sync.rs` | `EntitySyncServices.xml` | 8c |
@@ -427,7 +427,7 @@ The service section names the Rust service bodies. This section is where the add
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `service/mail/` | The three Groovy mail scripts and both `EmailServices.xml`. | Port |
+| `moqui-mail/src/` | The three Groovy mail scripts and both `EmailServices.xml`. | Port |
 | `print.rs` | `moqui-cups` `PrintServices.xml` as a `PrintClient` the host installs. | Port |
 | `moqui-host/src/ipp.rs` | CUPS4J calls (CUPS-Get-Printers, Print-Job, Hold, Release, Cancel, Get-Job-Attributes). | Port |
 | `service/images.rs` | `moqui-image` service XML. ImageIO is the `image` crate. | Port |
@@ -620,7 +620,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | Source | Where | Status |
 |---|---|---|
 | `src/start/java/MoquiStart.java` | `moqui-host/src/lib.rs`, `search.rs` (local OpenSearch). WAR and H2 paths are not ported. | Partial |
-| `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | `service/mail/` | Port |
+| `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | `moqui-mail/src/` | Port |
 | `MoquiDefaultConf.xml` | `context/conf.rs`. Servlet and proxy entries also `http.rs` and `search_proxy.rs`. | Port |
 | `log4j2.xml` | `moqui-host/src/logging.rs` (file names and levels, not Log4j) | Partial |
 | `shiro.ini`, `web.xml`, `cache.ccf`, `bitronix-default-config.properties` | — | Excluded |

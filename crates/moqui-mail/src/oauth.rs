@@ -55,10 +55,10 @@ use sha2::{Digest, Sha256};
 use super::implementation::{find_one, force_new, note_error};
 use super::inbound::stamp_millis;
 use super::sync::{value_millis, value_number, ACCOUNT, SERVER};
-use crate::context::ExecutionContext;
-use crate::entity::{Condition, EntityFacade, EntityValue};
-use crate::service::util::{field_text, now_millis, param_text, take_errors_string};
-use crate::user::session::{current_user_id, session_attribute, update_session_attribute};
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, now_millis, param_text, take_errors_string};
+use moqui_core::user::session::{current_user_id, session_attribute, update_session_attribute};
 
 const PROVIDER: &str = "moqui.basic.email.EmailOAuthProvider";
 const ENUMERATION: &str = "moqui.basic.Enumeration";
@@ -81,7 +81,7 @@ const EARLY_MILLIS: i64 = 60 * 1000;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 /// The `type` of the callback page's message, and the name of its BroadcastChannel (`moqui.oauthPopup`).
 const MESSAGE_TYPE: &str = "moqui-email-oauth";
-const DECRYPT_FAILED: &str = crate::entity::field_rw::DECRYPT_FAILED;
+const DECRYPT_FAILED: &str = moqui_core::entity::field_rw::DECRYPT_FAILED;
 
 // ---- providers ----
 
@@ -400,7 +400,7 @@ fn json_text(value: Option<&Json>) -> String {
 fn sim() -> bool {
     ExecutionContext::with_current(|ec| ec.factory().entity().is_some_and(|facade| facade.sim_active()))
         .unwrap_or(false)
-        || crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "a mail sign-in provider")
+        || moqui_core::entity::fence::refuses(moqui_core::entity::fence::Effect::RemoteCall, "a mail sign-in provider")
 }
 
 /// The answer of a provider endpoint: its status and JSON body.
@@ -438,7 +438,7 @@ fn traced_send(
     url: &str,
     mut request: moqui_lib::http::Call<'_>,
 ) -> Result<moqui_lib::http::RestResponse, String> {
-    let mut traced = crate::outbound::ClientCall::start(method, url);
+    let mut traced = moqui_core::outbound::ClientCall::start(method, url);
     for (name, value) in traced.headers() {
         request = request.header(name, value);
     }
@@ -874,7 +874,7 @@ fn publish_counts_of_server(facade: &EntityFacade, server_id: &str) {
     let mut parameters = BTreeMap::new();
     parameters.insert("emailAccountIdList".to_string(), Value::List(ids));
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    if let Err(err) = crate::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &parameters) {
+    if let Err(err) = moqui_core::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &parameters) {
         tracing::debug!("Could not publish the counts of email server {server_id}: {err}");
     }
 }
@@ -1003,7 +1003,7 @@ fn user_id() -> String {
 fn account_access(account_id: &str) -> Result<(i64, IndexMap<String, Value>), LibError> {
     let mut parameters = BTreeMap::new();
     parameters.insert("emailAccountId".to_string(), Value::string(account_id));
-    let out = crate::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &parameters)
+    let out = moqui_core::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &parameters)
         .map_err(|err| LibError::new(err.to_string()))?;
     let level = value_number(out.get("level")).unwrap_or(0);
     let account = match out.get("account") {
@@ -1034,7 +1034,7 @@ pub(super) fn start_sign_in(
         note_error("Email sign-in is disabled in LLM sim session");
         return Ok(out);
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::RemoteCall, "start#OAuthSignIn")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::RemoteCall, "start#OAuthSignIn")?;
     let user = user_id();
     if user.is_empty() {
         note_error("Sign in to the app first");
@@ -1130,7 +1130,7 @@ pub(super) fn start_sign_in(
         pending.account_kind = kind;
     } else {
         let (level, account) = account_access(&account_id)?;
-        if crate::service::util::has_error() {
+        if moqui_core::service::util::has_error() {
             return Ok(out);
         }
         if level < 1 {
@@ -1816,7 +1816,7 @@ fn store_new_account(
             "EasPaused"
         };
         parameters.insert("statusId".into(), Value::string(status));
-        let created = crate::service::sync(&format!("{SERVICES}.create#EmailAccount"), &parameters)
+        let created = moqui_core::service::sync(&format!("{SERVICES}.create#EmailAccount"), &parameters)
             .map_err(|err| LibError::new(err.to_string()))?;
         if let Some(errors) = take_errors_string() {
             return Err(LibError::new(errors));
@@ -1914,7 +1914,7 @@ fn send_page(sign_in_id: &str, outcome: &Outcome) {
     let csp = format!(
         "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
-    crate::web::send_bytes_with_headers(
+    moqui_core::web::send_bytes_with_headers(
         200,
         vec![
             ("Content-Type".to_string(), "text/html;charset=UTF-8".to_string()),
@@ -1976,7 +1976,7 @@ pub(super) fn sign_in_status(
         return Ok(out);
     }
     let (level, account) = account_access(&account_id)?;
-    if crate::service::util::has_error() {
+    if moqui_core::service::util::has_error() {
         return Ok(out);
     }
     if level < 1 {
@@ -2101,7 +2101,7 @@ pub(super) fn find_provider_service(
         && flag(parameters, "lookupMx")
         && super::discover::lookup_domain(&domain)
         && !facade.sim_active()
-        && !crate::entity::fence::refuses(crate::entity::fence::Effect::RemoteCall, "an MX lookup")
+        && !moqui_core::entity::fence::refuses(moqui_core::entity::fence::Effect::RemoteCall, "an MX lookup")
     {
         let mx = super::discover::mx_hosts(&domain);
         found = detect(&providers, &domain, &[], &mx).map(|provider| (provider, "mx"));
@@ -2256,7 +2256,7 @@ pub(super) fn sign_out_service(
     let mut out = BTreeMap::new();
     let account_id = param_text(parameters, "emailAccountId");
     let (level, account) = account_access(&account_id)?;
-    if crate::service::util::has_error() {
+    if moqui_core::service::util::has_error() {
         return Ok(out);
     }
     if level < 1 {
@@ -2346,10 +2346,9 @@ mod tests {
 
     /// A token request and a bearer request each send the request's trace and have a CLIENT span; neither the form, the
     /// token nor a query is on the span.
-    #[cfg(all(feature = "http", feature = "telemetry"))]
     #[test]
     fn provider_calls_carry_the_trace_and_keep_secrets_off_the_span() {
-        use crate::outbound::trace_tests::{assert_client_span, stub, traced};
+        use moqui_core::outbound::trace_tests::{assert_client_span, stub, traced};
         let (address, requests) = stub();
         let token_url = format!("{address}/token?tenant=t1");
         let user_url = format!("{address}/userinfo");

@@ -30,9 +30,9 @@ use moqui_lib::object::{basic_convert, to_plain_string, Value};
 use super::implementation::{
     extra_ca_certificates, fail, find_one, force_new, note_error, parse_port, require_host, SERVER,
 };
-use crate::context::{Error, ExecutionContext};
-use crate::entity::{EntityFacade, EntityValue};
-use crate::service::util::{field_text, has_error, param_text};
+use moqui_core::context::{Error, ExecutionContext};
+use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::service::util::{field_text, has_error, param_text};
 
 #[cfg(test)]
 thread_local! {
@@ -50,7 +50,7 @@ pub(super) fn poll_server(
     if facade.sim_active() {
         return fail("Email poll is disabled in LLM sim session");
     }
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, "poll#EmailServer")?;
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, "poll#EmailServer")?;
     let server_id = param_text(parameters, "emailServerId");
     let Some(server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));
@@ -159,7 +159,7 @@ pub(super) fn poll_server(
 /// message facade, rolls it back; the errors are taken out of the facade and returned.
 fn receive(facade: &EntityFacade, message: &Inbound, server_id: &str) -> Result<(), Error> {
     let fields = eca_fields(message, server_id);
-    in_eca_transaction(facade, || crate::service::run_email_rules(&fields))
+    in_eca_transaction(facade, || moqui_core::service::run_email_rules(&fields))
 }
 
 /// A message the mail client's sync stored ([`run_stored_ecas`]).
@@ -184,7 +184,7 @@ pub(super) struct StoredMessage<'a> {
 /// fails is rolled back and logged with the account and the message, and the other rules and the sync go on. Nothing
 /// runs when no rule is installed.
 pub(super) fn run_stored_ecas(facade: &EntityFacade, stored: &StoredMessage<'_>) {
-    let count = crate::service::email_rule_count();
+    let count = moqui_core::service::email_rule_count();
     if count == 0 {
         return;
     }
@@ -199,7 +199,7 @@ pub(super) fn run_stored_ecas(facade: &EntityFacade, stored: &StoredMessage<'_>)
     fields.insert("emailAccountId".into(), Value::string(stored.account_id));
     fields.insert("emailMessageId".into(), Value::string(stored.email_message_id));
     for index in 0..count {
-        if let Err(err) = in_eca_transaction(facade, || crate::service::run_email_rule(index, &fields)) {
+        if let Err(err) = in_eca_transaction(facade, || moqui_core::service::run_email_rule(index, &fields)) {
             tracing::error!(
                 account = %stored.account_id,
                 "Email ECA rule {} failed for email message {} of account {}, skipped: {err}",
@@ -1012,7 +1012,7 @@ fn connect_net(host: &str, port: u16, tls: bool) -> Result<Net, Error> {
 /// A TCP connection to a mail server, with read and write timeouts of a minute.
 pub(super) fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, Error> {
     // every mail service checks the fence; this is the one place each mail connection goes through
-    crate::entity::fence::check_effect(crate::entity::fence::Effect::Mail, &format!("{host}:{port}"))
+    moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &format!("{host}:{port}"))
         .map_err(|err| Error::new(err.message()))?;
     // A blackholed host fails in 30 seconds instead of the system default of minutes.
     let address = std::net::ToSocketAddrs::to_socket_addrs(&(host, port))

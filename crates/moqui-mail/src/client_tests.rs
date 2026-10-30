@@ -24,8 +24,8 @@ use std::net::TcpListener;
 use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::{EntityFacade, EntityValue};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::{EntityFacade, EntityValue};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
@@ -39,23 +39,23 @@ fn setup() -> (ExecutionContext, EntityFacade) {
 fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
         conf,
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     ctx.factory().set_entity(facade.clone());
     (ctx, facade)
 }
 
 fn install() {
-    let framework = crate::context::framework_dir().join("service/org/moqui");
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ];
-    let failures = crate::service::lint(&paths).unwrap();
+    let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
 
@@ -98,7 +98,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
 
 fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -106,7 +106,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    crate::service::sync(&format!("{SERVICES}.{name}"), &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
+    moqui_core::service::sync(&format!("{SERVICES}.{name}"), &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
 
 /// The errors so far, cleared.
@@ -1010,7 +1010,7 @@ fn set_smtp_host(facade: &EntityFacade, account: &str, host: &str) {
 /// the job, a cancel, and a failed send waiting in the Outbox for its retry.
 #[test]
 fn drafts_send_now_scheduled_held_and_failed() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install();
@@ -1034,7 +1034,7 @@ fn drafts_send_now_scheduled_held_and_failed() {
     std::fs::write(dir.join("logo.png"), b"\x89PNG not really").unwrap();
     let note = format!("file:{}", dir.join("note.txt").display());
     let logo = format!("file:{}", dir.join("logo.png").display());
-    let sink = crate::service::SinkGuard::install();
+    let sink = crate::SinkGuard::install();
 
     // the Internal account takes no email draft
     let internal = out_text(&ok("ensure#InternalAccount", &[]), "emailAccountId");
@@ -1730,7 +1730,7 @@ fn fake_imap_with(starttls: bool, log: std::sync::Arc<std::sync::Mutex<Vec<Strin
 /// The server test step by step against scripted local servers, and a step that fails.
 #[test]
 fn test_email_account_against_local_servers() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2168,7 +2168,7 @@ fn new_mail_wakes_its_snoozed_thread() {
 /// before it was on, or spam; with Auto-Submitted on it; and storing it again starts over.
 #[test]
 fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2257,7 +2257,7 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
         &[("receivedDate", stamp(now() - 10 * DAY))],
     );
     received("O11", "spam@x.example.org", "EfkJunk", &[]);
-    let sink = crate::service::SinkGuard::install();
+    let sink = crate::SinkGuard::install();
     let reply = |ids: &[&str]| {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         ok(
@@ -2310,17 +2310,20 @@ fn the_automatic_reply_goes_once_to_each_sender_it_is_for() {
 /// The test's HTTP sender: it answers the list's addresses and passes any other request on, as a test elsewhere in
 /// the crate may make one meanwhile.
 struct ListServer {
-    seen: std::sync::Mutex<Vec<crate::outbound::Request>>,
+    seen: std::sync::Mutex<Vec<moqui_core::outbound::Request>>,
     status: std::sync::atomic::AtomicU16,
 }
 
-impl crate::outbound::HttpSender for ListServer {
-    fn send(&self, request: crate::outbound::Request) -> Result<crate::outbound::Response, moqui_lib::error::Error> {
+impl moqui_core::outbound::HttpSender for ListServer {
+    fn send(
+        &self,
+        request: moqui_core::outbound::Request,
+    ) -> Result<moqui_core::outbound::Response, moqui_lib::error::Error> {
         if !request.url.starts_with("https://lists.example.org/") {
-            return crate::outbound::send_default(request);
+            return moqui_core::outbound::send_default(request);
         }
         self.seen.lock().unwrap().push(request);
-        Ok(crate::outbound::Response {
+        Ok(moqui_core::outbound::Response {
             status: self.status.load(std::sync::atomic::Ordering::SeqCst),
             body: "ok".to_string(),
             ..Default::default()
@@ -2332,7 +2335,7 @@ impl crate::outbound::HttpSender for ListServer {
 /// client to open, a private host refused, and get#Thread saying which.
 #[test]
 fn unsubscribe_one_click_mailto_and_url() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2381,8 +2384,8 @@ fn unsubscribe_one_click_mailto_and_url() {
         seen: std::sync::Mutex::new(Vec::new()),
         status: std::sync::atomic::AtomicU16::new(200),
     });
-    crate::outbound::install_http_sender(server.clone());
-    let sink = crate::service::SinkGuard::install();
+    moqui_core::outbound::install_http_sender(server.clone());
+    let sink = crate::SinkGuard::install();
 
     let one = ok("unsubscribe#Message", &[("emailMessageId", text("U1"))]);
     assert_eq!(out_text(&one, "method"), "oneClick");
@@ -2390,7 +2393,7 @@ fn unsubscribe_one_click_mailto_and_url() {
     {
         let seen = server.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].method, crate::outbound::Method::Post);
+        assert_eq!(seen[0].method, moqui_core::outbound::Method::Post);
         assert_eq!(seen[0].url, "https://lists.example.org/u/1");
         assert_eq!(seen[0].body.as_deref(), Some("List-Unsubscribe=One-Click"));
         // a name that resolves to a private address is refused by the transport, not only the host text
@@ -2431,7 +2434,7 @@ fn unsubscribe_one_click_mailto_and_url() {
         &[("emailMessageId", text("U5"))],
         "no List-Unsubscribe",
     );
-    crate::outbound::clear_http_sender();
+    moqui_core::outbound::clear_http_sender();
 
     let thread = |id: &str| {
         field(
@@ -2448,12 +2451,12 @@ fn unsubscribe_one_click_mailto_and_url() {
 /// who may send from it; a send that fails answers its error and leaves nothing in the Outbox.
 #[test]
 fn a_test_message_goes_from_the_account_to_itself() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install();
     let account = shared_account(&facade, "smtp.example.com");
-    let capture = crate::service::mail_capture::MailCapture::of(ctx.factory());
+    let capture = moqui_core::service::mail_capture::MailCapture::of(ctx.factory());
     capture.set_enabled(Some(true));
     capture.clear();
 
@@ -2517,70 +2520,70 @@ struct MailIndex {
 struct MailIndexBackend(std::sync::Arc<MailIndex>);
 
 /// The messageDate bound (lt, as epoch millis) and the emailMessageId values of a search filter.
-fn filter_bounds(query: &crate::search::Query, before: &mut Option<i64>, ids: &mut Option<Vec<String>>) {
+fn filter_bounds(query: &moqui_core::search::Query, before: &mut Option<i64>, ids: &mut Option<Vec<String>>) {
     match query {
-        crate::search::Query::Bool { all, .. } => {
+        moqui_core::search::Query::Bool { all, .. } => {
             for inner in all {
                 filter_bounds(inner, before, ids);
             }
         }
-        crate::search::Query::Field(field) if field.name == "messageDate" => {
+        moqui_core::search::Query::Field(field) if field.name == "messageDate" => {
             *before = match &field.lt {
                 Some(Value::Timestamp(at)) => Some(at.as_millisecond()),
                 Some(value) => to_plain_string(value).parse::<f64>().ok().map(|millis| millis as i64),
                 None => None,
             };
         }
-        crate::search::Query::Field(field) if field.name == "emailMessageId" => {
+        moqui_core::search::Query::Field(field) if field.name == "emailMessageId" => {
             *ids = Some(field.values.iter().map(to_plain_string).collect());
         }
         _ => {}
     }
 }
 
-impl crate::search::SearchBackend for MailIndexBackend {
+impl moqui_core::search::SearchBackend for MailIndexBackend {
     fn name(&self) -> &'static str {
         "mail-index"
     }
-    fn ensure_index(&self, _mapping: &crate::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
+    fn ensure_index(&self, _mapping: &moqui_core::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
         Ok(())
     }
-    fn index_exists(&self, _mapping: &crate::search::DocumentMapping) -> Result<bool, moqui_lib::error::Error> {
+    fn index_exists(&self, _mapping: &moqui_core::search::DocumentMapping) -> Result<bool, moqui_lib::error::Error> {
         Ok(true)
     }
     fn index_documents(
         &self,
-        _mapping: &crate::search::DocumentMapping,
-        documents: &[(String, crate::entity::document::Document)],
+        _mapping: &moqui_core::search::DocumentMapping,
+        documents: &[(String, moqui_core::entity::document::Document)],
     ) -> Result<usize, moqui_lib::error::Error> {
         Ok(documents.len())
     }
     fn delete_document(
         &self,
-        _mapping: &crate::search::DocumentMapping,
+        _mapping: &moqui_core::search::DocumentMapping,
         _id: &str,
     ) -> Result<bool, moqui_lib::error::Error> {
         Ok(true)
     }
     fn delete_matching(
         &self,
-        _mapping: &crate::search::DocumentMapping,
-        _filter: &crate::search::Query,
+        _mapping: &moqui_core::search::DocumentMapping,
+        _filter: &moqui_core::search::Query,
     ) -> Result<u64, moqui_lib::error::Error> {
         Ok(0)
     }
     fn get_document(
         &self,
-        _mapping: &crate::search::DocumentMapping,
+        _mapping: &moqui_core::search::DocumentMapping,
         _id: &str,
-    ) -> Result<Option<crate::entity::document::Document>, moqui_lib::error::Error> {
+    ) -> Result<Option<moqui_core::entity::document::Document>, moqui_lib::error::Error> {
         Ok(None)
     }
     fn search(
         &self,
-        _mappings: &[std::sync::Arc<crate::search::DocumentMapping>],
-        request: &crate::search::SearchRequest,
-    ) -> Result<crate::search::SearchPage, moqui_lib::error::Error> {
+        _mappings: &[std::sync::Arc<moqui_core::search::DocumentMapping>],
+        request: &moqui_core::search::SearchRequest,
+    ) -> Result<moqui_core::search::SearchPage, moqui_lib::error::Error> {
         moqui_lib::sync::lock(&self.0.limits).push(request.limit);
         let (mut before, mut ids) = (None, None);
         if let Some(filter) = &request.filter {
@@ -2599,7 +2602,7 @@ impl crate::search::SearchBackend for MailIndexBackend {
         let hits = found
             .into_iter()
             .take(request.limit)
-            .map(|(id, _)| crate::search::SearchHit {
+            .map(|(id, _)| moqui_core::search::SearchHit {
                 document_id: "MoquiEmailMessage".to_string(),
                 id: id.clone(),
                 index: "moqui_mail".to_string(),
@@ -2608,7 +2611,7 @@ impl crate::search::SearchBackend for MailIndexBackend {
                 highlights: Default::default(),
             })
             .collect();
-        Ok(crate::search::SearchPage {
+        Ok(moqui_core::search::SearchPage {
             hits,
             total,
             ..Default::default()
@@ -2616,13 +2619,13 @@ impl crate::search::SearchBackend for MailIndexBackend {
     }
     fn aggregate(
         &self,
-        _mapping: &crate::search::DocumentMapping,
-        _filter: &crate::search::Query,
-        _aggs: &IndexMap<String, crate::search::Agg>,
+        _mapping: &moqui_core::search::DocumentMapping,
+        _filter: &moqui_core::search::Query,
+        _aggs: &IndexMap<String, moqui_core::search::Agg>,
     ) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
         Ok(IndexMap::new())
     }
-    fn drop_index(&self, _mapping: &crate::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
+    fn drop_index(&self, _mapping: &moqui_core::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
         Ok(())
     }
 }
@@ -2662,17 +2665,18 @@ fn the_index_search_pages_past_one_read_of_the_index() {
     }
     {
         let _authz = ctx.disable_authz();
-        let data = std::fs::read_to_string(crate::context::framework_dir().join("data/MailSearchData.xml")).unwrap();
-        crate::entity::load_feed::load_entity_xml_text(&facade, "MailSearchData.xml", &data, &Default::default())
+        let data =
+            std::fs::read_to_string(moqui_core::context::framework_dir().join("data/MailSearchData.xml")).unwrap();
+        moqui_core::entity::load_feed::load_entity_xml_text(&facade, "MailSearchData.xml", &data, &Default::default())
             .unwrap();
     }
     let index = std::sync::Arc::new(MailIndex {
         documents,
         limits: Default::default(),
     });
-    crate::search::install(
+    moqui_core::search::install(
         ctx.factory(),
-        crate::search::SearchFacade::new(
+        moqui_core::search::SearchFacade::new(
             std::sync::Arc::new(MailIndexBackend(std::sync::Arc::clone(&index))),
             facade.clone(),
         ),
@@ -2735,7 +2739,7 @@ fn the_index_search_pages_past_one_read_of_the_index() {
 /// sender at one of them is internal (the internal message, and the internal-only audience).
 #[test]
 fn the_automatic_reply_counts_its_own_domains_as_internal() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2800,7 +2804,7 @@ fn the_automatic_reply_counts_its_own_domains_as_internal() {
     received("D1", "Pat@Partner.example.org");
     received("D2", "sam@ally.example.com");
     received("D3", "kim@elsewhere.example.org");
-    let sink = crate::service::SinkGuard::install();
+    let sink = crate::SinkGuard::install();
     let out = {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         ok(

@@ -79,14 +79,14 @@ impl Drop for WorkerFlag {
 /// still open on the factory's managers, which is rolled back, and the entity layer's thread state. Request and
 /// service workers, reserved threads and the scheduler pass hold one for each item, as Java runs `destroyAllInThread`
 /// in `finally`. It goes outside the item's `catch_unwind`, so it never runs during an unwind.
-pub(crate) struct WorkCleanup {
+pub struct WorkCleanup {
     factory: Option<Arc<ExecutionContextFactory>>,
     /// False for an inline item run under the caller's context, whose script stack and sim session stay.
     outermost: bool,
 }
 
 impl WorkCleanup {
-    pub(crate) fn new(factory: Option<Arc<ExecutionContextFactory>>) -> Self {
+    pub fn new(factory: Option<Arc<ExecutionContextFactory>>) -> Self {
         Self {
             factory,
             outermost: true,
@@ -144,7 +144,7 @@ fn rollback_manager(manager: &TransactionManager) {
 }
 
 /// The message of a caught panic, for the log.
-pub(crate) fn panic_text(payload: &(dyn Any + Send)) -> String {
+pub fn panic_text(payload: &(dyn Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|text| (*text).to_string())
@@ -496,7 +496,7 @@ impl ServicePools {
 
     /// Run `job` on a service worker in an execution context of its own, without waiting for it, as Java's
     /// `ThreadPoolRunnable`. A failure is logged with `what`. With no worker threads it runs now.
-    pub(crate) fn spawn(&self, what: &'static str, job: impl FnOnce() -> Result<(), Error> + Send + 'static) {
+    pub fn spawn(&self, what: &'static str, job: impl FnOnce() -> Result<(), Error> + Send + 'static) {
         let Some(shared) = &self.shared else {
             let result = match capture_factory() {
                 Ok(factory) => {

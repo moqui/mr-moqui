@@ -167,7 +167,7 @@ impl ToolFactory for RichFactory {
         let err = factory.register_service("probe::echo", echo).unwrap_err();
         assert!(err.to_string().contains("duplicate"), "a catalogue location: {err}");
         let err = factory
-            .register_service("moqui_core::service::mail::send_template", echo)
+            .register_service("moqui_core::service::contacts::filter_contact_addresses", echo)
             .unwrap_err();
         assert!(err.to_string().contains("duplicate"), "a built-in location: {err}");
         Ok(())
@@ -582,13 +582,18 @@ fn resources_and_templates_need_neither_services_nor_tools() {
 }
 
 #[test]
-fn missing_duplicate_and_inactive_implementations_fail_clearly() {
+fn missing_and_duplicate_implementations_fail_clearly() {
+    // A tool factory that is not linked, or whose component is not, is left out and the boot goes on (a dev
+    // component's on a Lite binary, since 05425cb9).
+    for (component, class, name) in [
+        ("native-probe", "missing", "missing"),
+        ("unlinked-component", "probe::First", "First"),
+    ] {
+        let runtime = Runtime::new(component, &format!("<tools><tool-factory class=\"{class}\"/></tools>"));
+        let factory = runtime.boot().expect("a tool factory that is not linked is left out");
+        assert!(factory.get_tool_factory(name).is_none(), "{component} {class}");
+    }
     for (component, config, expected) in [
-        (
-            "native-probe",
-            "<tools><tool-factory class=\"missing\"/></tools>",
-            "tool-factory missing",
-        ),
         (
             "native-probe",
             "<resource-facade><resource-reference scheme=\"memory\" class=\"missing\"/></resource-facade>",
@@ -609,11 +614,6 @@ fn missing_duplicate_and_inactive_implementations_fail_clearly() {
             "native-probe",
             "<tools><tool-factory class=\"probe::First\"/><tool-factory class=\"probe::Alias\"/></tools>",
             "duplicate tool name First",
-        ),
-        (
-            "unlinked-component",
-            "<tools><tool-factory class=\"probe::First\"/></tools>",
-            "not linked",
         ),
     ] {
         let runtime = Runtime::new(component, config);

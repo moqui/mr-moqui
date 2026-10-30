@@ -290,7 +290,7 @@ pub fn publish(facade: &EntityFacade, topic: &'static str, message: &TopicMessag
 }
 
 /// Whether `facade`'s factory posts to cluster peers, whose sockets may have the users of a notification.
-pub(crate) fn is_linked(facade: &EntityFacade) -> bool {
+pub fn is_linked(facade: &EntityFacade) -> bool {
     linked_state(facade).is_some()
 }
 

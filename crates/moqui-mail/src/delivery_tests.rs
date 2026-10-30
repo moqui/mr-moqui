@@ -24,8 +24,8 @@ use super::delivery::{deliver, find_recipient, Envelope, Options, Outcome, Recip
 use super::sync_tests::{
     alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, stamp, text, update,
 };
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
 
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
@@ -97,18 +97,16 @@ fn eca_lines() -> Vec<String> {
 }
 
 fn install_ecas(ctx: &ExecutionContext) {
-    crate::service::eca_rules::install(
+    moqui_core::service::install_eca_rules(
         ctx.factory(),
-        crate::service::eca_rules::from_xml(
-            "",
-            r#"<emecas>
+        "",
+        r#"<emecas>
             <emeca rule-name="Fails"><condition><expression>true</expression></condition>
                 <actions><script>throw new Error('rule boom')</script></actions></emeca>
             <emeca rule-name="Seen">
                 <actions><script>ec.message.addMessage('eca ' + emailAccountId + ' ' + fields.subject)</script></actions>
             </emeca>
         </emecas>"#,
-        ),
     );
 }
 
@@ -148,7 +146,7 @@ fn plain(message_id: &str, subject: &str, to: &str, extra: &str) -> String {
 /// first one's.
 #[test]
 fn recipients_are_hosted_and_shared_accounts_by_address_identity_and_plus_tag() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -212,7 +210,7 @@ fn recipients_are_hosted_and_shared_accounts_by_address_identity_and_plus_tag() 
 /// run once on each copy, a failing ECA logged and the rest going on; the gateway sending it again stores nothing.
 #[test]
 fn a_message_is_stored_once_per_account_with_files_rules_and_ecas() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -239,7 +237,7 @@ fn a_message_is_stored_once_per_account_with_files_rules_and_ecas() {
         ),
         "emailRuleId",
     );
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
 
     let report = receive(
         &facade,
@@ -371,14 +369,14 @@ fn a_message_is_stored_once_per_account_with_files_rules_and_ecas() {
 /// of no leaves it in the Inbox.
 #[test]
 fn the_gateways_spam_verdict_files_in_junk() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
     alice(&facade);
     install_ecas(&ctx);
     let sales = account("EakHosted", "sales@example.com", &[]);
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
     let report = receive(
         &facade,
         &plain(
@@ -424,7 +422,7 @@ fn the_gateways_spam_verdict_files_in_junk() {
 /// store, a failing ECA is logged and the automatic reply still goes.
 #[test]
 fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -455,7 +453,7 @@ fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() 
         row.set("emailFolderId", text(&inbox));
         row.delete(&facade).unwrap();
     }
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
     let sink = super::SinkGuard::install();
     let report = receive(
         &facade,
@@ -501,7 +499,7 @@ fn a_failed_store_is_that_accounts_error_and_later_steps_are_failure_tolerant() 
 /// Original-Recipient field; the gateway's resend (a duplicate) and a recipient that did not ask tell nothing.
 #[test]
 fn a_delivered_report_goes_to_the_sender_for_notify_success() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -513,7 +511,7 @@ fn a_delivered_report_goes_to_the_sender_for_notify_success() {
     ];
     let sales = account("EakHosted", "sales@example.com", &server);
     let support = account("EakShared", "support@example.com", &server);
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
     let sink = super::SinkGuard::install();
     let recipients = [
         Recipients {

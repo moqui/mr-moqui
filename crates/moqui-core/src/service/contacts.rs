@@ -17,7 +17,8 @@
 //! Mantle's parties), so it asks a hook service, as the shell counts do: the one the `email_contact_service` property
 //! names, else the theme value `STRT_EMAIL_CONTACT_SERVICE` of the user's qapps theme. It is called with `userId` and
 //! `emailAddressList` and answers `contactAddressList`, the addresses of those that are a contact the user can see. No
-//! hook: `contactAddressList` is null, and the caller treats every sender as a contact.
+//! hook: `contactAddressList` is null, and the caller treats every sender as a contact. It is core's, not moqui-mail's,
+//! so it answers with or without mail built in.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
@@ -29,11 +30,16 @@ use moqui_lib::sync::lock;
 use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
 use crate::screen::sri::{theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
+use crate::service::rust_services::RustServiceFn;
 
 /// The property that names the hook; it wins over the theme value.
 const PROPERTY: &str = "email_contact_service";
 /// The theme value that names the hook.
 const THEME_VALUE: &str = "STRT_EMAIL_CONTACT_SERVICE";
+
+pub(super) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
+    rust_service!(map, filter_contact_addresses)
+}
 
 /// The hooks that are missing or failed, each logged once while the server runs.
 #[derive(Default)]
@@ -114,7 +120,7 @@ fn call_hook(
 /// another user's only with authorization disabled). Out: `contactAddressList` (lower case; null when no hook is
 /// configured), `hookService`, and `hookFailed` when the hook failed or answered no list, which is logged once by name
 /// (then the list is empty: no address counts as a contact).
-pub(super) fn filter_contact_addresses(
+fn filter_contact_addresses(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {

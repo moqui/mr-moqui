@@ -1595,7 +1595,7 @@ impl FakeProvider {
 }
 
 fn form_pairs(body: &str) -> HashMap<String, String> {
-    crate::web::form_pairs(body).into_iter().collect()
+    moqui_core::web::form_pairs(body).into_iter().collect()
 }
 
 fn json_response(writer: &mut TcpStream, status: u16, body: &serde_json::Value) -> std::io::Result<()> {

@@ -222,7 +222,7 @@ fn publish_shell_counts(
 /// Whether the counts would reach anyone: not while the factory shuts down (its database is closing), and only with a
 /// notification socket in this process or cluster peers to post to. A command such as `moqui load` has neither, so the
 /// EECAs of the records it loads send nothing (and nothing runs after its database closes).
-pub(crate) fn would_deliver(shutting_down: bool, listening: bool, linked: bool) -> bool {
+pub fn would_deliver(shutting_down: bool, listening: bool, linked: bool) -> bool {
     !shutting_down && (listening || linked)
 }
 

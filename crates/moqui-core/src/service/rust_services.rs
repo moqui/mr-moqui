@@ -13,7 +13,7 @@
  */
 
 //! Function registry for `type="rust"` services. Each function registers under its Rust path, down to the function
-//! name (`moqui_core::service::mail::send_template`). The service element's `location` is that path.
+//! name (`moqui_core::service::tools::print_document`). The service element's `location` is that path.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -50,25 +50,6 @@ static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new
 const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
     ("moqui_core::service::images::", "image", cfg!(feature = "image")),
     ("moqui_core::service::spreadsheet::", "xlsx", cfg!(feature = "xlsx")),
-    (
-        "moqui_core::service::mail::send_template",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    (
-        "moqui_core::service::mail::send_message",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    ("moqui_core::service::mail::test_server", "smtp", cfg!(feature = "smtp")),
-    (
-        "moqui_core::service::mail::push_remote_changes",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    // the app's contacts hook, with or without mail built in
-    ("moqui_core::service::mail::filter_contact_addresses", "", true),
-    ("moqui_core::service::mail::", "imap", cfg!(feature = "imap")),
 ];
 
 /// The feature `location` belongs to when this build leaves that feature out.
@@ -97,7 +78,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::backup::register(&mut map),
         super::content::register(&mut map),
         super::external_agent::register(&mut map),
-        super::mail::register(&mut map),
+        super::contacts::register(&mut map),
         super::system_sync::register(&mut map),
         super::elfinder::register(&mut map),
         super::sso::register(&mut map),

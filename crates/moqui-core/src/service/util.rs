@@ -27,13 +27,13 @@ use crate::entity::EntityValue;
 use crate::transaction::TransactionManager;
 
 /// True when the current context's message facade holds an error. False with no current context.
-pub(crate) fn has_error() -> bool {
+pub fn has_error() -> bool {
     ExecutionContext::with_current(|ctx| !ctx.message().errors().is_empty()).unwrap_or(false)
 }
 
 /// Java's `getErrorsString()` then `clearErrors()`, for a caller that consumes the errors a call left: their text, or
 /// `None` when there are none.
-pub(crate) fn take_errors_string() -> Option<String> {
+pub fn take_errors_string() -> Option<String> {
     ExecutionContext::with_current(|ctx| {
         let mut messages = ctx.message();
         if messages.errors().is_empty() {
@@ -47,17 +47,17 @@ pub(crate) fn take_errors_string() -> Option<String> {
 }
 
 /// Now, in epoch milliseconds.
-pub(crate) fn now_millis() -> i64 {
+pub fn now_millis() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
 /// Now as a `Timestamp` value, to the millisecond.
-pub(crate) fn now_stamp() -> Value {
+pub fn now_stamp() -> Value {
     basic_convert(&Value::I64(now_millis()), "Timestamp").value
 }
 
 /// The plain text of `value`. Empty for a missing or empty value.
-pub(crate) fn text_of(value: Option<&Value>) -> String {
+pub fn text_of(value: Option<&Value>) -> String {
     match value {
         Some(value) if !is_empty(value) => to_plain_string(value),
         _ => String::new(),
@@ -65,23 +65,23 @@ pub(crate) fn text_of(value: Option<&Value>) -> String {
 }
 
 /// The plain text of parameter `name`. Empty when it is missing or empty.
-pub(crate) fn param_text(parameters: &BTreeMap<String, Value>, name: &str) -> String {
+pub fn param_text(parameters: &BTreeMap<String, Value>, name: &str) -> String {
     text_of(parameters.get(name))
 }
 
 /// The plain text of entry `name` of `map`. Empty when it is missing or empty.
-pub(crate) fn map_text(map: &IndexMap<String, Value>, name: &str) -> String {
+pub fn map_text(map: &IndexMap<String, Value>, name: &str) -> String {
     text_of(map.get(name))
 }
 
 /// The plain text of field `name` of `row`. Empty when it is missing or empty.
-pub(crate) fn field_text(row: &EntityValue, name: &str) -> String {
+pub fn field_text(row: &EntityValue, name: &str) -> String {
     text_of(row.get(name))
 }
 
 /// Run `body` in its own transaction on a reserve connection: begin, then commit when `body` succeeds,
 /// else roll back. A failed commit is rolled back too. The caller's transaction is not touched.
-pub(crate) fn reserve<T>(
+pub fn reserve<T>(
     tx: &TransactionManager,
     body: impl FnOnce(&mut dyn DbConnection) -> Result<T, LibError>,
 ) -> Result<T, Error> {

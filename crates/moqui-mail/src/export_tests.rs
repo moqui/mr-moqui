@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::EntityFacade;
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::EntityFacade;
 
 fn text(value: &str) -> Value {
     Value::string(value)
@@ -34,7 +34,7 @@ fn row(facade: &EntityFacade, entity: &str, fields: &[(&str, Value)]) {
 
 fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 fn call(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, String) {
@@ -42,7 +42,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, S
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    let out = crate::service::sync(&format!("{}.{name}", super::SERVICES), &parameters).unwrap();
+    let out = moqui_core::service::sync(&format!("{}.{name}", super::SERVICES), &parameters).unwrap();
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors().join("\n");
         ec.message().clear_errors();
@@ -58,15 +58,15 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, S
 fn a_sent_message_exports_with_its_files() {
     let ctx = ExecutionContextFactory::test_context_in(
         "",
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
     let _entered = ctx.enter();
-    let framework = crate::context::framework_dir().join("service/org/moqui");
-    let failures = crate::service::lint(&[
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
+    let failures = moqui_core::service::lint(&[
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),

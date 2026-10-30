@@ -17,6 +17,7 @@ members = [
     "crates/moqui-core",
     "crates/moqui-llm",
     "crates/moqui-git",
+    "crates/moqui-mail",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -59,6 +60,9 @@ moqui-llm = { path = "crates/moqui-llm" }
 # git:// locations, the git services and the git server, on moqui-core (plans/Crate-Split.md); the host links it under
 # its git feature.
 moqui-git = { path = "crates/moqui-git" }
+# The email services, on moqui-core (plans/Crate-Split.md); the host links it under its smtp feature, and turns on its
+# imap feature under its own. default-features off so a host without imap leaves it out.
+moqui-mail = { path = "crates/moqui-mail", default-features = false }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.
@@ -118,6 +122,7 @@ des = "0.9"
 pbkdf2 = "0.12"
 md-5 = "0.10"
 
+# Mail (moqui-mail): lettre, imap, mail-parser; rustls and webpki-roots are the host's too.
 # Do not enable the feature named rustls-tls: on this crate it selects ring.
 # hostname is an optional dependency feature. tokio1 stays off, so SMTP is not async.
 lettre = { version = "0.11", default-features = false, features = [

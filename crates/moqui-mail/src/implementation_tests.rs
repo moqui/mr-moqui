@@ -17,25 +17,24 @@ use std::collections::BTreeMap;
 use indexmap::IndexMap;
 
 use super::{field_text, host_in, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
-use crate::context::ExecutionContextFactory;
-use crate::entity::EntityFacade;
-use crate::screen::PDF_UNAVAILABLE;
 #[cfg(feature = "imap")]
-use crate::service::eca_rules;
 #[cfg(feature = "imap")]
-use crate::service::mail::inbound::{header_one, parse_rfc822, read_line_bytes, FakeGuard, Inbound, FAKE_DELETED};
+use crate::inbound::{header_one, parse_rfc822, read_line_bytes, FakeGuard, Inbound, FAKE_DELETED};
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::entity::EntityFacade;
+use moqui_core::screen::PDF_UNAVAILABLE;
 use moqui_lib::object::Value;
 
 /// The tests set `email-client` `allowed-hosts`, a process property, so they share the property lock.
 fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
-    crate::user::session::cookie_property_lock()
+    moqui_core::user::session::cookie_property_lock()
 }
 
 fn fixture(name: &str) -> String {
-    format!("{}/src/service/testdata/mail/{name}", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/testdata/{name}", env!("CARGO_MANIFEST_DIR"))
 }
 
-fn smtp_server(facade: &EntityFacade, context: &crate::context::ExecutionContext, id: &str) {
+fn smtp_server(facade: &EntityFacade, context: &moqui_core::context::ExecutionContext, id: &str) {
     seed(
         facade,
         context,
@@ -49,7 +48,7 @@ fn smtp_server(facade: &EntityFacade, context: &crate::context::ExecutionContext
 }
 
 /// `send#ScreenRenderEmail` requires a user, as in Java.
-fn log_in(facade: &EntityFacade, context: &crate::context::ExecutionContext) {
+fn log_in(facade: &EntityFacade, context: &moqui_core::context::ExecutionContext) {
     seed(
         facade,
         context,
@@ -60,7 +59,7 @@ fn log_in(facade: &EntityFacade, context: &crate::context::ExecutionContext) {
             ("emailAddress", "emailer@example.com"),
         ],
     );
-    crate::user::internal_login_user("emailer").expect("login");
+    moqui_core::user::internal_login_user("emailer").expect("login");
 }
 
 fn map(pairs: Vec<(&str, Value)>) -> Value {
@@ -72,23 +71,23 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
     )
 }
 
-fn entered() -> (EntityFacade, crate::context::ExecutionContext) {
+fn entered() -> (EntityFacade, moqui_core::context::ExecutionContext) {
     entered_with("")
 }
 
 /// [`entered`] with the conf text `conf`.
-fn entered_with(conf: &str) -> (EntityFacade, crate::context::ExecutionContext) {
-    let facade = crate::testing::open();
+fn entered_with(conf: &str) -> (EntityFacade, moqui_core::context::ExecutionContext) {
+    let facade = moqui_core::testing::open();
     let context = ExecutionContextFactory::test_context_in(
         conf,
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
     context.factory().set_entity(facade.clone());
     (facade, context)
 }
 
-fn seed(facade: &EntityFacade, context: &crate::context::ExecutionContext, entity: &str, fields: &[(&str, &str)]) {
+fn seed(facade: &EntityFacade, context: &moqui_core::context::ExecutionContext, entity: &str, fields: &[(&str, &str)]) {
     let _authz = context.disable_authz();
     let mut row = facade.make_value(entity).expect("make");
     for (name, value) in fields {
@@ -110,7 +109,7 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     seed(
         &facade,
         &context,
@@ -141,7 +140,7 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
     params.insert("body".into(), Value::string("Hi"));
     params.insert("bodyText".into(), Value::string("Hi"));
     params.insert("bodyParameters".into(), Value::Map(body_parameters));
-    let out = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.messages();
@@ -157,7 +156,7 @@ fn a_template_send_adds_the_list_headers_and_keeps_them() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     seed(
         &facade,
         &context,
@@ -192,7 +191,7 @@ fn a_template_send_adds_the_list_headers_and_keeps_them() {
     params.insert("toAddresses".into(), Value::string("member@example.com"));
     params.insert("body".into(), Value::string("<p>News</p>"));
     params.insert("extraHeaders".into(), Value::Map(extra));
-    let out = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.messages();
@@ -220,7 +219,7 @@ fn a_template_send_threads_and_replies_as_the_caller_says() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     seed(
         &facade,
         &context,
@@ -248,7 +247,7 @@ fn a_template_send_threads_and_replies_as_the_caller_says() {
         params.insert("inReplyTo".into(), Value::string(in_reply_to));
         params.insert("references".into(), Value::string(references));
         params.insert("replyToAddresses".into(), Value::string(reply_to));
-        crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send")
+        moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send")
     };
     let out = send(
         "<b@forum.example.com>",
@@ -281,7 +280,7 @@ fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
     let _lock = lock_tests();
     let (facade, context) = entered_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     seed(
         &facade,
         &context,
@@ -305,7 +304,7 @@ fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
     params.insert("toAddresses".into(), Value::string("to@example.com"));
     params.insert("body".into(), Value::string("Hi"));
     params.insert("bodyText".into(), Value::string("Hi"));
-    let _ = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
+    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
     let errors = context.message().errors().join("\n");
     assert!(errors.contains("notexample.com"), "{errors}");
     assert!(sink.messages().is_empty(), "{errors}");
@@ -317,11 +316,11 @@ fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
 #[test]
 fn screen_body_renders_html_and_text_and_sends_with_attachments() {
     let _lock = lock_tests();
-    let _pdf = crate::screen::pdf_test_lock();
-    crate::screen::clear_pdf_engine();
+    let _pdf = moqui_core::screen::pdf_test_lock();
+    moqui_core::screen::clear_pdf_engine();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     smtp_server(&facade, &context, "GATE_SMTP");
     seed(
         &facade,
@@ -400,7 +399,7 @@ fn screen_body_renders_html_and_text_and_sends_with_attachments() {
             ("contentBytes", Value::Bytes(vec![137, 80, 78, 71])),
         ])]),
     );
-    let out = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     let messages = context.message().messages().join("\n");
     assert!(errors.is_empty(), "{errors}");
@@ -491,7 +490,7 @@ fn screen_render_email_sends_the_rendered_screen_as_an_attachment() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     smtp_server(&facade, &context, "SYSTEM");
     seed(
         &facade,
@@ -518,7 +517,7 @@ fn screen_render_email_sends_the_rendered_screen_as_an_attachment() {
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Monthly Report"));
     params.insert("bodyParameters".into(), map(vec![("rowName", Value::string("March"))]));
-    crate::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     let messages = context.message().messages().join("\n");
     assert!(errors.is_empty(), "{errors}");
@@ -539,7 +538,6 @@ fn screen_render_email_sends_the_rendered_screen_as_an_attachment() {
     assert!(mail.mime.contains("multipart/alternative"), "{}", mail.mime);
 }
 
-#[cfg(feature = "xlsx")]
 /// The Email Export dialog's default: the screen as xlsx, attached as the workbook it renders.
 #[test]
 fn screen_render_email_as_xlsx_attaches_the_workbook() {
@@ -547,7 +545,7 @@ fn screen_render_email_as_xlsx_attaches_the_workbook() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     smtp_server(&facade, &context, "SYSTEM");
     seed(
         &facade,
@@ -572,7 +570,7 @@ fn screen_render_email_as_xlsx_attaches_the_workbook() {
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Monthly Report"));
     params.insert("bodyParameters".into(), map(vec![("rowName", Value::string("March"))]));
-    crate::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.sent();
@@ -592,11 +590,11 @@ fn screen_render_email_as_xlsx_attaches_the_workbook() {
 #[test]
 fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
     let _lock = lock_tests();
-    let _pdf = crate::screen::pdf_test_lock();
-    crate::screen::clear_pdf_engine();
+    let _pdf = moqui_core::screen::pdf_test_lock();
+    moqui_core::screen::clear_pdf_engine();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     smtp_server(&facade, &context, "SYSTEM");
     seed(
         &facade,
@@ -620,7 +618,7 @@ fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
     params.insert("screenRenderMode".into(), Value::string("xsl-fo"));
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Printed"));
-    crate::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     assert!(!errors.contains(PDF_UNAVAILABLE), "{errors}");
@@ -629,9 +627,9 @@ fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
     assert!(sent[0].attachments.is_empty());
     assert!(sent[0].body.contains("Printed"), "{}", sent[0].body);
 
-    crate::screen::install_pdf_engine(std::sync::Arc::new(FakePdf));
-    crate::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
-    crate::screen::clear_pdf_engine();
+    moqui_core::screen::install_pdf_engine(std::sync::Arc::new(FakePdf));
+    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::screen::clear_pdf_engine();
     let sent = sink.sent();
     assert_eq!(sent.len(), 2);
     let (filename, content_type, bytes) = &sent[1].attachments[0];
@@ -642,8 +640,8 @@ fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
 
 struct FakePdf;
 
-impl crate::screen::PdfEngine for FakePdf {
-    fn render(&self, html: &str) -> Result<Vec<u8>, crate::context::Error> {
+impl moqui_core::screen::PdfEngine for FakePdf {
+    fn render(&self, html: &str) -> Result<Vec<u8>, moqui_core::context::Error> {
         assert!(html.contains("@page"), "the attachment is the html-print document");
         Ok(b"%PDF-fake".to_vec())
     }
@@ -654,7 +652,7 @@ fn a_body_screen_that_fails_to_render_does_not_send() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     smtp_server(&facade, &context, "BROKEN_SMTP");
     seed(
         &facade,
@@ -672,7 +670,7 @@ fn a_body_screen_that_fails_to_render_does_not_send() {
     let mut params = BTreeMap::new();
     params.insert("emailTemplateId".into(), Value::string("BROKEN"));
     params.insert("toAddresses".into(), Value::string("to@example.com"));
-    let _ = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
+    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
     let messages = context.message().messages().join("\n");
     assert!(messages.contains("Error sending email"), "{messages}");
     assert!(messages.contains("NoSuchScreen.xml"), "{messages}");
@@ -684,13 +682,13 @@ fn sim_skip_returns_email_message_id_sim() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
+    moqui_core::service::load_definitions().unwrap();
     facade.set_sim_active(true);
     let sink = SinkGuard::install();
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailTemplateId".into(), Value::string("MISSING"));
     params.insert("toAddresses".into(), Value::string("to@example.com"));
-    let out = crate::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("sim");
+    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("sim");
     assert_eq!(out.get("emailMessageId").and_then(Value::as_str), Some("SIM"));
     assert!(sink.messages().is_empty());
     assert!(context.message().errors().is_empty());
@@ -702,18 +700,16 @@ fn fake_store_poll_runs_one_eca_and_skips_seen() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
-    eca_rules::install(
+    moqui_core::service::load_definitions().unwrap();
+    moqui_core::service::install_eca_rules(
         context.factory(),
-        eca_rules::from_xml(
-            "",
-            r#"<emecas>
+        "",
+        r#"<emecas>
                 <emeca rule-name="Notice">
                     <condition><expression>true</expression></condition>
                     <actions><script>ec.message.addMessage(fields.subject);</script></actions>
                 </emeca>
             </emecas>"#,
-        ),
     );
     seed(
         &facade,
@@ -739,7 +735,7 @@ fn fake_store_poll_runs_one_eca_and_skips_seen() {
     let _store = FakeGuard::install(vec![fresh, seen]);
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_POLL"));
-    crate::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params).expect("poll");
+    moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params).expect("poll");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let messages = context.message().messages().to_vec();
@@ -814,17 +810,15 @@ fn a_message_whose_rule_fails_is_not_marked_or_deleted() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
-    eca_rules::install(
+    moqui_core::service::load_definitions().unwrap();
+    moqui_core::service::install_eca_rules(
         context.factory(),
-        eca_rules::from_xml(
-            "",
-            r#"<emecas>
+        "",
+        r#"<emecas>
                 <emeca rule-name="Breaks"><condition><expression>fields.subject == 'bad'</expression></condition>
                     <actions><script>throw new Error('rule broke')</script></actions></emeca>
                 <emeca rule-name="Notes"><actions><script>ec.message.addMessage('saw ' + fields.subject);</script></actions></emeca>
             </emecas>"#,
-        ),
     );
     seed(
         &facade,
@@ -849,7 +843,7 @@ fn a_message_whose_rule_fails_is_not_marked_or_deleted() {
     FAKE_DELETED.with(|deleted| deleted.borrow_mut().clear());
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_KEEP"));
-    let _ = crate::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
+    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
     let messages = context.message().messages().to_vec();
     // The second rule still ran for the failing message, and the next message was processed.
     assert!(messages.iter().any(|text| text == "saw bad"), "{messages:?}");
@@ -864,18 +858,16 @@ fn a_failed_message_keeps_the_ones_before_it_committed_and_deleted() {
     let _lock = lock_tests();
     let (facade, context) = entered();
     let _entered = context.enter();
-    crate::service::load_definitions().unwrap();
-    eca_rules::install(
+    moqui_core::service::load_definitions().unwrap();
+    moqui_core::service::install_eca_rules(
         context.factory(),
-        eca_rules::from_xml(
-            "",
-            r#"<emecas>
+        "",
+        r#"<emecas>
                 <emeca rule-name="Save"><actions>
                     <service-call name="org.moqui.impl.EmailServices.save#EcaEmailMessage" in-map="context"/></actions></emeca>
                 <emeca rule-name="Breaks"><condition><expression>fields.subject == 'bad'</expression></condition>
                     <actions><script>throw new Error('rule broke')</script></actions></emeca>
             </emecas>"#,
-        ),
     );
     seed(
         &facade,
@@ -903,7 +895,7 @@ fn a_failed_message_keeps_the_ones_before_it_committed_and_deleted() {
     FAKE_DELETED.with(|deleted| deleted.borrow_mut().clear());
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_EACH"));
-    let _ = crate::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
+    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
     let errors = context.message().errors().join("\n");
     assert!(errors.contains("rule broke"), "{errors}");
     // The poll's own transaction rolled back on that error; the saved messages were committed before it.

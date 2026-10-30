@@ -84,6 +84,17 @@ pub fn run_email_rules(fields: &BTreeMap<String, Value>) -> Result<(), Error> {
     first.map_or(Ok(()), Err)
 }
 
-#[cfg(all(test, feature = "imap"))]
+/// Install SECA and EmECA rules from XML on a factory, for tests (moqui-mail's too).
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn install_rules(
+    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    seca_xml: &str,
+    email_xml: &str,
+) {
+    super::eca_rules::install(factory, super::eca_rules::from_xml(seca_xml, email_xml));
+}
+
+#[cfg(test)]
 #[path = "email_eca_tests.rs"]
 mod tests;

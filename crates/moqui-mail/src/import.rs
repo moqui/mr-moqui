@@ -26,9 +26,9 @@ use moqui_lib::object::{to_plain_string, Value};
 use super::implementation::{find_one, force_new, note_error};
 use super::store::{self, parse_message, Placement, MESSAGE};
 use super::sync::{value_number, FOLDER};
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
-use crate::service::util::{field_text, has_error, now_millis, param_text};
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
+use moqui_core::service::util::{field_text, has_error, now_millis, param_text};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 /// The most errors reported back; the rest are only logged.
@@ -48,7 +48,7 @@ fn uploaded(value: &Value, out: &mut Vec<Source>) {
             }
         }
         Value::Object(object) => {
-            if let Some(file) = object.downcast::<crate::web::multipart::UploadedFile>() {
+            if let Some(file) = object.downcast::<moqui_core::web::multipart::UploadedFile>() {
                 match file.read_bytes() {
                     Ok(bytes) => out.push(Source {
                         name: file.file_name.clone(),
@@ -124,7 +124,7 @@ pub(super) fn import_messages(
     let account_id = field_text(&folder, "emailAccountId");
     let mut access_in = BTreeMap::new();
     access_in.insert("emailAccountId".to_string(), Value::string(&account_id));
-    let access = crate::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
+    let access = moqui_core::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &access_in)
         .map_err(|err| LibError::new(err.message()))?;
     if has_error() {
         return Ok(out);
@@ -248,7 +248,7 @@ pub(super) fn import_messages(
             "emailAccountIdList".to_string(),
             Value::List(vec![Value::string(&account_id)]),
         );
-        let _ = crate::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &counts);
+        let _ = moqui_core::service::sync(&format!("{SERVICES}.publish#AccountCounts"), &counts);
     }
     errors.truncate(ERRORS_SHOWN);
     out.insert("importedCount".into(), Value::I64(imported));

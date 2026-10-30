@@ -25,8 +25,8 @@ use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
 use super::fake_servers::{fake_dns, fake_http, FakeImap, FakePop};
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::{EntityFacade, EntityValue};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::{EntityFacade, EntityValue};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
@@ -40,10 +40,10 @@ pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
 pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
         conf,
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     // the attachments are DbResource files; the in-memory database has every table
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
@@ -51,14 +51,14 @@ pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
 }
 
 pub(super) fn install() {
-    let framework = crate::context::framework_dir().join("service/org/moqui");
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ];
-    let failures = crate::service::lint(&paths).unwrap();
+    let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
 
@@ -116,7 +116,7 @@ pub(super) fn user(facade: &EntityFacade, user_id: &str) {
 
 pub(super) fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 pub(super) fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -124,7 +124,7 @@ pub(super) fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String,
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    crate::service::sync(&format!("{SERVICES}.{name}"), &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
+    moqui_core::service::sync(&format!("{SERVICES}.{name}"), &parameters).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
 
 pub(super) fn errors() -> String {
@@ -309,7 +309,7 @@ fn changes(facade: &EntityFacade, account: &str) -> usize {
 /// nothing new that reads no folder.
 #[test]
 fn first_sync_maps_folders_and_stores_messages_files_and_threads() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -454,7 +454,7 @@ fn first_sync_maps_folders_and_stores_messages_files_and_threads() {
 /// Without CONDSTORE: new UIDs, the flag scan when due, and an expunge found by comparing UIDs, with and without a scan.
 #[test]
 fn incremental_sync_flag_scan_and_expunge_without_condstore() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -557,7 +557,7 @@ fn incremental_sync_flag_scan_and_expunge_without_condstore() {
 /// expunge is found by the UIDs.
 #[test]
 fn condstore_and_qresync_bring_flag_changes_and_expunges() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -627,7 +627,7 @@ fn condstore_and_qresync_bring_flag_changes_and_expunges() {
 /// A new UIDVALIDITY: the folder is read again and each row is kept, with its new UID, by its Message-ID.
 #[test]
 fn uidvalidity_reset_reads_the_folder_again_and_keeps_the_rows() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -676,7 +676,7 @@ fn uidvalidity_reset_reads_the_folder_again_and_keeps_the_rows() {
 /// A message another client moved keeps its row, whichever folder is read first.
 #[test]
 fn a_message_moved_by_another_client_keeps_its_row() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -729,7 +729,7 @@ fn a_message_moved_by_another_client_keeps_its_row() {
 /// delete, a folder made and renamed; nothing is left queued.
 #[test]
 fn local_changes_reach_the_server_at_the_next_sync() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -852,7 +852,7 @@ impl Drop for PushNow {
 /// at the next sync once the server is back.
 #[test]
 fn a_change_goes_at_once_and_waits_while_the_server_is_away() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -943,7 +943,7 @@ fn a_change_goes_at_once_and_waits_while_the_server_is_away() {
 /// A message that is not mail is logged and skipped, the rest are stored and the folder moves past it.
 #[test]
 fn a_malformed_message_is_skipped_and_the_rest_are_stored() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -983,7 +983,7 @@ fn a_malformed_message_is_skipped_and_the_rest_are_stored() {
 /// it Active again.
 #[test]
 fn a_refused_sign_in_marks_the_account() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1038,7 +1038,7 @@ fn a_refused_sign_in_marks_the_account() {
 /// POP3: fetch-only into the Inbox by UIDL, each message once; DELE only when the server is set to delete.
 #[test]
 fn pop3_fetches_by_uidl_and_deletes_only_when_told() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1121,7 +1121,7 @@ pub(super) fn pop_log_has(pop: &FakePop, line: &str) -> bool {
 /// Message-ID instead of appended again.
 #[test]
 fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1187,7 +1187,7 @@ fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
 /// the backlog is in; then the interval holds again.
 #[test]
 fn the_job_goes_on_with_a_backlog_at_its_next_run() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup_with(r#"<moqui-conf><email-client sync-batch="1"/></moqui-conf>"#);
     let _entered = ctx.enter();
     install();
@@ -1227,7 +1227,7 @@ fn the_job_goes_on_with_a_backlog_at_its_next_run() {
 /// The job syncs what is due and leaves a paused account; a sync holding the lock makes another one busy.
 #[test]
 fn the_job_syncs_due_accounts_and_the_lock_keeps_one_at_a_time() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1314,7 +1314,7 @@ fn conditions(items: &[&[(&str, &str)]]) -> Value {
 /// is reported and the others still run. Block sender and report spam.
 #[test]
 fn rules_conditions_actions_block_and_spam() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1656,7 +1656,7 @@ fn rules_conditions_actions_block_and_spam() {
 /// Discovery from a local autoconfig file, then from SRV records of a local DNS server, then the guesses.
 #[test]
 fn discover_from_autoconfig_then_srv_then_guesses() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let config = r#"<?xml version="1.0"?><clientConfig version="1.1"><emailProvider id="example.test">
         <domain>example.test</domain><displayName>Example Test Mail</displayName>
         <incomingServer type="imap"><hostname>imap.example.test</hostname><port>993</port><socketType>SSL</socketType>
@@ -1745,7 +1745,7 @@ Duplicate
 /// mbox's headers; a user who may only read the account may not import.
 #[test]
 fn import_mbox_and_eml_into_a_folder() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1825,7 +1825,7 @@ fn import_mbox_and_eml_into_a_folder() {
 /// An IDLE worker: new mail in the Inbox is stored without a sync being asked for, and the worker stops on demand.
 #[test]
 fn an_idle_worker_syncs_new_inbox_mail_and_stops() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1900,7 +1900,7 @@ fn parse_message_reads_headers_bodies_and_files() {
 /// A draft discarded before its change went leaves nothing there.
 #[test]
 fn drafts_go_to_the_servers_drafts_are_replaced_and_leave_when_sent() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -1989,7 +1989,7 @@ fn drafts_go_to_the_servers_drafts_are_replaced_and_leave_when_sent() {
 /// its sender once (Auto-Submitted, appended to Sent), not again for the reply.
 #[test]
 fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2071,16 +2071,15 @@ fn new_mail_at_a_sync_wakes_its_thread_and_gets_the_automatic_reply() {
 #[test]
 fn email_eca_rules_run_once_on_each_new_message_a_sync_brings_in() {
     const DAY: i64 = 86_400_000;
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
     alice(&facade);
-    crate::service::eca_rules::install(
+    moqui_core::service::install_eca_rules(
         ctx.factory(),
-        crate::service::eca_rules::from_xml(
-            "",
-            r#"<emecas>
+        "",
+        r#"<emecas>
             <emeca rule-name="Fails"><condition><expression>true</expression></condition>
                 <actions><script>throw new Error('rule boom')</script></actions></emeca>
             <emeca rule-name="ListUnsubscribeMailto">
@@ -2088,7 +2087,6 @@ fn email_eca_rules_run_once_on_each_new_message_a_sync_brings_in() {
                 <actions><script>ec.message.addMessage('eca ' + fields.subject + ' ' + emailMessageId + ' ' + emailAccountId + ' ' + headers['message-id'] + ' ' + emailServerId)</script></actions>
             </emeca>
         </emecas>"#,
-        ),
     );
     let ran = || -> Vec<String> {
         ExecutionContext::with_current(|ec| ec.message().messages().to_vec())
@@ -2258,7 +2256,7 @@ fn store_test(account: &str) -> Vec<(String, String, String)> {
 /// STLS is sent STLS and the connection goes to TLS before USER (the fake server has no TLS, so the handshake fails).
 #[test]
 fn a_plain_store_signs_in_only_with_tls_or_when_allowed() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2365,7 +2363,7 @@ fn a_plain_store_signs_in_only_with_tls_or_when_allowed() {
 /// still queued to go there. The server has CONDSTORE, so each sync reads the flags that changed.
 #[test]
 fn a_label_taken_off_on_the_server_comes_off_here() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2463,7 +2461,7 @@ fn a_label_taken_off_on_the_server_comes_off_here() {
 /// sync finds it at once, not at the IDLE's renewal ten minutes on.
 #[test]
 fn an_idle_worker_finds_mail_that_came_during_its_sync() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();
@@ -2516,7 +2514,7 @@ fn an_idle_worker_finds_mail_that_came_during_its_sync() {
 /// with no stall and no failed connection.
 #[test]
 fn an_idle_worker_takes_an_exists_before_the_continuation() {
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let (ctx, facade) = setup();
     let _entered = ctx.enter();
     install();

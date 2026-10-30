@@ -55,6 +55,7 @@ moqui_core::extension::submit! {
         features: &["git"],
         register_services: service::register,
         register_native,
+        ..moqui_core::extension::Extension::EMPTY
     }
 }
 

@@ -38,12 +38,16 @@ print = ["dep:ipp"]
 # The SMTP listener for hosted and shared mail accounts behind the edge gateway (src/smtp.rs, Tokio only); it stores
 # through the inbound mail of imap. It starts only when smtp_listen_port is set. docs/interfaces/Mail-Inbound.md.
 inbound-smtp = ["imap"]
-# Framework features, forwarded to moqui-core.
+# The email services (crates/moqui-mail): both halves.
 mail = ["smtp", "imap"]
-smtp = ["moqui-core/smtp"]
-imap = ["moqui-core/imap"]
+# Outbound SMTP: send#EmailMessage and send#EmailTemplate (password reset, notifications), test#EmailServer's SMTP step.
+smtp = ["dep:moqui-mail"]
+# Inbound: IMAP and POP3 poll, the mail client's sync, IDLE and import, the OAuth sign-in of mail accounts and the
+# delivery of mail the SMTP listener received. Replies and the client's sends go out through SMTP, so this includes it.
+imap = ["smtp", "moqui-mail/imap"]
 # git:// locations, the git services and the git server (crates/moqui-git).
 git = ["dep:moqui-git"]
+# Framework features, forwarded to moqui-core.
 image = ["moqui-core/image"]
 xlsx = ["moqui-core/xlsx"]
 # The agents and the model providers (crates/moqui-llm).
@@ -69,6 +73,7 @@ moqui-core = { workspace = true, features = ["http", "cluster-tls"] }
 moqui-lib = { workspace = true, features = ["http"] }
 moqui-llm = { workspace = true, optional = true }
 moqui-git = { workspace = true, optional = true }
+moqui-mail = { workspace = true, optional = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }
