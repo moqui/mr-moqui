@@ -874,6 +874,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="tagId"/>
             <parameter name="modifiedByUserId"/>
             <parameter name="limit" type="Integer" default="50"/>
+            <parameter name="excludeLocationPrefixList" type="List">
+                <description>Optional resource-location subtrees to omit before searching, walking or limiting results.
+                    Callers may narrow an authorized search; component policies may add private prefixes.</description>
+            </parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="resultList" type="List"/>
@@ -886,6 +890,11 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.user.userId) return
             if (String(path || '').split('/').includes('..')) return
             path = clean(path)
+            const normalizedLocation = (value) => String(value).startsWith('dbresource:')
+                ? 'dbresource://' + String(value).replace(/^dbresource:(?:\/\/)?/, '').split('/').filter(Boolean).join('/')
+                : String(value).replace(/\/+$/, '')
+            const excludedPrefixes = [...new Set(Array.from(excludeLocationPrefixList || []).map(normalizedLocation).filter(Boolean))]
+            if (excludedPrefixes.length > 200) throw new Error('Choose at most 200 excluded resource locations')
             // a path in the trash is only searched in one drive, by its owner (below)
             if (path.split('/')[0] === '.trash' && !driveId) return
             const drives = {}
@@ -919,7 +928,13 @@ along with this software (see the LICENSE.md file). If not, see
                 if (contentType.startsWith('text/') || ['md', 'txt', 'json', 'xml', 'yaml', 'yml'].includes(ext)) return 'text'
                 return 'other'
             }
+            const excluded = (id, itemPath) => {
+                const base = normalizedLocation(drives[id]?.rootLocation || '')
+                const location = base + (itemPath ? '/' + itemPath : '')
+                return excludedPrefixes.some(prefix => location === prefix || location.startsWith(prefix + '/'))
+            }
             const keep = (row) => {
+                if (excluded(row.driveId, row.path)) return false
                 if (needle && !String(row.name).toLowerCase().includes(needle)) return false
                 if (fileType && row.fileType !== fileType) return false
                 if (modifiedFrom != null && !(row.modified >= modifiedFrom)) return false
@@ -943,6 +958,18 @@ along with this software (see the LICENSE.md file). If not, see
             if (indexed) {
                 try {
                     const all = [{field: {name: 'driveId', op: 'in', values: driveIds}}]
+                    const none = []
+                    for (const id of driveIds) {
+                        const base = normalizedLocation(drives[id].rootLocation || '')
+                        for (const prefix of excludedPrefixes) {
+                            if (base === prefix || base.startsWith(prefix + '/')) none.push({field: {name: 'driveId', op: 'eq', value: id}})
+                            else if (prefix.startsWith(base + '/')) {
+                                const relative = prefix.slice(base.length + 1)
+                                none.push({bool: {all: [{field: {name: 'driveId', op: 'eq', value: id}},
+                                    {bool: {any: [{field: {name: 'path', op: 'eq', value: relative}}, {field: {name: 'path', op: 'prefix', value: relative + '/'}}]}}]}})
+                            }
+                        }
+                    }
                     if (needle) all.push({text: {terms: String(text).trim(), fields: ['name', 'tags', 'extractedText'], match: 'prefix'}})
                     if (path) all.push({bool: {any: [{field: {name: 'path', op: 'eq', value: path}}, {field: {name: 'path', op: 'prefix', value: path + '/'}}]}})
                     if (fileType) all.push({field: {name: 'fileType', op: 'eq', value: fileType}})
@@ -954,12 +981,12 @@ along with this software (see the LICENSE.md file). If not, see
                     if (Object.keys(range).length) all.push({field: Object.assign({name: 'modifiedDate', op: 'range'}, range)})
                     // more hits when some may be in records the user may not see
                     const asked = gated.size ? Math.min(limit * 4, 1000) : limit
-                    const found = ec.search.search({documentType: 'MoquiDriveFile', query: {bool: {all: all}}, limit: asked, sort: ['-modifiedDate']})
+                    const found = ec.search.search({documentType: 'MoquiDriveFile', query: {bool: {all: all, none: none}}, limit: asked, sort: ['-modifiedDate']})
                     const rows = []
                     for (const hit of found.hits || []) {
                         const body = hit.body || {}
                         const drive = drives[body.driveId]
-                        if (!drive) continue
+                        if (!drive || excluded(body.driveId, body.path)) continue
                         rows.push({driveId: body.driveId, driveName: drive.driveName, path: body.path, name: body.name,
                             isDirectory: body.isDirectory === 'Y', size: body.size ?? null,
                             modified: body.modifiedDate ? new Date(body.modifiedDate).getTime() : null,
@@ -984,6 +1011,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const root = drive.rootLocation.replace(/\/+$/, '')
                 let visited = 0
                 const walk = (folder, depth) => {
+                    if (excluded(id, folder)) return
                     if (depth > 24 || visited >= 5000) return
                     let changes
                     try { changes = ec.resource.getChildChanges(folder ? `${root}/${folder}` : root) }
@@ -993,6 +1021,8 @@ along with this software (see the LICENSE.md file). If not, see
                         changes = changes.filter((change, index) => visible[index])
                     }
                     for (const change of changes) {
+                        const candidatePath = folder ? `${folder}/${change.name}` : change.name
+                        if (excluded(id, candidatePath)) continue
                         if (visited++ >= 5000) return
                         if (!folder && change.name === '.trash') continue
                         if (change.name === '.gitkeep') continue
