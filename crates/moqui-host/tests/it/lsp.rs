@@ -57,6 +57,9 @@ fn request(server: &mut Server, id: i32, method: &str, params: Json) -> Json {
 
 #[test]
 fn the_language_server_answers_on_the_example_component() {
+    if !crate::common::own_process() {
+        return;
+    }
     let files = [
         ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
         ("component/my-site/entity/MySiteEntities.xml", ENTITIES),

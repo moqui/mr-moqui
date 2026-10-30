@@ -137,6 +137,9 @@ fn rule(at: i64) -> Json {
 
 #[test]
 fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
@@ -317,6 +320,9 @@ fn save_typed(factory: &Arc<ExecutionContextFactory>, id: &str, kind: &str, body
 /// every rule runs them on several workers; and a relative query range is read at the evaluator's effective time.
 #[test]
 fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
@@ -881,6 +887,9 @@ fn contact_sent(factory: &Arc<ExecutionContextFactory>, rule: &str, contact: &st
 
 #[test]
 fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credentials() {
+    if !crate::common::own_process() {
+        return;
+    }
     use std::sync::atomic::Ordering;
     moqui_host::logging::install();
     let observed = Arc::new(WireObservations::default());

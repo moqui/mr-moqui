@@ -36,6 +36,9 @@ const ONLY_TOPIC: &str = "Wave3Only";
 #[test]
 #[ignore = "slow: waits for the production 60-second credential recheck"]
 fn notification_sockets_close_after_logout_key_revocation_and_expiry() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_conf("notws-revalidate", "", &[]);
     let address = gate.server.address();
     let cookie = login(address);
@@ -112,6 +115,9 @@ fn notification_sockets_close_after_logout_key_revocation_and_expiry() {
 #[test]
 #[ignore = "slow: cargo test-slow"]
 fn notws_push_and_one_cluster_invalidation() {
+    if !crate::common::own_process() {
+        return;
+    }
     let _serial = crate::common::serial();
     let runtime = temp_dir("moqui-notws-rt");
     let cluster_dir = temp_dir("moqui-notws-pg");
@@ -236,6 +242,9 @@ fn notws_push_and_one_cluster_invalidation() {
 /// request's own origin for both checks alike. The test client on loopback is the trusted proxy here.
 #[test]
 fn notws_and_cors_compare_the_scheme_host_and_port_of_the_origin() {
+    if !crate::common::own_process() {
+        return;
+    }
     const CONF: &str = r#"<webapp-list><webapp name="webroot" client-ip-header="X-Forwarded-For"
         trusted-proxies="127.0.0.1"/></webapp-list>"#;
     let gate = crate::common::start_with_conf("notws-origin", CONF, &[]);

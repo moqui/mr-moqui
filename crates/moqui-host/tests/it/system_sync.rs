@@ -100,6 +100,9 @@ fn renders(address: SocketAddr, path: &str, auth: &str) -> String {
 /// One server runs both: they use the same data, and a server start is most of what each costs.
 #[test]
 fn system_messages_and_entity_syncs_run_over_rest() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("system-sync", DATA);
     a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(&gate);
     an_entity_sync_push_and_a_pull_complete_with_a_history_row(&gate);

@@ -139,6 +139,9 @@ fn send(socket: &mut Ws, message: Json) {
 
 #[test]
 fn dav_routes_and_coediting_over_the_socket() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start("collab");
     let http = gate.server.address();
     let factory = std::sync::Arc::clone(gate.server.factory());

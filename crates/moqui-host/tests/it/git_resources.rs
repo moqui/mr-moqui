@@ -83,6 +83,9 @@ fn git(args: &[&str]) -> Option<String> {
 
 #[test]
 fn a_database_git_repository_is_written_through_elfinder_and_exported() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("git-resources", DATA);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");

@@ -99,6 +99,9 @@ fn sign_in(browser: &mut Browser, base: &str) {
 
 #[test]
 fn the_server_merged_modes_render_in_chromium_with_a_clean_console() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -118,6 +121,9 @@ fn the_server_merged_modes_render_in_chromium_with_a_clean_console() {
 
 #[test]
 fn server_static_qvt_renders_in_chromium_with_its_actions_data() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with("browser-static", true);
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -137,6 +143,9 @@ fn server_static_qvt_renders_in_chromium_with_its_actions_data() {
 /// script) holds: the shell and the components run their precompiled render functions and the static screen its server-compiled one.
 #[test]
 fn server_static_qvt_runs_on_the_runtime_build_under_a_policy_without_eval() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf(
         "browser-runtime",
         r#"<webapp-list><webapp name="webroot">
@@ -176,6 +185,9 @@ fn server_static_qvt_runs_on_the_runtime_build_under_a_policy_without_eval() {
 
 #[test]
 fn a_notification_sent_on_the_server_shows_in_the_html_and_qapps_pages() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser-notify");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -277,6 +289,9 @@ fn palette_row(browser: &mut Browser, what: &str, shown: &str) -> String {
 /// and dark, 1280 and 390 px wide.
 #[test]
 fn the_suite_shell_palette_quick_create_and_keys_work_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser-shell");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -455,6 +470,9 @@ fn the_suite_shell_palette_quick_create_and_keys_work_in_chromium() {
 /// `$q.dialog` (Quasar's Dialog plugin).
 #[test]
 fn a_qvue_screen_loads_in_the_tray_and_quick_create_and_refreshes_in_place_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-qvue",
         r#"<entity-facade-xml type="seed">
@@ -549,6 +567,9 @@ fn a_qvue_screen_loads_in_the_tray_and_quick_create_and_refreshes_in_place_in_ch
 /// and dark, 1280 and 390 px wide.
 #[test]
 fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-tray",
         r#"<entity-facade-xml type="seed">
@@ -768,6 +789,9 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
 /// toggle turns its HTML into text. With the Tiptap script blocked, the editor is the html editor of `m-text-area`.
 #[test]
 fn the_record_panels_and_the_rich_text_editor_work_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-records",
         r#"<entity-facade-xml type="seed">
@@ -929,6 +953,9 @@ fn the_record_panels_and_the_rich_text_editor_work_in_chromium() {
 /// to the page on the userStatus topic because the two share a room.
 #[test]
 fn the_account_status_and_the_presence_dots_work_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-status",
         r#"<entity-facade-xml type="seed">
@@ -1113,6 +1140,9 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
 /// draft, and Create customer on the review goes back to the first step.
 #[test]
 fn the_split_stacks_and_the_wizard_steps_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser-layout");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -1285,6 +1315,9 @@ fn the_split_stacks_and_the_wizard_steps_in_chromium() {
 /// `background-hide-id="NewEnumDialog"`, closes it once its background submit is answered; the page stays the list.
 #[test]
 fn a_background_submit_closes_the_container_dialog_it_names_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser-dialog");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -2329,6 +2362,9 @@ fn print_and_text_modes(browser: &mut Browser, base: &str) {
 /// escaped, with its links and its quoted reply collapsed, and follows dark mode while the designed one stays a light card.
 #[test]
 fn the_html_view_cleans_sandboxes_and_sizes_a_message_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("browser-htmlview");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -2539,6 +2575,9 @@ fn the_html_view_cleans_sandboxes_and_sizes_a_message_in_chromium() {
 /// session user, no /qapps header or drawers, and a clean console.
 #[test]
 fn a_token_route_page_mounts_its_screen_in_the_public_shell() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = common::start_token_route("browser-token");
     let base = format!("http://{}", gate.server.address());
     let mut browser = Browser::launch();
@@ -2684,6 +2723,9 @@ fn example_row(gate: &common::Gate, example_id: &str) -> (String, String) {
 /// shows it there); back to the list, the rows come again from the server.
 #[test]
 fn the_form_list_board_and_calendar_move_cards_and_events_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-views",
         r#"<entity-facade-xml type="seed">
@@ -3148,6 +3190,9 @@ mod assist {
     /// run's stream and ends with its whole text once.
     #[test]
     fn the_assist_drawer_streams_a_run_and_reattaches_after_a_reload_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start("browser-assist", &[], "");
         let base = format!("http://{}", gate.server.address());
         let mut browser = Browser::launch();
@@ -3235,6 +3280,9 @@ mod assist {
     /// functions: it opens, a run streams and its Markdown renders.
     #[test]
     fn the_assist_drawer_works_on_a_static_only_page_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start(
             "browser-assist-static",
             &[("webapp_qvt_static_only", "true")],
@@ -3309,6 +3357,9 @@ mod assist {
     /// ends the hand-off and the run goes on with it.
     #[test]
     fn a_gallery_hand_off_reports_the_refused_save_then_saves_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start("browser-assist-handoff", &[], "");
         let base = format!("http://{}", gate.server.address());
         let mut browser = Browser::launch();
@@ -3419,6 +3470,9 @@ mod assist {
     /// navigation while the agent's command runs wins: the agent's page action, minted for the page before, is a chip.
     #[test]
     fn only_the_owner_tab_follows_and_an_approval_executes_while_a_second_tab_sees_it_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start("browser-assist-tabs", &[], "");
         let base = format!("http://{}", gate.server.address());
         let mut browser = Browser::launch();
@@ -3666,6 +3720,9 @@ mod assist {
     /// card, and approving it runs it; Back to the page shows the screen again.
     #[test]
     fn the_canvas_shows_over_the_page_and_a_canvas_mutation_yields_a_card_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start("browser-assist-canvas", &[], "");
         let base = format!("http://{}", gate.server.address());
         let mut browser = Browser::launch();
@@ -3979,6 +4036,9 @@ module.exports = {
     /// the attempt recorded as a canvas problem of the sandbox section.
     #[test]
     fn a_vue_sfc_canvas_runs_sandboxed_and_holds_the_java_probes_in_chromium() {
+        if !crate::common::own_process() {
+            return;
+        }
         let (gate, _reset) = start("browser-assist-sfc", &[], "");
         set_field(
             &gate,
@@ -4301,6 +4361,9 @@ module.exports = {
 /// opens again. With the CodeMirror script blocked it is a plain text area.
 #[test]
 fn the_code_editor_saves_in_a_form_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data(
         "browser-code",
         r#"<entity-facade-xml type="seed">
@@ -4375,6 +4438,9 @@ fn the_code_editor_saves_in_a_form_in_chromium() {
 #[cfg(feature = "devtools")]
 #[test]
 fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n</services>\n";
     let files = [
         ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
@@ -4538,6 +4604,9 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
 #[cfg(feature = "devtools")]
 #[test]
 fn a_pull_conflict_is_resolved_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let notes = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
     let files = [
         ("component/my-site/component.xml", r#"<component name="my-site"/>"#),
@@ -4718,6 +4787,9 @@ fn a_pull_conflict_is_resolved_in_chromium() {
 #[cfg(feature = "devtools")]
 #[test]
 fn the_artifact_browser_expands_and_flips_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let entities = r#"<entities>
     <entity entity-name="Widget" package="mysite"><field name="widgetId" type="id" is-pk="true"/><field name="partId" type="id"/>
         <relationship type="one" related="mysite.Part"/></entity>
@@ -4858,6 +4930,9 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
 #[cfg(feature = "devtools")]
 #[test]
 fn a_qvue_screen_is_designed_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let site_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
         <subscreens-item name="board" menu-title="Board" location="component://my-site/screen/MySite/Board.xml"/>
     </screen></screen-facade></moqui-conf>"#;
@@ -4953,6 +5028,9 @@ fn a_qvue_screen_is_designed_in_chromium() {
 /// its relationship and its seed records in one Save, the records load, and a site screen's drop-down shows them.
 #[test]
 fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let upstream_entities = "<entities>\n    <!-- the app's widgets -->\n    <entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\n        <field name=\"widgetName\" type=\"text-medium\"/>\n    </entity>\n</entities>\n";
     let site_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
         <subscreens-item name="mysite" menu-title="My Site" location="component://my-site/screen/MySite.xml"/>
@@ -5200,6 +5278,9 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
 /// selected field; an unnamed container is reported with its nearest named anchor.
 #[test]
 fn the_screen_builder_extends_an_upstream_list_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let upstream_entities = "<entities>\n    <entity entity-name=\"Widget\" package=\"upapp\">\n        <field name=\"widgetId\" type=\"id\" is-pk=\"true\"/>\n        <field name=\"widgetName\" type=\"text-medium\"/>\n    </entity>\n</entities>\n";
     let upstream_conf = r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
         <subscreens-item name="upapp" menu-title="Up App" location="component://upstream-app/screen/UpApp.xml"/>
@@ -5511,6 +5592,9 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
 /// tree draws 300 blocks within the measure of 9.2 (100 ms).
 #[test]
 fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     let site_entities = "<entities><entity entity-name=\"Thing\" package=\"mysite\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\
         <field name=\"thingName\" type=\"text-medium\"/></entity></entities>\n";
     let site_services = "<services>\n    <service verb=\"make\" noun=\"Thing\">\n        <in-parameters><parameter name=\"thingId\" required=\"true\"/><parameter name=\"thingName\"/></in-parameters>\n        <out-parameters><parameter name=\"thingId\"/></out-parameters>\n        <actions>\n            <set field=\"thingName\" from=\"thingName || 'unnamed'\"/>\n            <service-call name=\"create#mysite.Thing\" in-map=\"context\" out-map=\"context\"/>\n        </actions>\n    </service>\n</services>\n";
@@ -5770,6 +5854,9 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
 /// the rest saved; the approval resolves with what the user did, which the run reads.
 #[test]
 fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
     use moqui_llm::provider::fake::{self, Reply, Step};
     let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n\n    <service verb=\"get\" noun=\"Other\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"other\"/></actions>\n    </service>\n</services>\n";
     let files = [

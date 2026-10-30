@@ -70,6 +70,9 @@ fn get(address: std::net::SocketAddr, path: &str, accept: Option<&str>) -> (u16,
 }
 #[test]
 fn otlp_keys_partial_success_compression_and_request_context() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = common::start_with_conf_properties(
         "monitor-edge",
         Some(
@@ -336,6 +339,9 @@ fn otlp_keys_partial_success_compression_and_request_context() {
 }
 #[test]
 fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
+    if !crate::common::own_process() {
+        return;
+    }
     let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     let properties = if std::path::Path::new(chrome).is_file() {
         vec![("pdf_chromium_path", chrome)]
@@ -504,6 +510,9 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
 }
 #[test]
 fn chromium_report_pdf_png_wait_for_ready_and_block_network() {
+    if !crate::common::own_process() {
+        return;
+    }
     let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     let properties = if std::path::Path::new(chrome).is_file() {
         vec![("pdf_chromium_path", chrome)]
@@ -561,6 +570,9 @@ fn exports_all_signals_to_a_live_collector() {
 
 #[test]
 fn startup_retires_legacy_jobs_without_deleting_historical_runs() {
+    if !crate::common::own_process() {
+        return;
+    }
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.service.job.ServiceJob jobName="clean_ArtifactData_daily" serviceName="retired" cronExpression="0 0 * * * ?" paused="N"/>
       <moqui.service.job.ServiceJobParameter jobName="clean_ArtifactData_daily" parameterName="days" parameterValue="7"/>
@@ -620,6 +632,9 @@ fn startup_retires_legacy_jobs_without_deleting_historical_runs() {
 #[test]
 #[ignore = "needs Docker and a local MONITOR_COLLECTOR_IMAGE (default otel/opentelemetry-collector-contrib:0.130.0)"]
 fn collector_forwards_json_and_raw_protobuf_for_every_signal() {
+    if !crate::common::own_process() {
+        return;
+    }
     use std::process::{Child, Command, Stdio};
     struct Collector {
         name: String,
@@ -874,6 +889,9 @@ service:
 }
 #[test]
 fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = common::start_with_conf_properties("monitor-pull", None, "<telemetry sample-ratio=\"0\"/>", &[]);
     let factory = gate.server.factory();
     let context = factory.new_context();
@@ -1104,6 +1122,9 @@ fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
 }
 #[test]
 fn report_embed_renders_the_dashboard_for_a_signed_in_viewer_only() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = common::start_with_conf_properties("monitor-embed", None, "<telemetry/>", &[]);
     let address = gate.server.address();
     let path = "/apps/dashboards/Panels.html?previewPanelId=monitor-overview";

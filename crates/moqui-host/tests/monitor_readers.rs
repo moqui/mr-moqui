@@ -26,12 +26,18 @@ fn monitoring_and_migrated_screens_have_valid_native_expressions() {
 
 #[test]
 fn visits_logs_context_and_gallery_read_authorized_telemetry() {
+    if !crate::common::own_process() {
+        return;
+    }
     verify_readers(None);
 }
 
 #[test]
 #[ignore = "requires MONITOR_READER_OPENSEARCH_URL, for example http://127.0.0.1:19200"]
 fn visits_logs_context_and_gallery_read_authorized_telemetry_opensearch() {
+    if !crate::common::own_process() {
+        return;
+    }
     let url = std::env::var("MONITOR_READER_OPENSEARCH_URL").expect("set MONITOR_READER_OPENSEARCH_URL");
     verify_readers(Some(&url));
 }

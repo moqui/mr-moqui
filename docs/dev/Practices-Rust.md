@@ -111,7 +111,10 @@ a reader (or an agent) loading the code does not load its tests too.
   environment variable, never by hand (`UPDATE_GOLDEN=1`, `MOQUI_REGENERATE_VECTORS=1`), and the diff is read before
   it is committed.
 - Tests may `unwrap`, `expect` and index; the rules of §5 are for non-test code.
-- A test that needs a process property or starts a server takes the serial lock (`common::serial` in the host).
+- A test that needs a process property or starts a server runs in a process of its own, beside the others: in the
+  host it begins with `if !crate::common::own_process() { return; }` (`tests/common`), and the gate starts and
+  `common::serial` fail without it. A server's boot writes process-wide properties, so two in one process would share
+  them; a test that only loads data with no property takes `common::shared` in the test binary's process.
 - JavaScript specs (`*.spec.js`) run under `moqui test` and `moqui test-client`, not Node ([Testing](../Build-Test.md#component-specs),
   [Client-Testing](Client-Testing.md)).
 

@@ -237,6 +237,9 @@ fn events(factory: &Arc<ExecutionContextFactory>, run_id: &str, event_type: &str
 
 #[test]
 fn a_local_run_delegates_and_calls_mcp_tools_of_a_second_server_over_loopback() {
+    if !crate::common::own_process() {
+        return;
+    }
     let local = start_with_conf_properties("remote-client", Some(LOCAL_DATA), LOCAL_CONF, &[]);
     let remote = start_second("remote-server", Some(REMOTE_DATA), REMOTE_CONF);
     let (local_factory, local_address) = (Arc::clone(local.server.factory()), local.server.address());

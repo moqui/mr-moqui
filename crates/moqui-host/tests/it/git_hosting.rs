@@ -120,6 +120,9 @@ fn sync(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, S
 
 #[test]
 fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
+    if !crate::common::own_process() {
+        return;
+    }
     if !git_available("git") {
         eprintln!("skipped: git is not on the PATH");
         return;

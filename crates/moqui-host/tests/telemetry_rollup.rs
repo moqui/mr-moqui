@@ -7,12 +7,18 @@ use moqui_lib::object::Value;
 
 #[test]
 fn postgres_rollups_stream_over_a_page_and_retry_without_doubling() {
+    if !crate::common::own_process() {
+        return;
+    }
     verify(None);
 }
 
 #[test]
 #[ignore = "requires MONITOR_READER_OPENSEARCH_URL"]
 fn opensearch_rollups_stream_over_a_page_and_retry_without_doubling() {
+    if !crate::common::own_process() {
+        return;
+    }
     let url = std::env::var("MONITOR_READER_OPENSEARCH_URL").expect("set MONITOR_READER_OPENSEARCH_URL");
     verify(Some(&url));
 }

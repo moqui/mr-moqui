@@ -55,6 +55,9 @@ fn file_url(path: &str) -> String {
 
 #[test]
 fn large_files_stream_with_ranges_and_validators() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("web-streaming", DATA);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");

@@ -54,12 +54,18 @@ impl Drop for VectorSchema {
 
 #[test]
 fn mixed_index_documents_keep_type_row_link_and_dialog_boundaries() {
+    if !crate::common::own_process() {
+        return;
+    }
     verify_documents(None, false);
 }
 
 #[test]
 #[ignore = "requires MONITOR_READER_OPENSEARCH_URL, for example http://127.0.0.1:19200"]
 fn mixed_index_documents_keep_type_row_link_and_dialog_boundaries_opensearch() {
+    if !crate::common::own_process() {
+        return;
+    }
     let url = std::env::var("MONITOR_READER_OPENSEARCH_URL").expect("set MONITOR_READER_OPENSEARCH_URL");
     verify_documents(Some(&url), false);
 }
@@ -67,6 +73,9 @@ fn mixed_index_documents_keep_type_row_link_and_dialog_boundaries_opensearch() {
 #[test]
 #[ignore = "requires an isolated pgvector server, configured with MONITOR_VECTOR_PG_HOST/PORT/USER/PASSWORD/DATABASE"]
 fn semantic_documents_rank_only_the_authorized_population_on_pgvector() {
+    if !crate::common::own_process() {
+        return;
+    }
     verify_documents(None, true);
 }
 

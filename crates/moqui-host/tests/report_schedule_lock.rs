@@ -117,6 +117,9 @@ fn schedule(factory: &Arc<ExecutionContextFactory>, location: &str, template: Op
 }
 #[test]
 fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
+    if !crate::common::own_process() {
+        return;
+    }
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.security.UserAccount userId="EX_JOHN_DOE" emailAddress="lease-recipient@example.test"/>
       <moqui.security.ArtifactGroup artifactGroupId="REPORT_LEASE_FIXTURE"/>

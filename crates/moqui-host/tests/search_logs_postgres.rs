@@ -29,6 +29,9 @@ use common::{basic, exchange, http_request, start_with_data};
 
 #[test]
 fn postgres_backend_exports_telemetry_through_the_search_facade() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let marker = format!("pglogmarker{}", std::process::id());
     // Before the server exists: the queue holds it until search attaches.

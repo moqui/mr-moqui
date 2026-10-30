@@ -31,6 +31,9 @@ use moqui_lib::object::Value;
 #[test]
 #[ignore = "slow: cargo test-slow"]
 fn empty_db_startup_persists_audit_artifact_stack() {
+    if !crate::common::own_process() {
+        return;
+    }
     use moqui_core::driver::DbConnection;
     use moqui_host::db::embedded::StartOptions;
 
@@ -90,6 +93,9 @@ fn empty_db_startup_persists_audit_artifact_stack() {
 #[test]
 #[ignore = "slow: cargo test-slow"]
 fn rest_enum_types_login_and_session_survive_restart() {
+    if !crate::common::own_process() {
+        return;
+    }
     let _serial = crate::common::serial();
     let runtime = temp_dir("moqui-gate2-rt");
     let cluster_dir = temp_dir("moqui-gate2-pg");

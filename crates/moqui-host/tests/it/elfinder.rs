@@ -68,6 +68,9 @@ fn json(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> serde_json::
 
 #[test]
 fn the_elfinder_screen_renders_and_its_connector_runs_on_a_dbresource_volume() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("elfinder");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");

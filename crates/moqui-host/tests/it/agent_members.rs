@@ -111,6 +111,9 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
 
 #[test]
 fn a_trigger_leaves_out_its_own_agents_writes_through_the_data_feed() {
+    if !crate::common::own_process() {
+        return;
+    }
     let files = [
         ("component/agentmembers/component.xml", COMPONENT),
         (

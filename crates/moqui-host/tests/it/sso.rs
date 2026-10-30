@@ -269,6 +269,9 @@ fn sso_login(server: SocketAddr, return_to: &str, tamper: bool) -> (String, u16,
 
 #[test]
 fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
+    if !crate::common::own_process() {
+        return;
+    }
     let (idp, provider) = start_idp();
     provider.lock().unwrap().roles = vec!["staff".to_string(), "unmapped".to_string()];
     let gate = start_with_data("sso", &data(idp));

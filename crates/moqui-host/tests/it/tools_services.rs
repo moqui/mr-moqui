@@ -93,6 +93,9 @@ fn browser() -> Option<String> {
 
 #[test]
 fn tools_services_run_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let browser = browser();
     let chromium: Vec<(&str, &str)> = browser
         .iter()

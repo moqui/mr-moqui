@@ -129,6 +129,9 @@ fn exec(address: std::net::SocketAddr, username: &str, password: &str, command: 
 
 #[test]
 fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
+    if !crate::common::own_process() {
+        return;
+    }
     let user_key = key(USER_SEED);
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
     let gate = crate::common::start_with_conf_properties(
@@ -733,6 +736,9 @@ mod apps {
 #[cfg(feature = "tui")]
 #[test]
 fn apps_runs_the_terminal_client_over_ssh() {
+    if !crate::common::own_process() {
+        return;
+    }
     use apps::{connect, exit_status, pty, read_until, send, text};
 
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
@@ -858,6 +864,9 @@ fn exec_with_input(address: std::net::SocketAddr, username: &str, command: &str,
 #[cfg(feature = "tui")]
 #[test]
 fn agent_apps_answers_one_command_per_exec() {
+    if !crate::common::own_process() {
+        return;
+    }
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
     let gate = crate::common::start_with_conf_properties(
         "ssh_agent",
@@ -952,6 +961,9 @@ fn agent_apps_answers_one_command_per_exec() {
 #[cfg(feature = "tui")]
 #[test]
 fn the_login_dialog_lets_in_a_client_with_no_key() {
+    if !crate::common::own_process() {
+        return;
+    }
     use apps::{connect_for_dialog, exit_status, pty, read_until, send, text};
 
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);

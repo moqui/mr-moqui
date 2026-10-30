@@ -57,6 +57,9 @@ fn line_of<'a>(text: &'a str, start: &str) -> &'a str {
 
 #[test]
 fn a_browser_spec_drives_the_gallery_and_its_problems_fail_a_feature() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("client-browser");
     let server = format!("http://{}", gate.server.address());
     let component = temp_dir("moqui-client-browser");

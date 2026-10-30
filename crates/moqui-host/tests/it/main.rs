@@ -15,8 +15,9 @@
 //! The integration tests of the host as one test binary.
 //!
 //! Each file under `tests/` is its own binary, and each one links the whole host. Their tests are modules here instead, so a
-//! change to the sources links once. Tests that start a server or set process properties take [`common::serial`]; the
-//! seeded gates do so through `common::start*`.
+//! change to the sources links once. A test that starts a server or sets process properties runs in a process of its
+//! own ([`common::own_process`]), so those run in parallel; the seeded gates (`common::start*`) and [`common::serial`]
+//! fail outside one.
 //!
 //! `search_logs_postgres.rs` stays apart: it needs the process-wide log shipping as no earlier test left it.
 //! `gate3.rs` and `gate3_browser.rs` stay apart, out of the default run: `cargo test -p moqui-host --test gate3 --test gate3_browser`.

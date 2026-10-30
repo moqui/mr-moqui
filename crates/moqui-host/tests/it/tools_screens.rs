@@ -239,6 +239,9 @@ const TELEMETRY_CONF: &str = r#"
 #[test]
 #[ignore = "slow: cargo test-slow"]
 fn tools_screens_render_and_the_sql_runners_run() {
+    if !crate::common::own_process() {
+        return;
+    }
     let seed_end = "</entity-facade-xml>";
     let sql_rows = SQL_DATA.split_once('>').map_or("", |(_, rows)| rows);
     let data = format!("{}{sql_rows}", DATA.trim_end_matches(seed_end));

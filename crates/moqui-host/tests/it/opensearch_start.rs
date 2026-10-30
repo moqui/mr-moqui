@@ -31,6 +31,9 @@ use moqui_host::db::embedded::EmbeddedCluster;
 #[test]
 #[ignore = "starts runtime/opensearch: OPENSEARCH_START_TEST=1 cargo test -p moqui-host --test it -- opensearch_start --ignored"]
 fn the_search_store_starts_and_stops_a_local_opensearch() {
+    if !crate::common::own_process() {
+        return;
+    }
     assert_eq!(
         std::env::var("OPENSEARCH_START_TEST").as_deref(),
         Ok("1"),

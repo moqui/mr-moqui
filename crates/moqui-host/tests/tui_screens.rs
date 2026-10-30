@@ -64,6 +64,9 @@ const GALLERY: &[&str] = &[
 
 #[test]
 fn gallery_screens() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_gate();
     let factory = Arc::clone(gate.server.factory());
     grant_gate(&factory);

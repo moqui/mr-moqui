@@ -128,6 +128,9 @@ const VCS: &str = "org.moqui.devaide.VcsServices.";
 
 #[test]
 fn the_workspace_saves_checks_commits_and_publishes() {
+    if !crate::common::own_process() {
+        return;
+    }
     let users = r#"
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
@@ -603,6 +606,9 @@ const SITE_CALLS: &str = r#"<services>
 /// and a call observed on the artifact stack joining the references.
 #[test]
 fn the_index_follows_reloads_and_extensions() {
+    if !crate::common::own_process() {
+        return;
+    }
     let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -762,6 +768,9 @@ fn the_index_follows_reloads_and_extensions() {
 #[test]
 #[ignore = "a measurement, run by hand"]
 fn the_index_scales() {
+    if !crate::common::own_process() {
+        return;
+    }
     let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml");
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -824,6 +833,9 @@ fn the_index_scales() {
 /// and the cached definition is not the overlaid one.
 #[test]
 fn a_screen_renders_with_proposed_text_in_an_overlay() {
+    if !crate::common::own_process() {
+        return;
+    }
     let screen = r#"<screen require-authentication="false">
     <widgets>
         <form-single name="Facts"><field name="upId"><default-field title="Up Id"><display/></default-field></field></form-single>
@@ -868,6 +880,9 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
 /// merges naming the screen-extend file; a render that does not ask has none.
 #[test]
 fn a_stamped_render_names_each_widgets_file() {
+    if !crate::common::own_process() {
+        return;
+    }
     let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <container name=\"Box\"><label text=\"Hello\"/></container>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
     let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
     let dev_aide = std::fs::canonicalize(concat!(
@@ -944,6 +959,9 @@ const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
 /// confirmed; and for an upstream parent the default goes in the site's screen-extend of it.
 #[test]
 fn the_screen_tree_orders_moves_and_removes() {
+    if !crate::common::own_process() {
+        return;
+    }
     let parent = "<screen>\n    <subscreens>\n        <subscreens-item name=\"Child\" location=\"component://my-site/screen/Site/Child.xml\"/>\n        <subscreens-item name=\"Other\" location=\"component://my-site/screen/Site/Other.xml\"/>\n    </subscreens>\n    <widgets><subscreens-panel id=\"site\"/></widgets>\n</screen>\n";
     let leaf = "<screen><widgets><label text=\"leaf\"/></widgets></screen>\n";
     let dev_aide = std::fs::canonicalize(concat!(
@@ -1107,6 +1125,9 @@ fn writer_gate(label: &str) -> crate::common::Gate {
 /// the sim, and it passes.
 #[test]
 fn a_try_saved_as_a_spec_passes() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = writer_gate("dev-aide-try-spec");
     let factory = Arc::clone(gate.server.factory());
     let parameters = r#"{"widgetId": "W-TRY", "widgetName": "From a try"}"#;
@@ -1191,6 +1212,9 @@ fn a_try_saved_as_a_spec_passes() {
 /// again from the files, no restart.
 #[test]
 fn a_site_seca_runs_after_its_save() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = writer_gate("dev-aide-seca");
     let factory = Arc::clone(gate.server.factory());
     let make = |id: &str| {
@@ -1239,6 +1263,9 @@ fn a_site_seca_runs_after_its_save() {
 /// tier may not make one.
 #[test]
 fn new_components_come_from_the_component_template() {
+    if !crate::common::own_process() {
+        return;
+    }
     let users = r#"
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
@@ -1312,6 +1339,9 @@ const ENTITY: &str = "org.moqui.devaide.EntityServices.";
 /// a site's seed data file loads.
 #[test]
 fn an_entity_save_relinks_and_adds_its_column() {
+    if !crate::common::own_process() {
+        return;
+    }
     let upstream_entities = r#"<entities>
     <entity entity-name="Widget" package="upapp">
         <field name="widgetId" type="id" is-pk="true"/>
@@ -1555,6 +1585,9 @@ const NOTES: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n
 /// remotes; a force push refused until it is confirmed and for the extend tier; and a clone into the component directory.
 #[test]
 fn the_git_depth_writes_on_scratch_repositories() {
+    if !crate::common::own_process() {
+        return;
+    }
     let users = r#"
     <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
     <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
@@ -1934,6 +1967,9 @@ const TASK_SERVICES: &str = r#"<services>
 /// branch named for a task becomes the root's current task.
 #[test]
 fn tasks_from_mantle_and_rest() {
+    if !crate::common::own_process() {
+        return;
+    }
     // Mantle's REST API for admins, as its seed data grants it
     let api = r#"
     <moqui.security.ArtifactGroup artifactGroupId="MANTLE_API" description="Mantle REST API"/>
@@ -2149,6 +2185,9 @@ fn tasks_from_mantle_and_rest() {
 /// overlay (F14 for a `<text location>`), and a stamped render marks its template's elements with their lines (F10).
 #[test]
 fn a_qvue_screen_renders_from_its_buffer() {
+    if !crate::common::own_process() {
+        return;
+    }
     let screen = r#"<screen require-authentication="false" render-modes="qvue">
     <widgets><render-mode><text type="qvue" location="component://my-site/screen/MySite/Board.qvue" template="false"/></render-mode></widgets>
 </screen>

@@ -130,6 +130,9 @@ fn set_field(view: &mut AppView<HostLink>, id: &str, value: &str) {
 
 #[test]
 fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let gate = common::start_with_data(
         "monitor-tui",

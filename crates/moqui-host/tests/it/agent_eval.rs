@@ -131,6 +131,9 @@ fn binding_model(factory: &Arc<ExecutionContextFactory>) -> String {
 
 #[test]
 fn the_agent_tasks_replay_with_no_model_and_run_live_or_skip() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("agent-eval", DATA);
     let factory = Arc::clone(gate.server.factory());
     let out = temp_dir("agent-eval-out");

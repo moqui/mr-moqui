@@ -44,6 +44,9 @@ fn row(entity: &EntityFacade, name: &str, fields: Json) {
 /// start of the next unit.
 #[test]
 fn postgres_sunday_weeks_align_buckets_and_rounding() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let gate = common::start_with_conf("report-week", r#"<report week-start="0"/>"#, &[]);
     let factory = gate.server.factory();
@@ -123,6 +126,9 @@ fn postgres_sunday_weeks_align_buckets_and_rounding() {
 
 #[test]
 fn postgres_report_authorization_cursor_counters_and_definitions() {
+    if !crate::common::own_process() {
+        return;
+    }
     moqui_host::logging::install();
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.entity.document.DataDocument dataDocumentId="ReportFixture" indexName="report_fixture" primaryEntityName="moqui.basic.Enumeration"/>

@@ -633,6 +633,9 @@ fn embed_rows(factory: &Arc<ExecutionContextFactory>) -> usize {
 
 #[test]
 fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let upstream = Upstream::start();
     let gate = start_with_conf_properties("gateway", Some(DATA), &conf(upstream.port, hanging()), &[]);
     let factory = Arc::clone(gate.server.factory());
@@ -1414,6 +1417,9 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
 
 #[test]
 fn the_gateway_is_off_by_default() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf_properties("gateway-off", None, "", &[]);
     let address = gate.server.address();
     let (status, _, body) = send(address, "Bearer x", "GET", "/models", &Json::Null);
@@ -1424,6 +1430,9 @@ fn the_gateway_is_off_by_default() {
 
 #[test]
 fn the_gateway_bounds_a_call_by_its_own_timeout_and_app_passwords_need_a_client() {
+    if !crate::common::own_process() {
+        return;
+    }
     let upstream = Upstream::start();
     let conf = format!(
         r#"<llm-facade>

@@ -214,6 +214,9 @@ fn text(result: &Json) -> String {
 
 #[test]
 fn the_mcp_server_over_http_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf_files("mcp", Some(DATA), CONF, &[], &FILES);
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
@@ -481,6 +484,9 @@ fn the_mcp_server_over_http_on_postgres() {
 
 #[test]
 fn the_mcp_server_is_off_by_default() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf_properties("mcp-off", None, "", &[]);
     let address = gate.server.address();
     for path in [
@@ -604,6 +610,9 @@ fn conformance_checks(printed: &str) -> Vec<(String, String)> {
 
 #[test]
 fn the_published_conformance_suite_where_it_applies() {
+    if !crate::common::own_process() {
+        return;
+    }
     // the suite's CLI (its node_modules/.bin/conformance, with Node 24 on the PATH); CI without one skips it, loudly
     let cli = std::env::var("MCP_CONFORMANCE").unwrap_or_default();
     if cli.is_empty() {
@@ -751,6 +760,9 @@ fn screen_writes(factory: &Arc<ExecutionContextFactory>, ann: &Caller, address: 
 #[cfg(feature = "devtools")]
 #[test]
 fn the_dev_tools_over_mcp() {
+    if !crate::common::own_process() {
+        return;
+    }
     let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml").replace(
         "</entity-facade-xml>",
         r#"<moqui.security.UserGroupMember userGroupId="DEV_AIDE_USERS" userId="MCP_ANN" fromDate="1265184000000"/>
