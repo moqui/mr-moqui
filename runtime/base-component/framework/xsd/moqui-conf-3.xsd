@@ -1039,6 +1039,17 @@ along with this software (see the LICENSE.md file). If not, see
                     Fold accents: a copy of text-config with the unaccent extension before its word dictionaries, and
                     folded titles for fuzzy and autocomplete. A change rebuilds the tables.
                 </xs:documentation></xs:annotation></xs:attribute>
+                <xs:attribute name="partition-telemetry" type="boolean" default="false"><xs:annotation>
+                    <xs:documentation>Day-partition the telemetry tables (otel_spans, otel_logs, otel_metrics by
+                    granularity then day, monitor_annotations; not otel_errors) made from now on, so retention drops
+                    whole days instead of deleting rows. A table made before stays unpartitioned, with a warning, until
+                    org.moqui.impl.TelemetryServices.partition#TelemetryTables (Monitor › Sources) moves its rows and
+                    keeps the old table as &lt;table&gt;_unpartitioned to drop.</xs:documentation>
+                </xs:annotation></xs:attribute>
+                <xs:attribute name="partition-days-ahead" type="xs:nonNegativeInteger"><xs:annotation>
+                    <xs:documentation>Day partitions made ahead of today, at first use and by the daily retention
+                    job; a row of a day with no partition goes to the default partition. Default 3.</xs:documentation>
+                </xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
             <xs:element name="cluster" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>The cluster for the opensearch backend.</xs:documentation></xs:annotation>

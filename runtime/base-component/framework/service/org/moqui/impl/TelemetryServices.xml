@@ -2,7 +2,17 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="clean" noun="TelemetryData" type="rust" location="moqui_core::telemetry::clean" transaction="ignore">
         <description>Apply each configured telemetry retention independently. A failed index is logged and the remaining indexes continue.</description>
-        <out-parameters><parameter name="deleted" type="Long"/><parameter name="failed" type="Long"/></out-parameters>
+        <out-parameters><parameter name="deleted" type="Long"/><parameter name="droppedPartitions" type="Long"/>
+            <parameter name="failed" type="Long"/></out-parameters>
+    </service>
+    <service verb="partition" noun="TelemetryTables" type="rust" location="moqui_core::telemetry::partition_tables" transaction="ignore">
+        <description>With search-facade postgres partition-telemetry="true", move each telemetry table made before it was on
+            (or only index) into a day-partitioned table: rows are copied a day at a time, then the new table is swapped in
+            under a short lock. The old table is kept as &lt;table&gt;_unpartitioned to drop. A failed table is logged and
+            listed, and the others go on.</description>
+        <in-parameters><parameter name="index"><description>otel_spans, otel_logs, otel_metrics or monitor_annotations; empty is all.</description></parameter></in-parameters>
+        <out-parameters><parameter name="moved" type="Long"/><parameter name="rows" type="Long"/>
+            <parameter name="kept" type="List"/><parameter name="failed" type="List"/></out-parameters>
     </service>
     <service verb="rollup" noun="Metrics" type="rust" location="moqui_core::telemetry::rollup" transaction="ignore">
         <description>Roll minute metrics into hours and hours into days, with deterministic document ids for safe retries.</description>

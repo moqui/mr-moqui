@@ -72,6 +72,15 @@ with an `artifact` override and the receiver limits written out:
   on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
+- **Day partitions** (Postgres search backend): `<search-facade><postgres partition-telemetry="true"
+  partition-days-ahead="3"/>` makes new `otel_spans`, `otel_logs`, `otel_metrics` and `monitor_annotations` tables
+  partitioned by UTC day (`<table>_p<yyyymmdd>`, with a `<table>_default` for rows of a day with no partition);
+  `otel_metrics` is split by granularity first (`otel_metrics_minute`, `_hour`, `_day`), since each keeps for its own
+  time. `otel_errors` is not split. Partitions are made from yesterday to the days ahead when a table is first used
+  and by the retention job, which drops the days wholly past retention and then deletes the rows left. A table made
+  before the option was on stays as it is, with a warning, until Monitor › Sources › Move telemetry tables into day
+  partitions (`org.moqui.impl.TelemetryServices.partition#TelemetryTables`) copies its rows into a partitioned table
+  and keeps the old one as `<table>_unpartitioned` to drop.
 - **`interval-seconds`** is for tests; the metric documents are minute documents.
 - A screen with `track-artifact-hit="false"` records no artifact spans or metrics for itself and anything under it.
   Its request span is still written.

@@ -113,6 +113,9 @@ pub fn attach_search(
                 backend = backend.with_read_replica(read_tx(read_url, &conf.postgres)?);
             }
             backend = backend.with_semantic(&conf.semantic)?;
+            if conf.postgres.partition_telemetry {
+                backend = backend.with_partitions(conf.postgres.partition_days_ahead.unwrap_or(3));
+            }
             let facade = SearchFacade::new(Arc::new(backend), entity.clone());
             if conf.semantic.enabled {
                 facade.set_embedder(embedder_of(factory, &conf.semantic));

@@ -83,6 +83,7 @@ mod smtp;
 mod ssh;
 mod sso;
 mod system_sync;
+mod telemetry_partitions;
 mod telemetry_rollup;
 mod termws;
 mod test_client;

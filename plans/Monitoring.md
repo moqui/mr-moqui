@@ -262,7 +262,7 @@ Internal and external sources share the same documents and the same screens, tol
 
   CI posts deploy markers to `POST /v1/annotations` with an ingest key; signed-in users and scripts can use `monitor/annotations` in `moqui.rest.xml`. Time series panels draw annotations as markers and bands.
 - **Retention.** A daily ServiceJob replaces `clean#ArtifactData`. It deletes by time with `delete_matching`, with separate settings per index and per metric granularity: raw spans and logs for days, minute metrics for days, hour and day metrics for months, and annotations for years.
-- **Later:** a Postgres-backend option to partition these tables by day, so retention drops partitions instead of deleting rows (SkyWalking's day tables).
+- **Day partitions** (built Oct 30): a Postgres-backend option, `<search-facade><postgres partition-telemetry="true">`, partitions these tables by day, so retention drops partitions instead of deleting rows (SkyWalking's day tables). `otel_metrics` is split by granularity first, as each has its own retention; `otel_errors` is upserted across days and is not split. The key becomes `(doc_id, [granularity,] time)`, kept out of the registry signature so an existing table is not refused as a changed mapping; it stays unpartitioned with a warning until `partition#TelemetryTables` (Monitor › Sources) copies it a day at a time and swaps it in under a short lock, keeping the old table to drop (`search/postgres/partitions.rs`, test `tests/it/telemetry_partitions.rs`).
 - **Telemetry config.** It replaces `artifact-stats`. The settings: per-type enable and sampling (keep the artifact-type list), retention, the exporters, and the receiver. `stats-skip-condition` goes away: it is not read, the XSD marks it deprecated, and a conf that sets it gets a startup warning. An `artifact-stats` left in a site or component conf still applies, with a deprecation warning ([Retired and replaced](#retired-and-replaced)).
 
 **SearchFacade additions** for the telemetry screens:
@@ -760,7 +760,7 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
   - Require compatibility checks and approvals, with cooldowns, deadlines and an emergency stop.
   - Verify against business health.
   - Advisory by default. Never reverse committed business transactions automatically.
-- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver (built Oct 30).
+- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver (both built Oct 30).
 - **Dashboards, later:**
   - repeating rows and panels (built Oct 28)
   - node graph, flame graph, funnel and geomap (built Oct 28)

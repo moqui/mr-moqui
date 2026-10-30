@@ -25,6 +25,22 @@ pub fn time_field(name: &str) -> Option<&'static str> {
     })
 }
 
+/// The metric granularities, each a list partition of a day-partitioned `otel_metrics`.
+pub const GRANULARITIES: &[&str] = &["minute", "hour", "day"];
+
+/// How a telemetry index is split when the Postgres backend partitions by day: an optional list column (the metric
+/// granularity, whose rows keep for different times) and the day column. `otel_errors` is upserted by fingerprint
+/// across days, so it is not split.
+pub fn partition_by(name: &str) -> Option<(Option<&'static str>, &'static str)> {
+    Some(match name {
+        SPANS => (None, "start"),
+        LOGS => (None, "timestamp"),
+        METRICS => (Some("granularity"), "bucket_start"),
+        ANNOTATIONS => (None, "time"),
+        _ => return None,
+    })
+}
+
 pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
     use FieldKind::{Boolean, Date, Double, Keyword, Long, Text};
     let fields: &[(&str, FieldKind)] = match name {
