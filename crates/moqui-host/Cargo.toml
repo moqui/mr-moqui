@@ -154,6 +154,7 @@ yrs = { workspace = true }
 name = "gate3"
 test = false
 
+# Slow (about 3 minutes, docs/Build-Test.md "Slow tests"): ./moq test-all runs it only with --slow.
 [[test]]
 name = "gate3_browser"
 test = false

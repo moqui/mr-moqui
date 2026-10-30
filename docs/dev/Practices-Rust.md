@@ -103,6 +103,10 @@ a reader (or an agent) loading the code does not load its tests too.
   module to the single `tests/it/` binary (see `tests/it/main.rs`) rather than a new file in `tests/`. Shared helpers
   are in `tests/common/`. A slow or opt-in suite (the Gate 3 browser tests, the speed tests) is a `[[test]]` with
   `test = false` in `Cargo.toml`, run by name.
+- **Slow tests.** A test over about 15 seconds is slow and only for a special case (a specific scenario, not
+  coverage); write tests to run in well under that. One over 30 seconds is `#[ignore = "slow: ..."]` (`cargo
+  test-slow` runs those), or an opt-in `[[test]]` that `./moq test-all` runs only with `--slow` (`gate3_browser`).
+  Never run one without the user's permission ([Build-Test](../Build-Test.md#slow-tests), AGENTS.md).
 - **Fixtures and goldens** go in a `testdata/` directory beside the code that reads them. A golden is rewritten by an
   environment variable, never by hand (`UPDATE_GOLDEN=1`, `MOQUI_REGENERATE_VECTORS=1`), and the diff is read before
   it is committed.

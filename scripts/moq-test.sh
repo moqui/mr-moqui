@@ -394,8 +394,12 @@ check "test-all dry run offline webroot" 0 'moqui test-client webroot --offline$
 check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/dev-component/dev-aide --offline$' -- dry "$M" test-all
 check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false demo$' -- dry "$M" test-all
 lacks "test-all dry run has no node suite" 'node --test' -- dry "$M" test-all
-check "test-all dry run runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test gate3_browser' -- dry "$M" test-all
+check "test-all dry run runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens$' -- dry "$M" test-all
+lacks "test-all dry run runs no slow test" 'gate3_browser|test-slow|--slow' -- dry "$M" test-all
 check "test-all slow" 0 'cargo test-slow' -- dry "$M" test-all --slow
+check "test-all slow runs gate3_browser" 0 'cargo test -p moqui-host --test gate3_browser$' -- dry "$M" test-all --slow
+check "test-all slow passes --slow to moqui test" 0 'moq test --slow$' -- dry "$M" test-all --slow
+check "test-all slow passes --slow to test-client" 0 'moq test-client --nobuild -- --serve --slow$' -- dry "$M" test-all --slow
 check "test-all passes the package on" 0 'moq test-client --debug --nobuild -- --serve' -- dry "$M" test-all --debug
 check "test-all unknown option" 1 'unknown option --fast' -- "$M" test-all --fast
 check "test still resolves to test" 0 'moqui test$' -- dry "$M" test

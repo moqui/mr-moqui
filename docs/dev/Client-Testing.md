@@ -50,6 +50,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--offline` | Run only specs with `server: false`. Pages open at `https://moqui.test`. Nothing listens. Not with `--serve` |
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, exactly (no patterns), with the specs their `dependsOn` names |
 | `--feature text` | Only the features whose names contain the text |
+| `--slow` | Also the specs and features marked `slow: true` (over 30 seconds), and with `--serve` the server's slow specs; without it they are listed as ignored, also when named ([Slow tests](../Build-Test.md#slow-tests)) |
 | `--param name=value` | Repeatable; `params.name` in specs. `MOQUI_TEST_<NAME>` variables are params too, in camel case (`MOQUI_TEST_LOAD_PASSWORD` is `params.loadPassword`), for a password that should not show in `ps`. A `--param` wins over a variable |
 | `--junit dir` | `TEST-<component>.client.<Spec>.xml` per spec. Files a case attaches are `[[ATTACHMENT\|path]]` lines in its `system-out`, after its load table |
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
@@ -116,7 +117,9 @@ child's output goes to `server-<n>.log` in the output directory. Once the ready 
 run against it; then the pipe closes, and the child stops and removes its scratch runtime. The child also stops when
 the client dies without cleaning up, since its standard input closes. A component with no declaration, or a child that
 exits or does not start within 30 minutes, fails that group's specs with the last lines of its log; the other groups
-still run.
+still run. The child gets `--slow` when the client has it; a component whose specs are all slow starts no server
+without it. When nothing names a browser for PDF (`pdf_chromium_path`), the child renders PDF with the browser the
+client drives, so the specs that check a PDF have one where the child's own search finds only Google Chrome.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under
 `runtime/save` that `--db snapshot` restores on later runs while the entity and data files and the binary are unchanged.
@@ -170,8 +173,9 @@ A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, t
 its component, or by its file path. A whole-component run leaves it out. It can `dependsOn` the component's other specs.
 
 `spec({...})` and `feature(name, {...})` take what they take in `moqui test` (`dependsOn`, `requires`, `stepwise`,
-`timeout`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
-`allowMessageErrors`: there is no `ec.message` to check.
+`timeout`, `slow`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
+`allowMessageErrors`: there is no `ec.message` to check. A client spec over about 15 seconds is for a special case;
+one over 30 seconds is `slow: true` and runs only with `--slow` ([Slow tests](../Build-Test.md#slow-tests)).
 
 **Fixtures are server specs.** Data a client suite needs is made by a `test/*.spec.js` of the same component that also
 asserts what it made, such as `framework/test/ClientFixtures.spec.js`, which makes the `sec.*` users and `test.load` as

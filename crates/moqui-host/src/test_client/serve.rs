@@ -20,17 +20,19 @@
 //! the pipe closes and the child stops and removes its scratch runtime.
 //!
 //! The client still opens no database and binds no port: the child does. A child that does not start fails its
-//! group's specs with the last lines of its output, and the other groups still run (D14).
+//! group's specs with the last lines of its output, and the other groups still run (D14). The child gets `--slow` when
+//! the client has it, and renders PDF with the browser the client drives when nothing names one for PDF. A component
+//! whose specs are all slow starts no server without `--slow`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use moqui_core::testkit::{spec_offline, suite_server, Failure, SpecResult, SuiteServer};
+use moqui_core::testkit::{spec_offline, spec_slow, suite_server, Failure, SpecResult, SuiteServer};
 use moqui_lib::error::Error;
 
 use super::{run_against, ClientArgs, Server};
-use crate::test_cmd::{report, TestComponent};
+use crate::test_cmd::{report, slow_spec, TestComponent};
 
 /// How long a child has to load or restore its database and start listening. A first load of Mantle's data is minutes.
 const START_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -65,6 +67,20 @@ pub(super) fn run_served(
             ));
             continue;
         }
+        // Without --slow a slow spec is not run, so a component of only slow specs needs no server.
+        if !args.slow && !component.specs.is_empty() && component.specs.iter().all(|spec| spec_slow(&spec.source)) {
+            for spec in &component.specs {
+                let result = slow_spec(spec);
+                for case in &result.cases {
+                    print(&report::case_line(&spec.name, case));
+                }
+                results.push(report::ComponentSpec {
+                    component: component.name.clone(),
+                    result,
+                });
+            }
+            continue;
+        }
         match declared_server(component) {
             Ok(server) => match groups.iter_mut().find(|group| group.server == server) {
                 Some(group) => group.components.push(component.clone()),
@@ -81,9 +97,9 @@ pub(super) fn run_served(
         let log = out_dir.join(format!("server-{}.log", index + 1));
         print(&format!(
             "Starting the server for {names}: moqui {}",
-            child_args(&group.server, Path::new("<ready-file>")).join(" ")
+            child_args(&group.server, Path::new("<ready-file>"), args.slow).join(" ")
         ));
-        let mut child = match start(&group.server, &log, index) {
+        let mut child = match start(&group.server, &log, index, args) {
             Ok(child) => child,
             Err(err) => {
                 results.extend(failed_specs(&group.components, &err.to_string(), print));
@@ -133,13 +149,17 @@ fn declared_server(component: &TestComponent) -> Result<SuiteServer, Error> {
     Ok(server)
 }
 
-/// The arguments of the child: `test`, the components, the specs, and the serve options.
-fn child_args(server: &SuiteServer, ready_file: &Path) -> Vec<String> {
+/// The arguments of the child: `test`, the components, the specs, `--slow` when the client has it, and the serve
+/// options.
+fn child_args(server: &SuiteServer, ready_file: &Path, slow: bool) -> Vec<String> {
     let mut args = vec!["test".to_string()];
     args.extend(server.components.iter().cloned());
     if !server.specs.is_empty() {
         args.push("--spec".to_string());
         args.push(server.specs.join(","));
+    }
+    if slow {
+        args.push("--slow".to_string());
     }
     for arg in ["--db", "snapshot", "--serve", "127.0.0.1:0", "--ready-file"] {
         args.push(arg.to_string());
@@ -157,7 +177,22 @@ struct ServeChild {
     names: String,
 }
 
-fn start(server: &SuiteServer, log: &Path, index: usize) -> Result<ServeChild, Error> {
+/// The browser the child renders PDF with: the one this client drives, when nothing names one for PDF
+/// (`pdf_chromium_path` as a property, in the environment or in `runtime/.env`). The child's own search would leave out
+/// Google Chrome, which PDF uses only when named, and the specs that check a PDF would wait for one that never comes.
+fn pdf_browser(args: &ClientArgs) -> Option<PathBuf> {
+    if !moqui_lib::env::get_prop_or_env("pdf_chromium_path").trim().is_empty() {
+        return None;
+    }
+    let configured = args
+        .chromium
+        .clone()
+        .or_else(|| std::env::var("MOQUI_CHROMIUM").ok())
+        .unwrap_or_default();
+    crate::chromium::find_test_browser(Some(&crate::runtime_framework_dirs().0), &configured).ok()
+}
+
+fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> Result<ServeChild, Error> {
     let names = server.components.join(", ");
     let ready_file = std::env::temp_dir().join(format!("moqui-serve-{}-{}.url", std::process::id(), index + 1));
     let _ = std::fs::remove_file(&ready_file);
@@ -174,12 +209,15 @@ fn start(server: &SuiteServer, log: &Path, index: usize) -> Result<ServeChild, E
         .map_err(|err| Error::new("could not find this binary to start the server").with_source(err))?;
     let mut command = Command::new(exe);
     command
-        .args(child_args(server, &ready_file))
+        .args(child_args(server, &ready_file, args.slow))
         .stdin(Stdio::piped())
         .stdout(out)
         .stderr(err_out);
     if let Some(conf) = &server.conf {
         command.env("MOQUI_CONF", conf);
+    }
+    if let Some(browser) = pdf_browser(args) {
+        command.env("pdf_chromium_path", browser);
     }
     let mut process = command
         .spawn()
@@ -331,15 +369,20 @@ mod tests {
             conf: None,
         };
         assert_eq!(
-            child_args(&server, Path::new("/tmp/r.url")).join(" "),
+            child_args(&server, Path::new("/tmp/r.url"), false).join(" "),
             "test mr-mantle mr-marble --spec A,B --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
+        );
+        // --slow goes on to the server's own specs
+        assert_eq!(
+            child_args(&server, Path::new("/tmp/r.url"), true).join(" "),
+            "test mr-mantle mr-marble --spec A,B --slow --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
         );
         let all = SuiteServer {
             components: vec!["c".to_string()],
             ..SuiteServer::default()
         };
         assert_eq!(
-            child_args(&all, Path::new("r")).join(" "),
+            child_args(&all, Path::new("r"), false).join(" "),
             "test c --db snapshot --serve 127.0.0.1:0 --ready-file r"
         );
     }

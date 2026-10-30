@@ -22,6 +22,17 @@ fn spec(name: &str, source: &str) -> SpecFile {
     }
 }
 
+/// A slow spec in a run without --slow is one ignored case, read without loading the file (whose top level would throw).
+#[test]
+fn a_slow_spec_is_listed_as_ignored_without_loading_it() {
+    let source = "throw new Error('loaded')\nspec({ slow: true })\nfeature('f', { expect() { true } })";
+    assert!(spec_slow(source));
+    let result = slow_spec(&spec("Long", source));
+    assert_eq!(result.cases.len(), 1);
+    assert_eq!(result.cases[0].outcome, Outcome::Ignored(SLOW_REASON.to_string()));
+    assert!(!result.failed());
+}
+
 #[test]
 fn args_parse() {
     let args: Vec<String> = [
@@ -37,6 +48,8 @@ fn args_parse() {
     assert!(parsed.db_explicit);
     assert_eq!(parsed.junit, Some(PathBuf::from("out")));
     assert!(parsed.keep);
+    assert!(!parsed.slow);
+    assert!(parse_test_args(&["--slow".to_string()]).unwrap().slow);
     assert!(parse_test_args(&["--db".to_string(), "nope".to_string()]).is_err());
     assert!(parse_test_args(&["--bogus".to_string()]).is_err());
     let none = parse_test_args(&["--db".to_string(), "none".to_string()]).unwrap();

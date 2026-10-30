@@ -126,6 +126,12 @@ pub fn spec_offline(source: &str) -> bool {
     spec_flag(source, "server") == Some(false)
 }
 
+/// `spec({ slow: true })`, read without running the file: a spec that runs over 30 seconds, which a run leaves out
+/// unless it is asked for slow tests (`--slow`). Anything else, including a file that does not parse, is false.
+pub fn spec_slow(source: &str) -> bool {
+    spec_flag(source, "slow") == Some(true)
+}
+
 /// `spec({ database: false })`, read without running the file. Anything else, including a file that does not parse,
 /// is false: the spec is treated as one that needs a database.
 pub fn spec_database_free(source: &str) -> bool {

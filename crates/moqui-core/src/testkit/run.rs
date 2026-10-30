@@ -127,7 +127,7 @@ pub struct Failure {
 pub enum Outcome {
     Passed,
     Failed(Failure),
-    /// `ignore: "reason"` on the feature.
+    /// `ignore: "reason"` on the feature, or `slow: true` on it or its spec in a run without `--slow` ([`SLOW_REASON`]).
     Ignored(String),
     /// Not run: a stepwise spec after a failure, a failed `setupSpec`, a `requires` this binary lacks, or a case
     /// whose failure only reports that a tool is not built in.
@@ -163,11 +163,17 @@ impl SpecResult {
     }
 }
 
+/// Why a slow spec or feature (`slow: true`, one that runs over 30 seconds) did not run: no command runs one without
+/// `--slow`, also when it is named.
+pub const SLOW_REASON: &str = "slow: run with --slow";
+
 /// What to run of a spec.
 #[derive(Clone, Default)]
 pub struct RunOptions {
     /// Run only the features whose name contains this text.
     pub feature_filter: Option<String>,
+    /// `--slow`: run the specs and features marked `slow: true` too.
+    pub slow: bool,
     /// The client host. With one, the spec runs outside any execution context: no `ec.message` check and no context
     /// reset, the host's hooks instead.
     pub host: Option<Arc<dyn SpecHost>>,
@@ -177,6 +183,7 @@ impl std::fmt::Debug for RunOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunOptions")
             .field("feature_filter", &self.feature_filter)
+            .field("slow", &self.slow)
             .field("host", &self.host.is_some())
             .finish()
     }
@@ -244,6 +251,10 @@ struct SpecPlan {
     #[serde(default)]
     allow_page_problems: bool,
     timeout: Option<f64>,
+    /// `spec({ slow: true })`: every feature is left out of a run without `--slow`. The hosts check it before they load
+    /// the file ([`spec_slow`]); this is for a caller that does not.
+    #[serde(default)]
+    slow: bool,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +269,9 @@ struct CasePlan {
     allow_message_errors: bool,
     #[serde(default)]
     allow_page_problems: bool,
+    /// `slow: true` on the feature: left out of a run without `--slow`.
+    #[serde(default)]
+    slow: bool,
 }
 
 #[derive(Deserialize)]
@@ -315,6 +329,29 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             return result;
         }
     };
+    // A slow spec in a run without --slow: its features are listed as ignored, and setupSpec does not run.
+    if plan.spec.slow && !options.slow {
+        for case in &plan.cases {
+            if options
+                .feature_filter
+                .as_ref()
+                .is_some_and(|filter| !case.name.contains(filter.as_str()))
+            {
+                continue;
+            }
+            let case_result = CaseResult {
+                name: case.name.clone(),
+                outcome: Outcome::Ignored(SLOW_REASON.to_string()),
+                duration: Duration::ZERO,
+                output: String::new(),
+            };
+            on_case(&case_result);
+            result.cases.push(case_result);
+        }
+        finish();
+        result.duration = started.elapsed();
+        return result;
+    }
     let setup = block(
         spec,
         "__moquiTest.runSpecPhase('setupSpec')",
@@ -350,7 +387,9 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             .filter(|feature| !crate::build_info::has_feature(feature))
             .collect();
         let mut output = String::new();
-        let mut outcome = if let Some(reason) = &skip_rest {
+        let mut outcome = if case.slow && !options.slow {
+            Outcome::Ignored(SLOW_REASON.to_string())
+        } else if let Some(reason) = &skip_rest {
             Outcome::Skipped(reason.clone())
         } else if !missing.is_empty() {
             Outcome::Skipped(requires_skip_reason(&missing.join(", ")))
@@ -647,6 +686,11 @@ pub fn spec_depends_on(source: &str) -> Vec<String> {
 /// [`super::rewrite::spec_offline`].
 pub fn spec_offline(source: &str) -> bool {
     super::rewrite::spec_offline(source)
+}
+
+/// [`super::rewrite::spec_slow`].
+pub fn spec_slow(source: &str) -> bool {
+    super::rewrite::spec_slow(source)
 }
 
 /// [`super::rewrite::spec_database_free`].

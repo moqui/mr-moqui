@@ -484,8 +484,10 @@ help_test() {
     cat <<EOF
 Runs moqui test, the JavaScript specs in each component's test/ directory, with the Default
 binary (or the package asked for) and the dev conf. A spec that requires a feature the binary
-leaves out (spec({ requires: [...] })) is reported as skipped. Arguments go to moqui test; the moq options below are read first and
-any other option is passed on, so moqui's own options work as they are:
+leaves out (spec({ requires: [...] })) is reported as skipped. A slow spec or feature (slow: true, one
+over 30 seconds) is reported as ignored, also when named; --slow runs it, and only when its result is
+needed. Arguments go to moqui test; the moq options below are read first and any other option is
+passed on, so moqui's own options work as they are:
   ./moq test mr-mantle
   ./moq test mr-mantle --db snapshot
   ./moq test mr-mantle --spec OrderToCashBasicFlow --feature "ship Sales Order"
@@ -513,6 +515,8 @@ and any other option is passed on:
   ./moq test-client framework --serve          start the server its test/client/suite.js declares
                                                (a child moqui test --serve), run, then stop it
   ./moq test-client mr-marble --serve --spec FindScreens --param screen=Order/FindOrder --headed
+A slow spec or feature (slow: true, one over 30 seconds) is reported as ignored, also when named;
+--slow runs it (and the server's slow specs), only when its result is needed.
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
   -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
@@ -525,7 +529,7 @@ help_test_all() {
 Runs every test suite in turn, each whatever the ones before it did, then lists which passed and
 exits 1 when any failed:
   cargo test --workspace            the unit and integration tests of every crate
-  cargo test -p moqui-host --test gate3 --test gate3_browser --test client_browser --test tui_screens
+  cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
                                     the opt-in host tests: embedded Postgres, Chromium, the TUI screens
   scripts/moq-test.sh               the tests of this script
   moqui test                        the specs of every component with test/*.spec.js, including the
@@ -537,13 +541,17 @@ exits 1 when any failed:
                                     the offline client specs: pages at https://moqui.test, no server
   moqui test-client --serve         the client specs of every component with test/client/, each against
                                     the server its suite.js declares
+None of them runs a slow test (over 30 seconds): a spec or feature marked slow: true is listed as
+ignored, a Rust test marked #[ignore = "slow: ..."] is left out, and so is gate3_browser.
 The Chromium is the one PDF and moqui test-client use: pdf_chromium_path (or MOQUI_CHROMIUM), else
 runtime/chromium (./moq chromium-download), else chromium, chromium-browser or google-chrome on the PATH.
 Left out: the timings (cargo test --release --test entity_speed and the other *_speed tests) and
 Clippy over every feature set (scripts/check-packages.sh, which runs tui_screens too).
   ./moq test-all
-  ./moq test-all --slow             also cargo test-slow and the binary's ignored cli tests (hours with
-                                    the mantle components)
+  ./moq test-all --slow             also the slow tests: gate3_browser, cargo test-slow, the binary's
+                                    ignored cli tests (hours with the mantle components), and moqui test
+                                    and test-client with --slow. Only with the user's permission, when
+                                    their results are needed (AGENTS.md).
 
 Options:
   --slow               Also the tests marked slow
@@ -1343,19 +1351,25 @@ task_test_all() {
     }
     need_tool cargo
     suite "cargo test --workspace" cargo test --workspace
-    suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test gate3_browser --test client_browser \
-        --test tui_screens
+    suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
+    # the slow tests (over 30 seconds), only with --slow; the spec harnesses list theirs as ignored without it
+    local -a slow_specs
+    slow_specs=()
     if [ -n "$slow" ]; then
+        slow_specs=(--slow)
+        suite "gate3_browser" cargo test -p moqui-host --test gate3_browser
         suite "cargo test-slow" cargo test-slow
         suite "moqui cli slow tests" cargo test -p moqui --test cli -- --ignored
     fi
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
-    suite "moqui test" "$MOQ" test "${moq_opts[@]}"
-    suite "moqui test demo" "$MOQ" test "${moq_opts[@]}" --nobuild -D demo_disabled=false demo
+    suite "moqui test" "$MOQ" test "${moq_opts[@]}" "${slow_specs[@]}"
+    suite "moqui test demo" "$MOQ" test "${moq_opts[@]}" --nobuild -D demo_disabled=false demo "${slow_specs[@]}"
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
-    suite "moqui test-client webroot --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- webroot --offline
-    suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- runtime/dev-component/dev-aide --offline
-    suite "moqui test-client --serve" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- --serve
+    suite "moqui test-client webroot --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- webroot --offline \
+        "${slow_specs[@]}"
+    suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- \
+        runtime/dev-component/dev-aide --offline "${slow_specs[@]}"
+    suite "moqui test-client --serve" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- --serve "${slow_specs[@]}"
     printf '\n'
     heading "test-all"
     for line in "${results[@]}"; do
@@ -3690,8 +3704,8 @@ complete_task() {
             local out
             out=$(complete_run_like "$cur" "$prev" @binary)
             if [ "$out" = @binary ]; then
-                filter_prefix "$cur" $(test_components) --spec --feature --db --junit --keep --serve --ready-file \
-                    --log-level
+                filter_prefix "$cur" $(test_components) --spec --feature --slow --db --junit --keep --serve \
+                    --ready-file --log-level
             else
                 printf '%s\n' "$out"
             fi
@@ -3709,8 +3723,8 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --server --serve --spec --feature --param --junit --out --wait --timeout \
-                        --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
+                    filter_prefix "$cur" --server --serve --spec --feature --slow --param --junit --out --wait \
+                        --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
                     ;;
             esac
             ;;

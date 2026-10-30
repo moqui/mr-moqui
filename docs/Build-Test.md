@@ -247,8 +247,8 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# pdf_chromium_path, or chromium on the PATH)
-cargo test -p moqui-host --test gate3 --test gate3_browser
+# pdf_chromium_path, or chromium on the PATH); gate3_browser is slow (below)
+cargo test -p moqui-host --test gate3
 ```
 
 `scripts/check-packages.sh` runs Clippy with warnings denied on each feature set a build uses: the workspace
@@ -258,8 +258,26 @@ runs the scripted TUI screens, which `cargo test` leaves out. A gate that only o
 there.
 
 `./moq test-all` runs every suite in turn and lists which passed: `cargo test`, the opt-in host tests (Gate 3, the
-browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component, the demo component's specs (it is
-off by default, so the suite turns it on), and the client specs. `./moq help test-all` lists them.
+client browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component,
+the demo component's specs (it is off by default, so the suite turns it on), and the client specs. `./moq help
+test-all` lists them. It runs no slow test; `./moq test-all --slow` adds them.
+
+### Slow tests
+
+A test over about 15 seconds is slow, and is only for a special case: a specific scenario that is checked when its
+result is needed, not code coverage or the quality of the code at the unit level. Write a test to run in well under
+15 seconds. One over 30 seconds is marked slow, and no command runs a marked test unless it is given `--slow`, also
+when the test is named:
+
+- a spec or feature: `slow: true` on `spec({...})` or `feature(name, {...})`. `moqui test` and `moqui test-client` list
+  it as ignored (`slow: run with --slow`) and run it only with `--slow`; `test-client --serve` passes `--slow` to the
+  server's own specs, and starts no server for a component whose specs are all slow;
+- a Rust test: `#[ignore = "slow: ..."]`, run by `cargo test-slow`;
+- an opt-in host test binary that is slow as a whole (`gate3_browser`), run by name.
+
+`./moq test-all --slow` runs all of them. An agent never runs a slow test without the user's permission (AGENTS.md).
+`mr-boss/test/client/ProductsShots.spec.js` keeps, commented out, the screenshot matrix that made this rule: 535
+cases and 9 minutes for checks that did not depend on the width or the theme.
 
 ## Component specs
 
@@ -296,6 +314,7 @@ binary.
 |---|---|
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
 | `--feature text` | Only the features whose names contain the text |
+| `--slow` | Also the specs and features marked `slow: true`, which a run lists as ignored without it, also when named ([Slow tests](#slow-tests)) |
 | `--db fresh` | The default: load every data type into a scratch runtime, removed at the end unless `--keep`. Needs `embedded-postgres` |
 | `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the entity and data files and the binary are unchanged |
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
@@ -374,6 +393,8 @@ Once per file:
 - `tempSequences: { start, banks }`: sequenced ids from `start`, with the bank size for each entity, set before
   `setupSpec` and reset after `cleanupSpec`.
 - `allowMessageErrors`, and `timeout` in seconds per block.
+- `slow: true`: the spec runs over 30 seconds; a run lists its features as ignored and does not load it unless given
+  `--slow` ([Slow tests](#slow-tests)).
 - `setupSpec`, `cleanupSpec`, `setup` and `cleanup`, as in Spock. Cleanups always run. These get no `ctx`.
 
 #### `feature(name, {...})`
@@ -385,6 +406,7 @@ A statement at the top level of the file; features run in the order they are wri
 - `where`: an array of row objects, or a function that returns one. Each row is its own case, and `#field` in the name is
   the row's value.
 - `ignore: "reason"`, `timeout`, `allowMessageErrors`.
+- `slow: true`: the feature runs over 30 seconds; it is ignored unless the run is given `--slow`.
 - `requires: ["git"]`: build features the feature needs, as on `spec()`; in a binary without one it is reported as
   skipped. A `where` row may have its own `requires`, for a row that needs a feature the others do not.
 - A case that does not say `requires`, and fails only because the binary reports that a tool is not built in

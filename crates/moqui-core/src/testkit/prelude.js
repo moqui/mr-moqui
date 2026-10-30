@@ -5,9 +5,9 @@
     // A plain assignment to a global goes through the context stack's proxy, which takes only data; these are defined.
     const define = (name, value) => Object.defineProperty(g, name, { value, writable: true, configurable: true });
     const SPEC_FIELDS = ["dependsOn", "requires", "stepwise", "allowMessageErrors", "allowPageProblems", "timeout",
-        "tempSequences", "setupSpec", "cleanupSpec", "setup", "cleanup", "server", "database"];
+        "tempSequences", "setupSpec", "cleanupSpec", "setup", "cleanup", "server", "database", "slow"];
     const FEATURE_FIELDS = ["given", "when", "then", "expect", "cleanup", "where", "ignore", "requires", "timeout",
-        "allowMessageErrors", "allowPageProblems"];
+        "allowMessageErrors", "allowPageProblems", "slow"];
     const REWRITTEN = "$pa";
 
     const T = {};
@@ -105,7 +105,7 @@
                 dependsOn: Array.from(spec.dependsOn || []).map(String), stepwise: !!spec.stepwise,
                 offline: spec.server === false, databaseFree: spec.database === false,
                 allowMessageErrors: !!spec.allowMessageErrors, allowPageProblems: !!spec.allowPageProblems,
-                timeout: spec.timeout == null ? null : Number(spec.timeout)
+                timeout: spec.timeout == null ? null : Number(spec.timeout), slow: spec.slow === true
             },
             // Names inside a page file are not known until it runs. The host emits one case per test().
             pageRuns: (T.pageRuns || []).map((run) => ({ scripts: run.scripts, styles: run.styles, test: run.test })),
@@ -115,7 +115,7 @@
                     name: c.name, ignore: ignoreOf(def.ignore),
                     requires: [...Array.from(def.requires || []), ...Array.from((c.row && c.row.requires) || [])].map(String),
                     timeout: def.timeout == null ? null : Number(def.timeout), allowMessageErrors: !!def.allowMessageErrors,
-                    allowPageProblems: !!def.allowPageProblems
+                    allowPageProblems: !!def.allowPageProblems, slow: def.slow === true
                 };
             })
         });

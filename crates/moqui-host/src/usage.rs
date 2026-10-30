@@ -309,6 +309,8 @@ Options:
   --spec Name[,Name]              Specs to run. The name is the file name without .spec.js.
                                   Specs named in dependsOn are included, in suite order.
   --feature text                  Run features whose names contain this text.
+  --slow                          Also run the specs and features marked slow: true (over 30
+                                  seconds). Without it they are listed as ignored, also when named.
   --db MODE                       none, fresh, snapshot, or existing. The default is fresh,
                                   or none when every selected spec sets database: false.
                                   none boots the factory and skips Postgres, including a build
@@ -397,6 +399,9 @@ Options:
   --serve                         Start each suite's declared server, as above, instead of --server.
   --spec Name[,Name]              Specs to run, with the specs named in their dependsOn.
   --feature text                  Run features whose names contain this text.
+  --slow                          Also run the specs and features marked slow: true (over 30
+                                  seconds), and the server's slow specs with --serve. Without it
+                                  they are listed as ignored, also when named.
   --param name=value              Repeatable; params.name in specs. MOQUI_TEST_<NAME> variables
                                   are params too (MOQUI_TEST_LOAD_PASSWORD is params.loadPassword),
                                   for a password that should not show in ps.

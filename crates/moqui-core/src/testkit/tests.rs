@@ -16,7 +16,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::run::{run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult};
+use super::run::{
+    run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult, SLOW_REASON,
+};
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 
 fn run(source: &str) -> SpecResult {
@@ -206,6 +208,42 @@ feature("c", { expect() { true } })
             ("c".to_string(), "skipped")
         ]
     );
+}
+
+/// A slow feature or spec is ignored, with the reason, unless the run asks for slow tests; a slow spec's setupSpec does
+/// not run either.
+#[test]
+fn slow_features_and_specs_run_only_with_slow() {
+    let source = r#"
+feature("quick", { expect() { true } })
+feature("long", { slow: true, expect() { 1 == 2 } })
+"#;
+    let result = run(source);
+    assert_eq!(
+        outcomes(&result),
+        vec![("quick".to_string(), "passed"), ("long".to_string(), "ignored")]
+    );
+    assert_eq!(result.cases[1].outcome, Outcome::Ignored(SLOW_REASON.to_string()));
+    let slow = RunOptions {
+        slow: true,
+        ..RunOptions::default()
+    };
+    assert_eq!(
+        outcomes(&run_with(source, &slow)),
+        vec![("quick".to_string(), "passed"), ("long".to_string(), "failed")]
+    );
+    let whole = r#"
+spec({ slow: true, setupSpec() { throw new Error("setupSpec ran") } })
+feature("a", { expect() { 1 == 2 } })
+feature("b", { expect() { 1 == 2 } })
+"#;
+    let result = run(whole);
+    assert!(result.setup_failure.is_none(), "{:?}", result.setup_failure);
+    assert_eq!(
+        outcomes(&result),
+        vec![("a".to_string(), "ignored"), ("b".to_string(), "ignored")]
+    );
+    assert!(run_with(whole, &slow).setup_failure.is_some());
 }
 
 #[test]

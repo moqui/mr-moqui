@@ -94,6 +94,9 @@ fn depends_on_is_read_without_running() {
     ));
     assert!(!spec_database_free("spec({})\nfeature('f', { expect() { 1 } })"));
     assert!(!spec_database_free("spec({ database: true })"));
+    assert!(spec_slow("spec({ slow: true })\nfeature('f', { expect() { 1 } })"));
+    assert!(!spec_slow("spec({ slow: false })"));
+    assert!(!spec_slow("spec({})\nfeature('f', { slow: true, expect() { 1 } })"));
     assert!(spec_depends_on("spec({})").is_empty());
     // a condition line that starts with a regular expression, which plain JavaScript reads as a division
     let regex_line =

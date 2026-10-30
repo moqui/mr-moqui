@@ -41,14 +41,15 @@ use std::time::{Duration, Instant};
 
 use moqui_core::service::{hmac_base64, timestamp_header};
 use moqui_core::testkit::{
-    run_on_thread, run_spec, spec_missing_features, spec_offline, CaseExtras, RunOptions, SpecHost,
+    run_on_thread, run_spec, spec_missing_features, spec_offline, spec_slow, CaseExtras, RunOptions, SpecHost,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 
 use crate::test_cmd::{
-    component_name, component_specs, discover, report, select_across, select_specs, skipped_spec, TestComponent,
+    component_name, component_specs, discover, report, select_across, select_specs, skipped_spec, slow_spec,
+    TestComponent,
 };
 use http::{Ask, Server, Session};
 
@@ -71,6 +72,9 @@ pub struct ClientArgs {
     pub server: Option<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
+    /// `--slow`: run the specs and features marked `slow: true` too, and the slow server-side specs of `--serve`;
+    /// without it they are listed as ignored, also when named.
+    pub slow: bool,
     /// `--param name=value`, in order; a later one wins.
     pub params: Vec<(String, String)>,
     pub junit: Option<PathBuf>,
@@ -125,6 +129,7 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
                     .map(str::to_string),
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
+            "--slow" => parsed.slow = true,
             "--param" => {
                 let pair = value("--param")?;
                 let (name, text) = pair
@@ -302,6 +307,7 @@ fn run_against(
     let host_dyn: Arc<dyn SpecHost> = host.clone();
     let options = RunOptions {
         feature_filter: args.feature.clone(),
+        slow: args.slow,
         host: Some(host_dyn),
     };
     let mut results = Vec::new();
@@ -319,7 +325,20 @@ fn run_against(
                 }
             };
             let missing = spec_missing_features(&spec.source);
-            let result = if missing.is_empty() {
+            let not_run = if !args.slow && spec_slow(&spec.source) {
+                Some(slow_spec(spec))
+            } else if !missing.is_empty() {
+                Some(skipped_spec(spec, &missing))
+            } else {
+                None
+            };
+            let result = if let Some(result) = not_run {
+                for case in &result.cases {
+                    note_case(case);
+                    print(&report::case_line(&spec.name, case));
+                }
+                result
+            } else {
                 let result = run_spec(spec, &options, &mut |case| {
                     note_case(case);
                     print(&report::case_line(&spec.name, case));
@@ -333,13 +352,6 @@ fn run_against(
                         spec.name,
                         failure.message.lines().next().unwrap_or("")
                     ));
-                }
-                result
-            } else {
-                let result = skipped_spec(spec, &missing);
-                for case in &result.cases {
-                    note_case(case);
-                    print(&report::case_line(&spec.name, case));
                 }
                 result
             };
@@ -1490,6 +1502,7 @@ mod tests {
         assert_eq!((parsed.wait, parsed.timeout), (Some(30.0), 2.5));
         assert!(parsed.insecure && parsed.fail_on_skip && parsed.video && !parsed.allow_http && !parsed.serve);
         assert!(parse_client_args(&args(&["framework", "--serve"])).unwrap().serve);
+        assert!(!parsed.slow && parse_client_args(&args(&["framework", "--slow"])).unwrap().slow);
         for (bad, says) in [
             (&["--param", "novalue"][..], "--param needs name=value"),
             (&["--wait", "soon"][..], "--wait is a number of seconds"),
