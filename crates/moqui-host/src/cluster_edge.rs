@@ -201,7 +201,7 @@ fn spawn_conn(
     factory: &Arc<ExecutionContextFactory>,
     posts: &Arc<Mutex<Vec<String>>>,
     stop: &Arc<AtomicBool>,
-    joins: &Arc<Mutex<Vec<JoinHandle<()>>>>,
+    joins: &Mutex<Vec<JoinHandle<()>>>,
     stream: TcpStream,
 ) {
     {

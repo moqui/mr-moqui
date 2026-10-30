@@ -200,7 +200,7 @@ fn is_member(doc: &str, client: &str, slot_id: u64) -> bool {
     })
 }
 
-fn update(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, client: &str, message: &Json) {
+fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
     if !is_member(doc, client, slot.id) {
         return error(slot, doc, client, 409, "join the document first");
     }
@@ -226,7 +226,7 @@ fn update(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, c
     publish_message(factory, &remote);
 }
 
-fn awareness(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, client: &str, message: &Json) {
+fn awareness(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
     if !is_member(doc, client, slot.id) {
         return;
     }
@@ -237,7 +237,7 @@ fn awareness(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str
 }
 
 /// A client leaves a document: `client`, or every client of the socket.
-fn leave(factory: &Arc<ExecutionContextFactory>, slot_id: u64, doc: &str, client: Option<&str>) {
+fn leave(factory: &ExecutionContextFactory, slot_id: u64, doc: &str, client: Option<&str>) {
     let left: Vec<Member> = {
         let mut all = lock(members());
         let Some(list) = all.get_mut(doc) else { return };
@@ -260,7 +260,7 @@ fn leave(factory: &Arc<ExecutionContextFactory>, slot_id: u64, doc: &str, client
 }
 
 /// The socket closed: its clients leave every document.
-pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64) {
+pub(super) fn socket_closed(factory: &ExecutionContextFactory, slot_id: u64) {
     let docs: Vec<String> = lock(members())
         .iter()
         .filter(|(_, list)| list.iter().any(|member| member.slot_id == slot_id))
