@@ -1,9 +1,9 @@
 # Crate Split
 
 Status 2026-10-30: Phases 0 to 4 done (9788e711, 0bda5fdc, 9aa631f9, 4e962f93, 27ab3317: `moqui_core::extension`,
-`moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`) and Phase 5 (8bebad83, ccbd0ca3 and the devkit commit:
-`moqui-collab`, `moqui-dav`, `moqui-devkit`); Phase 6 next ([Phases 5 and 6 in detail](#phases-5-and-6-in-detail),
-[Resuming](#resuming)). Splits
+`moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`) and Phase 5 (8bebad83, ccbd0ca3, b6be4155:
+`moqui-collab`, `moqui-dav`, `moqui-devkit`), and moqui-lib's unused `hmac` and `sha1`; Phase 6's host edits measured
+again and waiting on a decision ([Phases 5 and 6 in detail](#phases-5-and-6-in-detail), [Resuming](#resuming)). Splits
 `moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
 so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
 whose "few, larger crates" rule this replaces
@@ -159,8 +159,13 @@ report tests import `moqui_report as report`.
   embedded archive and `xmlshim`; no tokio; the `SearchStore` parameter of `db/backup.rs` becomes a closure, or backup
   stays in the host; the host forwards `postgres`, `mysql` and `embedded-postgres`), so a host edit stops rewriting a
   68 MB rlib; `moqui-test-client` (`test_client/` with `test_cmd`'s discovery, selection and report, in every package as
-  now). SSH only if the numbers justify it, as above.
-- Also drop `moqui-lib`'s unused `hmac` 0.12 and `sha1` 0.10 dependencies.
+  now). SSH only if the numbers justify it, as above. Measured after Phase 5 (b6be4155): a host edit is 2.1 s
+  (`http.rs` 2.1 s, 2.1 s; `db/pgwire.rs` 2.3 s, 2.8 s; `test_client/mod.rs` 2.1 s, 2.1 s), of which `moqui-host` is
+  1.55 s (frontend 1.2 s, codegen 0.3 s, which writes the 68 MB rlib) and the binary link 0.3 s. Taking the drivers
+  (about 9,000 lines) or the test client (about 7,000) out of the host would save part of that 1.5 s on a host edit,
+  and an edit in the moved code would rebuild that crate and the host: the split is for modularity and the clean build
+  more than for an edit.
+- Done: `moqui-lib`'s unused `hmac` 0.12 and `sha1` 0.10 dependencies are gone (the signer uses `sha1-digest-011`).
 
 ## Adding a crate
 
