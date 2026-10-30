@@ -1,5 +1,5 @@
 //! Authorized change markers and immutable build-release identities.
-use super::*;
+use super::{fail, input, json, output, search, text, time, Error, ExecutionContext, Parameters, ServiceInfo, Value};
 
 pub fn create_annotation(
     ec: &ExecutionContext,

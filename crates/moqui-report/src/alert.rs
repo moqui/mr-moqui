@@ -1398,14 +1398,14 @@ pub fn evaluate_rules(
     let queue = std::sync::Mutex::new(definitions);
     let totals = std::sync::Mutex::new((0usize, invalid, Vec::new()));
     let work = || loop {
-        let Some(definition) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else {
+        let Some(definition) = moqui_lib::sync::lock(&queue).pop_front() else {
             break;
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             evaluate_rule(&factory, &definition, now, &silences)
         }))
         .unwrap_or_else(|_| Err(fail("alert rule evaluation panicked")));
-        let mut totals = totals.lock().unwrap_or_else(|e| e.into_inner());
+        let mut totals = moqui_lib::sync::lock(&totals);
         match result {
             Ok((_, rule_notices)) => {
                 totals.0 += 1;

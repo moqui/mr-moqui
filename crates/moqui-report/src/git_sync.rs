@@ -15,7 +15,9 @@
 //! definition whose file is gone (as the sync's user, so only one it owns and nothing still references); an untracked
 //! one, such as a definition whose first write failed, is only listed. Deleting a tracked definition removes its file
 //! once the delete commits, and a push removes the file of any tracked definition that no longer exists.
-use super::*;
+use super::{
+    definitions, fail, input, json, output, text, Error, ExecutionContext, Json, Parameters, ServiceInfo, Value,
+};
 use moqui_core::context::ExecutionContextFactory;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -447,12 +449,14 @@ pub(super) fn after_save(ec: &ExecutionContext, definition: &Json) {
             let pending = std::sync::Arc::new(std::sync::Mutex::new(Some(push_one)));
             let hook = std::sync::Arc::clone(&pending);
             if let Err(error) = tx.on_commit(move || {
-                if let Some(push) = hook.lock().ok().and_then(|mut slot| slot.take()) {
+                let push = moqui_lib::sync::lock(&hook).take();
+                if let Some(push) = push {
                     push();
                 }
             }) {
                 tracing::error!(%error, "could not wait for the commit to push a definition; pushing now");
-                if let Some(push) = pending.lock().ok().and_then(|mut slot| slot.take()) {
+                let push = moqui_lib::sync::lock(&pending).take();
+                if let Some(push) = push {
                     push();
                 }
             }
@@ -522,12 +526,14 @@ pub(super) fn after_delete(ec: &ExecutionContext, definition: &Json) {
             let pending = std::sync::Arc::new(std::sync::Mutex::new(Some(remove)));
             let hook = std::sync::Arc::clone(&pending);
             if let Err(error) = tx.on_commit(move || {
-                if let Some(remove) = hook.lock().ok().and_then(|mut slot| slot.take()) {
+                let remove = moqui_lib::sync::lock(&hook).take();
+                if let Some(remove) = remove {
                     remove();
                 }
             }) {
                 tracing::error!(%error, "could not wait for the commit to remove a git file; removing now");
-                if let Some(remove) = pending.lock().ok().and_then(|mut slot| slot.take()) {
+                let remove = moqui_lib::sync::lock(&pending).take();
+                if let Some(remove) = remove {
                     remove();
                 }
             }

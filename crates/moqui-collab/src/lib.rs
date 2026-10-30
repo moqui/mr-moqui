@@ -47,6 +47,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_lib::object::{is_empty, to_plain_string, Value};
+use moqui_lib::sync::lock;
 use sha2::Digest;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -139,17 +140,13 @@ fn events() -> &'static Mutex<Vec<Event>> {
     EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 fn room_of(key: &str) -> Option<Arc<Mutex<Room>>> {
-    locked(rooms()).get(key).cloned()
+    lock(rooms()).get(key).cloned()
 }
 
 /// The events since the last call, for the host to send.
 pub fn take_events() -> Vec<Event> {
-    std::mem::take(&mut *locked(events()))
+    std::mem::take(&mut *lock(events()))
 }
 
 fn text_hash(text: &str) -> String {
@@ -351,7 +348,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         can_edit: HashMap::new(),
     }));
     // another join may have loaded it meanwhile: keep the first
-    Ok(Arc::clone(locked(rooms()).entry(key.to_string()).or_insert(room)))
+    Ok(Arc::clone(lock(rooms()).entry(key.to_string()).or_insert(room)))
 }
 
 /// How a row's stored state is taken.
@@ -456,7 +453,7 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
         return Err(Refusal::new(404, format!("{key} not found")));
     }
     let room = load(key, page_id, on_database)?;
-    let mut room = locked(&room);
+    let mut room = lock(&room);
     room.members += 1;
     room.can_edit.insert(user_id.to_string(), can_edit);
     let vector = if client_state_vector.is_empty() {
@@ -502,7 +499,7 @@ fn user_name(user_id: &str) -> String {
 /// An update from an editor of the document; refused when the user did not join it or may not change it.
 pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     let room = room_of(key).ok_or_else(|| Refusal::new(409, format!("{key} is not open here: join it first")))?;
-    let mut room = locked(&room);
+    let mut room = lock(&room);
     match room.can_edit.get(user_id) {
         Some(true) => {}
         Some(false) => return Err(Refusal::new(403, "you may view this page and not change it")),
@@ -523,7 +520,7 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.
 pub fn apply_remote(key: &str, update: &[u8]) {
     let Some(room) = room_of(key) else { return };
-    let room = locked(&room);
+    let room = lock(&room);
     match Update::decode_v1(update) {
         Ok(update) => {
             if let Err(err) = room.doc.transact_mut().apply_update(update) {
@@ -537,26 +534,26 @@ pub fn apply_remote(key: &str, update: &[u8]) {
 /// A client left the document. The room is written, saved and closed by the next [`tick`] once no one is in it.
 pub fn leave(key: &str) {
     if let Some(room) = room_of(key) {
-        let mut room = locked(&room);
+        let mut room = lock(&room);
         room.members = room.members.saturating_sub(1);
     }
 }
 
 /// The markdown of an open document, for a test or a preview.
 pub fn snapshot(key: &str) -> Option<String> {
-    room_of(key).map(|room| markdown::render(&locked(&room).doc))
+    room_of(key).map(|room| markdown::render(&lock(&room).doc))
 }
 
 /// The keys of the documents open on this server.
 pub fn open_documents() -> Vec<String> {
-    locked(rooms()).keys().cloned().collect()
+    lock(rooms()).keys().cloned().collect()
 }
 
 /// Write the rooms' state a moment after their edits, save a version of a document on database files that has been
 /// left a while, and save and close the rooms no one is in. Each room stands alone: a failure is logged and the others
 /// go on. Runs on a request worker in a fresh context every second or two.
 pub fn tick() {
-    let keys: Vec<(String, Arc<Mutex<Room>>)> = locked(rooms())
+    let keys: Vec<(String, Arc<Mutex<Room>>)> = lock(rooms())
         .iter()
         .map(|(key, room)| (key.clone(), Arc::clone(room)))
         .collect();
@@ -569,7 +566,7 @@ pub fn tick() {
 
 fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     let (dirty, quiet, members, unsaved, on_database, last_editor) = {
-        let room = locked(room);
+        let room = lock(room);
         (
             room.dirty,
             room.changed_at.elapsed(),
@@ -586,16 +583,16 @@ fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     if members == 0 || idle_save {
         if unsaved {
             let editor = last_editor
-                .or_else(|| locked(room).unsaved.iter().next().cloned())
+                .or_else(|| lock(room).unsaved.iter().next().cloned())
                 .unwrap_or_default();
             save_room(key, room, &editor, None)?;
         } else if dirty {
             flush(key, room)?;
         }
         if members == 0 {
-            let still_empty = locked(room).members == 0;
+            let still_empty = lock(room).members == 0;
             if still_empty {
-                locked(rooms()).remove(key);
+                lock(rooms()).remove(key);
             }
         }
     }
@@ -604,12 +601,12 @@ fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
 
 /// Write the room's state now.
 fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
-    let guard = locked(room);
+    let guard = lock(room);
     let unsaved = guard.unsaved.clone();
     let editor = guard.last_editor.clone();
     write_row(key, &guard.doc, Stored::Merge, None, None, &unsaved, editor.as_deref())?;
     drop(guard);
-    locked(room).dirty = false;
+    lock(room).dirty = false;
     Ok(())
 }
 
@@ -617,7 +614,7 @@ fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
 /// names its editors. Out: the version made, none when the text was unchanged.
 fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
     let (target, page_text, editors) = {
-        let room = locked(room);
+        let room = lock(room);
         (room.target.clone(), markdown::render(&room.doc), room.unsaved.clone())
     };
     let note = note
@@ -683,7 +680,7 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     let out = result?;
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
     {
-        let mut room = locked(room);
+        let mut room = lock(room);
         room.unsaved.clear();
         room.dirty = false;
         let guard = &*room;
@@ -705,7 +702,7 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
             .eq("documentKey", Value::string(key))
             .update_all([("lastSaveDate".to_string(), now_value())])?;
     }
-    locked(events()).push(Event::Saved {
+    lock(events()).push(Event::Saved {
         document_key: key.to_string(),
         version_name: version_name.clone(),
         user_id: user_id.to_string(),
@@ -736,10 +733,10 @@ pub fn save(key: &str, note: Option<&str>) -> Result<Option<String>, Refusal> {
         None => load(key, page_id, access.on_database)?,
     };
     // the saver's own changes count even when they came through another server
-    locked(&room).unsaved.insert(user_id.clone());
+    lock(&room).unsaved.insert(user_id.clone());
     let saved = save_room(key, &room, &user_id, note)?;
-    if locked(&room).members == 0 {
-        locked(rooms()).remove(key);
+    if lock(&room).members == 0 {
+        lock(rooms()).remove(key);
     }
     Ok(saved)
 }

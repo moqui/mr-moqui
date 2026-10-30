@@ -1,5 +1,6 @@
 //! Versioned saved objects and component definitions. Invalid independent files do not hide valid ones.
-use super::*;
+use super::{fail, input, json, output, text, Error, ExecutionContext, Json, Parameters, ServiceInfo, Value};
+use moqui_lib::sync;
 use std::collections::{BTreeSet, HashMap};
 const ENTITY: &str = "moqui.report.Definition";
 const VERSION: &str = "moqui.report.DefinitionVersion";
@@ -15,7 +16,7 @@ pub fn load_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> R
     let registry = factory.extension(|_| Shipped::default());
     let definitions = scan_shipped(factory);
     let count = definitions.len();
-    *registry.definitions.write().unwrap_or_else(|e| e.into_inner()) = Some(definitions.into());
+    *sync::write(&registry.definitions) = Some(definitions.into());
     Ok(count)
 }
 
@@ -59,11 +60,11 @@ fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
 fn shipped(ec: &ExecutionContext) -> std::sync::Arc<[Json]> {
     let registry = ec.factory().extension(|_| Shipped::default());
     {
-        if let Some(definitions) = registry.definitions.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if let Some(definitions) = sync::read(&registry.definitions).as_ref() {
             return definitions.clone();
         }
     }
-    let mut state = registry.definitions.write().unwrap_or_else(|e| e.into_inner());
+    let mut state = sync::write(&registry.definitions);
     state.get_or_insert_with(|| scan_shipped(ec.factory()).into()).clone()
 }
 
