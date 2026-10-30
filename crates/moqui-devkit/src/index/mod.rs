@@ -1386,15 +1386,14 @@ pub fn find(
         .limit(50)
         .list()?;
     let mut candidates: Vec<ArtifactRow> = exact.values().iter().map(artifact_of).collect();
-    if !query.is_empty() {
+    if let [head, tail @ ..] = query.as_slice() {
         // a key with a segment starting with each query segment's first letter, in order: the ranking does the rest
-        let rest: String = query
+        let rest: String = tail
             .iter()
-            .skip(1)
             .filter_map(|segment| segment.chars().next())
             .map(|first| format!("% {first}"))
             .collect();
-        let first = query[0].chars().next().unwrap_or('%');
+        let first = head.chars().next().unwrap_or('%');
         let like = narrow(facade.find(ARTIFACT)?)
             .condition(Condition::or(vec![
                 Condition::like("searchKey", Value::string(format!("{first}{rest}%"))),

@@ -518,12 +518,12 @@ fn string_regex_calls(text: &str, masked: &str) -> Vec<usize> {
                 continue;
             }
             let rest = &text[at + method.len()..];
-            let rest_trimmed = rest.trim_start();
-            let quote = match rest_trimmed.chars().next() {
+            let mut chars = rest.trim_start().chars();
+            let quote = match chars.next() {
                 Some(q @ ('\'' | '"')) => q,
                 _ => continue,
             };
-            let body = &rest_trimmed[1..];
+            let body = chars.as_str();
             let mut end = None;
             let mut escaped = false;
             for (index, ch) in body.char_indices() {

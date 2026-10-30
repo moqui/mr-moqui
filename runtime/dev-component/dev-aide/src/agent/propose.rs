@@ -630,7 +630,7 @@ fn new_titles(old: &str, new: &str) -> Vec<String> {
         text.match_indices("title=\"")
             .filter_map(|(at, found)| {
                 let rest = &text[at + found.len()..];
-                rest.find('"').map(|end| rest[..end].to_string())
+                rest.split_once('"').map(|(title, _)| title.to_string())
             })
             .collect()
     };

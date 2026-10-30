@@ -93,17 +93,18 @@ fn get_change_set(
         };
         match prepare(&context, &one) {
             Ok(prepared) => {
-                let file = &prepared[0];
-                let disk = file
-                    .current
-                    .as_deref()
-                    .map(|text| sha256(text.as_bytes()))
-                    .unwrap_or_default();
-                files.push(json!({
-                    "file": file.named.shown, "rootId": file.named.root.id, "path": file.named.relative,
-                    "diskText": file.current, "proposedText": file.new_text, "baseHash": change.base_hash,
-                    "diskHash": disk, "changedOnDisk": disk != change.base_hash, "new": file.current.is_none(),
-                }));
+                for file in &prepared {
+                    let disk = file
+                        .current
+                        .as_deref()
+                        .map(|text| sha256(text.as_bytes()))
+                        .unwrap_or_default();
+                    files.push(json!({
+                        "file": file.named.shown, "rootId": file.named.root.id, "path": file.named.relative,
+                        "diskText": file.current, "proposedText": file.new_text, "baseHash": change.base_hash,
+                        "diskHash": disk, "changedOnDisk": disk != change.base_hash, "new": file.current.is_none(),
+                    }));
+                }
             }
             Err(error) => files.push(json!({"file": change.file, "conflict": error.instruction})),
         }

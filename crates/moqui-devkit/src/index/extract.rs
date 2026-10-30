@@ -683,9 +683,8 @@ fn full_entity_name(node: &MNode) -> Option<String> {
 /// The dotted prefix of the services in a service file at `location`: its path under `service/` without `.xml`.
 fn service_prefix(location: &str) -> String {
     location
-        .find("/service/")
-        .map(|at| &location[at + "/service/".len()..])
-        .map(|rest| rest.strip_suffix(".xml").unwrap_or(rest).replace('/', "."))
+        .split_once("/service/")
+        .map(|(_, rest)| rest.strip_suffix(".xml").unwrap_or(rest).replace('/', "."))
         .unwrap_or_default()
 }
 
@@ -693,8 +692,8 @@ fn service_prefix(location: &str) -> String {
 #[must_use]
 pub fn extended_location(location: &str) -> String {
     location
-        .find("/screen-extend/")
-        .map(|at| format!("component://{}", &location[at + "/screen-extend/".len()..]))
+        .split_once("/screen-extend/")
+        .map(|(_, rest)| format!("component://{rest}"))
         .unwrap_or_default()
 }
 

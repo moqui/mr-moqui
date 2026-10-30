@@ -586,7 +586,7 @@ impl Session {
                 self.assist.bootstrap = Some(boot);
             }
             "turn" => {
-                let message_id = &lane["turn:".len()..];
+                let message_id = lane.strip_prefix("turn:").unwrap_or_default();
                 self.assist.thread.turn_answered(message_id, &value, &client);
                 self.assist_poll(true);
             }

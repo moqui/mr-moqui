@@ -386,7 +386,7 @@ fn name_status(out: &str) -> Vec<Json> {
     let mut parts = out.split('\0').filter(|part| !part.is_empty());
     let mut files = Vec::new();
     while let Some(status) = parts.next() {
-        let letter = &status[..1];
+        let letter = status.get(..1).unwrap_or(status);
         let mut path = parts.next().unwrap_or("");
         if matches!(letter, "R" | "C") {
             path = parts.next().unwrap_or(path);
@@ -421,7 +421,7 @@ fn get_tags(
             let fields: Vec<&str> = line.split('\u{1f}').collect();
             (fields.len() >= 5).then(|| {
                 // an annotated tag's own object then its commit; a lightweight one's commit only
-                let commit = if fields[1] == "tag" { &fields[2][..fields[2].len().min(40)] } else { fields[2] };
+                let commit = if fields[1] == "tag" { fields[2].get(..40).unwrap_or(fields[2]) } else { fields[2] };
                 json!({ "name": fields[0], "annotated": fields[1] == "tag", "commit": commit, "date": fields[3], "subject": fields[4] })
             })
         })

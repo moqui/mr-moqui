@@ -438,7 +438,7 @@ pub fn parse_status(out: &str) -> Status {
             b'?' | b'!' => {
                 let mark = char::from(kind);
                 status.entries.push(StatusEntry {
-                    path: record[2..].to_string(),
+                    path: record.get(2..).unwrap_or_default().to_string(),
                     original: None,
                     index: mark,
                     worktree: mark,

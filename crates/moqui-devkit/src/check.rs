@@ -429,9 +429,8 @@ pub fn extension_problems(extensions: &[crate::index::Extension]) -> Vec<Problem
 /// Line and column of a parse error message that names them (`line 3, column 7`, or `:3:7`), else 0.
 fn parse_error_position(message: &str) -> (u32, u32) {
     let number_after = |key: &str| -> Option<u32> {
-        let at = message.find(key)? + key.len();
-        message[at..]
-            .trim_start()
+        let (_, rest) = message.split_once(key)?;
+        rest.trim_start()
             .chars()
             .take_while(char::is_ascii_digit)
             .collect::<String>()
@@ -490,6 +489,14 @@ impl<'a> LineIndex<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_parse_error_position_is_the_numbers_after_line_and_column() {
+        assert_eq!(parse_error_position("bad tag at line 3, column 7"), (3, 7));
+        assert_eq!(parse_error_position("unexpected end at line 12"), (12, 0));
+        assert_eq!(parse_error_position("no position"), (0, 0));
+        assert_eq!(parse_error_position("é line é"), (0, 0));
+    }
 
     #[test]
     fn an_attribute_is_found_in_its_start_tag() {

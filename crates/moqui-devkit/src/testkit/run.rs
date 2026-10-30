@@ -756,10 +756,9 @@ fn missing_tool_of(failure: &Failure) -> Option<&'static str> {
 fn named_not_built(text: &str) -> Option<&'static str> {
     let marker = " is not built into this host";
     let mut rest = text;
-    while let Some(at) = rest.find(marker) {
-        let before = &rest[..at];
-        let line_start = before.rfind('\n').map_or(0, |index| index + 1);
-        if !http_head(before[line_start..].trim_start()) {
+    while let Some((before, after)) = rest.split_once(marker) {
+        let line = before.rsplit_once('\n').map_or(before, |(_, line)| line);
+        if !http_head(line.trim_start()) {
             let trimmed = before.trim_end_matches(')');
             let start = trimmed
                 .char_indices()
@@ -771,7 +770,7 @@ fn named_not_built(text: &str) -> Option<&'static str> {
                 return Some(feature);
             }
         }
-        rest = &rest[at + marker.len()..];
+        rest = after;
     }
     None
 }
@@ -780,13 +779,12 @@ fn named_not_built(text: &str) -> Option<&'static str> {
 fn http_not_built(text: &str) -> bool {
     let marker = " is not built into this host";
     let mut rest = text;
-    while let Some(at) = rest.find(marker) {
-        let before = &rest[..at];
-        let line_start = before.rfind('\n').map_or(0, |index| index + 1);
-        if http_head(before[line_start..].trim_start()) {
+    while let Some((before, after)) = rest.split_once(marker) {
+        let line = before.rsplit_once('\n').map_or(before, |(_, line)| line);
+        if http_head(line.trim_start()) {
             return true;
         }
-        rest = &rest[at + marker.len()..];
+        rest = after;
     }
     false
 }

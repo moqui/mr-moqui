@@ -463,7 +463,10 @@ impl<L: ScreenLink> Agent<L> {
                 self.press(KeyPress::plain(Key::Enter));
                 Ok(())
             }
-            None if lower == "find" || lower.starts_with("find ") => self.open_find(text.trim()[4..].trim()),
+            None if lower == "find" || lower.starts_with("find ") => {
+                let list = text.trim().get("find".len()..).unwrap_or_default();
+                self.open_find(list.trim())
+            }
             None => Err(self.not_here(text)),
         }
     }

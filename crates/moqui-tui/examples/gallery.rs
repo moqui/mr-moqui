@@ -58,7 +58,9 @@ fn main() {
 
 fn parse_columns(raw: &str) -> u16 {
     match raw {
-        "72" | "100" | "180" => raw.parse().expect("size is a number"),
+        "72" => 72,
+        "100" => 100,
+        "180" => 180,
         _ => usage(),
     }
 }

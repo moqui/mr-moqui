@@ -240,6 +240,20 @@ fn eca_rules_by_id_or_position() {
 }
 
 #[test]
+fn a_service_prefix_and_an_extended_location_are_the_path_after_their_directory() {
+    assert_eq!(
+        service_prefix("component://mantle/service/mantle/order/OrderServices.xml"),
+        "mantle.order.OrderServices"
+    );
+    assert_eq!(service_prefix("component://mantle/data/Seed.xml"), "");
+    assert_eq!(
+        extended_location("component://site/screen-extend/SimpleScreens/Order/FindOrder.xml"),
+        "component://SimpleScreens/Order/FindOrder.xml"
+    );
+    assert_eq!(extended_location("component://site/screen/Home.xml"), "");
+}
+
+#[test]
 fn resolving_names_fields_entity_auto_and_anchors() {
     let entities = read(
         ArtifactKind::Entity,

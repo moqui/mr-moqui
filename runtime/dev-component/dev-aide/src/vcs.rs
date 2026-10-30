@@ -453,7 +453,7 @@ fn get_commit(
         .collect::<Vec<_>>()
         .chunks(2)
         .filter(|pair| pair.len() == 2)
-        .map(|pair| serde_json::json!({ "status": &pair[0][..1], "path": pair[1] }))
+        .map(|pair| serde_json::json!({ "status": pair[0].get(..1).unwrap_or(pair[0]), "path": pair[1] }))
         .collect();
     let mut out = Parameters::new();
     out.insert("commit".into(), commit.first().map_or(Value::Null, json_value));
@@ -1063,7 +1063,7 @@ fn publish_site(
             "message".into(),
             Value::string(format!(
                 "Committed {}; the push failed: {}",
-                &id[..id.len().min(9)],
+                id.get(..9).unwrap_or(&id),
                 output.stderr.trim()
             )),
         );
