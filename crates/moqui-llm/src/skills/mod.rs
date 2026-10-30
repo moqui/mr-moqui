@@ -210,8 +210,9 @@ impl Skill {
             if line.trim_start().starts_with("```") {
                 fenced = !fenced;
             }
-            if !fenced && line.starts_with("## ") {
-                let title = line[3..].trim().to_string();
+            let heading = if fenced { None } else { line.strip_prefix("## ") };
+            if let Some(heading) = heading {
+                let title = heading.trim().to_string();
                 sections.push(Section {
                     slug: slug(&title),
                     title,
@@ -466,13 +467,8 @@ enum FrontValue {
 
 fn unquote(text: &str) -> String {
     let text = text.trim();
-    let quoted = text.len() >= 2
-        && ((text.starts_with('"') && text.ends_with('"')) || (text.starts_with('\'') && text.ends_with('\'')));
-    if quoted {
-        text[1..text.len() - 1].to_string()
-    } else {
-        text.to_string()
-    }
+    let quoted = |quote: char| text.strip_prefix(quote).and_then(|inner| inner.strip_suffix(quote));
+    quoted('"').or_else(|| quoted('\'')).unwrap_or(text).to_string()
 }
 
 /// The front matter's keys, in order: `key: value`, `key: [a, b]`, and a key with no value followed by indented
@@ -480,8 +476,8 @@ fn unquote(text: &str) -> String {
 fn front_values(front: &str) -> Result<Vec<(String, FrontValue)>, String> {
     let mut out: Vec<(String, FrontValue)> = Vec::new();
     for (number, raw) in front.lines().enumerate() {
-        let line = match raw.find(" #") {
-            Some(at) => &raw[..at],
+        let line = match raw.split_once(" #") {
+            Some((line, _)) => line,
             None => raw,
         };
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -525,17 +521,11 @@ fn front_values(front: &str) -> Result<Vec<(String, FrontValue)>, String> {
             return Err(format!("front matter line {} has no key: {}", number + 1, line.trim()));
         };
         let value = value.trim();
-        let parsed = if value.starts_with('[') {
-            if !value.ends_with(']') {
+        let parsed = if let Some(list) = value.strip_prefix('[') {
+            let Some(items) = list.strip_suffix(']') else {
                 return Err(format!("the list of {} has no closing ]", key.trim()));
-            }
-            FrontValue::List(
-                value[1..value.len() - 1]
-                    .split(',')
-                    .map(unquote)
-                    .filter(|item| !item.is_empty())
-                    .collect(),
-            )
+            };
+            FrontValue::List(items.split(',').map(unquote).filter(|item| !item.is_empty()).collect())
         } else {
             FrontValue::Text(unquote(value))
         };
@@ -556,11 +546,10 @@ pub fn parse_skill(text: &str) -> Result<Skill, String> {
     let rest = text
         .strip_prefix("---\n")
         .ok_or("it does not start with front matter (---)")?;
-    let (front, body) = match rest.find("\n---") {
-        Some(end) => (&rest[..end], &rest[end + 4..]),
-        None if rest.starts_with("---") => ("", &rest[3..]),
-        None => return Err("its front matter has no closing ---".to_string()),
-    };
+    let (front, body) = rest
+        .split_once("\n---")
+        .or_else(|| rest.strip_prefix("---").map(|body| ("", body)))
+        .ok_or("its front matter has no closing ---")?;
     let body = body.trim_start_matches('-').trim_start_matches('\n');
     let mut skill = Skill {
         body: body.trim_end().to_string(),

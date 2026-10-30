@@ -51,12 +51,10 @@ pub fn qvue_location(location: &str) -> String {
 #[must_use]
 pub fn parts(program: &str) -> Option<(Header, String, String)> {
     let header = header_named(program, "qvue-screen")?;
-    let start = program.find("<screen")?;
-    let close = program[start..]
-        .find("</screen>")
-        .map(|at| start + at + "</screen>".len())?;
-    let xml = program[start..close].to_string();
-    let sfc = program[close..].trim_start().to_string();
+    let (_, from_open) = program.split_once("<screen")?;
+    let (inner, after) = from_open.split_once("</screen>")?;
+    let xml = format!("<screen{inner}</screen>");
+    let sfc = after.trim_start().to_string();
     Some((header, xml, sfc))
 }
 
@@ -229,6 +227,14 @@ mod tests {
         );
         assert_eq!(sfc_of(PROGRAM), sfc);
         assert!(parts("<screen/>").is_none());
+        // the XML is from the first <screen to the first </screen>, the SFC the rest without its leading space
+        let (_, xml, sfc) = parts(
+            "<!-- qvue-screen at=\"component://a.xml\" -->é<screen a=\"1\">x</screen> \n<template>ü</template></screen>",
+        )
+        .unwrap();
+        assert_eq!(xml, "<screen a=\"1\">x</screen>");
+        assert_eq!(sfc, "<template>ü</template></screen>");
+        assert!(parts("<!-- qvue-screen at=\"component://a.xml\" --><screen>").is_none());
     }
 
     #[test]

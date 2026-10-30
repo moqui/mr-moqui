@@ -211,22 +211,22 @@ fn words(text: &str) -> Vec<String> {
 pub fn word_forms(word: &str) -> Vec<String> {
     let mut forms = vec![word.to_string()];
     let length = word.chars().count();
-    let stem = if length > 4 && word.ends_with("ies") {
-        Some(format!("{}y", &word[..word.len() - 3]))
-    } else if length > 4
-        && ["ches", "shes", "sses", "uses", "xes", "zes"]
-            .iter()
-            .any(|end| word.ends_with(end))
+    let es_plural = ["ches", "shes", "sses", "uses", "xes", "zes"]
+        .iter()
+        .any(|end| word.ends_with(end));
+    let stem = if let Some(base) = word.strip_suffix("ies").filter(|_| length > 4) {
+        Some(format!("{base}y"))
+    } else if let Some(base) = word.strip_suffix("es").filter(|_| length > 4 && es_plural) {
+        Some(base.to_string())
+    } else if let Some(base) = word
+        .strip_suffix('s')
+        .filter(|_| length > 3 && !word.ends_with("ss") && !word.ends_with("us"))
     {
-        Some(word[..word.len() - 2].to_string())
-    } else if length > 3 && word.ends_with('s') && !word.ends_with("ss") && !word.ends_with("us") {
-        Some(word[..word.len() - 1].to_string())
-    } else if length > 5 && word.ends_with("ing") {
-        Some(undouble(&word[..word.len() - 3]))
-    } else if length > 4 && word.ends_with("ed") {
-        Some(undouble(&word[..word.len() - 2]))
+        Some(base.to_string())
+    } else if let Some(base) = word.strip_suffix("ing").filter(|_| length > 5) {
+        Some(undouble(base))
     } else {
-        None
+        word.strip_suffix("ed").filter(|_| length > 4).map(undouble)
     };
     forms.extend(stem.filter(|stem| stem != word));
     forms
@@ -388,5 +388,10 @@ mod tests {
         assert_eq!(word_forms("status"), ["status"], "not a plural");
         assert_eq!(word_forms("class"), ["class"]);
         assert_eq!(word_forms("is"), ["is"]);
+        assert_eq!(word_forms("caches"), ["caches", "cach"]);
+        assert_eq!(word_forms("dogs"), ["dogs", "dog"]);
+        assert_eq!(word_forms("cafés"), ["cafés", "café"]);
+        assert_eq!(word_forms("ünies"), ["ünies", "üny"]);
+        assert_eq!(word_forms("lies"), ["lies", "lie"], "too short for -ies");
     }
 }

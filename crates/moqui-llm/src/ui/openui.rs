@@ -1380,12 +1380,9 @@ fn statement_components(program: &str) -> BTreeMap<String, String> {
             continue;
         }
         let value = value.trim();
-        let component: String = value
-            .chars()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-            .collect();
-        let component = if value[component.len()..].starts_with('(') {
-            component
+        let in_name = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let component = if value.trim_start_matches(in_name).starts_with('(') {
+            value.chars().take_while(|ch| in_name(*ch)).collect()
         } else {
             String::new()
         };

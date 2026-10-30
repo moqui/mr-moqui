@@ -259,8 +259,11 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
                     Test::Before(date(field, rest.trim(), false))
                 } else if text.len() > 1 && text.starts_with('%') && text.ends_with('%') {
                     Test::Contains(text.trim_matches('%').to_string())
-                } else if text.len() > 1 && text.ends_with('%') && !text[..text.len() - 1].contains('%') {
-                    Test::Begins(text.trim_end_matches('%').to_string())
+                } else if let Some(begins) = text
+                    .strip_suffix('%')
+                    .filter(|head| !head.is_empty() && !head.contains('%'))
+                {
+                    Test::Begins(begins.to_string())
                 } else {
                     Test::Equals(date(field, text, false))
                 }

@@ -46,20 +46,17 @@ pub fn header(program: &str) -> Option<Header> {
 /// The header of a program whose first comment starts with `keyword` (`screen-xml`, `qvue-screen`).
 #[must_use]
 pub fn header_named(program: &str, keyword: &str) -> Option<Header> {
-    let start = program.find("<!--")?;
-    let end = program[start..].find("-->")? + start;
-    let comment = &program[start + 4..end];
+    let (_, after_open) = program.split_once("<!--")?;
+    let (comment, _) = after_open.split_once("-->")?;
     if !comment.trim_start().starts_with(keyword) {
         return None;
     }
     let attribute = |name: &str| -> String {
         let key = format!("{name}=\"");
         comment
-            .find(&key)
-            .and_then(|at| {
-                let rest = &comment[at + key.len()..];
-                rest.find('"').map(|close| rest[..close].to_string())
-            })
+            .split_once(&key)
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(value, _)| value.to_string())
             .unwrap_or_default()
     };
     let location = attribute("at");
@@ -228,5 +225,30 @@ mod tests {
         );
         assert_eq!(header("<screen/>"), None);
         assert_eq!(header("<!-- screen-xml at=\"/etc/passwd\" --><screen/>"), None);
+        // the first comment only; an attribute with no closing quote is empty
+        assert_eq!(
+            header("x <!--screen-xml at=\"component://a.xml\" path=\"/qapps/é\"--> <!-- at=\"component://b.xml\" -->"),
+            Some(Header {
+                location: "component://a.xml".into(),
+                path: "/qapps/é".into()
+            })
+        );
+        assert_eq!(
+            header("<!-- screen-xml at=\"component://a.xml\" path=\"/qapps -->").map(|h| h.path),
+            Some(String::new())
+        );
+        assert_eq!(header("<!-- screen-xml at=\"component://a.xml\""), None);
+    }
+
+    #[test]
+    fn a_comment_that_closes_inside_its_opening_reads_to_the_next_close() {
+        // "<!-->" once took "-->" inside "<!--" and panicked on the slice
+        assert_eq!(header("<!-->"), None);
+        assert_eq!(header("<!--->"), None);
+        assert_eq!(
+            header("<!-->screen-xml at=\"component://a.xml\" -->").map(|h| h.location),
+            None,
+            "the comment is \">screen-xml ...\", which does not start with the keyword"
+        );
     }
 }

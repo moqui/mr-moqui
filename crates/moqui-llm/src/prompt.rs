@@ -571,8 +571,8 @@ fn cap_text(text: &str, cap: usize) -> (String, bool) {
     const NOTE: &str = "\n…(cut)";
     let room = cap.saturating_sub(NOTE.chars().count());
     let kept: String = text.chars().take(room).collect();
-    let kept = match kept.rfind('\n') {
-        Some(at) if at > 0 => kept[..at].to_string(),
+    let kept = match kept.rsplit_once('\n') {
+        Some((head, _)) if !head.is_empty() => head.to_string(),
         _ => kept,
     };
     (format!("{kept}{NOTE}"), true)

@@ -105,6 +105,21 @@ fn front_matter_errors_name_what_is_wrong() {
         assert!(many.contains(part), "{many}");
     }
     assert!(error("---\nname: x\ndescription: Use when x.\n").contains("closing ---"));
+    // an empty front matter closes at once, so what is missing is the name, not the closing ---
+    assert!(!error("---\n---\nBody.\n").contains("closing ---"));
+    assert!(error("---\nname: x\ndescription: Use when x.\naliases: [a, b\n---\n").contains("no closing ]"));
+}
+
+#[test]
+fn front_matter_values_lose_their_quotes() {
+    let read = parse_skill(
+        "---\nname: 'quoted-name'\ntitle: \"Café \"\ndescription: Use when é.\naliases: ['a b', \"c\", d, \"\"]\n\
+         tags: [\"]\n---\nBody.\n",
+    )
+    .unwrap();
+    assert_eq!(read.name, "quoted-name");
+    assert_eq!(read.title, "Café ");
+    assert_eq!(read.aliases, ["a b", "c", "d", "\""]);
 }
 
 #[test]

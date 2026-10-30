@@ -88,18 +88,19 @@ pub fn check_arguments(arguments: &Json, schema: &Json) -> Result<(), String> {
 /// characters (`*` alone is every tool).
 pub fn name_matches(pattern: &str, name: &str) -> bool {
     let pattern = pattern.trim();
-    if !pattern.contains('*') {
+    let Some((first, rest)) = pattern.split_once('*') else {
         return pattern == name;
-    }
-    let parts: Vec<&str> = pattern.split('*').collect();
-    let (first, rest) = parts.split_first().expect("split yields one part");
+    };
     let Some(mut left) = name.strip_prefix(first) else {
         return false;
     };
-    let (last, middle) = rest.split_last().expect("a pattern with * has two parts");
+    let (middle, last): (Vec<&str>, &str) = match rest.rsplit_once('*') {
+        Some((middle, last)) => (middle.split('*').collect(), last),
+        None => (Vec::new(), rest),
+    };
     for part in middle {
-        match left.find(part) {
-            Some(at) => left = &left[at + part.len()..],
+        match left.split_once(part) {
+            Some((_, after)) => left = after,
             None => return false,
         }
     }
@@ -121,6 +122,14 @@ mod tests {
         assert!(name_matches("mcp__*__read", "mcp__files__read"));
         assert!(!name_matches("mcp__*__read", "mcp__files__write"));
         assert!(!name_matches("ab*ba", "aba"));
+        // several stars: the middle parts in order, an empty part anywhere, and names that are not ASCII
+        assert!(name_matches("a*b*c*d", "a_b_c_d"));
+        assert!(!name_matches("a*c*b*d", "a_b_c_d"));
+        assert!(name_matches("a**d", "ad"));
+        assert!(name_matches("*b*", "abc"));
+        assert!(!name_matches("*x*", "abc"));
+        assert!(name_matches("é*ü*ß", "é_ü_ß"));
+        assert!(name_matches("  mcp__*  ", "mcp__x"));
     }
 
     #[test]

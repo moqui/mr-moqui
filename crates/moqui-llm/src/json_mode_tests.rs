@@ -207,4 +207,26 @@ fn the_intent_hint_is_one_known_word_added_to_the_tail() {
         tail_with_intent("<context note=\"n\">\nnow x\n</context>", "data"),
         "<context note=\"n\">\nnow x\nlikely: data\n</context>"
     );
+    // the last closing marker takes the line; a tail with none gets it at the end
+    assert_eq!(
+        tail_with_intent("<context>a</context> <context>b</context>!", "ui"),
+        "<context>a</context> <context>blikely: ui\n</context>!"
+    );
+    assert_eq!(tail_with_intent("no marker", "ui"), "no marker\nlikely: ui");
+}
+
+#[test]
+fn the_first_object_is_the_byte_range_of_its_balanced_braces() {
+    assert_eq!(first_object(r#"{"a": 1}"#), Some((0, 8)));
+    assert_eq!(first_object(r#"é → {"a": "}{"} after"#), Some((7, 18)));
+    assert_eq!(first_object(r#"{"a": {"b": "\"}"}} tail"#), Some((0, 19)));
+    assert_eq!(first_object("{ not closed"), None);
+    assert_eq!(first_object("no braces"), None);
+    // tool call blocks: each one object, whitespace between, nothing else
+    assert_eq!(
+        only_tool_call_blocks("<tool_call>{\"a\": 1}</tool_call>\n <tool_call> {\"b\": 2} </tool_call>"),
+        Some(vec![json!({"a": 1}), json!({"b": 2})])
+    );
+    assert_eq!(only_tool_call_blocks("<tool_call>{\"a\": 1}"), None);
+    assert_eq!(only_tool_call_blocks("<tool_call>{\"a\": 1} x</tool_call>"), None);
 }

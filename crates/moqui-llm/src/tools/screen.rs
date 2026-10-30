@@ -596,8 +596,8 @@ fn open_spec(
 
 /// `text` with its last line, the outcome, replaced by `outcome`.
 fn replace_outcome(text: &str, outcome: &str) -> String {
-    let kept = match text.rfind("\n--- ") {
-        Some(at) => &text[..at],
+    let kept = match text.rsplit_once("\n--- ") {
+        Some((kept, _)) => kept,
         None if text.starts_with("--- ") => "",
         None => text,
     };

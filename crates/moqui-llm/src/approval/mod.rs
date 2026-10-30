@@ -1131,21 +1131,20 @@ fn decide_in(
     }
     let now = run::now_millis();
     let run = run::load_run(facade, &view.run_id)?;
-    let waiting = run.as_ref().is_some_and(|run| {
+    let waiting = run.filter(|run| {
         run.state.is_paused()
             && run.pause_kind == Some(PauseKind::Approval)
             && run.pause_ref.as_deref() == Some(approval_id)
     });
     let expired = view.expires.is_some_and(|at| at <= now);
-    if expired || !waiting {
+    let (false, Some(run)) = (expired, waiting) else {
         expire_one(factory, facade, &view)?;
         return Err(DecideError::Refused(if expired {
             "this approval expired, so nothing was saved".to_string()
         } else {
             "the agent no longer waits for this approval, so nothing was saved".to_string()
         }));
-    }
-    let run = run.expect("a waiting run");
+    };
     let mut fields: Vec<(&str, Value)> = vec![
         ("decisionUserId", Value::string(&decider.user_id)),
         ("decisionDate", run::stamp(now)),
