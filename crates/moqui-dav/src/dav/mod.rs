@@ -846,11 +846,8 @@ pub(crate) fn maps(value: Option<&Value>) -> Vec<indexmap::IndexMap<String, Valu
 /// The path of a `Destination` header (an absolute URL or a path), percent-encoded as sent.
 pub(crate) fn destination_path(request: &DavRequest) -> Option<String> {
     let destination = request.header("destination")?.trim();
-    let path = match destination.find("://") {
-        Some(scheme) => {
-            let after = &destination[scheme + 3..];
-            after.find('/').map_or("/", |slash| &after[slash..])
-        }
+    let path = match destination.split_once("://") {
+        Some((_, after)) => after.find('/').map_or("/", |slash| &after[slash..]),
         None => destination,
     };
     Some(path.split('?').next().unwrap_or_default().to_string())

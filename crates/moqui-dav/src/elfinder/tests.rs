@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::{safe_entry_name, unhash, writes_restricted, Connector, RUN_COMMAND};
+use super::{parent_location, safe_entry_name, unhash, writes_restricted, Connector, RUN_COMMAND};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 use moqui_core::service::ServicePools;
@@ -98,6 +98,23 @@ fn temp_dir(label: &str) -> TempDir {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     TempDir(dir)
+}
+
+#[test]
+fn a_parent_is_one_level_up_and_none_at_the_top_of_a_scheme() {
+    assert_eq!(
+        parent_location("dbresource://a/b/c"),
+        Some("dbresource://a/b".to_string())
+    );
+    assert_eq!(parent_location("dbresource://a/b/"), Some("dbresource://a".to_string()));
+    assert_eq!(parent_location("dbresource://a"), Some("dbresource://".to_string()));
+    assert_eq!(parent_location("dbresource:///"), None);
+    assert_eq!(parent_location("dbresource://"), Some("dbresource:".to_string()));
+    assert_eq!(parent_location("file:/tmp/x"), Some("file:/tmp".to_string()));
+    assert_eq!(parent_location("file:/tmp"), Some("file:".to_string()));
+    assert_eq!(parent_location("component:"), None);
+    assert_eq!(parent_location("a/b"), Some("a".to_string()));
+    assert_eq!(parent_location("a"), Some(String::new()));
 }
 
 #[test]

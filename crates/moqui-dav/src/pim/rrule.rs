@@ -157,11 +157,7 @@ impl Rule {
     /// An RRULE value, with or without the `RRULE:` name. Parts this does not know (X- names, RSCALE) are left out.
     pub(crate) fn parse(text: &str) -> Result<Self, String> {
         let text = text.trim();
-        let text = if text.len() >= 6 && text[..6].eq_ignore_ascii_case("RRULE:") {
-            &text[6..]
-        } else {
-            text
-        };
+        let text = super::line::strip_prefix_ignore_case(text, "RRULE:").unwrap_or(text);
         let mut freq = None;
         let mut rule = Rule {
             freq: Freq::Daily,
@@ -724,8 +720,8 @@ pub(crate) enum SetDate {
 pub(crate) fn parse_set_date(text: &str, tz: &TimeZone, resolve: &dyn Fn(&str) -> Option<TimeZone>) -> Option<SetDate> {
     let mut text = text.trim();
     let mut zone = tz.clone();
-    if text.len() > 5 && text[..5].eq_ignore_ascii_case("TZID=") {
-        let (name, value) = text[5..].rsplit_once(':')?;
+    if let Some(zoned) = super::line::strip_prefix_ignore_case(text, "TZID=").filter(|zoned| !zoned.is_empty()) {
+        let (name, value) = zoned.rsplit_once(':')?;
         zone = resolve(name.trim().trim_matches('"'))?;
         text = value;
     }

@@ -72,9 +72,9 @@ pub(crate) fn unfold(text: &str) -> Vec<String> {
                 if let Some(last) = lines.last_mut() {
                     last.push_str(part);
                 }
-            } else if (part.starts_with(' ') || part.starts_with('\t')) && !lines.is_empty() {
+            } else if let Some(rest) = part.strip_prefix([' ', '\t']).filter(|_| !lines.is_empty()) {
                 if let Some(last) = lines.last_mut() {
-                    last.push_str(&part[1..]);
+                    last.push_str(rest);
                 }
             } else {
                 lines.push(part.to_string());
@@ -126,11 +126,8 @@ pub(crate) fn parse_line(line: &str) -> Option<Property> {
     if full_name.is_empty() {
         return None;
     }
-    let (group, name) = match full_name.rfind('.') {
-        Some(dot) => (
-            Some(full_name[..dot].to_string()),
-            full_name[dot + 1..].to_ascii_uppercase(),
-        ),
+    let (group, name) = match full_name.rsplit_once('.') {
+        Some((group, name)) => (Some(group.to_string()), name.to_ascii_uppercase()),
         None => (None, full_name.to_ascii_uppercase()),
     };
     let mut params: Vec<(String, Vec<String>)> = Vec::new();
@@ -139,11 +136,9 @@ pub(crate) fn parse_line(line: &str) -> Option<Property> {
         if part.is_empty() {
             continue;
         }
-        match part.find('=') {
-            Some(eq) => {
-                let key = part[..eq].trim().to_ascii_uppercase();
-                let values = split_param_values(&part[eq + 1..]);
-                params.push((key, values));
+        match part.split_once('=') {
+            Some((key, values)) => {
+                params.push((key.trim().to_ascii_uppercase(), split_param_values(values)));
             }
             None => {
                 // vCard 2.1 writes a bare value: TEL;WORK;VOICE, NOTE;QUOTED-PRINTABLE
@@ -169,6 +164,13 @@ pub(crate) fn parse_line(line: &str) -> Option<Property> {
         value = decode_charset(&decode_qp(&value), property.param("CHARSET"));
     }
     Some(Property { value, ..property })
+}
+
+/// `text` after `prefix`, the prefix matched ignoring ASCII case (`mailto:`, `TZID=`). None when `text` does not start
+/// with it.
+pub(crate) fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let (head, rest) = text.split_at_checked(prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then_some(rest)
 }
 
 /// The parts of a line's head split on semicolons outside quotes.
@@ -444,5 +446,14 @@ mod tests {
         let folded = fold(&long);
         assert!(folded.split("\r\n").all(|line| line.len() <= 75), "{folded}");
         assert_eq!(unfold(&folded), [long]);
+    }
+
+    #[test]
+    fn a_prefix_is_stripped_in_any_case() {
+        assert_eq!(strip_prefix_ignore_case("MailTo:a@b.c", "mailto:"), Some("a@b.c"));
+        assert_eq!(strip_prefix_ignore_case("mailto:", "mailto:"), Some(""));
+        assert_eq!(strip_prefix_ignore_case("mail", "mailto:"), None);
+        assert_eq!(strip_prefix_ignore_case("a@b.c", "mailto:"), None);
+        assert_eq!(strip_prefix_ignore_case("maili\u{20ac}x", "mailto:"), None);
     }
 }

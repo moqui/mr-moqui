@@ -218,10 +218,10 @@ pub(crate) fn zone_by_name(name: &str) -> Option<(String, TimeZone)> {
 /// `+0530`, `-05:00`, `+053000`: a UTC offset (TZOFFSETFROM, TZOFFSETTO).
 pub(crate) fn parse_offset(text: &str) -> Option<Offset> {
     let text = text.trim();
-    let (sign, rest) = match text.chars().next()? {
-        '+' => (1, &text[1..]),
-        '-' => (-1, &text[1..]),
-        _ => return None,
+    let (sign, rest) = if let Some(rest) = text.strip_prefix('+') {
+        (1, rest)
+    } else {
+        (-1, text.strip_prefix('-')?)
     };
     let digits: String = rest.chars().filter(|ch| *ch != ':').collect();
     if !(digits.len() == 4 || digits.len() == 6) || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -563,6 +563,16 @@ fn yearly_rule(onsets: &[DateTime]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offsets_read_their_sign_and_digits() {
+        assert_eq!(parse_offset("+0530"), Offset::from_seconds(19_800).ok());
+        assert_eq!(parse_offset(" -05:00 "), Offset::from_seconds(-18_000).ok());
+        assert_eq!(parse_offset("+010203"), Offset::from_seconds(3723).ok());
+        assert_eq!(parse_offset("0530"), None);
+        assert_eq!(parse_offset("+"), None);
+        assert_eq!(parse_offset(""), None);
+    }
 
     #[test]
     fn tzids_resolve_by_iana_windows_and_path_names() {

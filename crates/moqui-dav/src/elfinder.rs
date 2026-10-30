@@ -761,7 +761,10 @@ impl Connector<'_> {
                     fail(&mut response, ROOT_REFUSED);
                     break 'rename;
                 }
-                let new_location = format!("{}{name}", location.rfind('/').map_or("", |slash| &location[..=slash]));
+                let new_location = match location.rsplit_once('/') {
+                    Some((parent, _)) => format!("{parent}/{name}"),
+                    None => name.to_string(),
+                };
                 self.move_to(&self.entry(&location)?, &new_location)?;
                 response.insert(
                     "added".to_string(),
@@ -876,19 +879,21 @@ fn join_location(parent: &str, name: &str) -> String {
 /// The location one level up, as `ResourceReference.getParent`: `None` at the top of a scheme.
 fn parent_location(location: &str) -> Option<String> {
     let current = location.strip_suffix('/').unwrap_or(location);
-    let prefix_len = match current.find("://") {
-        Some(index) => index + 3,
-        None => current.find(':').map_or(0, |index| index + 1),
+    // the scheme with its `://` or `:`, and the path after it
+    let (scheme, path) = match current.find("://") {
+        Some(index) => current.split_at(index + 3),
+        None => current
+            .find(':')
+            .map_or(("", current), |index| current.split_at(index + 1)),
     };
-    let stripped = &current[prefix_len..];
-    if stripped.is_empty() {
+    if path.is_empty() {
         return None;
     }
-    let stripped = stripped.strip_prefix('/').unwrap_or(stripped);
-    if stripped.contains('/') {
-        current.rfind('/').map(|slash| current[..slash].to_string())
+    let path = path.strip_prefix('/').unwrap_or(path);
+    if path.contains('/') {
+        current.rsplit_once('/').map(|(parent, _)| parent.to_string())
     } else {
-        Some(current[..prefix_len].to_string())
+        Some(scheme.to_string())
     }
 }
 

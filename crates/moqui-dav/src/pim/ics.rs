@@ -223,11 +223,7 @@ fn person(property: &Property) -> IndexMap<String, Value> {
         name.map_or(Value::Null, |name| Value::String(name.to_string())),
     );
     let address = line::unescape(property.value.trim());
-    let email = if address.len() >= 7 && address[..7].eq_ignore_ascii_case("mailto:") {
-        &address[7..]
-    } else {
-        address.as_str()
-    };
+    let email = line::strip_prefix_ignore_case(&address, "mailto:").unwrap_or(&address);
     let email = email.trim();
     out.insert(
         "email".to_string(),
@@ -722,8 +718,8 @@ fn set_date_properties(name: &str, values: &[String], zone: Option<&Zone>, all_d
         .map(str::trim)
         .filter(|text| !text.is_empty())
     {
-        if text.len() > 5 && text[..5].eq_ignore_ascii_case("TZID=") {
-            if let Some((tzid, value)) = text[5..].rsplit_once(':') {
+        if let Some(zoned_value) = line::strip_prefix_ignore_case(text, "TZID=") {
+            if let Some((tzid, value)) = zoned_value.rsplit_once(':') {
                 zoned.entry(tzid.to_string()).or_default().push(value.to_string());
                 continue;
             }
@@ -776,11 +772,7 @@ fn set_date_properties(name: &str, values: &[String], zone: Option<&Zone>, all_d
 
 fn mailto(person: &IndexMap<String, Value>) -> Option<(String, Option<String>)> {
     let email = text_of(person, "email").or_else(|| text_of(person, "emailAddress"))?;
-    let email = if email.len() >= 7 && email[..7].eq_ignore_ascii_case("mailto:") {
-        email[7..].to_string()
-    } else {
-        email
-    };
+    let email = line::strip_prefix_ignore_case(&email, "mailto:").unwrap_or(&email);
     Some((format!("mailto:{email}"), text_of(person, "name")))
 }
 
@@ -899,11 +891,7 @@ pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Resul
             }
         }
         if let Some(rule) = text_of(event, "rrule") {
-            let rule = if rule.len() >= 6 && rule[..6].eq_ignore_ascii_case("RRULE:") {
-                rule[6..].to_string()
-            } else {
-                rule
-            };
+            let rule = line::strip_prefix_ignore_case(&rule, "RRULE:").unwrap_or(&rule);
             lines.push(format!("RRULE:{rule}"));
         }
         set_date_properties("EXDATE", &texts(event, "exdates"), zone.as_ref(), all_day, &mut lines);
@@ -963,7 +951,8 @@ pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Resul
             };
             // a REPLY carries the replying attendee only (RFC 5546 §3.2.3), when the calendar names one
             if let Some(replier) = &reply_from {
-                if !address[7..].eq_ignore_ascii_case(replier) {
+                let email = address.strip_prefix("mailto:").unwrap_or(&address);
+                if !email.eq_ignore_ascii_case(replier) {
                     continue;
                 }
             }

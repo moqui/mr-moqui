@@ -392,10 +392,9 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
         let mut asked: Vec<(String, String)> = Vec::new();
         for href in body.children_named(DAV, "href") {
             let text = href.text.trim();
-            let path = text.find("://").map_or(text, |scheme| {
-                let after = &text[scheme + 3..];
-                after.find('/').map_or("/", |slash| &after[slash..])
-            });
+            let path = text
+                .split_once("://")
+                .map_or(text, |(_, after)| after.find('/').map_or("/", |slash| &after[slash..]));
             let name = path.rsplit('/').next().map(super::decode_segment).unwrap_or_default();
             asked.push((path.to_string(), name));
         }
@@ -466,14 +465,15 @@ pub(crate) fn ical_utc_millis(text: &str) -> Option<i64> {
     if date.len() != 8 || time.len() < 6 {
         return None;
     }
-    let number = |from: &str| from.parse::<i16>().ok();
+    // a request's text: `get`, so a character that is not ASCII makes None, not a panic
+    let number = |text: &str, at: std::ops::Range<usize>| text.get(at)?.parse::<i16>().ok();
     let civil = jiff::civil::DateTime::new(
-        number(&date[0..4])?,
-        number(&date[4..6])? as i8,
-        number(&date[6..8])? as i8,
-        number(&time[0..2])? as i8,
-        number(&time[2..4])? as i8,
-        number(&time[4..6])? as i8,
+        number(date, 0..4)?,
+        number(date, 4..6)? as i8,
+        number(date, 6..8)? as i8,
+        number(time, 0..2)? as i8,
+        number(time, 2..4)? as i8,
+        number(time, 4..6)? as i8,
         0,
     )
     .ok()?;
@@ -621,5 +621,10 @@ mod tests {
         assert_eq!(ical_utc_millis("19700101T000001Z"), Some(1000));
         assert_eq!(ical_utc_millis("20240101T000000Z"), Some(1_704_067_200_000));
         assert_eq!(ical_utc_millis("2024"), None);
+        assert_eq!(ical_utc_millis(" 19700102 "), Some(86_400_000));
+        assert_eq!(ical_utc_millis("19700101T00000"), None);
+        // eight bytes but not eight ASCII digits: None, where an index into the text panicked
+        assert_eq!(ical_utc_millis("202\u{e9}1310T000000Z"), None);
+        assert_eq!(ical_utc_millis("20240101T0\u{e9}0000Z"), None);
     }
 }
