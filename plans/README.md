@@ -25,6 +25,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md).
 
+**Comms**
+- [Comms-Framework.md](Comms-Framework.md): moving the Comms app from mr-boss to a framework component with an extension model for apps, chat federation and bridges (Matrix, XMPP, WhatsApp, SMS), voice over SIP and the phone network with voicemail, and WebRTC conferencing on an SFU (plan; its open decisions are in §8).
+
 **[proposals/](proposals/)**: unbuilt, no code in the workspace; each is digested in Future-Plans.
 - [Messaging.md](proposals/Messaging.md): runtime-reflective FlatBuffers request/response and document subscriptions (1286 lines, 0 of 6 phases).
 - [Data.md](proposals/Data.md): load types by ownership and sensitivity, three-way code/DB merge, dev export (not fully verified).
