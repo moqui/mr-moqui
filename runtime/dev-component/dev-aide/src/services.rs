@@ -30,6 +30,7 @@ use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
 use moqui_devkit::index::{self, Direction};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use serde_json::{json, Value as Json};
 
 use crate::artifacts::shown;
@@ -167,10 +168,7 @@ fn list_services(
         .collect();
     let rows = index::of_kinds(&context.factory, &["service".to_string()], &components, 50_000)?;
     let secas = seca_counts(&moqui_devkit::eca::rule_list(&context.factory));
-    let calls = coverage()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let calls = lock(coverage()).clone();
     let services: Vec<Json> = rows
         .iter()
         .filter(|row| filter.is_empty() || row.name.to_lowercase().contains(&filter))
@@ -228,11 +226,7 @@ fn get_service_view(
             out
         })
         .collect();
-    let calls = coverage()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&name)
-        .copied();
+    let calls = lock(coverage()).get(&name).copied();
     let view = json!({
         "service": detail,
         "artifact": artifact,
@@ -643,7 +637,7 @@ fn run_spec(
         });
     let (result, calls) = ran?.value;
     {
-        let mut kept = coverage().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut kept = lock(coverage());
         for (service, count) in &calls {
             kept.insert(service.clone(), *count);
         }

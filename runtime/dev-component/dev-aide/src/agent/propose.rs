@@ -525,14 +525,17 @@ fn describe(file: &Prepared<'_>) -> Vec<Json> {
         let base = extract::extended_location(&file.location);
         let screen = short_file(&base).trim_end_matches(".xml").to_string();
         let before = form_fields(file.current.as_deref().unwrap_or(""));
-        for (form, name, after, title) in form_fields(&file.new_text) {
-            if before
-                .iter()
-                .any(|(old_form, old_name, _, _)| *old_form == form && *old_name == name)
-            {
+        for FormField {
+            form,
+            name,
+            after,
+            title,
+        } in form_fields(&file.new_text)
+        {
+            if before.iter().any(|old| old.form == form && old.name == name) {
                 continue;
             }
-            let label = if title.is_empty() { name.clone() } else { title };
+            let label = if title.is_empty() { name } else { title };
             let place = if after.is_empty() {
                 String::new()
             } else {
@@ -592,8 +595,19 @@ fn describe(file: &Prepared<'_>) -> Vec<Json> {
     rows
 }
 
-/// The fields of the forms of a screen or screen-extend text: (form, field, after, title).
-fn form_fields(text: &str) -> Vec<(String, String, String, String)> {
+/// A field of a form in a screen or screen-extend text.
+#[derive(Debug, PartialEq)]
+struct FormField {
+    form: String,
+    name: String,
+    /// The `after` attribute: the field it is placed after, or empty.
+    after: String,
+    /// Its title, or its default-field's.
+    title: String,
+}
+
+/// The fields of the forms of a screen or screen-extend text.
+fn form_fields(text: &str) -> Vec<FormField> {
     let Ok(root) = MNode::parse_text("change", text) else {
         return Vec::new();
     };
@@ -611,12 +625,12 @@ fn form_fields(text: &str) -> Vec<(String, String, String, String)> {
                             .and_then(|default| default.attribute("title"))
                     })
                     .unwrap_or_default();
-                found.push((
-                    form.clone(),
-                    field.attribute("name").unwrap_or_default(),
-                    field.attribute("after").unwrap_or_default(),
+                found.push(FormField {
+                    form: form.clone(),
+                    name: field.attribute("name").unwrap_or_default(),
+                    after: field.attribute("after").unwrap_or_default(),
                     title,
-                ));
+                });
             }
         }
         stack.extend(node.child_iter());
@@ -733,12 +747,12 @@ mod tests {
         assert_eq!(new_titles(old, new), ["Due Date"]);
         assert_eq!(
             form_fields(new),
-            [(
-                "F".to_string(),
-                "dueDate".to_string(),
-                "exampleEndDate".to_string(),
-                "Due Date".to_string()
-            )]
+            [FormField {
+                form: "F".to_string(),
+                name: "dueDate".to_string(),
+                after: "exampleEndDate".to_string(),
+                title: "Due Date".to_string()
+            }]
         );
     }
 }

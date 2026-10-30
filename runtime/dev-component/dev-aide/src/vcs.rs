@@ -137,9 +137,17 @@ pub(crate) fn network_allowed(context: &Context) -> Result<(), LibError> {
 const TOKEN_USER_ENV: &str = "MOQUI_DEV_AIDE_GIT_USERNAME";
 const TOKEN_ENV: &str = "MOQUI_DEV_AIDE_GIT_TOKEN";
 
+/// A stored HTTPS token and the remote it is for.
+struct StoredToken {
+    username: String,
+    token: String,
+    /// The scheme, host and port it is for ([`url_prefix`]); empty when stored without one.
+    url_prefix: String,
+}
+
 /// A shared server's token for `root` (D19, `DevAideCredential`): the user's own HTTPS token, else the root's deploy
 /// token; `None` when an admin set neither, and git's own helpers and SSH agent answer.
-fn stored_token(context: &Context, root: &Root) -> Option<(String, String, String)> {
+fn stored_token(context: &Context, root: &Root) -> Option<StoredToken> {
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let find = |user_id: Option<&str>| {
         let mut find = context
@@ -157,7 +165,12 @@ fn stored_token(context: &Context, root: &Root) -> Option<(String, String, Strin
                 .map(moqui_lib::object::to_plain_string)
                 .unwrap_or_default()
         };
-        Some((field("username"), field("token"), field("urlPrefix"))).filter(|(_, token, _)| !token.is_empty())
+        Some(StoredToken {
+            username: field("username"),
+            token: field("token"),
+            url_prefix: field("urlPrefix"),
+        })
+        .filter(|stored| !stored.token.is_empty())
     };
     (!user.is_empty())
         .then(|| find(Some(&user)))
@@ -169,7 +182,9 @@ fn stored_token(context: &Context, root: &Root) -> Option<(String, String, Strin
 /// replaced by one that answers the token from the environment (`!` helpers run in git's own shell, on Windows too).
 fn credential_args(context: &Context, root: &Root) -> (Vec<String>, Vec<(&'static str, String)>) {
     match stored_token(context, root) {
-        Some((username, token, prefix)) if !prefix.is_empty() => token_helper(&prefix, username, token),
+        Some(stored) if !stored.url_prefix.is_empty() => {
+            token_helper(&stored.url_prefix, stored.username, stored.token)
+        }
         Some(_) => {
             tracing::warn!(
                 "Dev AIDE git token for {} has no remote it is for: store it again to use it",
