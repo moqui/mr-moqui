@@ -918,9 +918,8 @@ mod driver {
         if after_word {
             return None;
         }
-        let rest = sql.get(at + 1..)?;
-        let tag_len = rest.find('$')?;
-        let tag = &rest[..tag_len];
+        let (tag, _) = sql.get(at + 1..)?.split_once('$')?;
+        let tag_len = tag.len();
         let valid = tag.bytes().enumerate().all(|(position, byte)| {
             byte == b'_' || byte.is_ascii_alphabetic() || (position > 0 && byte.is_ascii_digit())
         });
@@ -1153,13 +1152,13 @@ mod driver {
     }
 
     fn numeric_to_text(raw: &[u8]) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
-        if raw.len() < 8 {
+        let Some((&[n0, n1, w0, w1, s0, s1, d0, d1], body)) = raw.split_first_chunk::<8>() else {
             return Err(bad("short numeric"));
-        }
-        let ndigits = i16::from_be_bytes([raw[0], raw[1]]);
-        let weight = i32::from(i16::from_be_bytes([raw[2], raw[3]]));
-        let sign = u16::from_be_bytes([raw[4], raw[5]]);
-        let dscale_raw = i16::from_be_bytes([raw[6], raw[7]]);
+        };
+        let ndigits = i16::from_be_bytes([n0, n1]);
+        let weight = i32::from(i16::from_be_bytes([w0, w1]));
+        let sign = u16::from_be_bytes([s0, s1]);
+        let dscale_raw = i16::from_be_bytes([d0, d1]);
         if ndigits < 0 || dscale_raw < 0 {
             return Err(bad("bad numeric header"));
         }
@@ -1175,14 +1174,17 @@ mod driver {
         if ndigits > 2_000 || dscale > 8_000 || !(-2_000..=2_000).contains(&weight) {
             return Err(bad("numeric too large"));
         }
-        if raw.len() < 8 + ndigits * 2 {
+        let Some(digits) = body.get(..ndigits * 2) else {
             return Err(bad("short numeric"));
-        }
-        let digit_at = |index: usize| {
-            let offset = 8 + index * 2;
-            u16::from_be_bytes([raw[offset], raw[offset + 1]])
         };
-        if (0..ndigits).any(|index| digit_at(index) >= 10_000) {
+        // The base-10000 digits, two bytes each.
+        let digits: Vec<u16> = digits
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
+            .collect();
+        if digits.iter().any(|&digit| digit >= 10_000) {
             return Err(bad("numeric digit"));
         }
         let leading = if weight >= 0 {
@@ -1204,7 +1206,7 @@ mod driver {
         let groups = if weight >= 0 {
             let groups = usize::try_from(weight + 1).map_err(|_| bad("numeric weight"))?;
             for index in 0..groups {
-                let digit = if index < ndigits { digit_at(index) } else { 0 };
+                let digit = digits.get(index).copied().unwrap_or(0);
                 let _ = if index == 0 {
                     write!(text, "{digit}")
                 } else {
@@ -1222,8 +1224,8 @@ mod driver {
             for _ in 0..leading {
                 text.push_str("0000");
             }
-            for index in groups.min(ndigits)..ndigits {
-                let _ = write!(text, "{:04}", digit_at(index));
+            for digit in digits.iter().skip(groups) {
+                let _ = write!(text, "{digit:04}");
             }
             let fraction_end = fraction_start + dscale;
             if text.len() < fraction_end {
@@ -1356,6 +1358,22 @@ mod driver {
                 numeric_to_text(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).unwrap(),
                 "0"
             );
+            // 10000: one digit group of weight 1, so a zero group follows it.
+            assert_eq!(numeric_to_text(&[0, 1, 0, 1, 0, 0, 0, 0, 0, 1]).unwrap(), "10000");
+            // 0.0001: weight -1 leaves no leading zero group, and the scale clips the fraction.
+            assert_eq!(
+                numeric_to_text(&[0, 1, 0xFF, 0xFF, 0, 0, 0, 4, 0, 1]).unwrap(),
+                "0.0001"
+            );
+            assert_eq!(
+                numeric_to_text(&[0, 1, 0xFF, 0xFE, 0, 0, 0, 6, 0, 12]).unwrap(),
+                "0.000000"
+            );
+            let error = |raw: &[u8]| numeric_to_text(raw).unwrap_err().to_string();
+            assert_eq!(error(&[0, 0, 0, 0]), "short numeric");
+            assert_eq!(error(&[0, 2, 0, 0, 0, 0, 0, 0, 0, 1]), "short numeric");
+            assert_eq!(error(&[0, 1, 0, 0, 0, 0, 0, 0, 0x27, 0x10]), "numeric digit");
+            assert_eq!(error(&[0, 0, 0, 0, 0xC0, 0, 0, 0]), "numeric NaN");
         }
 
         #[test]

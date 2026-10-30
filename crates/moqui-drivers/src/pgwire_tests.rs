@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
-use super::{tag_rows, Endpoint, Wire};
+use super::{has_error_message, tag_rows, Endpoint, Wire};
 
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
@@ -385,4 +385,20 @@ fn a_command_tag_counts_its_rows() {
     assert_eq!(tag_rows("UPDATE 3"), 3);
     assert_eq!(tag_rows("SELECT 4"), 4);
     assert_eq!(tag_rows("BEGIN"), 0);
+}
+
+#[test]
+fn has_error_message_looks_only_into_whole_messages() {
+    let notice = message(b'N', b"notice");
+    let error = message(b'E', b"error");
+    assert!(has_error_message(&[notice.clone(), error.clone()].concat()));
+    assert!(!has_error_message(&notice));
+    assert!(!has_error_message(&[]));
+    // Cut off in the length, or a notice whose length runs into the error.
+    assert!(!has_error_message(b"N\0\0"));
+    assert!(!has_error_message(&[&notice[..], b"E\0"].concat()));
+    assert!(!has_error_message(&[&notice[..notice.len() - 1], &error[..]].concat()));
+    // An error whose kind and length came in is enough, and a length under 4 stops the scan.
+    assert!(has_error_message(&[&notice[..], b"E\0\0\0\x20"].concat()));
+    assert!(!has_error_message(&[b"N\0\0\0\x03".as_slice(), &error[..]].concat()));
 }

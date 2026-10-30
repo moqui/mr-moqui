@@ -343,15 +343,16 @@ fn negotiate_tls(mut tcp: TcpStream, host: &str, config: &Arc<rustls::ClientConf
 /// Whether the backend messages at the start of `bytes` include an `ErrorResponse`. A message cut off at the end is
 /// not looked into.
 fn has_error_message(mut bytes: &[u8]) -> bool {
-    while bytes.len() >= 5 {
-        if bytes[0] == b'E' {
+    while let Some((&[kind, l0, l1, l2, l3], _)) = bytes.split_first_chunk::<5>() {
+        if kind == b'E' {
             return true;
         }
-        let len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
-        if len < 4 || bytes.len() < len + 1 {
+        // The length counts itself but not the kind byte.
+        let len = u32::from_be_bytes([l0, l1, l2, l3]) as usize;
+        let Some(next) = bytes.get(len + 1..).filter(|_| len >= 4) else {
             return false;
-        }
-        bytes = &bytes[len + 1..];
+        };
+        bytes = next;
     }
     false
 }
