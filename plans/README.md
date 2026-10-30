@@ -6,6 +6,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Remaining-Work.md](Remaining-Work.md): what is still open, in one place, grouped by domain (agents, mail, git, screens, apps, tests and the rest), each item linking to its detail.
 - [Future-Plans.md](Future-Plans.md): digest of the unbuilt proposals.
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
+- [Crate-Split.md](Crate-Split.md): splitting `moqui-core` along hook seams (git, mail, reports and the other tool crates above it, the entity facade below it) and the host's drivers and test client, with the seam rules and the rebuild timings before and after.
 - [Rust-Practices-Review.md](Rust-Practices-Review.md): the review that applies [Practices-Rust](../docs/dev/Practices-Rust.md) to the existing code (unwraps, borrows over Rc/Arc, idiom): targets, order and results.
 
 **Phase 13: LLM, A2A and Assist**

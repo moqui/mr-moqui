@@ -18,7 +18,8 @@ Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organ
 ## 1. Crates and where code goes
 
 One workspace, one `src/` tree per crate. The cut and its reasons are in
-[Crate-Layout](../../plans/archive/Crate-Layout.md). Dependencies point one way:
+[Crate-Layout](../../plans/archive/Crate-Layout.md), and the splits under way in
+[Crate-Split](../../plans/Crate-Split.md). Dependencies point one way:
 
 ```
 moqui (bin) → moqui-host → moqui-llm, moqui-tui (optional features)
@@ -44,7 +45,8 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 - Put code in the lowest crate that can hold it. A helper that needs no ExecutionContext goes in `moqui-lib`.
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the
   lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm`.
-- Do not move code between crates as part of other work; a new crate or a move needs its own plan.
+- Do not move code between crates as part of other work; a new crate or a move needs its own plan
+  ([Crate-Split](../../plans/Crate-Split.md) is the current one, with the seam rules and the files a new crate touches).
 - A feature-gated module has an off stub with the same API, so callers need no `cfg` of their own:
 
   ```rust
@@ -322,8 +324,10 @@ Do not "fix" these:
   everyone out.
 - **async and threads.** `moqui-host` uses Tokio and axum. `moqui-core` is synchronous on `std::thread` by design. Do
   not add async to core.
-- **Few, larger crates.** Google favors small crates and a flat layout; here the crate cut of §1 stands, and modules
-  inside a crate carry the structure.
+- **Crates along hook seams.** Google favors small crates and a flat layout. Here a crate is split off only along a
+  seam a hook can carry (a register entry above core, a hook table below it), when the split saves rebuild time or
+  keeps a heavy dependency out of core ([Crate-Split](../../plans/Crate-Split.md)). Modules inside a crate carry the
+  rest of the structure; do not split by facade or by module for its own sake.
 - **Docs.** This is application code, so there is no `missing_docs`. Module docs and comments follow §2 and §4.
 - **Library-API rules** (`impl Into<T>`, returning `impl Iterator`, `#[non_exhaustive]`, generics over `dyn`). This is
   application code in one workspace, so `Vec` returns and `dyn` registries are fine.

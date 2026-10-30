@@ -28,7 +28,7 @@ use std::sync::Weak;
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
 use moqui_lib::object::Value;
 
-use super::on_pool;
+use crate::worker::on_pool;
 
 /// Up to this many rows from `entity`.
 const ENTITY_LIMIT: i64 = 100;

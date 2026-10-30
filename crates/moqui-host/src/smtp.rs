@@ -426,7 +426,7 @@ struct FactoryBackend {
 impl Backend for FactoryBackend {
     async fn recipient(&self, address: String) -> RcptAnswer {
         let delimiters = self.delimiters.clone();
-        let found = crate::ssh::on_pool_without_authz(&self.factory, move |factory| {
+        let found = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
@@ -442,7 +442,7 @@ impl Backend for FactoryBackend {
 
     async fn deliver(&self, message: Message) -> DataAnswer {
         let options = self.options.clone();
-        let delivered = crate::ssh::on_pool_without_authz(&self.factory, move |factory| {
+        let delivered = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;

@@ -216,7 +216,7 @@ gix-pack = { version = "0.77", default-features = false, features = ["generate",
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 # --- moqui-host ---
-# rt-multi-thread is for axum. Each Postgres connection builds its own current_thread runtime.
+# rt-multi-thread is for axum. The database clients are blocking and use no runtime (crates/moqui-host/src/db).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util"] }
 # Defaults are tls-native-tls and theseus. No feature downloads or bundles the archive: crates/moqui-host/build.rs
 # stages it and db/embedded.rs unpacks it, so the crate's build script links no TLS stack.

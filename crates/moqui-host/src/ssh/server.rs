@@ -52,10 +52,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::{
-    on_pool,
     sftp_fs::{Backend, SftpFs},
     shell,
 };
+use crate::worker::on_pool;
 
 const DEFAULT_MAX_SESSIONS: usize = 8;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;

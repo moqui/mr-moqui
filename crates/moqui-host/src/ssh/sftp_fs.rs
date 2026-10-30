@@ -31,7 +31,7 @@ use moqui_core::dav::files::tree;
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use russh_sftp::server::StatusReply;
 
-use super::{on_pool, on_pool_without_authz};
+use crate::worker::{on_pool, on_pool_without_authz};
 
 /// Open file and directory handles on one channel.
 const MAX_HANDLES: usize = 64;

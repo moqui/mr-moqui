@@ -68,6 +68,9 @@ mod tui_cmd;
 pub mod tui_remote;
 pub mod types;
 pub mod usage;
+// The request-worker handoff of the SSH server and the SMTP listener.
+#[cfg(any(feature = "ssh", feature = "inbound-smtp"))]
+mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
