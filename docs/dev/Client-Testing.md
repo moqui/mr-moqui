@@ -28,6 +28,7 @@ moqui test-client runtime/dev-component/dev-aide --offline
 moqui test-client mr-marble --serve --junit build/test-results
 moqui test-client framework --spec LoadBasic --param users=50 --param duration=60
 moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
+moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results --fail-on-skip
 moqui test-client runtime/component/my-site/test/client --server https://test.example.com --insecure
 ```
@@ -56,6 +57,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--timeout seconds` | What `waitUntil`, a raw request, a WebSocket connect and receive, and a browser action wait by default. 10 |
 | `--chromium path` | The browser, else `MOQUI_CHROMIUM`, else `runtime/chromium` (`./moq chromium-download`), `chromium` or `chromium-browser` on the PATH, then `google-chrome` |
 | `--headed` | A visible browser, for debugging |
+| `--video` | Record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json` ([Video](#video)). Needs `ffmpeg` |
 | `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too |
 | `--allow-http` | Allow plain `http` to another machine |
 | `--fail-on-skip` | A skipped spec or feature fails the run, so that a missing Chromium or fixture does not pass as green in CI |
@@ -417,6 +419,46 @@ feature("New Survey opens and closes on Escape", {
 })
 ```
 
+### Video
+
+`--video` records each spec that opens a page: `<out>/video/<Spec>.webm` (VP8), and beside it
+`<Spec>.timeline.json`, the spec's features on the video's clock. It needs `ffmpeg` on the `PATH` (`/usr/bin/ffmpeg`
+from the distribution's package will do) as well as Chromium. Without either, an error names what is missing, the
+specs still run, and only the timelines are written.
+
+Each page is recorded with the DevTools screencast (`Page.startScreencast`, JPEG, every frame, each acknowledged). The
+screencast sends a frame only when the page changes, so each frame lasts until the next one, from the time the browser
+drew it, and the last frame lasts until the spec ends: a page that stays the same for ten seconds is ten seconds of
+video. The video starts when the spec starts and is white until the first page draws. A spec with several pages is one
+video: it shows the page opened last that is still open, and when that page closes, the one before it again. A spec
+that opens no page has a timeline and no video. A failed feature does not stop the recording.
+
+The timeline has every feature that was reported, in order, those that open no page and the skipped ones too:
+
+```json
+[
+  { "feature": "a page changes and then stays the same", "start": 0.012, "end": 1.31, "status": "passed", "reason": null },
+  { "feature": "a feature the before phase skips", "start": 1.31, "end": 1.311, "status": "skipped", "reason": "phase is before" }
+]
+```
+
+`start` and `end` are seconds from the start of the video (the start of the spec), on the clock of its frames. `status`
+is `passed`, `failed` or `skipped` (an `ignore` is `skipped`); `reason` is the skip reason or the failure message, or
+`null`. With `--param`, one spec can serve several runs: `params` is there at the top of the file and in every block,
+and a feature that does not belong to this run calls `skip("reason")`:
+
+```js
+spec({ server: false })
+const phase = params.phase                       // --param phase=before
+
+feature("the new layout", {
+    expect() {
+        if (phase === "before") skip(`phase is ${phase}`)
+        browser.newPage().goto("/apps/my-app").status == 200
+    },
+})
+```
+
 ### From Playwright
 
 | Playwright | Here |
@@ -523,6 +565,7 @@ The output directory has what the specs wrote and what failures left:
 - `response.save(name)` bodies, `page.screenshot(name)` PNGs and `page.pdf(name)` PDFs, under their names;
 - `failed-<feature>-<n>.png` and `.txt` for each page open at a failure;
 - `load/<component>.<Spec>.<feature>.json` for each load;
+- `video/<Spec>.webm` and `video/<Spec>.timeline.json` with `--video`;
 - `server-<n>.log`, the output of each `--serve` child.
 
 ## Examples in the repository
@@ -536,7 +579,8 @@ The output directory has what the specs wrote and what failures left:
   one), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server.
 - `crates/moqui-host/tests/fixtures/test-component/test/client/`: the harness's own specs (HTTP, sessions and the
   token, raw, WebSocket, load and parallel, skip, and a served spec), and `browser-client/Browser.spec.js` over the
-  gallery screens (`cargo test -p moqui-host --test client_browser`, opt-in because it needs Chromium).
+  gallery screens and `browser-client/Video.spec.js` with `--video` (`cargo test -p moqui-host --test client_browser`,
+  opt-in because it needs Chromium).
 
 ## Pitfalls
 

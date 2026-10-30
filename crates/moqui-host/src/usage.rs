@@ -389,6 +389,7 @@ output goes to server-<n>.log in the --out directory.
   moqui test-client runtime/component/my-site/test/client --server https://test.example.com
   moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results
   moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
+  moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 
 Options:
   --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
@@ -411,6 +412,11 @@ Options:
                                   chromium-download), chromium or chromium-browser on the PATH, then
                                   google-chrome.
   --headed                        A visible browser, for debugging.
+  --video                         Record each spec's pages (the CDP screencast) into
+                                  <out>/video/<Spec>.webm, with <Spec>.timeline.json: each feature's
+                                  start, end, status and reason. Needs ffmpeg on the PATH; without
+                                  ffmpeg or Chromium an error says so and only the timelines are
+                                  written.
   --offline                       Run only specs with server: false. They open pages at
                                   https://moqui.test with no server and no listening port.
                                   Not with --serve.
