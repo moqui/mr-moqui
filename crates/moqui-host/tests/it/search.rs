@@ -1605,11 +1605,13 @@ fn feed_scenario(facade: &moqui_core::entity::EntityFacade) {
         to_plain_string(map_at(highlights, "description")),
         "<em>Crimson</em> Red"
     );
+    // A bare fuzzy term is a query (I-18); numbered fuzziness is still a query error, which finds nothing.
+    assert_eq!(search_ids("test_enums", "crim~"), vec!["TcRed", "TestColor"]);
     let bad = call(
         "org.moqui.search.SearchServices.search#DataDocuments",
         &[
             ("indexName", Value::string("test_enums")),
-            ("queryString", Value::string("crim~")),
+            ("queryString", Value::string("crim~1")),
         ],
     );
     assert_eq!(number(&bad["documentListCount"]), "0");
