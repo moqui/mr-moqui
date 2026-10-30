@@ -51,7 +51,6 @@ rust_xlsxwriter = { workspace = true, optional = true }
 calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
-yrs = { workspace = true }
 pulldown-cmark = { workspace = true }
 notify = { workspace = true, optional = true }
 # gzip of outgoing OTLP; already linked through zip's deflate.

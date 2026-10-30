@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework crates on top of this one (moqui-git, moqui-mail, moqui-report, plans/Crate-Split.md). Each submits one [`Extension`], which the
+//! The framework crates on top of this one (moqui-git, moqui-mail, moqui-report, moqui-collab, plans/Crate-Split.md). Each submits one [`Extension`], which the
 //! framework calls to register the crate's Rust services and native implementations. A binary that does not link a
 //! crate has no entry for it: a service at one of its locations still loads, and a call reports that the feature is
 //! not built into this host ([`missing_feature`]).
@@ -62,6 +62,7 @@ impl Extension {
 /// decides. moqui-mail is `smtp`, with the receive half under its `imap` feature.
 const LOCATIONS: &[(&str, &str)] = &[
     ("moqui_git::", "git"),
+    ("moqui_collab::", "collab"),
     ("moqui_mail::send_template", "smtp"),
     ("moqui_mail::send_message", "smtp"),
     ("moqui_mail::test_server", "smtp"),

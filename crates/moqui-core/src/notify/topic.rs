@@ -25,7 +25,7 @@ pub const ENTITY_CACHE_INVALIDATE: &str = "entity-cache-invalidate";
 /// Notification topic. A repeated `message_id` is delivered once until it ages out of the recent set.
 pub const NOTIFICATION_MESSAGE: &str = "notification-message";
 
-/// A co-edited document's update or presence from another server (`crate::collab`), for that server's editors.
+/// A co-edited document's update or presence from another server (moqui-collab), for that server's editors.
 pub const COLLAB_UPDATE: &str = "collab-update";
 
 /// Web sessions ended on one server (`end#UserVisit`), `{"sessionIds": [..]}`, so every server stops serving its live copy.

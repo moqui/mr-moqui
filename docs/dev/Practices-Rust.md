@@ -22,9 +22,9 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 [Crate-Split](../../plans/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report, moqui-collab
               moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
-moqui-llm, moqui-git, moqui-mail, moqui-report → moqui-core
+moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab → moqui-core
 moqui-browser → moqui-core (default-features = false), moqui-report
 ```
 
@@ -38,6 +38,7 @@ moqui-browser → moqui-core (default-features = false), moqui-report
 | `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/Crate-Split.md)). |
 | `moqui-mail` | The email services: outbound SMTP and, under its `imap` feature, IMAP and POP3, the mail client's sync, IDLE, import and OAuth sign-in, and the delivery of mail the host's SMTP listener received. A framework crate, as `moqui-git`. |
 | `moqui-report` | Reports, dashboards and their alerts and annotations, scheduled report delivery and the monitoring sources' ingest keys. A framework crate, as `moqui-git`, linked in every build and in the browser. |
+| `moqui-collab` | Co-edited documents (a Yjs document per record, on yrs) and `org.moqui.impl.CollabServices`. A framework crate, as `moqui-git`, linked in every host build and left out of the browser. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), drivers, process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
@@ -51,7 +52,7 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the
   lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm` and core's
   `entity_hooks.rs` does for `moqui_entity::hooks`. A crate that only adds services, tools and resource providers
-  submits a `moqui_core::extension::Extension` (`moqui-git`, `moqui-mail`, `moqui-report`).
+  submits a `moqui_core::extension::Extension` (`moqui-git`, `moqui-mail`, `moqui-report`, `moqui-collab`).
 - An entity facade test that needs an entered ExecutionContext, a script or a service is in core
   (`crates/moqui-core/src/entity/*_tests.rs`); the others are in `moqui-entity`, where no hooks are linked and each
   hook answers as with no context entered.

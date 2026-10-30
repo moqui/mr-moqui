@@ -24,16 +24,16 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::EntityFacade;
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::EntityFacade;
 
 fn setup() -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
         "",
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
     (ctx, facade)
@@ -50,7 +50,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
 
 fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -58,7 +58,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    let out = crate::service::sync(name, &parameters).unwrap_or_else(|err| panic!("{name}: {err}"));
+    let out = moqui_core::service::sync(name, &parameters).unwrap_or_else(|err| panic!("{name}: {err}"));
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors().join("\n");
         ec.message().clear_errors();
@@ -247,4 +247,23 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
     assert_eq!(page_text("TEAM", ""), "Home.\n\nMore.\n");
     super::leave(&home_key);
     super::tick();
+}
+
+/// The Rust services register at the `moqui_collab::` locations the service file names, and at no other.
+#[test]
+fn the_services_register_at_the_locations_the_service_file_names() {
+    let mut map = BTreeMap::new();
+    crate::service::register(&mut map).unwrap();
+    let registered: Vec<&str> = map.keys().copied().collect();
+    let file = moqui_core::context::framework_dir().join("service/org/moqui/impl/CollabServices.xml");
+    let text = std::fs::read_to_string(file).unwrap();
+    let mut named: Vec<String> = text
+        .split("location=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(location, _)| location.to_string()))
+        .filter(|location| location.starts_with("moqui_collab::"))
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    assert_eq!(registered, named);
 }

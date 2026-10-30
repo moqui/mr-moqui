@@ -14,7 +14,7 @@
 
 //! Co-edited documents: a Yjs document (`yrs`, wire-compatible with the browser's Yjs) per record that people edit at
 //! once, held in memory on each server that has an editor of it and stored as `moqui.resource.CollabDocument`. The host
-//! carries the Yjs sync messages on the notification WebSocket (moqui-host `collab_ws.rs`); this module keeps the rooms:
+//! carries the Yjs sync messages on the notification WebSocket (moqui-host `notws/collab.rs`); this crate keeps the rooms:
 //! [`join`] (the access check, the document loaded or seeded from the record's text, the diff the client lacks),
 //! [`apply`] (an editor's update), [`tick`] (the state written a second or two after an edit, a version of the record
 //! after a while without edits on database files, and when the last editor leaves) and [`save`] (a version now, with a
@@ -26,8 +26,21 @@
 //! is the saves; the document between saves is its CollabDocument row. A page changed outside co-editing while no one had
 //! changes open is read again when the next editor joins; with changes open, the co-edited text is kept (logged) and
 //! the next save writes over it, the other change staying in the page's history.
+//!
+//! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
+//! below: `org.moqui.impl.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms from its
+//! WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
 
 pub mod markdown;
+pub mod service;
+
+moqui_core::extension::submit! {
+    moqui_core::extension::Extension {
+        features: &["collab"],
+        register_services: service::register,
+        ..moqui_core::extension::Extension::EMPTY
+    }
+}
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -39,8 +52,8 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
-use crate::context::{Error, ExecutionContext};
-use crate::service::call::{sync_checked, CallOptions};
+use moqui_core::context::{Error, ExecutionContext};
+use moqui_core::service::call::{sync_checked, CallOptions};
 
 const COLLAB_DOCUMENT: &str = "moqui.resource.CollabDocument";
 /// The state is written this long after the last edit.
@@ -246,13 +259,13 @@ fn read_page(page_id: &str, on_database: bool) -> Result<(WikiTarget, String, Op
     Ok((target, page_text, version))
 }
 
-fn entity() -> Result<crate::entity::EntityFacade, Error> {
+fn entity() -> Result<moqui_core::entity::EntityFacade, Error> {
     ExecutionContext::with_current(|ec| ec.factory().entity())
         .flatten()
         .ok_or_else(|| Error::new("no entity facade"))
 }
 
-fn stored(key: &str) -> Result<Option<crate::entity::EntityValue>, Error> {
+fn stored(key: &str) -> Result<Option<moqui_core::entity::EntityValue>, Error> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     Ok(entity()?
         .find(COLLAB_DOCUMENT)?
@@ -260,7 +273,7 @@ fn stored(key: &str) -> Result<Option<crate::entity::EntityValue>, Error> {
         .one()?)
 }
 
-fn bytes_of(row: &crate::entity::EntityValue, field: &str) -> Vec<u8> {
+fn bytes_of(row: &moqui_core::entity::EntityValue, field: &str) -> Vec<u8> {
     match row.get(field) {
         Some(Value::Bytes(bytes)) => bytes.clone(),
         _ => Vec::new(),
@@ -268,7 +281,7 @@ fn bytes_of(row: &crate::entity::EntityValue, field: &str) -> Vec<u8> {
 }
 
 fn now_value() -> Value {
-    crate::user::now_value()
+    moqui_core::user::now_value()
 }
 
 /// The room of a document, loaded from its row or seeded from the page's text.
@@ -363,7 +376,7 @@ fn write_row(
     let facade = entity()?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let tx = facade.transactions_for(COLLAB_DOCUMENT)?;
-    tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+    tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
         let existing = facade
             .find(COLLAB_DOCUMENT)?
             .eq("documentKey", Value::string(key))
@@ -422,7 +435,7 @@ fn write_row(
 /// An error unless the current user may view the document.
 pub fn check_view(key: &str) -> Result<(), Refusal> {
     let page_id = wiki_page_id(key)?;
-    let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     if access(page_id, &user_id)?.can_view {
         Ok(())
     } else {
@@ -632,11 +645,11 @@ fn save_room(key: &str, room: &Arc<Mutex<Room>>, user_id: &str, note: Option<&st
     .flatten()
     .and_then(|row| row.get("username").map(to_plain_string))
     .ok_or_else(|| Error::new(format!("no user {user_id} to save {key} as")))?;
-    let current = crate::user::current_user_id().ok().flatten();
+    let current = moqui_core::user::current_user_id().ok().flatten();
     let switched = current.as_deref() != Some(user_id);
-    let identity = crate::user::session::identity();
+    let identity = moqui_core::user::session::identity();
     if switched {
-        crate::user::internal_login_user(&username)?;
+        moqui_core::user::internal_login_user(&username)?;
     }
     let parameters: BTreeMap<String, Value> = [
         ("wikiSpaceId", Value::string(&target.wiki_space_id)),
@@ -665,7 +678,7 @@ fn save_room(key: &str, room: &Arc<Mutex<Room>>, user_id: &str, note: Option<&st
     let result = sync_checked("org.moqui.impl.WikiServices.update#WikiPage", &parameters, &options);
     ExecutionContext::with_current(|ec| ec.message().clear_errors());
     if switched {
-        crate::user::session::restore_identity(&identity);
+        moqui_core::user::session::restore_identity(&identity);
     }
     let out = result?;
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
@@ -706,7 +719,7 @@ fn save_room(key: &str, room: &Arc<Mutex<Room>>, user_id: &str, note: Option<&st
 /// none when nothing changed.
 pub fn save(key: &str, note: Option<&str>) -> Result<Option<String>, Refusal> {
     let page_id = wiki_page_id(key)?;
-    let user_id = crate::user::current_user_id()
+    let user_id = moqui_core::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty())

@@ -13,12 +13,12 @@
  */
 
 //! Co-editing on the notification socket: the Yjs sync messages of `m-coedit` (docs/ui/Qvt-Client.md, Collaborative
-//! editing) for the rooms of `moqui_core::collab`. A client sends JSON frames with `collab` (`join`, `update`,
+//! editing) for the rooms of `moqui_collab`. A client sends JSON frames with `collab` (`join`, `update`,
 //! `awareness`, `leave`), and gets frames on the topic `collab:<doc>` (`joined`, `update`, `ack`, `awareness`, `peer`,
 //! `saved`, `error`). A join runs on a request worker (the access check and the load); an update is applied in memory
 //! at once, acknowledged, sent to the document's other editors on this server and published on the cluster topic
 //! `collab-update` for those on the others. A socket that closes leaves its documents. Every second the rooms are
-//! written, saved and closed as `moqui_core::collab::tick` decides, and a save is told to the editors.
+//! written, saved and closed as `moqui_collab::tick` decides, and a save is told to the editors.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -149,10 +149,7 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
     tokio::spawn(async move {
         let user_id = slot.user_id.clone();
         let job_doc = doc.clone();
-        let joined = super::on_pool(&factory, move || {
-            Ok(moqui_core::collab::join(&job_doc, &user_id, &vector))
-        })
-        .await;
+        let joined = super::on_pool(&factory, move || Ok(moqui_collab::join(&job_doc, &user_id, &vector))).await;
         let joined = match joined {
             Ok(Ok(joined)) => joined,
             Ok(Err(refusal)) => return error(&slot, &doc, &client, refusal.code, &refusal.message),
@@ -175,7 +172,7 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
                 .position(|known| known.client == client && known.slot_id == slot.id);
             if let Some(index) = had {
                 list.remove(index);
-                moqui_core::collab::leave(&doc);
+                moqui_collab::leave(&doc);
             }
             let peers = list
                 .iter()
@@ -216,7 +213,7 @@ fn update(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: &str, c
     let Ok(update) = b64().decode(encoded) else {
         return error(slot, doc, client, 400, "update is not base64");
     };
-    if let Err(refusal) = moqui_core::collab::apply(doc, &slot.user_id, &update) {
+    if let Err(refusal) = moqui_collab::apply(doc, &slot.user_id, &update) {
         return error(slot, doc, client, refusal.code, &refusal.message);
     }
     if let Some(id) = message.get("id") {
@@ -254,7 +251,7 @@ fn leave(factory: &Arc<ExecutionContextFactory>, slot_id: u64, doc: &str, client
         gone
     };
     for member in left {
-        moqui_core::collab::leave(doc);
+        moqui_collab::leave(doc);
         let frame = json!({"topic": topic(doc), "type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
             "awareness": member.awareness, "joined": false});
         broadcast(doc, None, &frame);
@@ -290,7 +287,7 @@ fn deliver_remote(message: &TopicMessage) {
         .and_then(Json::as_str)
         .and_then(|text| b64().decode(text).ok())
     {
-        moqui_core::collab::apply_remote(doc, &update);
+        moqui_collab::apply_remote(doc, &update);
     }
     if let Some(frame) = message.body.get("frame") {
         broadcast(doc, None, frame);
@@ -319,18 +316,18 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
                     }
                 }
             }
-            if moqui_core::collab::open_documents().is_empty() {
+            if moqui_collab::open_documents().is_empty() {
                 continue;
             }
             match super::on_pool(&factory, || {
-                moqui_core::collab::tick();
-                Ok(moqui_core::collab::take_events())
+                moqui_collab::tick();
+                Ok(moqui_collab::take_events())
             })
             .await
             {
                 Ok(events) => {
                     for event in events {
-                        let moqui_core::collab::Event::Saved {
+                        let moqui_collab::Event::Saved {
                             document_key,
                             version_name,
                             user_id,

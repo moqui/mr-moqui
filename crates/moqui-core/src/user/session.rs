@@ -1139,7 +1139,7 @@ pub fn clear_login() {
 }
 
 /// Who is logged in on this context, with what a login changes beside the user, for [`restore_identity`].
-pub(crate) struct Identity {
+pub struct Identity {
     user_id: Option<String>,
     username: Option<String>,
     anonymous: bool,
@@ -1151,7 +1151,7 @@ pub(crate) struct Identity {
     factor_required: Option<Json>,
 }
 
-pub(crate) fn identity() -> Identity {
+pub fn identity() -> Identity {
     with_session(|session| Identity {
         user_id: session.user_id.clone(),
         username: session.username.clone(),
@@ -1166,7 +1166,7 @@ pub(crate) fn identity() -> Identity {
 }
 
 /// Put back an [`identity`], as Java's `logoutLocal` pops the user. The session id and visit stay as they are.
-pub(crate) fn restore_identity(identity: &Identity) {
+pub fn restore_identity(identity: &Identity) {
     with_session(|session| {
         session.user_id.clone_from(&identity.user_id);
         session.username.clone_from(&identity.username);

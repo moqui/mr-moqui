@@ -270,7 +270,7 @@ fn dav_routes_and_coediting_over_the_socket() {
         .transact_mut()
         .apply_update(Update::decode_v1(&b64().decode(got["update"].as_str().unwrap()).unwrap()).unwrap())
         .unwrap();
-    assert!(moqui_core::collab::markdown::render(&bob_doc).contains("Typed together."));
+    assert!(moqui_collab::markdown::render(&bob_doc).contains("Typed together."));
     // presence goes to the other
     send(
         &mut alice,
@@ -286,7 +286,7 @@ fn dav_routes_and_coediting_over_the_socket() {
         let context = factory.new_context();
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
-        let version = moqui_core::collab::save(&doc, Some("Saved from the gate")).unwrap();
+        let version = moqui_collab::save(&doc, Some("Saved from the gate")).unwrap();
         assert!(version.is_some());
     }
     let saved = frame(&mut bob, "saved", Duration::from_secs(5)).expect("bob told of the save");

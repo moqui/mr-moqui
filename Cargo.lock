@@ -4134,6 +4134,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-collab"
+version = "0.1.0"
+dependencies = [
+ "moqui-core",
+ "moqui-lib",
+ "pulldown-cmark",
+ "sha2 0.10.9",
+ "tracing",
+ "yrs",
+]
+
+[[package]]
 name = "moqui-core"
 version = "0.1.0"
 dependencies = [
@@ -4178,7 +4190,6 @@ dependencies = [
  "tar",
  "totp-rs",
  "tracing",
- "yrs",
  "zip",
 ]
 
@@ -4265,6 +4276,7 @@ dependencies = [
  "libc",
  "lsp-server",
  "lsp-types",
+ "moqui-collab",
  "moqui-core",
  "moqui-db",
  "moqui-git",

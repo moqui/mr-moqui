@@ -24,8 +24,6 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::chat::push_signal",
         "moqui_core::service::chat_link::extract_link_urls",
         "moqui_core::service::chat_link::fetch_link_page",
-        "moqui_core::service::collab::get_document",
-        "moqui_core::service::collab::save_document",
         "moqui_core::service::contacts::filter_contact_addresses",
         "moqui_core::service::content::gc_content_blobs",
         "moqui_core::service::devtools::apply_xml_ops",
@@ -97,6 +95,10 @@ fn registry_keys_are_the_function_paths() {
 fn an_unlinked_framework_crate_service_reports_its_feature() {
     assert_eq!(super::missing_feature("moqui_git::service::get_refs"), Some("git"));
     assert!(!crate::build_info::core_features().contains(&"git"));
+    assert_eq!(
+        super::missing_feature("moqui_collab::service::save_document"),
+        Some("collab")
+    );
     // moqui-mail is smtp, with the receive half its imap
     assert_eq!(super::missing_feature("moqui_mail::send_message"), Some("smtp"));
     assert_eq!(super::missing_feature("moqui_mail::push_remote_changes"), Some("smtp"));

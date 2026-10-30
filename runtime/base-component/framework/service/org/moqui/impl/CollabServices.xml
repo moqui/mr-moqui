@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
         record that several people edit at once in m-coedit over the notification WebSocket, kept as
         moqui.resource.CollabDocument and written to its record (a wiki page, documentKey WikiPage:<wikiPageId>) only as a
         version: on Save, after two minutes without an edit on database files, and when its last editor leaves. -->
-    <service verb="save" noun="CollabDocument" type="rust" location="moqui_core::service::collab::save_document">
+    <service verb="save" noun="CollabDocument" type="rust" location="moqui_collab::service::save_document">
         <description>Save a co-edited document as a version of its record now, as the current user (update access to the
             record), with versionNote, or a note naming its editors: the record's text becomes the document's markdown. The
             document need not be open on this server; its stored state is saved. versionName is empty when the text was
@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="versionName"/></out-parameters>
     </service>
-    <service verb="get" noun="CollabDocument" type="rust" location="moqui_core::service::collab::get_document">
+    <service verb="get" noun="CollabDocument" type="rust" location="moqui_collab::service::get_document">
         <description>A co-edited document the current user may view: its markdown now (of the open document on this server,
             else as last stored), whether it is open here, who changed it last and when, the last save, and the users whose
             changes are in no version yet.</description>

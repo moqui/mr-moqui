@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.CollabServices`: a co-edited document (`crate::collab`) saved as a version of its record now, and
+//! `org.moqui.impl.CollabServices`: a co-edited document (the crate root) saved as a version of its record now, and
 //! its open state, for the editor's screen.
 
 use std::collections::BTreeMap;
@@ -20,12 +20,12 @@ use std::collections::BTreeMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
+use moqui_core::extension::RustServiceFn;
+use moqui_core::rust_service;
 
-pub(in crate::service) fn register(
-    map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
-) -> Result<(), String> {
+pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, save_document)?;
     rust_service!(map, get_document)?;
     Ok(())
@@ -49,7 +49,7 @@ fn save_document(
         ExecutionContext::with_current(|ec| ec.message().add_error("documentKey is required"));
         return Ok(out);
     };
-    match crate::collab::save(&key, text(parameters, "versionNote").as_deref()) {
+    match crate::save(&key, text(parameters, "versionNote").as_deref()) {
         Ok(version) => {
             out.insert("versionName".to_string(), version.map_or(Value::Null, Value::string));
         }
@@ -71,7 +71,7 @@ fn get_document(
         ExecutionContext::with_current(|ec| ec.message().add_error("documentKey is required"));
         return Ok(out);
     };
-    if let Err(refusal) = crate::collab::check_view(&key) {
+    if let Err(refusal) = crate::check_view(&key) {
         ExecutionContext::with_current(|ec| ec.message().add_error(refusal.message));
         return Ok(out);
     }
@@ -80,7 +80,7 @@ fn get_document(
         .find("moqui.resource.CollabDocument")?
         .eq("documentKey", Value::string(&key))
         .one()?;
-    let open = crate::collab::snapshot(&key);
+    let open = crate::snapshot(&key);
     let field = |name: &str| {
         row.as_ref()
             .and_then(|row| row.get(name).cloned())

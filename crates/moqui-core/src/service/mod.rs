@@ -22,7 +22,6 @@ mod chat;
 mod chat_link;
 #[cfg(test)]
 mod chat_tests;
-mod collab;
 mod contacts;
 mod content;
 pub mod coverage;

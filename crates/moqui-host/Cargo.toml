@@ -76,6 +76,8 @@ moqui-git = { workspace = true, optional = true }
 moqui-mail = { workspace = true, optional = true }
 # Reports, dashboards, alerts and monitoring keys (crates/moqui-report), in every build.
 moqui-report = { workspace = true }
+# Co-edited documents (crates/moqui-collab), in every build; the notification WebSocket carries their sync.
+moqui-collab = { workspace = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }

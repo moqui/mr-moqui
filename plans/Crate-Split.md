@@ -1,8 +1,8 @@
 # Crate Split
 
-Status 2026-10-30: Phases 0 to 4 done (9788e711, 0bda5fdc, 9aa631f9, 4e962f93 and the Phase 4 commit:
-`moqui_core::extension`, `moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`); Phase 5 next ([Phases 5 and 6 in
-detail](#phases-5-and-6-in-detail), [Resuming](#resuming)). Splits
+Status 2026-10-30: Phases 0 to 4 done (9788e711, 0bda5fdc, 9aa631f9, 4e962f93, 27ab3317: `moqui_core::extension`,
+`moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`) and Phase 5's `moqui-collab`; `moqui-dav` next ([Phases 5
+and 6 in detail](#phases-5-and-6-in-detail), [Resuming](#resuming)). Splits
 `moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
 so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
 whose "few, larger crates" rule this replaces
@@ -48,8 +48,8 @@ frontend.
 | 1 (done, 0bda5fdc) | `moqui-git` | core `resource/git/`, `service/git.rs`, `service/git_hosting.rs` | 17,500 | `moqui_core::extension` (new): services, the `git://` resource provider |
 | 2 (done, 9aa631f9) | `moqui-mail` | core `service/mail/` except `contacts.rs` (now `service/contacts.rs`) | 13,200 | services, idle stop at shutdown (`before_shutdown`) |
 | 3 (done, 4e962f93) | `moqui-entity` (below core) | core `entity/`, `transaction/`, `driver.rs`, `testing.rs`, `context/error.rs`, `resource/{blob,source,textdiff}.rs`, `user/period.rs` | 31,000 | `moqui_entity::hooks::EntityHooks`: ambient, authz, script, services (EECA run), observers |
-| 4 (done) | `moqui-report` | core `report/` (but `time.rs`), `report_schedule.rs`, `monitor.rs` | 10,700 | native registrations, shipped reports after boot (`after_boot`, new) |
-| 5 | `moqui-collab`, `moqui-dav`, `moqui-devkit` | core `collab/`; `dav/`, `pim/`, elFinder; devtools, typegen, the lint and convert tools, testkit | 1,900; 8,000; 14,000 | services, tools |
+| 4 (done, 27ab3317) | `moqui-report` | core `report/` (but `time.rs`), `report_schedule.rs`, `monitor.rs` | 10,700 | native registrations, shipped reports after boot (`after_boot`, new) |
+| 5 (collab done) | `moqui-collab`, `moqui-dav`, `moqui-devkit` | core `collab/`; `dav/`, `pim/`, elFinder; devtools, typegen, the lint and convert tools, testkit | 1,900; 8,000; 14,000 | services, tools |
 | 6 | `moqui-drivers`, `moqui-test-client` | host `db/`; host `test_client/` and test discovery | 9,000; 7,000 | none (direct calls) |
 
 Phase 3 is where the layout departs from Moqui Java, whose entity facade calls the service facade, the artifact stack,
@@ -132,8 +132,11 @@ report tests import `moqui_report as report`.
 
 ## Phases 5 and 6 in detail
 
-- **5, one commit each, register-only:** `moqui-collab` (`collab/` and `service/collab.rs`; yrs leaves core and the wasm
-  build); `moqui-dav` (`dav/`, `pim/` and `service/elfinder*`, about 8,000 lines; the pim tool classes keep their
+- **5, one commit each, register-only:** `moqui-collab` (done: `collab/mod.rs` as the crate root and
+  `service/collab.rs` as `moqui_collab::service`, whose two locations in `CollabServices.xml` are `moqui_collab::service::`;
+  its feature is `collab`, in `extension::LOCATIONS`, so the browser build, which leaves it out, reports it not built in;
+  the host depends on it, since its notification WebSocket calls the rooms; yrs left core and the browser build, and
+  `user::session::Identity` and its save and restore are `pub`); `moqui-dav` (`dav/`, `pim/` and `service/elfinder*`, about 8,000 lines; the pim tool classes keep their
   names); `moqui-devkit` (devtools minus `is_dev_instance`, `restart`, `log_capture` and `index/calls`, which stay in
   core on hot paths; `typegen/`; `script/{screen_lint, groovy_convert, lint_hazards}`; `testkit/`; about 14,000 lines,
   and notify leaves core). The devkit is linked in every package, because `moqui test`, `lint` and `types` are; only its
@@ -202,7 +205,8 @@ of the binaries (e98c1c8e); the `cargo test --no-run` row below was measured aga
 The touch set: one probe edit (a dead private function appended, then the file restored) in each of
 `entity/value.rs` (moqui-entity since Phase 3), core `service/call.rs`, `screen/render.rs`, `resource/git/mod.rs`,
 `service/mail/implementation.rs` (the send path; `sync.rs` is `imap`, which the Dev package leaves out), `report/mod.rs`
-(moqui-report's `lib.rs` since Phase 4), host `http.rs` and `db/pgwire.rs`, each rebuilt twice with `cargo build --profile develop --no-default-features --features dev -p
+(moqui-report's `lib.rs` since Phase 4), `collab/mod.rs` (moqui-collab's `lib.rs` since Phase 5), host `http.rs` and
+`db/pgwire.rs`, each rebuilt twice with `cargo build --profile develop --no-default-features --features dev -p
 moqui` (the Dev package, `./moq build`), on a warm cache with no other build running. A file that moved is probed at
 its new path. To take the "Before" column of a phase with its work in the tree, commit the work on a branch, switch
 back to master's HEAD for the probe, and switch back. The probe, for each file (restore the file afterwards, and build
@@ -233,6 +237,13 @@ Add `--timings` to one run to see where an edit's time goes (`target/cargo-timin
 | host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s | 2.0 s, 2.0 s | 2.0 s, 2.0 s | 2.0 s, 2.1 s | 2.0 s, 2.0 s |
 | host `db/pgwire.rs` | 2.5 s, 2.3 s | | | 2.5 s, 2.0 s | 2.0 s, 3.0 s | 2.2 s, 2.0 s |
 | `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s | (not taken) | 7.7 s, 7.7 s | 6.7 s, 7.0 s | 6.3 s, 6.2 s |
+
+Phase 5, one crate at a time (the edits of the main table unchanged within the spread of these runs: core
+`service/call.rs` and `screen/render.rs` 9.8 to 10.0 s):
+
+| Edit in | Before | After |
+|---|---|---|
+| collab `lib.rs` (core `collab/mod.rs` before) | 9.8 s, 9.8 s (27ab3317) | 2.6 s, 2.2 s |
 
 Where a core edit's 15 s goes (`--timings`, `service/call.rs`): `moqui-core` 14.5 s, its metadata ready at about 5 s, so
 `moqui-llm` (2.1 s) and `moqui-host` (3.1 s) finish while core is still in codegen, and the binary links (0.3 s) after

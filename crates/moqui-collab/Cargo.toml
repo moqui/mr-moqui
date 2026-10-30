@@ -1,0 +1,27 @@
+# Co-edited documents (a Yjs document per record, on yrs) and org.moqui.impl.CollabServices, on top of moqui-core
+# (plans/Crate-Split.md). Its own crate so an edit here does not rebuild the framework, and yrs stays out of core and the
+# browser build. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry;
+# moqui-host links it in every build and calls the rooms from its notification WebSocket.
+
+[package]
+name = "moqui-collab"
+description = "Co-edited documents and the collab services."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+pulldown-cmark = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+yrs = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
