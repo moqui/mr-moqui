@@ -753,8 +753,7 @@ run re-attaches and ends with its text once; the drawer on a `webapp_qvt_static_
 saves; two tabs, where only the sender follows, the other shows "Following in another tab" and a chip, an approval shows in
 both and executes from the first while the second sees it executed; the user's own navigation while the agent's command runs
 wins (the agent's navigation is a chip); and Edit in screen from the tab that does not follow, after it moved on its own,
-follows there. With `MOQUI_SHELL_SHOTS=<dir>` they save `assist-<thread|approval|elsewhere|handoff>-<light|dark>-<1280|390>.png`;
-`moqui test-client example --serve --spec GalleryShots` opens the Assist drawer on the gallery List screen when Assist is available (`example/test/client/GalleryShots.spec.js`).
+follows there. With `MOQUI_SHELL_SHOTS=<dir>` they save `assist-<thread|approval|elsewhere|handoff>-<light|dark>-<1280|390>.png`.
 
 **The extras of 13.14** (the calls are "The calls of 13.14").
 
