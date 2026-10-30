@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A minimal page for a public link, the screen of a token route in the public shell (docs/data/Revision-Management.md,
+    "Token routes"): no route names it by default; a conf adds one, for example
+    <webapp-list><webapp name="webroot"><token-route name="link" screen-location="component://example/screen/PublicLink.xml"
+        token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared with you"/></webapp></webapp-list>
+    The route's token check has run first: tokenRoute.context is what the link shows (name, sharer, note). The files
+    transition calls the public-share service, which checks the token again before it reads the folder. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-include="false" default-menu-title="Shared">
+    <transition name="files" read-only="true">
+        <parameter name="path"/><parameter name="grant"/>
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.FileServices.list#PublicShare')
+                    .parameters({token: token, grant: ec.web.parameters.grant || null, path: ec.web.parameters.path || null}).call()
+            if (ec.message.hasError()) ec.web.sendJsonError(404, ec.message.errorsString)
+            else ec.web.sendJsonResponse({fileList: out.fileList || [], uploadOnly: !!out.uploadOnly})
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <actions>
+        <set field="shared" from="(tokenRoute &amp;&amp; tokenRoute.context) || {}"/>
+    </actions>
+    <widgets>
+        <container-box>
+            <box-header title="${shared.name || 'Shared'}"/>
+            <box-body>
+                <label text="Shared by ${shared.sharerName || 'someone'}" type="p"/>
+                <label text="${shared.note || ''}" type="p" style="public-link-note"/>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

@@ -43,7 +43,7 @@ History:
   unblocked; a bad `show-total` is logged.
 - **2026-10-21, the last eight decided.** P7-11, P8-05 and P8-08 are fixed; P7-09, P3-05 and P6-04 are recorded. P9-02
   and P9-03 are built: the lifecycle actions run, and `servlet`, `filter` and `listener` are scripts whose value is a
-  handler object with the Servlet API's methods ([Web-Scripts](../../docs/Web-Scripts.md)). The search proxies are now
+  handler object with the Servlet API's methods ([Web-Scripts](../../docs/interfaces/Web-Scripts.md)). The search proxies are now
   `ProxyServlet.js` on `/search` and `/dashboard`. See [Decided on 2026-10-21](#decided-on-2026-10-21). The Decide list
   is empty.
 
@@ -170,7 +170,7 @@ Each row's decision and what was done. What stays different from Java is in
     - the sockets and `/git`, async protocols the synchronous script engine cannot serve;
     - the request log, which runs on every request.
 
-  Guide: [Web-Scripts](../../docs/Web-Scripts.md).
+  Guide: [Web-Scripts](../../docs/interfaces/Web-Scripts.md).
 - **P7-11.** A `get` or `any` transition is now preferred over the first one declared. With no method,
   `ScreenDef::transition` takes the `any` transition, then the `get` one, then the first. Recorded.
 - **P7-09.** `skip-actions` is left out of the conf XSD. Recorded.

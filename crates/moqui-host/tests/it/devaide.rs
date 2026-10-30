@@ -1219,6 +1219,77 @@ fn a_site_seca_runs_after_its_save() {
     assert_eq!(rules[0]["site"], true, "{rules}");
 }
 
+/// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
+/// (`runtime/dev-component/template`) in runtime/component, or with dev in runtime/dev-component, of the part asked for,
+/// with a git repository of its own; a name taken, a name that is not one or an unknown part is refused, and the extend
+/// tier may not make one.
+#[test]
+fn new_components_come_from_the_component_template() {
+    let users = r#"
+    <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
+    <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
+</entity-facade-xml>"#;
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+        .replace("</entity-facade-xml>", users);
+    let repo_dir = |path: &str| {
+        std::fs::canonicalize(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR")))
+            .unwrap()
+            .display()
+            .to_string()
+    };
+    let (dev_aide, template) = (
+        repo_dir("runtime/dev-component/dev-aide"),
+        repo_dir("runtime/dev-component/template"),
+    );
+    let gate = start_with_files_and_links(
+        "dev-aide-create",
+        Some(&security),
+        &[("instance_purpose", "dev")],
+        &[],
+        &[
+            (dev_aide.as_str(), "dev-component/dev-aide"),
+            (template.as_str(), "dev-component/template"),
+        ],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    isolate_git(&gate.runtime);
+    let create =
+        |user: &str, parameters: &[(&str, &str)]| call(&factory, user, &format!("{WS}create#Component"), parameters);
+
+    let made = create("john.doe", &[("componentName", "demo-shop")]).unwrap();
+    let shop = gate.runtime.join("component/demo-shop");
+    assert_eq!(text(&made, "location"), shop.display().to_string());
+    assert_eq!(text(&made, "restart"), "true");
+    assert!(shop.join("screen/DemoShop/FindItem.xml").is_file());
+    assert!(shop.join("service/demoshop/DemoShopServices.xml").is_file());
+    assert!(shop.join("service/demo-shop.rest.xml").is_file());
+    assert!(shop.join(".git").is_dir());
+    let manifest = std::fs::read_to_string(shop.join("component.xml")).unwrap();
+    assert!(
+        manifest.contains(r#"name="demo-shop""#) && !manifest.contains("disabled"),
+        "{manifest}"
+    );
+
+    create(
+        "john.doe",
+        &[("componentName", "demo-api"), ("part", "rest"), ("dev", "true")],
+    )
+    .unwrap();
+    let api = gate.runtime.join("dev-component/demo-api");
+    assert!(api.join("service/demo-api.rest.xml").is_file());
+    assert!(!api.join("screen").exists() && !api.join("MoquiConf.xml").exists());
+
+    let taken = create("john.doe", &[("componentName", "demo-shop")]).unwrap_err();
+    assert!(taken.contains("is there already"), "{taken}");
+    assert!(create("john.doe", &[("componentName", "9lives")]).is_err());
+    assert!(create("john.doe", &[("componentName", "other"), ("part", "both")]).is_err());
+    assert!(create("ext.user", &[("componentName", "ext-shop")]).is_err());
+    assert!(!gate.runtime.join("component/ext-shop").exists());
+    // the template stays a template
+    let template_manifest = std::fs::read_to_string(Path::new(&template).join("component.xml")).unwrap();
+    assert!(template_manifest.contains(r#"name="@component@""#));
+}
+
 const ENTITY: &str = "org.moqui.devaide.EntityServices.";
 
 /// The entity modeler's save (plans/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's

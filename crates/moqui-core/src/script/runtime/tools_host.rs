@@ -420,7 +420,7 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
                 return info != null && info.exists && info.file ? host.resourceText(ref.location) : null;
             },
             // a note (optional) is kept with the version the write makes: the commit message on git, versionNote on the
-            // database tree (docs/Revision-Management.md, Version notes)
+            // database tree (docs/data/Revision-Management.md, Version notes)
             putText: (text, note) => note == null ? host.resourcePutText(ref.location, String(text))
                 : ec.resource.putContent(ref.location, String(text), note),
             putBytes: (bytes, note) => note == null ? host.resourcePutBytes(ref.location, bytes)

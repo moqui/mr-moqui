@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="20" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/css/WebrootVue.qvt.css"/>
 
-    <!-- Color schemes (THEME_COLOR_SCHEME; docs/Qvt-Client.md, Appearance). Default has no colors, so it is the theme's own (the style
+    <!-- Color schemes (THEME_COLOR_SCHEME; docs/ui/Qvt-Client.md, Appearance). Default has no colors, so it is the theme's own (the style
          sheet's tokens and the STRT_QUASAR_CONFIG brand); the others set the standard colors for light and dark. The header stays a
          light surface in light mode, so the tint of a dev or test instance (body.dev #top) still reads. -->
     <moqui.screen.ScreenColorScheme colorSchemeId="DEFAULT" screenThemeId="DEFAULT_QUASAR" sequenceNum="1" description="Default"/>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The shared demo login cannot be locked: before each account service that would change who can log in, an error
+    for a user in demo_shared_user_ids stops it (demo.DemoServices.refuse#SharedAccountChange). Mantle's update#Account
+    and update#PartyUserAccount go through update#UserAccount. Any active sign-in factor makes the login ask for a
+    second one, so creating a factor is refused too. -->
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+    <seca id="DemoSharedPassword" service="org.moqui.impl.UserServices.update#Password" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedResetPassword" service="org.moqui.impl.UserServices.reset#Password" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedAccount" service="org.moqui.impl.UserServices.update#UserAccount" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange"
+                in-map="Object.assign({}, context, {accountUpdate: true})"/></actions>
+    </seca>
+    <seca id="DemoSharedDisable" service="org.moqui.impl.UserServices.disable#UserAccount" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedFactorEmail" service="org.moqui.impl.UserServices.create#UserAuthcFactorEmail" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedFactorSms" service="org.moqui.impl.UserServices.create#UserAuthcFactorSms" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedFactorTotp" service="org.moqui.impl.UserServices.create#UserAuthcFactorTotp" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedSetupTotp" service="org.moqui.impl.UserServices.setup#UserAuthcFactorTotp" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedSingleUseCodes" service="org.moqui.impl.UserServices.create#SingleUseAuthcCodes" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+    <seca id="DemoSharedSingleUseFactor" service="org.moqui.impl.UserServices.create#SingleUseAuthcFactor" when="pre-service">
+        <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
+    </seca>
+</secas>

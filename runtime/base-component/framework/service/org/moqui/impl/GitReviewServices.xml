@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     work items and comments to lines; the framework keeps the request, its reviewers and its merge. Each service checks
     the repository's rights (org.moqui.impl.GitServices.get#GitRepositoryAccess): viewers see, comment and request
     changes, users who may push (update) approve and only their approvals count, the author or a user with update
-    changes one, update merges. Guide: docs/Git-Hosting.md, Merge requests. -->
+    changes one, update merges. Guide: docs/interfaces/Git-Hosting.md, Merge requests. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="create" noun="MergeRequest">
         <description>Open a merge request of a source branch into a target branch (the default branch when empty), as

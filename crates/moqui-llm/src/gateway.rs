@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The OpenAI-compatible gateway (plans/LLM-A2A-Assist.md 4.17, D10; docs/Gateway.md), off by default (`llm-facade`
+//! The OpenAI-compatible gateway (plans/LLM-A2A-Assist.md 4.17, D10; docs/ai/Gateway.md), off by default (`llm-facade`
 //! `gateway enabled`): internal tools and scripts call the configured models at `/llm/v1` with their own keys, under
 //! the central keys, quotas and usage log.
 //!

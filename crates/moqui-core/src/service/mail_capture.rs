@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The mail capture, for specs (no Java counterpart; docs/Testing.md, "Mail"). With the conf property
+//! The mail capture, for specs (no Java counterpart; docs/Build-Test.md, "Mail"). With the conf property
 //! `mail_capture_sends=true` (`mail_capture_sends=true ./moq test ...`) or the tool enabled by a spec, a send of
 //! `send#EmailMessage` (and so of `send#EmailTemplate` and the mail client's sends) does everything a real send does,
 //! the `EmailMessage` row and its `ES_SENT` status included, except connect: the message is kept in memory, where

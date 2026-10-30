@@ -9,8 +9,9 @@ first with `base-component/` in it). `./moq archive` zips this directory, withou
 |---|---|---|
 | `base-component/` | yes | The framework and base components that ship with Moqui |
 | `component/` | no | Additional components, normally checked out by `./moq` |
+| `dev-component/` | partly | Components that load only when `instance_purpose` is `dev`: the framework's (`dev-aide`, `example`), the demo lock-down (off by default, loaded on a demo server by `conf/MoquiDemoConf.xml`) and the component template in git, a developer's own beside them ([dev-component/README.md](dev-component/README.md)) |
 | `conf/` | yes | Runtime conf files (`MoquiDevConf.xml`, `MoquiProductionConf.xml`, ...) merged over `MoquiDefaultConf.xml` |
-| `cert/` | no | HTTPS certificates by domain (nginx-proxy, certbot or mkcert layouts; `docs/Running.md`). Never commit keys. |
+| `cert/` | no | HTTPS certificates by domain (nginx-proxy, certbot or mkcert layouts; `docs/Run-Deploy.md`). Never commit keys. |
 | `db/` | no | Embedded database cluster and related files |
 | `log/` | no | Log files |
 | `opensearch/` | no | Managed OpenSearch install and data |

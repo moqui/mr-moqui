@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A server's routes (`moqui_llm::a2a`, docs/A2A.md): `/a2a` (JSON-RPC), `/a2a/{*rest}` (HTTP+JSON) and
+//! The A2A server's routes (`moqui_llm::a2a`, docs/ai/A2A.md): `/a2a` (JSON-RPC), `/a2a/{*rest}` (HTTP+JSON) and
 //! the public card at `/.well-known/agent-card.json`. The body is read whole (at most 4 MiB) and the request is served
 //! on a request worker, which authenticates it and answers, or hands back what takes longer: a blocking send's wait
 //! and a stream each run on a thread of their own (at most 256 at once on a node; one more is 503), so neither holds a

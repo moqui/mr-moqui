@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
 
-    <!-- Git repositories for git:// resource locations (crates/moqui-core/src/resource/git, docs/Revision-Management.md).
+    <!-- Git repositories for git:// resource locations (crates/moqui-core/src/resource/git, docs/data/Revision-Management.md).
         No Java counterpart. The repositoryId is the first segment of a location: git://<repositoryId>/<path>. -->
     <entity entity-name="GitRepository" package="moqui.resource" use="nontransactional" short-alias="gitRepositories">
         <field name="repositoryId" type="id" is-pk="true"/>
@@ -177,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.resource.GitUpdate"/>
     </entity>
 
-    <!-- Hosting and code review (docs/Git-Hosting.md: Commit statuses, Webhooks, Branch rules, Merge requests). No Java
+    <!-- Hosting and code review (docs/interfaces/Git-Hosting.md: Commit statuses, Webhooks, Branch rules, Merge requests). No Java
         counterpart. Entity filters do not apply to moqui.* entities: these rows are read through the services of
         org.moqui.impl.GitServices and GitReviewServices, which check the repository's rights. -->
     <entity entity-name="GitCommitStatus" package="moqui.resource" use="nontransactional" cache="never">
@@ -326,7 +326,7 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
-    <!-- Git LFS (crates/moqui-core/src/resource/git/server/lfs.rs, docs/Git-Hosting.md). No Java counterpart. -->
+    <!-- Git LFS (crates/moqui-core/src/resource/git/server/lfs.rs, docs/interfaces/Git-Hosting.md). No Java counterpart. -->
     <entity entity-name="GitLfsObject" package="moqui.resource" use="nontransactional" cache="never">
         <description>A Git LFS object of a repository, its content the ContentBlob of the same SHA-256. A repository
             has an object only once it was uploaded to it: the same content in another repository is stored once,
@@ -355,7 +355,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_LFS_LOCK_PATH" unique="true"><index-field name="repositoryId"/><index-field name="lockPath"/></index>
     </entity>
 
-    <!-- Large content by its SHA-256, in chunks (crates/moqui-core/src/resource/blob.rs, docs/Git-Hosting.md). No Java
+    <!-- Large content by its SHA-256, in chunks (crates/moqui-core/src/resource/blob.rs, docs/interfaces/Git-Hosting.md). No Java
         counterpart. A row that refers to a blob has a relationship to ContentBlob: gc#ContentBlobs deletes the blobs
         no such row refers to. -->
     <entity entity-name="ContentBlob" package="moqui.resource" use="nontransactional" cache="never">
@@ -391,7 +391,7 @@ along with this software (see the LICENSE.md file). If not, see
         never apply to: FileServices checks every access (a drive's owner, a current member by permission, or a share of
         the path), and screens read these records only through it. The file metadata (shares, favorites, tags, trash,
         recent) is keyed by drive and path, since a file of a git:// drive has no row of its own. Guide:
-        docs/Revision-Management.md, "Drives". -->
+        docs/data/Revision-Management.md, "Drives". -->
 
     <entity entity-name="ResourceDrive" package="moqui.resource" use="nontransactional" short-alias="resourceDrives">
         <description>A root location with an owner, members and a quota. The storage is the root's scheme: a personal or
@@ -673,7 +673,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="WIKILINK_TOPATH"><index-field name="toWikiSpaceId"/><index-field name="toPagePath"/></index>
     </entity>
     <entity entity-name="CollabDocument" package="moqui.resource" use="transactional" cache="never">
-        <description>A document several people edit at once (m-coedit, org.moqui.impl.CollabServices; docs/Revision-Management.md,
+        <description>A document several people edit at once (m-coedit, org.moqui.impl.CollabServices; docs/data/Revision-Management.md,
             Co-editing): the Yjs state of its editors (stateData, the full update in Yjs v1 encoding, kept current a second
             or two after an edit and merged when several servers write it), the markdown it renders to (snapshotText), and
             what it was last saved as. documentKey names the record, such as WikiPage:100023. The record's own text (the

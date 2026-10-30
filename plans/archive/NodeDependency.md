@@ -1,6 +1,6 @@
 # Node dependency: moving the node tests onto moqui's own test tools
 
-> Archived 2026-10-27: the Node test migration is complete. Current usage is in [Testing](../../docs/Testing.md) and [Client-Testing](../../docs/Client-Testing.md). Node remains only for the library refresh and WASM smoke tools listed below.
+> Archived 2026-10-27: the Node test migration is complete. Current usage is in [Testing](../../docs/Build-Test.md#component-specs) and [Client-Testing](../../docs/dev/Client-Testing.md). Node remains only for the library refresh and WASM smoke tools listed below.
 
 ## Why
 
@@ -40,7 +40,7 @@ Implemented. The work follows this plan, with these corrections:
 Closed. `moqui test --db none` and `spec({ database: false })` run the template specs without Postgres, including on a
 build without `embedded-postgres`. `moqui test-client --offline` runs `spec({ server: false })` at `https://moqui.test`
 with no listening port. Assertions, `browser.runInPage`, `setContent`, `addScript`, `addStyle` and `keyboard.type` are
-in [Client-Testing](../../docs/Client-Testing.md). Node is not a test dependency. `libs/refresh.mjs` and `scripts/wasm-smoke.mjs` still use Node.
+in [Client-Testing](../../docs/dev/Client-Testing.md). Node is not a test dependency. `libs/refresh.mjs` and `scripts/wasm-smoke.mjs` still use Node.
 
 ## Plan
 
@@ -124,7 +124,7 @@ The sections below are the design. What shipped is the Reviewed list above (`run
   - `moqui test` picks up the database-free specs as it runs the others.
 - **Delete `js/chromium-for-tests.js`.** `crates/moqui-host/src/chromium.rs` `find_test_browser` is the one lookup.
 - **Docs:**
-  - `js/README.md` (the Tests section), `docs/Testing.md` (`database: false`) and `docs/Client-Testing.md` (offline
+  - `js/README.md` (the Tests section), `docs/Build-Test.md` (`database: false`) and `docs/dev/Client-Testing.md` (offline
     suites, `runInPage`, the new page calls);
   - AGENTS.md or the building skill: Node is no longer a test dependency.
 

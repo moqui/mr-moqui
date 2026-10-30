@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Assist drawer's JSON calls (docs/Assist.md; plans/LLM-A2A-Assist.md 4.5, 4.11) over HTTP on a seeded server on
+//! The Assist drawer's JSON calls (docs/ai/Assist.md; plans/LLM-A2A-Assist.md 4.5, 4.11) over HTTP on a seeded server on
 //! embedded Postgres, with the scripted fake provider: each call's happy path and its refusal for another user; a turn
 //! sent twice with one client message id; a turn while a run is active queued as input and not counted by the AT_LLM
 //! tarpit, which counts runs; the client's tier; a decision refused for a header login and taken from the owner's
@@ -1393,7 +1393,7 @@ impl Client {
     }
 }
 
-/// The calls of phase 13.14 over HTTP on embedded Postgres with the scripted fake (docs/Assist.md): bootstrap's new
+/// The calls of phase 13.14 over HTTP on embedded Postgres with the scripted fake (docs/ai/Assist.md): bootstrap's new
 /// features and limits; a file attached, refused when it is a program or of a type not allowed, sent with a turn, read
 /// by the agent with data, shown as a file part and downloaded by its user only; memory added, gated for one
 /// conversation and forgotten, the user's own; Save as skill drafted from a run that used a screen, saved, listed and

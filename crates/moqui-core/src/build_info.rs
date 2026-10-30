@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The package and features this binary was built with (docs/Packaging.md): the framework's own features, from this
+//! The package and features this binary was built with (docs/Build-Test.md): the framework's own features, from this
 //! crate's configuration, and the host's, which the host registers once at start. `moqui version` prints them, the
 //! server logs them at boot, and `moqui test` skips a spec whose `requires` names one that is missing.
 

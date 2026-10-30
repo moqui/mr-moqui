@@ -3,7 +3,7 @@
 Oct 18, 2026 · @David
 
 Archived Oct 21, 2026: built through [Screen-TUI-Impl](Screen-TUI-Impl.md) Phases 1 to 4, with the findings there; the
-user guide is [TUI](../../docs/TUI.md). The browser terminal and the other open parts are in
+user guide is [TUI](../../docs/ui/TUI.md). The browser terminal and the other open parts are in
 [Remaining-Work](../Remaining-Work.md).
 
 ## Summary

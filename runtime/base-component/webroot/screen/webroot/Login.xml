@@ -165,8 +165,11 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="minDigits" from="ec.user.passwordRules.minDigits"/>
         <set field="minOthers" from="ec.user.passwordRules.minOthers"/>
 
-        <!-- the account checks the sections show by, read here so the widgets read flags -->
-        <set field="hasUserAccounts" from="ec.entity.find('moqui.security.UserAccount').disableAuthz().count() > 1"/>
+        <!-- the account checks the sections show by, read here so the widgets read flags; seed data has accounts nobody
+            logs in as, _NA_ and the chat users of agents (AgentTypeData.xml), as create#InitialAdminAccount counts -->
+        <set field="hasUserAccounts" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'not-in',
+            ['_NA_'].concat(Array.from(ec.entity.find('moqui.agent.AgentDefinition').selectField('chatUserId').disableAuthz().list())
+                .map((agent) => agent.chatUserId).filter(Boolean))).disableAuthz().count() > 0"/>
         <!-- the test user's password is still 'moqui': verified, not compared to its seed SHA hash, since a login re-hashes it -->
         <set field="testUserAccount" from="ec.entity.find('moqui.security.UserAccount').condition('userId', 'EX_JOHN_DOE').disableAuthz().one()"/>
         <set field="hasTestLogin" from="testUserAccount != null &amp;&amp; ec.user.passwordsMatch('moqui', testUserAccount.get('currentPassword'),

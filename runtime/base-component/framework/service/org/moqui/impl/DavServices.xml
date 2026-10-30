@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- The DAV server (crates/moqui-core/src/dav, docs/Sync.md) without a socket -->
+    <!-- The DAV server (crates/moqui-core/src/dav, docs/interfaces/Sync.md) without a socket -->
     <service verb="serve" noun="DavRequest" type="rust" location="moqui_core::service::dav::serve_request" allow-remote="false">
         <description>One request to the DAV server at /dav, as a device would send it, for a spec or a script that checks a
             DAV adapter: the request runs in an execution context of its own, as on a request worker (authorization on), and

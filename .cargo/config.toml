@@ -14,7 +14,7 @@ lint = "clippy --workspace --all-targets -- -D warnings"
 # The host without its default features (no server, no embedded Postgres, MySQL or PDF), which `lint` does not build.
 lint-min = "clippy -p moqui-host --no-default-features --all-targets -- -D warnings"
 
-# The build profiles, one for each package (docs/Packaging.md), here rather than in Cargo.toml so they apply to the
+# The build profiles, one for each package (docs/Build-Test.md), here rather than in Cargo.toml so they apply to the
 # generated crate `./moq build` links add-on components through (target/moqui-app), which is its own workspace. Cargo
 # reads this file from the directory it runs in and its parents, so run cargo from the repository.
 
@@ -28,7 +28,7 @@ panic = "unwind"
 [profile.dev.package."*"]
 opt-level = 3
 
-# The Maximal package (`./moq build --release`, docs/Packaging.md).
+# The Maximal package (`./moq build --release`, docs/Build-Test.md).
 [profile.release]
 panic = "unwind"
 

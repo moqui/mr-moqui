@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP server (docs/MCP.md; plans/LLM-A2A-Assist.md 4.16) over HTTP on a seeded server on embedded Postgres: the
+//! The MCP server (docs/ai/MCP.md; plans/LLM-A2A-Assist.md 4.16) over HTTP on a seeded server on embedded Postgres: the
 //! public documents, the transport's refusals (GET, a foreign Origin, a missing version header), `server/discover`
 //! without credentials, auth and permissions, `tools/list` sorted and private with its TTL, `screen` going on in its
 //! session, a read, and a write that answers `input_required` with its link: the owner opens the link's conversation
@@ -448,7 +448,7 @@ fn the_mcp_server_over_http_on_postgres() {
     if python.is_empty() {
         eprintln!(
             "SKIPPED: the MCP SDK smoke check (tests/fixtures/mcp/smoke_mcp_sdk.py) did not run: MCP_SDK_PYTHON is \
-             not set; docs/MCP.md says how to make the venv"
+             not set; docs/ai/MCP.md says how to make the venv"
         );
         return;
     }
@@ -608,7 +608,7 @@ fn the_published_conformance_suite_where_it_applies() {
     let cli = std::env::var("MCP_CONFORMANCE").unwrap_or_default();
     if cli.is_empty() {
         eprintln!(
-            "SKIPPED: the MCP conformance scenarios did not run: MCP_CONFORMANCE is not set; docs/MCP.md says how to \
+            "SKIPPED: the MCP conformance scenarios did not run: MCP_CONFORMANCE is not set; docs/ai/MCP.md says how to \
              install the suite"
         );
         return;
@@ -852,7 +852,7 @@ fn the_dev_tools_over_mcp() {
         std::env::remove_var("MOQUI_LOGIN_KEY");
         let file = std::fs::canonicalize(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../runtime/base-component/example/entity/ExampleEntities.xml"
+            "/../../runtime/dev-component/example/entity/ExampleEntities.xml"
         ))
         .unwrap();
         let text = std::fs::read_to_string(&file).unwrap().replacen(

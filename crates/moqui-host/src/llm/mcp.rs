@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP server's routes (`moqui_llm::mcp`, docs/MCP.md): `/mcp` (Streamable HTTP, POST only) and the public
+//! The MCP server's routes (`moqui_llm::mcp`, docs/ai/MCP.md): `/mcp` (Streamable HTTP, POST only) and the public
 //! documents, `/mcp/server-card`, `/mcp/setup`, `/.well-known/mcp.json` and `/.well-known/ai-catalog.json`; each is
 //! 404 while the server is off. The body is read whole (at most 4 MiB) and served on a request worker, which
 //! authenticates and answers; a retry that waits for its owner's decision waits on a thread of its own, counted with

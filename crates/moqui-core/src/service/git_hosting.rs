@@ -16,7 +16,7 @@
 //! list and push log, a directory with each entry's last commit, refs, compare, merge, archive, commit statuses and
 //! webhooks. No Java counterpart. Each checks the repository's rights (`AT_GIT_REPOSITORY`, or the drive's rule for a
 //! drive's repository) as the git server does; the rows are `moqui.*` entities that entity filters do not reach, so
-//! they are read only here. Guide: `docs/Git-Hosting.md`.
+//! they are read only here. Guide: `docs/interfaces/Git-Hosting.md`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

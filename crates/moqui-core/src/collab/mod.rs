@@ -18,7 +18,7 @@
 //! [`join`] (the access check, the document loaded or seeded from the record's text, the diff the client lacks),
 //! [`apply`] (an editor's update), [`tick`] (the state written a second or two after an edit, a version of the record
 //! after a while without edits on database files, and when the last editor leaves) and [`save`] (a version now, with a
-//! note). Guide: `docs/Revision-Management.md`, Co-editing.
+//! note). Guide: `docs/data/Revision-Management.md`, Co-editing.
 //!
 //! A document key names its record: `WikiPage:<wikiPageId>` is a wiki page, whose markdown the document is
 //! ([`markdown`]); the user needs view access to join and update access to change it (`WikiServices.get#WikiPageAccess`).

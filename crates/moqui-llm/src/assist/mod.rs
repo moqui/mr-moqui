@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/Assist.md): the transitions of
+//! The drawer's JSON calls (plans/LLM-A2A-Assist.md 4.5 and 4.11; the contract is docs/ai/Assist.md): the transitions of
 //! the webroot subscreen `assist` (`runtime/base-component/webroot/screen/webroot/assist.xml`) call the one service
 //! `org.moqui.agent.AssistServices.call#Drawer` with the call's name, which reads the request's parameters and answers
 //! the response itself: 200 with the call's JSON, or the error status with `{errorCode, errors, code}`.
@@ -68,7 +68,7 @@ pub const MAX_MESSAGE_CHARS: usize = 16_000;
 /// The longest client id and client message id.
 const MAX_ID_CHARS: usize = 100;
 
-/// Every call the drawer makes, in the order docs/Assist.md lists them.
+/// Every call the drawer makes, in the order docs/ai/Assist.md lists them.
 pub const CALLS: &[&str] = &[
     "bootstrap",
     "conversations",

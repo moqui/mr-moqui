@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clippy, with warnings denied, on every feature set a build uses (docs/Packaging.md), so a feature gate that only one
+# Clippy, with warnings denied, on every feature set a build uses (docs/Build-Test.md), so a feature gate that only one
 # package sees still compiles: the workspace on its defaults (the Maximal package with the dev tools, `cargo lint`), the
 # Dev, Lite, Maximal and Enterprise packages of the binary, the host with no features (`cargo lint-min`) and with only the terminal client (the
 # client-only build of `moqui tui --server`), and the framework with none (what

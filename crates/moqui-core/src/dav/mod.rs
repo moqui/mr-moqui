@@ -15,7 +15,7 @@
 //! The DAV server under `/dav/`: WebDAV (RFC 4918, class 1 and 2) over each drive a user may open, and CalDAV (RFC 4791)
 //! and CardDAV (RFC 6352) over the calendars and address books an application serves through the adapter services the
 //! conf's `dav-server` names. The host (moqui-host `dav_http.rs`) owns the socket, reads the request and calls
-//! [`serve`] on a request worker, in a fresh execution context. Guide: `docs/Sync.md`.
+//! [`serve`] on a request worker, in a fresh execution context. Guide: `docs/interfaces/Sync.md`.
 //!
 //! | Path | |
 //! |---|---|

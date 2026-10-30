@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The OpenAI-compatible gateway (docs/Gateway.md; plans/LLM-A2A-Assist.md 4.17) over HTTP on a seeded server on
+//! The OpenAI-compatible gateway (docs/ai/Gateway.md; plans/LLM-A2A-Assist.md 4.17) over HTTP on a seeded server on
 //! embedded Postgres, against a fake upstream on loopback that speaks Chat Completions (SSE and whole), Responses and
 //! embeddings: the models list per client, the client row with the gateway scope (and store#LlmApiClient refusing a
 //! second one, two refused as ambiguous), streaming with and without the usage chunk, tool definitions passed through
@@ -1390,7 +1390,7 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
     if python.is_empty() {
         eprintln!(
             "SKIPPED: the OpenAI Python client check (tests/fixtures/gateway/openai_client.py) did not run: OPENAI_PYTHON \
-             is not set; docs/Gateway.md says how to make the venv"
+             is not set; docs/ai/Gateway.md says how to make the venv"
         );
         return;
     }

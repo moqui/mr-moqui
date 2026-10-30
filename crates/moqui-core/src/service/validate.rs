@@ -1042,7 +1042,7 @@ mod parameter_tests;
 mod safe_html_tests {
     use super::*;
 
-    /// What the qvt rich-text editor writes (`m-rich-text`, docs/Qvt-Client.md) survives `allow-html="safe"`: its
+    /// What the qvt rich-text editor writes (`m-rich-text`, docs/ui/Qvt-Client.md) survives `allow-html="safe"`: its
     /// blocks, marks, links, images and the mention span with its id; a link gains ammonia's `rel`, and what the editor
     /// never writes goes.
     #[test]

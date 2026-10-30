@@ -1,6 +1,6 @@
 # Podman and systemd
 
-MR Moqui runs as one process. It can use the embedded Postgres it ships, and it terminates HTTPS itself from certificates in the runtime `cert/` directory (the old nginx-proxy file names still work). These files are the Podman image and four stacks, plus a systemd unit that runs the binary with no container.
+MR Moqui runs as one process. It can use the embedded Postgres it ships, and it terminates HTTPS itself from certificates in the runtime `cert/` directory (the old nginx-proxy file names still work). These files are the Podman image and four stacks, plus a systemd unit that runs the binary with no container. Choosing a deployment, its properties, upgrades and clusters are in [docs/Run-Deploy.md](../docs/Run-Deploy.md).
 
 There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP is 8080 and HTTPS is 8443, so a rootless Podman can bind them. Put a certificate in the data volume's `cert/` directory, then set `webapp_https_enabled=true` and `webapp_https_port=8443`. Until a certificate is there the HTTPS port is not listening; production does not mint one, and forcing the listen port with an empty `cert/` makes startup fail.
 
@@ -54,10 +54,10 @@ sudo sysctl -w vm.max_map_count=262144
 
 `bootstrap.memory_lock` is off. Rootless Podman usually cannot grant `IPC_LOCK`.
 
-The first start creates tables. It does not load seed data. Load with a one-off container, while the server is stopped (a second process cannot open an embedded data directory the server already holds):
+The first start creates the tables and, on an empty database, loads the seed, seed-initial and install data (`entity_empty_db_load`). To load more later, such as the data of a component added to the image, use a one-off container while the server is stopped (a second process cannot open an embedded data directory the server already holds):
 
 ```sh
-podman compose -f podman/moqui-compose.yml run --rm moqui load seed seed-initial install
+podman compose -f podman/moqui-compose.yml run --rm moqui load types=seed,seed-initial,install
 ```
 
 `compose run` goes through the entrypoint, so the load runs as uid 1000. `compose exec` does not: it is root unless you pass `-u moqui`.

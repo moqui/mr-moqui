@@ -6,28 +6,28 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# The packages of moqui-host (docs/Packaging.md). `./moq build` picks one with --no-default-features.
+# The packages of moqui-host (docs/Build-Test.md). `./moq build` picks one with --no-default-features.
 [features]
 default = ["maximal", "devtools"]
 dev = ["moqui-host/dev", "devtools"]
 lite = ["moqui-host/lite"]
 enterprise = ["moqui-host/enterprise"]
 maximal = ["moqui-host/maximal"]
-# The SMTP listener for hosted and shared mail accounts (docs/Mail-Inbound.md), in Enterprise and Maximal; for a
+# The SMTP listener for hosted and shared mail accounts (docs/interfaces/Mail-Inbound.md), in Enterprise and Maximal; for a
 # Default build `./moq build -- --features inbound-smtp`.
 inbound-smtp = ["moqui-host/inbound-smtp"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the
 # dev-component crates kept in runtime/dev-component.
-devtools = ["moqui-host/devtools", "dep:dev-aide"]
+devtools = ["moqui-host/devtools", "dep:dev-aide", "dep:example"]
 
 [dependencies]
 moqui-host = { workspace = true }
-# Component crates kept in runtime/base-component; each adds nothing unless its component loads.
-example = { workspace = true }
-# The framework's dev components in runtime/dev-component, in the packages with the dev tools.
+# The framework's dev components in runtime/dev-component, in the packages with the dev tools; each adds nothing unless
+# its component loads.
 dev-aide = { workspace = true, optional = true }
+example = { workspace = true, optional = true }
 
 [lints]
 workspace = true

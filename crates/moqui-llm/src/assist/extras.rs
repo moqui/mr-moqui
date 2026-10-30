@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The drawer's calls of phase 13.14 (plans/LLM-A2A-Assist.md 4.11, 7.5, 7.6; docs/Assist.md): a queued message edited
+//! The drawer's calls of phase 13.14 (plans/LLM-A2A-Assist.md 4.11, 7.5, 7.6; docs/ai/Assist.md): a queued message edited
 //! or canceled (`queued`), dictation (`transcribe`, through the model bound to the `transcribe` feature), the inline text
 //! actions (`textAction`, one tool-free call with a fixed safety scaffold whose result is only proposed), the user's
 //! memory and its gates (`memories`, `memory`), the user's own skills and Save as skill (`skills`, `skill`), and the

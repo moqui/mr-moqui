@@ -262,7 +262,7 @@ pub(crate) struct TestComponent {
 
 /// The components under `runtime/base-component`, `runtime/component` and `runtime/dev-component` (which load on a dev
 /// instance) that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`. By directory
-/// name within each.
+/// name within each. Not a template, whose name is a placeholder (`runtime/dev-component/template`).
 pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
     for parent in ["base-component", "component", "dev-component"] {
@@ -281,6 +281,9 @@ pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, 
                 continue;
             }
             let name = component_name(&dir);
+            if name.contains('@') {
+                continue;
+            }
             let specs = component_specs(&name, &test_dir, sub)?;
             if !specs.is_empty() {
                 found.push(TestComponent { name, dir, specs });

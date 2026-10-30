@@ -263,7 +263,7 @@ along with this software (see the LICENSE.md file). If not, see
         </resource>
     </resource>
 
-    <!-- Commit statuses from outside CI, in GitHub's status shape (docs/Git-Hosting.md, Commit statuses). The path is
+    <!-- Commit statuses from outside CI, in GitHub's status shape (docs/interfaces/Git-Hosting.md, Commit statuses). The path is
         open to every user (MOQUI_API_GIT in ToolsSecurityData.xml): the services check the push right on the repository. -->
     <resource name="git">
         <id name="repositoryId">

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The demo lock-down of ADMIN (README.md). Seed, not demo: a seed load runs the tools and framework seed again and
+    then this, after them, so the lock-down holds on every seed load and on a production first-run load. Each row has
+    the primary key of the row it overwrites. -->
+<entity-facade-xml type="seed">
+    <!-- VIEW-only for ADMIN on the Tools and System apps, so the lock-down below cannot be undone from them, and on the
+        Moqui REST API (component://tools/data/ToolsSecurityData.xml) -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="TOOLS_APP_ADMIN" artifactGroupId="TOOLS_APP" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="SYSTEM_APP_ADMIN" artifactGroupId="SYSTEM_APP" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MOQUI_API_ADMIN" artifactGroupId="MOQUI_API" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- EntitySync put and get, and SystemMessage receive, are not under the Tools and System screens
+        (component://framework/data/SecurityTypeData.xml) -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="EntitySyncServicesADMIN" artifactGroupId="EntitySyncServices" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="SystemMessageServicesADMIN" artifactGroupId="SystemMessageServices" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- git repositories: clone and read, no push, no new repositories or mirrors (SecurityTypeData.xml) -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="GitRepositoriesADMIN" artifactGroupId="GitRepositories" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- Monitor: its checks and scrape targets fetch URLs a user gives, and its sources issue ingest keys; reports keep
+        their editing but not git sync or webhook contacts (component://tools/data/MonitoringSecurityData.xml) -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_APP_ADMIN" artifactGroupId="MONITOR_APP" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="REPORT_GIT_SYNC_ADMIN" artifactGroupId="REPORT_GIT_SYNC_ADMIN" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="REPORT_CONTACT_ADMIN" artifactGroupId="REPORT_CONTACT_ADMIN" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+
+    <!-- ADMIN permissions ended: the search store and OpenSearch Dashboards proxies
+        (component://framework/data/MoquiSetupData.xml), another user's password without the old one, SFTP and git over
+        SSH should SSH be turned back on, telemetry ingest, and report files written on the server -->
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SearchRemote" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DashboardRemote" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_PASSWORD" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_GIT" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INGEST" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_SAVE_LOCATION" fromDate="0" thruDate="1265184000000"/>
+</entity-facade-xml>

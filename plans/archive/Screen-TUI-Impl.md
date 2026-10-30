@@ -1,6 +1,6 @@
 # Screen TUI implementation plan
 
-> Archived 2026-10-21: Phases 1 to 5 are built, with the findings under each in section 5. The open parts (live checks in real terminals and browsers, per-user key bindings, a two-way rich-text editor, a `diagram` component, board sums and calendar create, the upstream Revue asks) are in [Remaining-Work](../Remaining-Work.md). The user guide is [docs/TUI.md](../../docs/TUI.md).
+> Archived 2026-10-21: Phases 1 to 5 are built, with the findings under each in section 5. The open parts (live checks in real terminals and browsers, per-user key bindings, a two-way rich-text editor, a `diagram` component, board sums and calendar create, the upstream Revue asks) are in [Remaining-Work](../Remaining-Work.md). The user guide is [docs/ui/TUI.md](../../docs/ui/TUI.md).
 
 Oct 21, 2026 · Phases 1 to 5 built (findings under each in section 5): the browser terminal (4.4) included, SSH opened to every user (4.2, "Changed Oct 21"), the leftovers of Phase 4 (a second factor in the login dialog, the client address, text areas that scroll, a dialog per list row) and the mouse with drag to select and copy. What is still open is in [Remaining-Work](../Remaining-Work.md). This plan implements [archive/Screen-TUI-Revue.md](Screen-TUI-Revue.md). Revue was read at 3.10.1 (commit `011741e`, the clone at `~/work/moquiwork/3p_other/revue`). Revue paths below are relative to that clone. Every other path is relative to this repository.
 
@@ -31,7 +31,7 @@ Most of these are beyond what the proposal settles.
 | D8 | The keyboard scheme follows **5250/3270 function keys plus Lynx link travel**, and every action has a key. | Section 1.5. This settles the proposal's "Keyboard conventions" open question. |
 | D9 | Every string from the server is stripped of control characters before it is drawn. | A field value holding ESC or OSC bytes would otherwise drive the user's terminal. Revue writes cell characters as given. |
 | D10 | **A screen that goes custom in one render mode needs its own implementation in each other mode it should work in.** A `.qvue` screen, or inline `render-mode` text of type `qvt`, gets a `tui` text beside it: a model fragment that may name a client component. Until it has one, it shows a placeholder with a browser link. | This is the user's rule. Custom presentation does not translate between modes, but the screen's transitions and data are shared, so only the presentation is written twice (section 2.9). |
-| D11 | Key bindings are a **theme value**, with the scheme of section 1.5 as the default. Per-user bindings and a UI for them wait. | One scheme per deployment keeps the help, the key line and `docs/TUI.md` true for everyone. |
+| D11 | Key bindings are a **theme value**, with the scheme of section 1.5 as the default. Per-user bindings and a UI for them wait. | One scheme per deployment keeps the help, the key line and `docs/ui/TUI.md` true for everyone. |
 | D12 | Rich-text fields (`editor-type="html"`, `rich`, `rich-light`) are read-only in the TUI, with "open in browser". Markdown fields (`editor-type="md"`) are edited as source with a preview. A two-way Markdown editor that looks like `markdown-view` comes later (section 3.8). | No terminal editor today edits rich text, or Markdown in place, without losing content (section 3.8). |
 
 ---
@@ -194,7 +194,7 @@ Rules:
 
 ### 1.5 Keyboard scheme
 
-This is one scheme for every screen. It is documented in a new `docs/TUI.md` and shown by F1. It follows three rules:
+This is one scheme for every screen. It is documented in a new `docs/ui/TUI.md` and shown by F1. It follows three rules:
 
 1. Single-letter keys work only when focus is not in a text field, as in Lynx.
 2. Function keys and Alt combinations work everywhere.
@@ -709,7 +709,7 @@ It would be an own widget over `TextArea`, or a contribution to Revue's `RichTex
     session with no user counts toward the total only; the dialog login moves it to the user (`SessionSlot::assign`),
     refused when the user's sessions are full. A host-side `ScreenLink` wrapper (`GatedLink`) does that, decides the log
     pane after the login (`SessionEvent::LogOffered`), and closes the session after `MAX_LOGIN_FAILURES` (5).
-- **`agent-apps` (Phase 3c).** The same client for a program, on an `exec` channel with no pty (`crates/moqui-host/src/ssh/agent.rs`). Sessions are held by the server between one-command execs, and there is a line mode. It needs a user the SSH connection logged in (a key or a password; not a dialog login) and takes the same slots. docs/TUI.md "For agents".
+- **`agent-apps` (Phase 3c).** The same client for a program, on an `exec` channel with no pty (`crates/moqui-host/src/ssh/agent.rs`). Sessions are held by the server between one-command execs, and there is a line mode. It needs a user the SSH connection logged in (a key or a password; not a dialog login) and takes the same slots. docs/ui/TUI.md "For agents".
 
 ### 4.3 Remote client (`moqui tui --server <url>`)
 
@@ -752,7 +752,7 @@ The same interpreter draws through `PipelineHarness` at a given size with a `Fak
 - **The `tui-client` feature.** Not made: `tui` alone is the remote client's build (Phase 4 findings).
 - **Forwarding.** `crates/moqui/Cargo.toml` forwards both features.
 - **The generated app crate.** The template in `moq` (the `[features]` block near `moq:1067-1074`, `package_features` at `moq:941`) gets them too, so `./moq build` of an add-on set carries the feature.
-- **Checks and docs.** `scripts/check-packages.sh` checks the new sets, and `docs/Packaging.md:18-42` gets the rows.
+- **Checks and docs.** `scripts/check-packages.sh` checks the new sets, and `docs/Build-Test.md` (Features) gets the rows.
 
 ---
 
@@ -788,7 +788,7 @@ Recorded 2026-10-20. Decision: **go**. Route 3 is available without carrying a f
 1. **Server.** `ScreenTui.js` for the elements of 1.6 minus views, trees, charts and wizard/stack. The registration of 2.1, the error kinds of 2.2 and the envelope of 2.3. `text type="tui"` fragments with their JSON check, and the placeholder where a `qvt` text has no `tui` twin (2.9). The two lint findings of 2.9, and the worklist they print. The goldens and render tests of 2.8, and the Gallery spec in `tui`.
 2. **Client.** `nav`, `state`, `layout`, `keys` (with the theme's `STRT_TUI_KEYS` overrides) and `theme`. The frame with title, drawer, message and key lines. Forms with validation. Lists with paging, sort, the find dialog and selection. Drop-down with inline and URL options. Date fields. Dialogs. Transitions with messages and errors.
 3. **Local channel.** `moqui tui` with the in-process link, login, and the log pane with its logging tap.
-4. **Docs.** `docs/TUI.md` first version: start, keys, widths.
+4. **Docs.** `docs/ui/TUI.md` first version: start, keys, widths.
 
 **Exit:** in the example app and one Mantle app, a user finds, opens, edits and saves records, uses dialogs and dependent drop-downs, and pages lists, all by keyboard, at 100 and 180 columns. Every Gallery screen renders a valid model.
 
@@ -1007,7 +1007,7 @@ Recorded 2026-10-21.
 **Exit evidence.**
 - `crates/moqui-tui/tests/agent.rs` (6 tests): the answer's form, elements by number, id and label, `set` on a text field and on a dependent drop-down by label and by value, a settled palette search, JSON, a confirm, the empty-row count, and errors.
 - `crates/moqui-host/tests/it/ssh.rs` `agent_apps_answers_one_command_per_exec`: open, the user list's find by label, JSON elements, another user refused, `tui_max_sessions_per_user`, `SSH_APPS` refused (removed Oct 21, 4.2), `close`, and the line mode.
-- **Live.** The Tools task, run by an agent on the release build with one `ssh -S <control socket> … agent-apps <id> <command>` per step: 20 commands, none of them a wait, a retry or a Tab count. The command list is in docs/TUI.md "For agents".
+- **Live.** The Tools task, run by an agent on the release build with one `ssh -S <control socket> … agent-apps <id> <command>` per step: 20 commands, none of them a wait, a retry or a Tab count. The command list is in docs/ui/TUI.md "For agents".
 
 **Still awkward for an agent.**
 - Unnamed links have path ids (`widgets/container-row/row-col[0]/link[0]`). Labels work, but an id is no help.
@@ -1128,7 +1128,7 @@ Not usable, so no `diagram` component; Status Flows' twin stays text.
 - `tests/markdown_roundtrip.rs` runs `RichTextEditor`'s round trip:
   - the Gallery sample, the wiki pages and plans/README.md come back as they went in;
   - a line that starts with digits and holds `. ` is rewritten as a numbered item (`00:53 … quotes. An answer is:`
-    became `1. An answer is:` in docs/TUI.md);
+    became `1. An answer is:` in docs/ui/TUI.md);
   - inline markup is drawn plain.
 - So the editor is styled source (3.8). `markdown::source_looks` gives each character its look from pulldown-cmark's
   offsets, `draw.rs` `source_line` draws the runs, and Alt+B, Alt+I and Alt+K wrap the word at the cursor. F1 lists
@@ -1357,7 +1357,7 @@ These update the proposal's list with what the survey found.
 - `plans/README.md`: list this plan under the active plans, and keep the proposal in `proposals/`. Per the README conventions, the proposal moves to `archive/` when Phase 4 is done, and the parts still open go to `Remaining-Work.md`.
 - `plans/Future-Plans.md`: a paragraph for the proposal pointing here.
 - `plans/Parity-Mapping.md`: `tui` has no Java counterpart, so it goes in the "not in Java" list with `ScreenTui.js` and `crates/moqui-tui`.
-- `docs/TUI.md` (new): the user guide (channels, keys, widths, themes), and for screen authors: writing a `tui` text, the component props of the framework set, and registering a component from a component crate. `docs/Packaging.md`: the features. `webroot/js/README.md`: the model contract section.
+- `docs/ui/TUI.md` (new): the user guide (channels, keys, widths, themes), and for screen authors: writing a `tui` text, the component props of the framework set, and registering a component from a component crate. `docs/Build-Test.md`: the features. `webroot/js/README.md`: the model contract section.
 - `plans/archive/License-Review.md` and `deny.toml`: the new crates of 3.1, and xterm.js if 4.4 is built.
 - `xml-screen-3.xsd`: the `text` `type` documentation names `tui` beside `qvt` and `qvue`, and states D10's rule.
 - In the ironstone-boss repository (its own git repo): the style guide has the rule since Oct 20, 2026, in principle 3, §4.8 "The terminal twin", the Terminal row of §7, the §8.1 checklist and a §9 reference. Still to do there: BOSS's lint worklist goes into its plan once the lint exists, and design-doc-guide's **Impl** column may name the `tui` twin of a `qvue` screen.

@@ -79,11 +79,12 @@ fn a_clean_file_passes_and_warnings_do_not_fail() {
 
 #[test]
 fn refs_lists_what_uses_an_entity() {
-    let output = moqui(&["refs", "moqui.example.Example", "--kind", "entity"]);
+    // --kind keeps the references whose other side, here the screen that finds the entity, is of that kind
+    let output = moqui(&["refs", "moqui.example.Example", "--kind", "screen"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(
-        stdout.contains("runtime/base-component/example/screen/Gallery/ExampleDetail.xml:"),
+        stdout.contains("runtime/dev-component/example/screen/Gallery/ExampleDetail.xml:"),
         "{stdout}"
     );
     let _ = repo();

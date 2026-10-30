@@ -1,6 +1,6 @@
 # Integration review
 
-> Archived 2026-10-27: all 21 findings are resolved. Implementation and validation evidence remain below; the applicable cluster rollout requirement is maintained in [Security surface](../../docs/SECURITY_SURFACE.md#integration-fix-cluster-rollout).
+> Archived 2026-10-27: all 21 findings are resolved. Implementation and validation evidence remain below; the applicable cluster rollout requirement is maintained in [Security surface](../../docs/security/Attack-Surface.md#integration-fix-cluster-rollout).
 
 > 2026-10-26. Read-only sweep of the assembled framework. Eight seam reviews, then a check of each conflict and bug against the cited lines. No source changes.
 >
@@ -93,7 +93,7 @@ P3 validation: the full core suite passed 2,038 tests (three ignored), with only
 
 I-9/I-16 follow-up validation: all 16 native browser-host tests, 317 core screen tests (one ignored), and 220 host unit tests passed. The browser custom-runtime test verifies component entities, extensions, configured extra entity files, entity-auto service calls, runtime-overridden physical naming and encrypted storage. Render regressions compare merged HTML/QVT and server-static QVT both inside and outside form fields, TUI JSON versus HTML fallback conversion, duplicate matches, fallback ordering, comma-separated types and print aliases. `moqui test framework --spec ScreenQvt` passed all 16 features after its static-renderer fixture switched from stubbed support to the real shared module; the selected offline QVT/static/HTML browser suites passed all 65 features. Workspace and minimal-build lint, changed-file rustfmt and `git diff --check` passed. Existing generated fixture outputs remain unchanged. A WASM build was not run because this checkout has neither the Emscripten SDK nor the WASM Rust target installed; browser-host coverage here runs natively against SQLite.
 
-**Cluster rollout:** stop collaborative editing, upgrade and restart every member, then reopen editing. Mixed versions are unsupported: the compact envelope uses `body.frame.update`, whereas old receivers expect a second top-level update and old HTTPS listeners cap bodies at 1 MiB. The common limit is now 16 MiB on every transport. See [Security surface](../../docs/SECURITY_SURFACE.md#integration-fix-cluster-rollout).
+**Cluster rollout:** stop collaborative editing, upgrade and restart every member, then reopen editing. Mixed versions are unsupported: the compact envelope uses `body.frame.update`, whereas old receivers expect a second top-level update and old HTTPS listeners cap bodies at 1 MiB. The common limit is now 16 MiB on every transport. See [Security surface](../../docs/security/Attack-Surface.md#integration-fix-cluster-rollout).
 
 ## Bugs
 
@@ -271,7 +271,7 @@ I-9/I-16 follow-up validation: all 16 native browser-host tests, 317 core screen
 
 ## Seams that agreed
 
-- Boot. Conf merge order is default, then components, then the runtime conf. One Rust service location cannot sit in both the built-in table and a component catalogue. Host features match `docs/Packaging.md`. Detach and `moqui test --serve` do not build a second live factory on top of the process globals already listed under Remaining-Work.
+- Boot. Conf merge order is default, then components, then the runtime conf. One Rust service location cannot sit in both the built-in table and a component catalogue. Host features match `docs/Build-Test.md`. Detach and `moqui test --serve` do not build a second live factory on top of the process globals already listed under Remaining-Work.
 - Commit order. Cache flush, the `DataFeedPending` insert, the enlisted commit, and `process#DataFeedPending` run in that order. Guarantee session flush runs in `end_request`. The scheduler queues job bodies onto the service pool. A nested borrow of the enlisted connection is refused. `force_new` stops at `park_budget`.
 - Authorization doors. Password, login key, app password, and SSO external login reach `finish_login` and `session::set_user`. Git HTTP, WebDAV, A2A, MCP tool calls, and the gateway read `current_user_id` after those functions. The HTTP guard runs before the artifact tarpit on purpose. The browser host's disabled authorization stays in `moqui-browser`.
 - Screens. `script/runtime/urls.rs` delegates to `UrlInstance`. Pass-through parameters override a link's own parameters in both merged and server-static qvt. `xsl-fo` is the `html-print` alias on the render-mode switch. No caller in these paths asks for FO XML bytes.

@@ -14,5 +14,5 @@ passes, and each task there says what it exercises.
 
 To replace a recording with one from a model, run the task live and copy its transcript here as `<task>-1.jsonl`
 (`runtime/log/agent-eval/<run>/assist/<task>-<n>.jsonl`, the same form); to keep several runs, name them
-`<task>-<n>.jsonl`, which `--runs` plays in turn. Agent evaluation is described in `docs/Testing.md` ("Agent
+`<task>-<n>.jsonl`, which `--runs` plays in turn. Agent evaluation is described in `docs/Build-Test.md` ("Agent
 evaluation").

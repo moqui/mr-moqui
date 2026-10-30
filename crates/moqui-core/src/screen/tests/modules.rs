@@ -358,8 +358,8 @@ fn the_generated_code_of_the_whole_render_is_one_function_per_section() {
     );
 }
 
-/// Every screen file of the framework and the base components generates code in all three modes, with
-/// its forms assembled: an element without a macro, an expression that is not JavaScript, or a form that
+/// Every screen file of the framework, the base components and the example dev component generates code in all three
+/// modes, with its forms assembled: an element without a macro, an expression that is not JavaScript, or a form that
 /// cannot be assembled fails here and not on the first request that reaches the screen.
 #[test]
 fn every_base_component_screen_generates_in_all_three_modes() {
@@ -380,17 +380,16 @@ fn every_base_component_screen_generates_in_all_three_modes() {
     let _env = super::Env::new();
     let _example = crate::testing::ExampleOff::new();
     let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-    let factory = ExecutionContextFactory::boot(runtime).unwrap();
+    let factory = ExecutionContextFactory::boot(&runtime).unwrap();
     factory.set_entity(crate::testing::open());
     let context = factory.new_context();
     let _entered = context.enter();
     let _authz = context.disable_authz();
     let facade = ScreenFacade::of(&factory);
     let mut files = Vec::new();
-    collect(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component"),
-        &mut files,
-    );
+    for dir in ["base-component", "dev-component/example"] {
+        collect(&runtime.join(dir), &mut files);
+    }
     assert!(files.len() > 100, "{}", files.len());
     let mut failures = Vec::new();
     let mut units = 0;

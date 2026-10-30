@@ -13,7 +13,7 @@
  */
 
 //! The servlet API's request and response for scripts, `ec.web.request` and `ec.web.response`, and the handler
-//! objects of the conf's script servlets, filters and listeners ([`invoke`]). Guide: `docs/Web-Scripts.md`.
+//! objects of the conf's script servlets, filters and listeners ([`invoke`]). Guide: `docs/interfaces/Web-Scripts.md`.
 //!
 //! ```text
 //! request:  method, requestURI, queryString, contextPath (""), servletPath, pathInfo, scheme, serverName, serverPort,

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Assist drawer's calls (plans/LLM-A2A-Assist.md 4.5; docs/Assist.md): the transitions of the webroot subscreen
+<!-- The Assist drawer's calls (plans/LLM-A2A-Assist.md 4.5; docs/ai/Assist.md): the transitions of the webroot subscreen
     assist (webroot/assist.xml) call call#Drawer with their name. The body is Rust (crates/moqui-core/src/llm/assist),
     in builds with the llm feature. It is not a REST or JSON-RPC service: programs use A2A, MCP or the gateway. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">

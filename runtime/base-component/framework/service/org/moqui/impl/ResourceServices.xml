@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Large content in the database: moqui.resource.ContentBlob and its chunks. No Java counterpart. The bodies are Rust:
-    crates/moqui-core/src/service/content.rs over crates/moqui-core/src/resource/blob.rs. Guide: docs/Git-Hosting.md,
+    crates/moqui-core/src/service/content.rs over crates/moqui-core/src/resource/blob.rs. Guide: docs/interfaces/Git-Hosting.md,
     Storage. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="gc" noun="ContentBlobs" type="rust" location="moqui_core::service::content::gc_content_blobs"

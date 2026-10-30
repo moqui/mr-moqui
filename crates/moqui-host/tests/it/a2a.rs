@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A server (docs/A2A.md; plans/LLM-A2A-Assist.md 4.15) over HTTP on a seeded server on embedded Postgres, with
+//! The A2A server (docs/ai/A2A.md; plans/LLM-A2A-Assist.md 4.15) over HTTP on a seeded server on embedded Postgres, with
 //! the scripted fake provider. Ported from the Java wire tests (`A2ACoreTests`, `A2AJsonRpcTests`) and the
 //! `interop_a2a_sdk.py` cases, against both bindings: the card and its URL against forwarded headers, auth, the
 //! envelope and version errors, SendMessage with its idempotency per user, GetTask, ListTasks paging, ownership
@@ -1033,7 +1033,7 @@ fn the_a2a_server_over_both_bindings_on_postgres() {
     if python.is_empty() {
         eprintln!(
             "SKIPPED: the a2a-sdk interop check (tests/fixtures/a2a/interop_a2a_sdk.py) did not run: A2A_SDK_PYTHON \
-             is not set; docs/A2A.md says how to make the venv"
+             is not set; docs/ai/A2A.md says how to make the venv"
         );
         return;
     }

@@ -2928,7 +2928,7 @@ fn the_form_list_board_and_calendar_move_cards_and_events_in_chromium() {
     }
 }
 
-/// The Assist drawer (docs/Assist.md "The drawer"; plans/LLM-A2A-Assist.md 13.5) driven as a user would, against the scripted fake
+/// The Assist drawer (docs/ai/Assist.md "The drawer"; plans/LLM-A2A-Assist.md 13.5) driven as a user would, against the scripted fake
 /// provider: a run streams into the thread, a reload re-attaches to it, a page of the build without the compiler runs it, a gallery
 /// hand-off reports the refused save and then the saved one, the user's own navigation wins over the agent's, only the tab that
 /// owns follow follows, and an approval executes while a second tab sees it.

@@ -19,7 +19,7 @@
 //! API key; the SSH server already checked the key or password), and every repository is checked against
 //! `AT_GIT_REPOSITORY`: `view` to fetch, `create`/`update` to push new refs and fast-forwards, `delete` to force a
 //! push or delete a ref. With that type's authorization off in the conf the server refuses everything. Guide:
-//! `docs/Git-Hosting.md`.
+//! `docs/interfaces/Git-Hosting.md`.
 
 #[cfg(test)]
 mod hosting_tests;

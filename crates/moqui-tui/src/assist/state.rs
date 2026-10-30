@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The pane's reducer, with no Revue and no I/O: the drawer's contract (docs/Assist.md, `moqui.assist` in
+//! The pane's reducer, with no Revue and no I/O: the drawer's contract (docs/ai/Assist.md, `moqui.assist` in
 //! `WebrootAssist.js`) in Rust. A conversation as `GET conversation` answers it is a [`Thread`]; a run's stored events
 //! are applied in sequence ([`Thread::apply`]), each answering the [`Effect`]s the session acts on; [`Thread::rows`]
 //! are the lines the pane draws.
@@ -141,7 +141,7 @@ pub struct Owner {
     pub following: bool,
 }
 
-/// What the session does for an event this client follows (docs/Assist.md "Follow").
+/// What the session does for an event this client follows (docs/ai/Assist.md "Follow").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Follow {
     Navigate {

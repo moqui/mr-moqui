@@ -16,8 +16,8 @@ that carries it (D16).
 The tools have been talked about since early OFBiz, and small prototypes made over the years; this plan expands the
 user's notes of Oct 24, 2026 into a design grounded in what mr-moqui has built. Reviewed for it: the framework's
 definition caches and what follows a file change, the component discovery, the Assist drawer, canvases, approvals and
-tool registry (docs/Assist.md, [LLM-A2A-Assist](LLM-A2A-Assist.md)), git hosting and revision management
-(docs/Git-Hosting.md, docs/Revision-Management.md), IronStone Projects' Code (`boss/plan/design-projects.md` §7 and its
+tool registry (docs/ai/Assist.md, [LLM-A2A-Assist](LLM-A2A-Assist.md)), git hosting and revision management
+(docs/interfaces/Git-Hosting.md, docs/data/Revision-Management.md), IronStone Projects' Code (`boss/plan/design-projects.md` §7 and its
 screens), the vendored client libraries, the screen and XML Actions macros, the XSDs, the IronStone style guide
 (`boss/plan/style-guide.md`), and Gitea's repository view and editor (`~/work/moquiwork/3p_other/gitea`, at fc49368).
 
@@ -76,7 +76,7 @@ and the risks and open questions (20).
 - The text is the truth (D3). Every visual tool is a view of a file's buffer; Text is one click away with the same undo,
   and nothing is reformatted.
 - Errors teach: a check names the element, the XSD's documentation and the skill section that has the rule, so a person
-  and a model fix it the same way (the pattern of `openui-lang`, docs/Assist.md "Parsed once").
+  and a model fix it the same way (the pattern of `openui-lang`, docs/ai/Assist.md "Parsed once").
 - Agents work as people do: they read, run in sim and propose; the user reviews and saves. Nothing an agent writes
   reaches disk without the user's click.
 - Failure tolerant, as [AGENTS.md](../AGENTS.md) asks: a file that does not parse keeps its previous definitions loaded
@@ -134,7 +134,7 @@ parameters, so the canvas shows the record the user was looking at.
 The rail on the left switches the side panel: Files, Search, Changes, Artifacts, Tasks.
 
 **A change, start to end.** On a site whose site component is `my-site` (D17), a user looking at an example in the
-gallery's `ExampleDetail` (`runtime/base-component/example/screen/Gallery/ExampleDetail.xml`, an upstream screen) opens
+gallery's `ExampleDetail` (`runtime/dev-component/example/screen/Gallery/ExampleDetail.xml`, an upstream screen) opens
 Assist from "Customize this screen" (the `dev` agent, picked by default on dev-aide pages) and asks: "Add a due date to
 examples and show it after Ends."
 
@@ -193,20 +193,20 @@ kept by their XML text (`core/script/actions.rs`), so new text compiles anew.
 
 | Piece | What it gives | Where |
 | --- | --- | --- |
-| Assist | The agent runtime, approvals with hand-offs (Edit in screen, the transition observer), screen sessions on the tui model, skills with sections, the drawer's page state and suggested prompts | docs/Assist.md, plans/LLM-A2A-Assist.md |
+| Assist | The agent runtime, approvals with hand-offs (Edit in screen, the transition observer), screen sessions on the tui model, skills with sections, the drawer's page state and suggested prompts | docs/ai/Assist.md, plans/LLM-A2A-Assist.md |
 | Canvas dialects | `openui` and `vue-sfc` with its sandbox frame; a registry that takes the planned `screen-xml` dialect as it is (`devOnly`) | `core/llm/ui/`, `webroot/js/WebrootAssistCanvas.js` |
 | Registration from a crate | `submit_tool!`, `submit_dialect!`, `submit_assist_prompts!` | `core/llm/tools/mod.rs`, `core/llm/ui/mod.rs`, `core/llm/assist/prompts.rs` |
-| MCP server | Read tools and admin-exposed services for agents outside, as the user | docs/MCP.md |
+| MCP server | Read tools and admin-exposed services for agents outside, as the user | docs/ai/MCP.md |
 | Sim overlay | A call run against an overlay of the database, the rows it wrote, a fence against outside effects; embedded Postgres builds only | `core/entity/cache.rs` (`enter_sim`, `sim_changes`), the approval preview |
-| Command line | `moqui types` (TypeScript of entities, services and `ec`), `moqui lint` (expression parses with oxc, Groovy idioms and hazards), `moqui test --coverage` (services no spec called), `moqui tui --snapshot` and `--agent` | `core/typegen/`, `core/script/screen_lint.rs`, `core/script/lint_hazards.rs`, `core/service/coverage.rs`, docs/TUI.md |
+| Command line | `moqui types` (TypeScript of entities, services and `ec`), `moqui lint` (expression parses with oxc, Groovy idioms and hazards), `moqui test --coverage` (services no spec called), `moqui tui --snapshot` and `--agent` | `core/typegen/`, `core/script/screen_lint.rs`, `core/script/lint_hazards.rs`, `core/service/coverage.rs`, docs/ui/TUI.md |
 | XML Actions to JavaScript | One generator function per action element: the exact translation a composer shows | `fw/template/XmlActions.js` |
 | Screen macros | The qvt and tui renderers the builder stamps | `fw/template/screen/ScreenQvt.js`, `ScreenTui.js` |
 | Element positions | Each `MNode` has its file, line and column; the reader is hand-written, no XML crate | `lib/node/` |
 | Widget fragments | Cached as re-serialized text (`node.write_string()`), so their positions are lost | `core/screen/definition.rs` `XmlFragment` |
 | Vendored libraries | Vue 3.5.44 and its compiler for QuickJS, Quasar 2.35.1, Tiptap 3.31.4 with ProseMirror and Yjs in one bundle, highlight.js, Marked, DOMPurify, Mermaid, Chart.js, SortableJS, xterm.js; no code editor | `webroot/libs/refresh.mjs` |
-| Read-only code | `code-view` (highlight.js) and the `moqui-diff` table | `fw/xsd/xml-screen-3.xsd`, docs/Revision-Management.md |
-| Git hosting | Hosted `local`, `db` and `remote` repositories over gitoxide, merge requests, branch rules, gitECA rules; the `git` feature, which today's default package (Lite) leaves out | docs/Git-Hosting.md, docs/Packaging.md |
-| Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `docs/Qvt-Client.md` |
+| Read-only code | `code-view` (highlight.js) and the `moqui-diff` table | `fw/xsd/xml-screen-3.xsd`, docs/data/Revision-Management.md |
+| Git hosting | Hosted `local`, `db` and `remote` repositories over gitoxide, merge requests, branch rules, gitECA rules; the `git` feature, which today's default package (Lite) leaves out | docs/interfaces/Git-Hosting.md, docs/Build-Test.md |
+| Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `docs/ui/Qvt-Client.md` |
 | XSDs | 12 schemas, 7,319 lines, with documentation; nothing reads them | `fw/xsd/` |
 | Script console | None: phase 11 dropped the Groovy shell and decided on no web eval endpoint "even in development" | `runtime/base-component/tools/screen/Tools/GroovyShell.xml`, archive/Implementation-Phases.md |
 
@@ -235,8 +235,9 @@ loads in about 5 ms (Performance-Implementation), so relinking the whole model o
 - **Dependencies.** A component that loads on every purpose may not depend on a dev-only one: discovery logs an error
   naming both and leaves the dependent out (the others go on). A dev component may depend on any.
 - **The directory.** `runtime/dev-component` is a component directory as `runtime/component` is. The framework's own
-  dev components are tracked in this repository, as base-component's are: the dev-aide first, more later, each named in
-  `.gitignore` as an exception to `/runtime/dev-component/*` (`!/runtime/dev-component/dev-aide/`). A user's own dev
+  dev components are tracked in this repository, as base-component's are: the dev-aide, the example component and the
+  component template, each named in `.gitignore` as an exception to `/runtime/dev-component/*`
+  (`!/runtime/dev-component/dev-aide/`). A user's own dev
   components sit beside them in repositories of their own, which this repository ignores as it ignores
   `runtime/component`. `./moq`'s component tasks take `--dev` to work there (`component-get --dev`,
   `component-create --dev`), and `git`, `git-status` and `git-pull` include its repositories.
@@ -266,7 +267,7 @@ runtime/dev-component/dev-aide/
   (§4.2), the agent tools and dialects (§13), and the service implementations they share. The general pieces (reload,
   index, lossless XML, schema digest, checks) are the framework's (§17), because `moqui check`, `moqui refs` and MCP
   need them without the dev-aide.
-- **The packages** (D16; docs/Packaging.md changes to this):
+- **The packages** (D16; docs/Build-Test.md changes to this):
 
   | Package | `./moq` flag | Cargo profile | Binary | Features |
   | --- | --- | --- | --- | --- |
@@ -289,9 +290,9 @@ runtime/dev-component/dev-aide/
   `requires: ["git"]` run in a plain `./moq test`, and the dev conf's `ssh_port` (2222) opens the SSH server on
   127.0.0.1 with `./moq run`, as 8080 and 8443 open the web server (a second instance on the machine sets other
   ports). The first build takes longer (gitoxide and russh). The default binary moves from `target/lite/moqui` to
-  `target/develop/moqui`, so the README's Quick Start, docs/Packaging.md, `moq`'s help and completion, and any script
+  `target/develop/moqui`, so the README's Quick Start, docs/Build-Test.md, `moq`'s help and completion, and any script
   that names the path change with it.
-- A linked native component whose component is not loaded contributes nothing (docs/Native-Components.md). The agent
+- A linked native component whose component is not loaded contributes nothing (docs/dev/Native-Components.md). The agent
   tools registered with `submit_tool!` are not gated by component (`core/llm/tools/mod.rs` `registered` takes every
   linked one), so each needs the `dev.aide` capability (§13.2) and checks the component and purpose when called. A
   binary without `devtools` (Lite, Maximal, Enterprise) still loads the component's screens on a dev instance; its
@@ -1002,7 +1003,7 @@ parameter validation".
   dynamic-dialog, a button-menu, a status-bar, a number-card, a chart. A new screen starts from one of the style
   guide's archetypes (`boss/plan/style-guide.md` §3: Landing, List, Detail, 360, Task, Board, Calendar, Split, Settings,
   Wizard, Dialog, Report, Editor, Panel, Tree list), as the gallery shows them
-  (`runtime/base-component/example/screen/Gallery/`).
+  (`runtime/dev-component/example/screen/Gallery/`).
 - **Forms**: a field's place on screen comes from the form's `field-layout` when it has one, so moving a field moves
   its `field-ref` (or a list's `form-list-column`), and adding a field to such a form adds its `field-ref` too; without
   a layout it is the order of the `field` elements. A form merge from a `screen-extend` does the same through F16's
@@ -1159,7 +1160,7 @@ relative paths, subscreens and extensions resolve as they will after the save. N
   the card's: Accept all (a new screen file at its path and mount, or the change set of the existing file), Review, and
   Open in the builder (the proposal becomes the builder's buffer, unsaved).
 - **`qvue-screen`** (P9; as built, §18): the program is an XML screen block and the SFC blocks of `vue-sfc` (`<template>`,
-  `<script>`, `<style>`). The SFC previews in the existing sandbox frame (docs/Assist.md "Vue SFC canvases"), its
+  `<script>`, `<style>`). The SFC previews in the existing sandbox frame (docs/ai/Assist.md "Vue SFC canvases"), its
   `$bridge` reads answered by the program's own read-only transitions under the read fence and its submits held as
   approvals. Accept writes the `.xml` (with `render-modes="qvue"` and the `render-mode text` naming the `.qvue`) and
   the `.qvue`.
@@ -1203,7 +1204,7 @@ the git-depth phase (P8), since a developer's tasks live in the team's tools alr
   repository first (`WorkEffortGitRepository`, when the source knows the repository), each with key, title, status and
   project. Actions: Open (in the configured app), Copy key, Use in commit (a `Task: PROJ-12` trailer, or `Fixes
   PROJ-12`, which Mantle's gitECA rules read when the commit reaches a repository a Projects server hosts or mirrors:
-  docs/Git-Hosting.md "Projects and tasks"), Branch (a local branch `PROJ-12-<words>`), Set current (sticky per
+  docs/interfaces/Git-Hosting.md "Projects and tasks"), Branch (a local branch `PROJ-12-<words>`), Set current (sticky per
   repository: the commit message gets its trailer), and Quick create (title and project).
 - **App paths** are conf (§16): a task app names its project, task and new task paths, with `{projectId}` and `{taskId}`,
   and a base URL when it is another instance. mr-marble's Project and Task screens are named the same way.
@@ -1296,7 +1297,7 @@ framework's:
 | # | Change | Where |
 | --- | --- | --- |
 | F1 | `purpose` on `component-dir`, `component` and `component.xml`; the effective purpose before discovery; the WARN per component left out; the dependency check; `dev-component` in the default `component-list` | `core/context/component.rs`, `factory.rs`, `fw/conf/MoquiDefaultConf.xml`, `moqui-conf-3.xsd` |
-| F2 | The Dev package as `./moq`'s default (feature `dev`, Cargo profile `develop`, `target/develop/moqui`) and `--lite` for Lite; the `devtools` feature (the dev crates, the watcher) in Dev and Debug; the dev-aide's crate a workspace member linked under `devtools`, a user's dev crates through the generated crate; `--dev` for the component tasks, `runtime/dev-component` in the git tasks; the docs and help that name the default package | `moq`, `.cargo/config.toml`, `Cargo.toml`, `crates/moqui-host/Cargo.toml`, `crates/moqui/Cargo.toml`, docs/Packaging.md, README.md |
+| F2 | The Dev package as `./moq`'s default (feature `dev`, Cargo profile `develop`, `target/develop/moqui`) and `--lite` for Lite; the `devtools` feature (the dev crates, the watcher) in Dev and Debug; the dev-aide's crate a workspace member linked under `devtools`, a user's dev crates through the generated crate; `--dev` for the component tasks, `runtime/dev-component` in the git tasks; the docs and help that name the default package | `moq`, `.cargo/config.toml`, `Cargo.toml`, `crates/moqui-host/Cargo.toml`, `crates/moqui/Cargo.toml`, docs/Build-Test.md, README.md |
 | F3 | Reload the service registry: rebuilt from every service file as `lint` replaces it, the changed file's new text included, and swapped in; a per-file merge (its services replaced or removed, includes and implements resolved again) only if the rebuild measures slow | `core/service/define.rs` |
 | F4 | Rebuild the SECA, EmECA and gitECA rule sets, and the EECA rules | `core/service/eca_rules.rs`, `core/entity/load_feed/eca.rs` |
 | F5 | Staged behind the restart (§6.5): the entity model swappable (an `Arc` behind a lock in place of `SharedModel`'s owned model), a relink from changed files, the caches of changed entities dropped, their table check run again; taken up in the modeler's phase (P5) when the restart proves tiresome | `core/entity/share.rs`, `facade.rs`, `derived.rs`, `meta.rs`, `moqui-db` model |
@@ -1323,7 +1324,7 @@ my-site, show it on a list and a detail, see it live, publish", with the agent; 
 are independent of P4 and may run beside it.
 
 - **P1a. Framework groundwork** (F1 to F4, F6, F8, F13, F16; F5 staged). The Dev package as the default build and
-  `--lite`, landed first as its own commit with the README, docs/Packaging.md and `moq`'s help, since D16 changes every
+  `--lite`, landed first as its own commit with the README, docs/Build-Test.md and `moq`'s help, since D16 changes every
   contributor's workflow; dev-only loading; the reload API and watcher over what reloads today, the service registry
   rebuild and the ECA rule sets, restart from the app; the schema digest and reference rules; `screen-extend`
   strengthened; `moqui check` and `moqui refs`. **Check**: `./moq build` makes the Dev package (`moqui version` lists
@@ -1754,6 +1755,17 @@ between the phases. Fixed:
 Still open: there is no CI, so the Windows checks of P1a and §19 run nowhere; the restart's re-exec has no test; P4's
 live-model run has not been run; the card's summary from a patch has no page test; the `.qvue` Design canvas renders
 the `.qvue` buffer, not an unsaved sibling XML.
+
+**New components from the component template** (Oct 29, 2026), §12's App and REST API kinds, with these differences:
+
+- **One template for both.** The App and REST API kinds come from `runtime/dev-component/template`, a component with
+  placeholders (`@component@`, `@Title@`, `@Class@`, `@package@`, `@ID@`) and `disabled="true"` so it never loads, not
+  from the dev-aide's `template/`. `./moq component-create` and Home's New component (`create#Component`,
+  `src/template.rs`) copy it the same way, with a part (screens and REST API, screens only, REST API only) and `--dev`;
+  a dev-aide test makes each part both ways and compares them file for file. The rules are in
+  `runtime/dev-component/README.md`. The Site template stays the dev-aide's.
+- **Not built:** the optional remote (git init only, as for a site), and the data only, native, theme, skill pack and
+  dev tool kinds.
 
 ---
 

@@ -330,7 +330,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="store" noun="LlmApiClient" type="rust" location="moqui_llm::gateway::store_api_client">
         <description>Create or change a client of the A2A server, the MCP server or the LLM gateway (System > LLM >
-            Gateway; docs/Gateway.md). Its credential is an app password of its user (appPasswordId) or one of the user's
+            Gateway; docs/ai/Gateway.md). Its credential is an app password of its user (appPasswordId) or one of the user's
             login keys (loginKey: the key itself, kept only as its hash and never shown again); a new client needs one.
             Refused: a user that does not exist, a credential that is not the user's, a scope that is not a2a, mcp or
             gateway, and a second client with the gateway scope for the same credential. A field left out keeps its

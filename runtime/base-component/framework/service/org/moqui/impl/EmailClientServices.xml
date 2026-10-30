@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     Search: the MoquiEmailMessage document (data/MailSearchData.xml, index moqui_mail) is fed on every change of a message;
     find#Messages searches its free text there (parse#SearchText takes out the operators), else with LIKE.
 
-    Sign-in with Google or Microsoft (M5e, Rust in moqui_core::service::mail::oauth; docs/Mail-OAuth.md): instead of a
+    Sign-in with Google or Microsoft (M5e, Rust in moqui_core::service::mail::oauth; docs/interfaces/Mail-OAuth.md): instead of a
     password, an account's own server signs in with XOAUTH2 (authTypeEnumId EatOAuth2) for IMAP and SMTP, with access
     tokens made from the refresh token stored encrypted on the EmailServer. start#OAuthSignIn begins the provider's
     sign-in in a popup (PKCE, state and nonce kept in the session), the webroot transition /emailOAuth/callback runs
@@ -1982,7 +1982,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outgoingList" type="List"><parameter name="server" type="Map"/></parameter>
         </out-parameters>
     </service>
-    <!-- ========== Sign-in with a provider (OAuth 2.0; Rust: moqui_core::service::mail::oauth, docs/Mail-OAuth.md) ========== -->
+    <!-- ========== Sign-in with a provider (OAuth 2.0; Rust: moqui_core::service::mail::oauth, docs/interfaces/Mail-OAuth.md) ========== -->
 
     <service verb="start" noun="OAuthSignIn" type="rust" location="moqui_core::service::mail::start_oauth_sign_in"
             transaction="ignore" allow-remote="false">

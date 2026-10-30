@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- Merged into the conf whenever the demo component loads, before the runtime conf, so a runtime conf that sets one of
+    these elements again wins. The security data (data/DemoSecurityData.xml) and the SECAs (service/Demo.secas.xml)
+    are the other half; README.md lists what stays open. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <!-- The users whose password, sign-in factors, username and enabled state cannot be changed (comma-separated
+        userIds; refuse#SharedAccountChange): the shared login of the Login screen's Test Login button. -->
+    <default-property name="demo_shared_user_ids" value="EX_JOHN_DOE"/>
+
+    <!-- The sharp tools, replaced and left out of the menus. VIEW-only authorization does not stop SpeedTest or the
+        Data Import check, which run as the screen renders; the others are stubbed as well so no one tries them. -->
+    <screen-facade>
+        <screen location="component://tools/screen/Tools/Entity.xml">
+            <subscreens-item name="DataImport" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="DataExport" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="DataSnapshot" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="SpeedTest" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="SqlRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="SqlScriptRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        </screen>
+        <screen location="component://tools/screen/Tools/Service.xml">
+            <subscreens-item name="ServiceRun" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="ServiceLoadRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        </screen>
+        <screen location="component://tools/screen/System/Resource.xml">
+            <subscreens-item name="ElFinder" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        </screen>
+    </screen-facade>
+
+    <!-- The servers a demo visitor does not need, off whatever ssh_port, mcp_enabled, a2a_enabled and
+        llm_gateway_enabled say: the MCP server and client, A2A both ways, the LLM gateway, SSH (the admin shell, SFTP,
+        git) and WebDAV. The browser terminal (/termws) and /notws stay on: the terminal shows the same screens, checked
+        as the user. -->
+    <llm-facade>
+        <a2a enabled="false" client-enabled="false"/>
+        <mcp server-enabled="false" client-enabled="false"/>
+        <gateway enabled="false"/>
+    </llm-facade>
+    <!-- Mail connects only to this host, so a visitor cannot sync a real mailbox into Comms, where every other visitor
+        would read it, or send through one. -->
+    <email-client allowed-hosts="localhost,127.0.0.1"/>
+    <ssh-server enabled="false"/>
+    <dav-server enabled="false"/>
+</moqui-conf>

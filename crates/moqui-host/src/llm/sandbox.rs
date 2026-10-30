@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `GET /assist/sandbox`: the frame document of a Vue SFC canvas (plans/LLM-A2A-Assist.md 4.10; docs/Assist.md "Vue SFC
+//! `GET /assist/sandbox`: the frame document of a Vue SFC canvas (plans/LLM-A2A-Assist.md 4.10; docs/ai/Assist.md "Vue SFC
 //! canvases"). The drawer loads it in `<iframe sandbox="allow-scripts">`, so it has an opaque origin, and it is sent with
 //! a policy of its own (`moqui_llm::ui::vue_sfc::frame_document`), not the screens' (which forbid framing): the
 //! `sandbox` directive, no network, form, frame or worker, scripts only Vue, Quasar and the frame runtime. The document

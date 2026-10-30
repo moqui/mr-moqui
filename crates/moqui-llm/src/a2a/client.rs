@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The A2A 1.0 client (plans/LLM-A2A-Assist.md 4.15 "Client"; docs/A2A.md "Delegating to remote agents"): what the
+//! The A2A 1.0 client (plans/LLM-A2A-Assist.md 4.15 "Client"; docs/ai/A2A.md "Delegating to remote agents"): what the
 //! delegate tools ([`crate::tools::delegate`]) call a remote agent with.
 //!
 //! A remote is an `AgentRemoteA2a` row: its card URL (an admin's, checked as [`crate::remote`] checks every

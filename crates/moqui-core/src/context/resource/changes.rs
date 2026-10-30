@@ -13,7 +13,7 @@
  */
 
 //! Version notes, change sets, and the last change of a path, over every storage of the facade. Guide:
-//! `docs/Revision-Management.md` ("Version notes", "Change sets", "Last changes and the git path index").
+//! `docs/data/Revision-Management.md` ("Version notes", "Change sets", "Last changes and the git path index").
 //!
 //! - A **version note** is written with a version: `write_bytes_noted`. On `git://` it is the commit message, on
 //!   `dbresource://` the file's `versionNote`; other storage keeps none.

@@ -63,14 +63,31 @@ pub(crate) fn model_only_factory(runtime: &Path, framework: &Path) -> Result<Arc
     Ok(factory)
 }
 
-/// Component directories whose screens are scanned. The framework directory is included when it sits outside
-/// `base-component` and `component`, so an external `MOQUI_FRAMEWORK` is scanned once along with the runtime components.
+/// Component directories whose screens are scanned: `base-component`, `component`, and each component in
+/// `dev-component` but a template, whose names are placeholders (`runtime/dev-component/template`). The framework
+/// directory is included when it sits outside `base-component` and `component`, so an external `MOQUI_FRAMEWORK` is
+/// scanned once along with the runtime components.
 pub(crate) fn component_roots(runtime: &Path, framework: &Path) -> Vec<PathBuf> {
     let mut roots = vec![runtime.join("base-component"), runtime.join("component")];
+    let mut dev: Vec<PathBuf> = std::fs::read_dir(runtime.join("dev-component"))
+        .map(|dir| {
+            dir.flatten()
+                .map(|entry| entry.path())
+                .filter(|path| scanned_component(path))
+                .collect()
+        })
+        .unwrap_or_default();
+    dev.sort();
+    roots.extend(dev);
     if !roots.iter().any(|root| framework.starts_with(root)) {
         roots.insert(0, framework.to_path_buf());
     }
     roots.into_iter().filter(|path| path.exists()).collect()
+}
+
+/// Whether `dir` is a component and not a template: a `component.xml` whose name is not a placeholder (`@component@`).
+fn scanned_component(dir: &Path) -> bool {
+    dir.join("component.xml").is_file() && !crate::test_cmd::component_name(dir).contains('@')
 }
 
 /// Screen files below `roots`: `*.xml` in a `screen` directory whose root element is `screen`.

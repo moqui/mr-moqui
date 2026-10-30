@@ -13,7 +13,7 @@
  */
 
 //! The Assist pane (plans/LLM-A2A-Assist.md 4.12) against a fake server: the `/assist/*` calls answered with the shapes
-//! of docs/Assist.md, the pane at 100x40 (over the canvas) and 180x50 (a right column) with a thread, an approval and a
+//! of docs/ai/Assist.md, the pane at 100x40 (over the canvas) and 180x50 (a right column) with a thread, an approval and a
 //! follow fill, and the calls the pane makes.
 //!
 //! `UPDATE_GOLDEN=1` rewrites `tests/snapshots/assist-*.txt`.

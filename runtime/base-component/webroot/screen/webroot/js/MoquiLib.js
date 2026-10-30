@@ -612,7 +612,7 @@
         // ---- OAuth sign-in popup ----
 
         // A mail account's sign-in with Google or Microsoft in a popup (org.moqui.impl.EmailClientServices
-        // start#OAuthSignIn, docs/Mail-OAuth.md). Call it in the click handler: the window opens at once, so a popup
+        // start#OAuthSignIn, docs/interfaces/Mail-OAuth.md). Call it in the click handler: the window opens at once, so a popup
         // blocker lets it through, then start() (the app's request to start#OAuthSignIn, a promise of {authUrl,
         // signInId}) points it at the provider. The outcome is the one the callback page sends: a message from this
         // page's own origin and from that window, or the same on the BroadcastChannel (a provider page can cut

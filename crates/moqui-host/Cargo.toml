@@ -9,7 +9,7 @@ publish.workspace = true
 # The only crate that may depend on Tokio, axum, the sync database clients,
 # postgresql_embedded, process spawn, SSH (russh, russh-sftp), and the OIDC client (huskarl).
 
-# The packages (docs/Packaging.md) are the first four; the binary crates (crates/moqui, and target/moqui-app that
+# The packages (docs/Build-Test.md) are the first four; the binary crates (crates/moqui, and target/moqui-app that
 # `./moq build` generates) forward them. The default is the largest with the dev tools, so `cargo build`, `cargo test`
 # and `cargo lint` cover everything.
 [features]
@@ -36,7 +36,7 @@ sso = ["dep:huskarl", "dep:p256", "dep:form_urlencoded"]
 # Network printing over IPP (moqui_core::print).
 print = ["dep:ipp"]
 # The SMTP listener for hosted and shared mail accounts behind the edge gateway (src/smtp.rs, Tokio only); it stores
-# through the inbound mail of imap. It starts only when smtp_listen_port is set. docs/Mail-Inbound.md.
+# through the inbound mail of imap. It starts only when smtp_listen_port is set. docs/interfaces/Mail-Inbound.md.
 inbound-smtp = ["imap"]
 # Framework features, forwarded to moqui-core.
 mail = ["smtp", "imap"]
@@ -129,8 +129,9 @@ dev-aide = { workspace = true }
 indexmap = { workspace = true }
 # The entity model the definition_speed test builds.
 moqui-db = { workspace = true }
-# The example component is on by default and its MoquiConf.xml selects a tool factory, so a test that boots the
-# repository runtime (tests/it, gate3, gate3_browser, search_logs_postgres) links the crate as the moqui binary does.
+# The example component (runtime/dev-component/example) loads on a dev instance and in the gate runtimes
+# (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
+# gate3_browser, search_logs_postgres) links the crate as the Dev binary does.
 example = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }

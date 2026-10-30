@@ -16,7 +16,7 @@
 //! `MoquiContextListener` and `WebappInfo` set them up. A servlet, filter or listener is a script whose value is a
 //! handler object (`location`), or one of the Java classes the port has natively ([`BUILT_IN`]); any other class is
 //! logged and left out. Servlets and filters are mapped by URL pattern as the Servlet spec (12.2) maps them. Guide:
-//! `docs/Web-Scripts.md`.
+//! `docs/interfaces/Web-Scripts.md`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

@@ -1,0 +1,22 @@
+# The Rust side of the example component. The binaries with the dev tools (Dev and Debug) link it
+# (`use example as _;`), and its submit_component! entry names the component, so its tool factory and services are
+# there only when the component loads.
+#
+# It is a member of the mr-moqui workspace, so it takes its versions and dependencies from there. A crate in
+# runtime/component is not a member: copied there as a template, it names them itself (see README.md).
+
+[package]
+name = "example"
+description = "Examples of Rust in a component: a tool factory, a rust service and a tool."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

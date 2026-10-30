@@ -34,6 +34,7 @@ use crate::confine;
 use crate::git::{self, Git};
 use crate::roots::{self, Root, RootKind};
 use crate::settings::Settings;
+use crate::template;
 use crate::tier::{self, Tier};
 
 pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
@@ -60,7 +61,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(
         moqui_core::service_location!(create_site_component),
         create_site_component,
-    )
+    )?;
+    registry.service_function(moqui_core::service_location!(create_component), create_component)
 }
 
 /// The preference that turns the upstream lock off for a full-tier user.
@@ -1221,11 +1223,7 @@ fn create_site_component(
     let context = Context::of(ec, Tier::Full)?;
     let _authz = ec.disable_authz();
     let name = text(parameters, "componentName");
-    let valid = |name: &str| {
-        name.chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-            && name.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
-    };
+    let valid = template::valid_name;
     if !valid(&name) {
         return Err(LibError::new(
             "a component name starts with a letter and has letters, digits, - and _",
@@ -1245,7 +1243,7 @@ fn create_site_component(
     if target.exists() {
         return Err(LibError::new(format!("runtime/component/{name} is there already")));
     }
-    let template = context
+    let site_template = context
         .factory
         .components()
         .iter()
@@ -1257,8 +1255,8 @@ fn create_site_component(
         .iter()
         .map(|depend| format!("\n    <depends-on name=\"{depend}\"/>"))
         .collect();
-    copy_template(
-        &template,
+    template::copy_template(
+        &site_template,
         &target,
         &|text: &str| {
             text.replace("@component@", &name)
@@ -1298,26 +1296,68 @@ fn create_site_component(
     Ok(out)
 }
 
-fn copy_template(
-    from: &Path,
-    to: &Path,
-    content: &dyn Fn(&str) -> String,
-    file_name: &dyn Fn(&str) -> String,
-) -> Result<(), LibError> {
-    std::fs::create_dir_all(to).map_err(|err| LibError::new(format!("{}: {err}", to.display())))?;
-    let entries = std::fs::read_dir(from).map_err(|err| LibError::new(format!("{}: {err}", from.display())))?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let target: PathBuf = to.join(file_name(&name));
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            copy_template(&entry.path(), &target, content, file_name)?;
-        } else {
-            let text = std::fs::read_to_string(entry.path()).map_err(|err| LibError::new(err.to_string()))?;
-            std::fs::write(&target, content(&text))
-                .map_err(|err| LibError::new(format!("{}: {err}", target.display())))?;
+/// `create#Component`: a component from the component template, `runtime/dev-component/template` (its README), in
+/// runtime/component/<name>, or runtime/dev-component/<name> with `dev`, with a git repository of its own; its screens
+/// and REST API, or one of them (`part`). `./moq component-create` makes the same. It loads after a restart.
+fn create_component(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Full)?;
+    let _authz = ec.disable_authz();
+    let name = text(parameters, "componentName");
+    if !template::valid_name(&name) {
+        return Err(LibError::new(
+            "a component name starts with a letter and has letters, digits, - and _",
+        ));
+    }
+    let part = template::Part::of(&text(parameters, "part"))
+        .ok_or_else(|| LibError::new("the part is all, screens or rest"))?;
+    let directory = if flag(parameters, "dev") {
+        "dev-component"
+    } else {
+        "component"
+    };
+    let runtime = context.factory.runtime_dir();
+    let target = runtime.join(directory).join(&name);
+    if target.exists() {
+        return Err(LibError::new(format!("runtime/{directory}/{name} is there already")));
+    }
+    let source = runtime.join("dev-component/template");
+    if !source.join("component.xml").is_file() {
+        return Err(LibError::new(
+            "the component template, runtime/dev-component/template, is not there",
+        ));
+    }
+    if let Err(err) = template::create(&source, &target, &name, part) {
+        // a component half made would load at the next start
+        let _ = std::fs::remove_dir_all(&target);
+        return Err(err);
+    }
+    let git = context.git();
+    if git.available() {
+        if let Err(err) = git
+            .run(&target, git::Mode::Write, &["init", "-q"], &[], None)
+            .and_then(|output| output.checked("init"))
+        {
+            tracing::warn!("git init in {}: {err}", target.display());
         }
     }
-    Ok(())
+    audit::record(
+        &context.facade,
+        &Write {
+            action: "DAA_CREATE",
+            root: directory,
+            path: &name,
+            detail: Some(serde_json::json!({ "template": "template", "part": part.name() })),
+            ..Write::default()
+        },
+    );
+    let mut out = Parameters::new();
+    out.insert("location".into(), Value::string(target.display().to_string()));
+    out.insert("restart".into(), Value::Bool(true));
+    Ok(out)
 }
 
 #[cfg(test)]

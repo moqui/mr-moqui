@@ -1,4 +1,4 @@
-// A transparent proxy as a web script servlet (docs/Web-Scripts.md), as Jetty's ProxyServlet.Transparent: the path
+// A transparent proxy as a web script servlet (docs/interfaces/Web-Scripts.md), as Jetty's ProxyServlet.Transparent: the path
 // after the prefix, and the query, go to proxyTo with the request's method, headers and body, and the answer comes
 // back as it is. Neither body passes through the script: the request's is sent from the server and the answer's is
 // streamed to the client as it comes. Init params:

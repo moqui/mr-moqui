@@ -19,7 +19,11 @@
 # The framework's own dev components are tracked here, as base-component's are; a user's sit beside them in
 # repositories of their own.
 /runtime/dev-component/*
+!/runtime/dev-component/README.md
+!/runtime/dev-component/demo/
 !/runtime/dev-component/dev-aide/
+!/runtime/dev-component/example/
+!/runtime/dev-component/template/
 
 # Python HTTP security tests
 /runtime/base-component/framework/test/.venv/

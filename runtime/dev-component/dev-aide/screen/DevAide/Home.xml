@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Dev AIDE Home (plans/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
     directory with its branch and changes, the reload log (what each save or outside edit reloaded, and its problems), the
-    restart a change needs, and "No site component yet. Create one". Plain forms and lists, so the terminal reaches it. -->
+    restart a change needs, "No site component yet. Create one", and New component from the component template. Plain
+    forms and lists, so the terminal reaches it. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Home" default-menu-index="1">
 
@@ -22,6 +23,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><message type="${published ? 'success' : 'warning'}">${(message || 'Published')}</message></actions>
         <default-response url="."/></transition>
     <transition name="createSite"><service-call name="org.moqui.devaide.WorkspaceServices.create#SiteComponent"/>
+        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <default-response url="."/></transition>
+    <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
         <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
         <default-response url="."/></transition>
     <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server"/>
@@ -59,6 +63,20 @@ along with this software (see the LICENSE.md file). If not, see
                 </form-single>
             </box-body></container-box>
         </widgets></section></container>
+
+        <container-box id="DevAideNewComponent"><box-header title="New component"/><box-body>
+            <label type="p" text="An app of the site's own from the component template (runtime/dev-component/template): an entity, its services, a REST API, screens to find and edit it, security and demo data, and specs. ./moq component-create makes the same."/>
+            <form-single name="CreateComponentForm" transition="createComponent">
+                <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-app"/></default-field></field>
+                <field name="part"><default-field title="Kind"><drop-down no-current-selected-key="all">
+                    <option key="all" text="Screens and REST API"/>
+                    <option key="screens" text="Screens only"/>
+                    <option key="rest" text="REST API only"/>
+                </drop-down></default-field></field>
+                <field name="dev"><default-field title="Dev only (runtime/dev-component)"><check><option key="true" text=" "/></check></default-field></field>
+                <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
 
         <container id="DevAideCustomizations"><section name="CustomizationsSection" condition="custom"><widgets>
             <container-box><box-header title="Site extensions: ${(custom.extensionCount || 0)}, ${(custom.brokenCount || 0)} broken"/><box-body>

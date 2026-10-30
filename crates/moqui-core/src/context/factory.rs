@@ -209,15 +209,15 @@ impl Default for Executor {
 #[derive(Clone, Default)]
 pub struct BootOptions {
     pub executor: Executor,
-    /// Runs once the default properties and `runtime/.env` are applied, before any facade is built. An error stops the
-    /// boot. The server checks its listen ports here.
+    /// Runs once the default properties and `runtime/.env` are applied, before any facade is built, with the merged conf.
+    /// An error stops the boot. The server checks its listen ports here.
     pub before_init: Option<BeforeInit>,
     /// A `moqui test` run: each component's `test/MoquiConf.xml` merges after its `MoquiConf.xml`.
     pub test_confs: bool,
 }
 
 /// The hook in [`BootOptions::before_init`].
-pub type BeforeInit = Arc<dyn Fn() -> Result<(), Error> + Send + Sync>;
+pub type BeforeInit = Arc<dyn Fn(&MNode) -> Result<(), Error> + Send + Sync>;
 
 impl std::fmt::Debug for BootOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -295,7 +295,7 @@ impl ExecutionContextFactory {
         let env_path = runtime_dir.join(".env");
         let (property_names, mut set_by_boot) = apply_default_properties(&conf_node, &env_path)?;
         if let Some(before_init) = &options.before_init {
-            before_init()?;
+            before_init(&conf_node)?;
         }
         crate::l10n::init_server_time_zone();
         let entity = Arc::new(RwLock::new(None));
@@ -1498,6 +1498,10 @@ fn append_env_secrets(path: &Path, pairs: &[(String, String)]) -> Result<(), Err
         })?;
     }
     let mut body = String::new();
+    // A file written by hand may end without a newline, and the first secret must not join its last line.
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        body.push('\n');
+    }
     for (name, value) in pairs {
         body.push_str(name);
         body.push('=');

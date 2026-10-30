@@ -1,8 +1,8 @@
 # Native component extensions
 
-> Archived 2026-10-16: built and merged (`9d2b1c1`, `ed04a7e`). The user guide is [docs/Native-Components.md](../../docs/Native-Components.md).
+> Archived 2026-10-16: built and merged (`9d2b1c1`, `ed04a7e`). The user guide is [docs/dev/Native-Components.md](../../docs/dev/Native-Components.md).
 
-Implementation: `feat/native-components`. See the [guide](../../docs/Native-Components.md).
+Implementation: `feat/native-components`. See the [guide](../../docs/dev/Native-Components.md).
 
 Service XML defines and discovers services. Linked Rust code supplies implementations; it must not define services by name or replace the XML invocation pipeline.
 

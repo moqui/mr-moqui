@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP client (plans/LLM-A2A-Assist.md 4.16 "Client"; docs/MCP.md "Calling remote MCP servers"): what the MCP
+//! The MCP client (plans/LLM-A2A-Assist.md 4.16 "Client"; docs/ai/MCP.md "Calling remote MCP servers"): what the MCP
 //! client tools ([`crate::tools::mcp_client`]) call a remote server with.
 //!
 //! A server is an `AgentMcpServer` row: its URL (an admin's, checked as [`crate::remote`] checks every address),

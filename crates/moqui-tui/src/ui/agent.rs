@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The agent mode (plans/archive/Screen-TUI-Impl.md Phase 3c, docs/TUI.md "For agents"): the same session, driven one command
+//! The agent mode (plans/archive/Screen-TUI-Impl.md Phase 3c, docs/ui/TUI.md "For agents"): the same session, driven one command
 //! line at a time by a program rather than a person. Each command runs its keys and requests on this thread, fires the
 //! waits for typing to stop, and answers once the screen has settled: no timing to guess, no escape sequences to read.
 //! The answer names the place, the focus, any overlay and the message, then gives the screen as text with the focused

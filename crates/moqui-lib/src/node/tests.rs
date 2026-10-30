@@ -288,6 +288,8 @@ fn same_attr(left: &MNode, right: &MNode, name: &str) -> bool {
     non_empty(left.attribute(name)) == non_empty(right.attribute(name))
 }
 
+/// The XML files under `dir`, but not the component template's, whose placeholders (`<@package@.@Class@Item>`) are not
+/// XML names.
 fn collect_xml(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -296,6 +298,9 @@ fn collect_xml(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.ends_with("dev-component/template") {
+                continue;
+            }
             collect_xml(&path, out);
         } else if path
             .extension()

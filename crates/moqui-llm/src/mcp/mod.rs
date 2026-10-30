@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The MCP server (plans/LLM-A2A-Assist.md 4.16, D10; docs/MCP.md), protocol version 2026-07-28, off by default
+//! The MCP server (plans/LLM-A2A-Assist.md 4.16, D10; docs/ai/MCP.md), protocol version 2026-07-28, off by default
 //! (`llm-facade` `mcp server-enabled`). MCP is stateless at this version: no `initialize` and no session; every request
 //! carries its protocol version and client capabilities in `_meta`, and clients learn the server with
 //! `server/discover`.

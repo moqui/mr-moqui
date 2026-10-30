@@ -17,7 +17,7 @@
 // DefaultScreenMacros.qvt.ftl for Vue 3.5 and Quasar 2.35. The page shell (WebrootVue.qvt.js) fetches the
 // screen as <path>.qvt, wraps the text in a component, and compiles it in the browser.
 //
-// The elements the macros write are the m-* wrappers of js/WebrootVue.qvt.js, listed in docs/Qvt-Client.md. A macro
+// The elements the macros write are the m-* wrappers of js/WebrootVue.qvt.js, listed in docs/ui/Qvt-Client.md. A macro
 // writes q-btn, q-tooltip and the like for buttons and layout, and never a raw q-input, q-select or q-date: the
 // wrappers carry the model, the remote options, the depends-on fields and the change highlight. A wrapper
 // binds with v-model (modelValue), and a widget outside a form gives its value as model-value.
@@ -1088,7 +1088,7 @@
             w("<m-subscreens-tabs></m-subscreens-tabs>");
         };
 
-        // A wizard is an m-subscreens-wizard (a step per subscreen, docs/Qvt-Client.md) and a stack an m-subscreens-stack; both read the
+        // A wizard is an m-subscreens-wizard (a step per subscreen, docs/ui/Qvt-Client.md) and a stack an m-subscreens-stack; both read the
         // subscreens from the menu data in the browser, so the render holds only the labels.
         const subscreensPanel = (n) => {
             const type = at(n, "type");

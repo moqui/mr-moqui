@@ -13,7 +13,7 @@
  */
 
 //! The webapp's script servlets, filters and listeners and its lifecycle actions, through a whole request
-//! (`web/servlet.rs`, `script/runtime/web_host.rs`, docs/Web-Scripts.md).
+//! (`web/servlet.rs`, `script/runtime/web_host.rs`, docs/interfaces/Web-Scripts.md).
 
 use std::path::{Path, PathBuf};
 

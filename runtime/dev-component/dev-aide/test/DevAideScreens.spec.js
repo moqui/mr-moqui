@@ -9,13 +9,14 @@ spec({
     setupSpec() { login("john.doe") },
 })
 
-feature("Home renders the roots and the reload log", {
+feature("Home renders the roots, the reload log and New component", {
     expect() {
         const page = dev().render("Home", null, null)
         page.status == 200
         page.errorMessages.length == 0
         page.output.includes("RootList")
         page.output.includes("Reload log")
+        page.output.includes("CreateComponentForm")
     },
 })
 
@@ -36,6 +37,7 @@ feature("Home and Settings render in the terminal", {
         home.status == 200 && home.errorMessages.length == 0
         settings.status == 200 && settings.errorMessages.length == 0
         home.output.includes("Reload log")
+        home.output.includes("New component")
     },
 })
 

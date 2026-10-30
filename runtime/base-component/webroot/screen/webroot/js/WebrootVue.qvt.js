@@ -5,7 +5,7 @@
  * the qvt macros write, and the root application that loads a screen as <path>.qvt, .qjs or .qvue and shows it. It needs
  * MoquiLib.js, MoquiL10n.js, vue.global.prod.js and quasar.umd.prod.js before it, takes its settings from the JSON block
  * <script type="application/json" id="moqui-config"> of the page shell, and has no build step and no other library.
- * docs/Qvt-Client.md lists the components and the settings.
+ * docs/ui/Qvt-Client.md lists the components and the settings.
  *
  * moqui.qvt.components holds the component definitions, so a test can compile their templates without a browser. The
  * application starts by itself when the page has the settings block.
@@ -78,7 +78,7 @@
         const body = root.document && root.document.body;
         if (body && body.classList) body.classList.toggle("m-density-compact", value === "compact");
     };
-    // The appearance (docs/Qvt-Client.md, Appearance): config.appearance has the color schemes of the theme, the fonts and the user's THEME_*
+    // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance has the color schemes of the theme, the fonts and the user's THEME_*
     // values. A scheme is a style sheet (the apps colorSchemeCss transition) linked as m-color-scheme, none for one without colors;
     // a font sets its --m-font-* token on the html element and links its style sheet; the sizes and line height set tokens there too;
     // the accent color is --q-primary on the body (!important, over the scheme and the Quasar brand) when it is a CSS color; motion,
@@ -281,7 +281,7 @@
     moqui.NotFound = markRaw({ template: '<div id="current-page-root"><h4>Screen not found at {{$root.currentPath}}</h4></div>' });
     moqui.EmptyComponent = markRaw({ template: '<div id="current-page-root"><div class="spinner"><div>&nbsp;</div></div></div>' });
 
-    // The screen a component was loaded as (docs/Qvt-Client.md, Loading a screen): {url, path, parameters, containerId}, the path without its
+    // The screen a component was loaded as (docs/ui/Qvt-Client.md, Loading a screen): {url, path, parameters, containerId}, the path without its
     // query and its .qvt, .qvue or .qjs, the parameters its query. Each m-dynamic-container and m-dynamic-dialog provides it as mScreen
     // for the screen it loaded (so a tray tab, the quick-create dialog and a record panel too), and the root for the page, so a .qvue
     // screen reads its own query with inject: ["mScreen"] wherever it is. The members are getters over the loader, so a watch or a
@@ -1911,7 +1911,7 @@
             },
             handleResponse(resp) {
                 let notified = false;
-                // the step form of a wizard: the wizard goes where the answer says (docs/Qvt-Client.md, Wizard and stack panels)
+                // the step form of a wizard: the wizard goes where the answer says (docs/ui/Qvt-Client.md, Wizard and stack panels)
                 const wizard = this.mWizard && this.mWizard.isStepForm(this) ? this.mWizard : null;
                 if (resp && moqui.isPlainObject(resp)) {
                     const rest = moqui.placeFieldErrors(this, resp);
@@ -2973,7 +2973,7 @@
 
     // The pure part of m-rich-text, tested under Node (WebrootVue.qvt.records.test.js): the HTML of a mention and a record link
     // and the ones in a text, the editor's empty value, plain text from its HTML and HTML from plain text (the plain-text toggle),
-    // and the answer of a mention or record search. The editor writes only what allow-html="safe" keeps (docs/Qvt-Client.md, Rich text):
+    // and the answer of a mention or record search. The editor writes only what allow-html="safe" keeps (docs/ui/Qvt-Client.md, Rich text):
     // p, h1-h3, strong, em, s, u, code, pre, blockquote, ul, ol (start), li, br, hr, a (href, title), img (src, alt, title),
     // table, thead, tbody, tr, th, td (colspan, rowspan), the mention <span data-mention-id="id">@Label</span> and the record
     // <span data-record-entity="entity" data-record-id="id">#Label</span>.
@@ -3858,7 +3858,7 @@
 
     // The pure part of m-coedit, tested in test/client/pages/WebrootVue.qvt.coedit.page.js with a fake notification client: base64 of
     // the binary Yjs updates (btoa in a browser, Buffer where there is none), the caret color of a user, and the provider,
-    // the protocol of docs/Qvt-Client.md (Collaborative editing) between a Y.Doc and its Awareness and the socket.
+    // the protocol of docs/ui/Qvt-Client.md (Collaborative editing) between a Y.Doc and its Awareness and the socket.
     const coeditColors = ["#1e88e5", "#e53935", "#43a047", "#8e24aa", "#fb8c00", "#00897b", "#d81b60", "#3949ab", "#6d4c41",
         "#00acc1", "#7cb342", "#f4511e"];
     moqui.coedit = {
@@ -4099,7 +4099,7 @@
         awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
     moqui.coedit.Provider = CoeditProvider;
 
-    // m-rich-text on a shared document (docs/Qvt-Client.md, Collaborative editing): doc-key names it ("WikiPage:100023"), and the
+    // m-rich-text on a shared document (docs/ui/Qvt-Client.md, Collaborative editing): doc-key names it ("WikiPage:100023"), and the
     // server seeds and renders it, so the editor never sets content of its own. The presence line shows the others (by user)
     // and the sync state. Emits status ({state: loading, connecting, synced, saving, offline, readonly or failed, peers:
     // [{client, userId, name}], pending}), saved (the server's saved frame: a version was made) and fallback ({reason: library,
@@ -8170,7 +8170,7 @@
         watch: { "$root.keysHelpShow"(shown) { if (shown) this.entries = keymap.describe(); } }
     });
 
-    // The Appearance dialog of the account menu (docs/Qvt-Client.md, Appearance): each choice applies at once and is saved as the user's
+    // The Appearance dialog of the account menu (docs/ui/Qvt-Client.md, Appearance): each choice applies at once and is saved as the user's
     // preference (QUASAR_DARK, SHELL_DENSITY and the THEME_* keys); Reset to defaults clears the THEME_* keys. A scheme card shows its
     // light and dark colors, the theme's own scheme (no colors) the style sheet's defaults.
     moqui.appearanceSwatchDefaults = { light: { primary: "#1976d2", "page-bg": "#f4f6f8", "panel-bg": "#ffffff", text: "#000000" },
@@ -8638,7 +8638,7 @@
                 if (index >= 0) this.screenContexts.splice(index, 1);
             },
 
-            // ---- the suite shell (docs/Qvt-Client.md, "Shell data and providers") ----
+            // ---- the suite shell (docs/ui/Qvt-Client.md, "Shell data and providers") ----
 
             // The shell data of the page: the apps, their providers, the theme's shell values and the first counts. Fetched
             // once when the page starts and again after a re-login; the keys of the providers are registered from it.

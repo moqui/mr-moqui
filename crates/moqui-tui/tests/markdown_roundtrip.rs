@@ -21,7 +21,7 @@ fn samples() -> Vec<(String, String)> {
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut out = Vec::new();
     let widgets =
-        std::fs::read_to_string(repo.join("runtime/base-component/example/screen/Gallery/Widgets.xml")).unwrap();
+        std::fs::read_to_string(repo.join("runtime/dev-component/example/screen/Gallery/Widgets.xml")).unwrap();
     let start = widgets.find("<set field=\"markdownText\" value=\"").unwrap() + 33;
     let end = start + widgets[start..].find("\"/>").unwrap();
     let text = widgets[start..end]
@@ -31,12 +31,12 @@ fn samples() -> Vec<(String, String)> {
         .replace("&quot;", "\"")
         .replace("&amp;", "&");
     out.push(("Gallery markdown-view".to_string(), text));
-    let wiki = std::fs::read_to_string(repo.join("runtime/base-component/example/data/ExampleWikiData.xml")).unwrap();
+    let wiki = std::fs::read_to_string(repo.join("runtime/dev-component/example/data/ExampleWikiData.xml")).unwrap();
     for (at, part) in wiki.split("<![CDATA[").skip(1).enumerate() {
         let page = part.split("]]>").next().unwrap_or("");
         out.push((format!("wiki page {at}"), page.to_string()));
     }
-    for doc in ["docs/TUI.md", "plans/README.md"] {
+    for doc in ["docs/ui/TUI.md", "plans/README.md"] {
         out.push((doc.to_string(), std::fs::read_to_string(repo.join(doc)).unwrap()));
     }
     out
@@ -52,7 +52,7 @@ fn rich_text_editor_round_trip() {
     let round = |text: &str| RichTextEditor::new().from_markdown(text.to_string()).to_markdown();
     for (name, text) in samples() {
         let back = round(&text);
-        if name == "docs/TUI.md" {
+        if name == "docs/ui/TUI.md" {
             continue;
         }
         assert_eq!(back.trim_end(), text.trim_end(), "{name}");
