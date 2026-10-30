@@ -189,7 +189,7 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
 }
 
 /// Fixed nested pairs avoid dynamic per-key mappings and keep keys correlated with their values.
-pub(crate) const ATTRIBUTE_VALUES: &str = "__attributes";
+pub const ATTRIBUTE_VALUES: &str = "__attributes";
 
 pub(crate) fn prepare_attributes(body: &mut crate::entity::document::Document) {
     use moqui_lib::object::{to_plain_string, Value};

@@ -38,8 +38,8 @@ Counts are of non-test code when the review began.
 
 Most of the ~11,600 `.unwrap()` calls are in tests. Non-test code has under a hundred, plus a few hundred `.expect(`.
 Known sites:
-- `crates/moqui-core/src/report/mod.rs:1504`: `range["from"].as_str().unwrap()` on a request's range (§5b).
-- `crates/moqui-core/src/report/mod.rs:1246`: `get_mut("bucket").unwrap()` twice (§5c).
+- `crates/moqui-report/src/lib.rs:1529`: `range["from"].as_str().unwrap()` on a request's range (§5b).
+- `crates/moqui-report/src/lib.rs:1271`: `get_mut("bucket").unwrap()` twice (§5c).
 - `crates/moqui-core/src/telemetry/exponential.rs:284`: `last_key_value().unwrap()` after checking the first (§5d).
 - `clippy::string_slice` lists the string slices (§5e).
 

@@ -749,7 +749,7 @@ pub(crate) fn request_secure() -> Option<bool> {
 /// request whose security matches `use_encryption`; otherwise the scheme and host. Those are the render's base URL
 /// when it has one (an email, a render with no socket), else the conf `webapp`'s host and port. Never the request's
 /// `Host` header, which the sender of the request picks (Parity-Diffs P8-08).
-pub(crate) fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
+pub fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
     let secure = request_secure();
     let require_encryption = use_encryption.unwrap_or(secure.unwrap_or(false));
     if !require_full_url && secure == Some(require_encryption) {

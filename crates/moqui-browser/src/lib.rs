@@ -19,6 +19,9 @@
 //! surface the emscripten exports call. [`ws`] carries WebSocket frames between the worker's sockets
 //! and the module.
 
+// The reports. Naming the crate keeps its moqui_core::extension entry in the module.
+use moqui_report as _;
+
 pub mod api;
 pub mod fetch;
 pub mod host;

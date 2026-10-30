@@ -403,8 +403,8 @@ README redesigns 1 and 3. The design is [SearchFacade](archive/SearchFacade.md).
 | `search/feed.rs` | After-commit assembly and the receive service. Registration of the pending row stays `entity/load_feed/feed.rs`. | Redesign |
 | `search/fresh.rs` | Read-your-writes for a search that asks. No Java counterpart. | Native |
 | `search/telemetry.rs` | The telemetry index mappings (`otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations`) on both backends. Replaces the `moqui_logs` and `moqui_http_log` fields. | Native |
-| `report/`, `report_schedule.rs` | No Java basis: datasets, report queries, frames and transformations, saved definitions, alerts and annotations for the Dashboards and Monitor apps; dashboard reports on `ScreenScheduled` (PDF, PNG, CSV, xlsx) with owner checks and leases. | Native |
-| `monitor.rs`, `moqui-host/src/monitor.rs` | No Java basis: ingest keys and source status (core), and the OTLP/HTTP receiver `/v1/{traces,logs,metrics,annotations}` (host). | Native |
+| `moqui-report/src/` (`schedule.rs` the scheduled reports), `search/time.rs` | No Java basis: datasets, report queries, frames and transformations, saved definitions, alerts and annotations for the Dashboards and Monitor apps; dashboard reports on `ScreenScheduled` (PDF, PNG, CSV, xlsx) with owner checks and leases. | Native |
+| `moqui-report/src/monitor.rs`, `moqui-host/src/monitor.rs` | No Java basis: ingest keys and source status (moqui-report), and the OTLP/HTTP receiver `/v1/{traces,logs,metrics,annotations}` (host). | Native |
 | `search/opensearch.rs` | `ElasticFacadeImpl.ElasticClientImpl` HTTP client. | Partial |
 | `moqui-host/src/search.rs` | Where the store lives, and `MoquiStart` launching a local OpenSearch install under `runtime/opensearch`. | Partial |
 | `search/postgres/mod.rs`, `search/postgres/compile.rs`, `search/postgres/agg.rs` | Postgres full-text and JSON backend. | Native |

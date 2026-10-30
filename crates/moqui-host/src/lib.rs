@@ -35,6 +35,8 @@ use moqui_git as _;
 // The email services, the same way.
 #[cfg(feature = "smtp")]
 use moqui_mail as _;
+// The reports, in every build, the same way.
+use moqui_report as _;
 
 pub mod chromium;
 pub mod db;
@@ -1453,7 +1455,7 @@ fn boot_server_factory(
     if let Some(instance) = moqui_core::cluster::instance_id(&factory) {
         moqui_core::telemetry::for_factory(&factory).set_instance_id(instance);
     }
-    if let Err(error) = moqui_core::report::record_release(&factory) {
+    if let Err(error) = moqui_report::record_release(&factory) {
         tracing::warn!(%error, "could not record release annotation");
     }
     // the mail client's IMAP IDLE workers, started on the scheduler's tick (email-client idle-enabled)

@@ -6,10 +6,11 @@ use moqui_core::{
     context::{ExecutionContext, ExecutionContextFactory},
     entity::document::Document,
     native::{Parameters, ServiceInfo},
-    report, search,
+    search,
     transaction::TransactionAttribute,
 };
 use moqui_lib::object::Value;
+use moqui_report as report;
 use serde_json::{json, Value as Json};
 use std::sync::Arc;
 

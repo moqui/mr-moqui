@@ -4126,6 +4126,7 @@ dependencies = [
  "jiff",
  "moqui-core",
  "moqui-lib",
+ "moqui-report",
  "rusqlite",
  "rust_decimal",
  "serde_json",
@@ -4270,6 +4271,7 @@ dependencies = [
  "moqui-lib",
  "moqui-llm",
  "moqui-mail",
+ "moqui-report",
  "moqui-tui",
  "mysql",
  "p256",
@@ -4363,6 +4365,27 @@ dependencies = [
  "sha2 0.10.9",
  "tracing",
  "webpki-roots",
+]
+
+[[package]]
+name = "moqui-report"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "calamine",
+ "croner",
+ "getrandom 0.3.4",
+ "indexmap",
+ "jiff",
+ "moqui-core",
+ "moqui-lib",
+ "regex",
+ "rust_xlsxwriter",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "zip",
 ]
 
 [[package]]

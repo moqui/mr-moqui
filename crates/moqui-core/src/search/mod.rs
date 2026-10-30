@@ -36,6 +36,7 @@ pub mod postgres;
 pub mod query;
 pub mod semantic;
 pub mod telemetry;
+pub mod time;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};

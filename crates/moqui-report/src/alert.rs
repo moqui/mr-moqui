@@ -116,7 +116,7 @@ fn millis(value: Option<&Value>) -> i64 {
         .unwrap_or(0)
 }
 
-fn state_from_row(row: &crate::entity::EntityValue) -> Instance {
+fn state_from_row(row: &moqui_core::entity::EntityValue) -> Instance {
     Instance {
         state: row
             .get("state")
@@ -165,7 +165,7 @@ fn label_value(value: &Json) -> Result<Json, Error> {
     if text.len() > 128 {
         return Err(fail("alert label value exceeds 128 bytes"));
     }
-    Ok(json!(crate::telemetry::redact_text(&text)))
+    Ok(json!(moqui_core::telemetry::redact_text(&text)))
 }
 
 fn approved_labels(ec: &ExecutionContext, body: &Json) -> Result<BTreeSet<String>, Error> {
@@ -197,7 +197,7 @@ fn approved_labels(ec: &ExecutionContext, body: &Json) -> Result<BTreeSet<String
             }
             return Ok(());
         }
-        let facade = crate::search::current()?;
+        let facade = moqui_core::search::current()?;
         let mappings = super::metadata(ec, || {
             facade
                 .target_documents(&dataset.target)?
@@ -206,12 +206,12 @@ fn approved_labels(ec: &ExecutionContext, body: &Json) -> Result<BTreeSet<String
                 .collect::<Result<Vec<_>, _>>()
         })?;
         fn walk(
-            aggs: &indexmap::IndexMap<String, crate::search::Agg>,
-            mappings: &[std::sync::Arc<crate::search::DocumentMapping>],
+            aggs: &indexmap::IndexMap<String, moqui_core::search::Agg>,
+            mappings: &[std::sync::Arc<moqui_core::search::DocumentMapping>],
             approved: &mut BTreeSet<String>,
         ) {
             for (name, agg) in aggs {
-                if let crate::search::Agg::Terms(terms) = agg {
+                if let moqui_core::search::Agg::Terms(terms) = agg {
                     let field = terms.field.strip_suffix(".keyword").unwrap_or(&terms.field);
                     let kinds: Vec<_> = mappings
                         .iter()
@@ -223,9 +223,9 @@ fn approved_labels(ec: &ExecutionContext, body: &Json) -> Result<BTreeSet<String
                         && kinds.iter().all(|kind| {
                             matches!(
                                 kind,
-                                crate::search::FieldKind::Keyword
-                                    | crate::search::FieldKind::Long
-                                    | crate::search::FieldKind::Boolean
+                                moqui_core::search::FieldKind::Keyword
+                                    | moqui_core::search::FieldKind::Long
+                                    | moqui_core::search::FieldKind::Boolean
                             )
                         })
                     {
@@ -477,11 +477,11 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
     for silence in body["silences"].as_array().into_iter().flatten() {
         let from = silence["from"]
             .as_str()
-            .and_then(|s| super::time::parse(s, now).ok())
+            .and_then(|s| moqui_core::search::time::parse(s, now).ok())
             .unwrap_or(0);
         let thru = silence["thru"]
             .as_str()
-            .and_then(|s| super::time::parse_thru(s, now).ok())
+            .and_then(|s| moqui_core::search::time::parse_thru(s, now).ok())
             .unwrap_or(0);
         if now >= from && now < thru && matches_labels(&silence["matchers"], labels) {
             return true;
@@ -489,7 +489,7 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
     }
     let time = jiff::Timestamp::from_millisecond(now)
         .unwrap()
-        .to_zoned(crate::l10n::time_zone());
+        .to_zoned(moqui_core::l10n::time_zone());
     let weekday = time.date().weekday().to_monday_zero_offset() as u64;
     for timing in body["muteTimings"].as_array().into_iter().flatten() {
         if timing["weekdays"]
@@ -522,7 +522,7 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
 fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     match text(contact, "type", "notification") {
         "notification" => {
-            let mut note = crate::notify::NotificationMessage::new();
+            let mut note = moqui_core::notify::NotificationMessage::new();
             note.topic(text(contact, "topic", "ReportAlert"))
                 .title(text(payload, "title", "Report alert"))
                 .link(text(payload, "link", "/apps/dashboards/Alerts"))
@@ -547,10 +547,10 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
                 ("toAddresses".into(), Value::string(text(contact, "toAddresses", ""))),
                 ("bodyParameters".into(), moqui_lib::json::from_json(payload)),
             ]);
-            let sent = crate::service::call::sync_checked(
+            let sent = moqui_core::service::call::sync_checked(
                 "org.moqui.impl.EmailServices.send#EmailTemplate",
                 &params,
-                &crate::service::call::CallOptions {
+                &moqui_core::service::call::CallOptions {
                     ignore_previous_error: true,
                     ..Default::default()
                 },
@@ -568,7 +568,8 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
         }
         "webhook" => {
             validate_contacts(&json!({"contactPoints":[contact]}))?;
-            crate::user::authorize_own("AT_SERVICE", "org.moqui.report.contact.webhook", "update").map_err(fail)?;
+            moqui_core::user::authorize_own("AT_SERVICE", "org.moqui.report.contact.webhook", "update")
+                .map_err(fail)?;
             let url = if let Some(property) = contact["urlProperty"].as_str() {
                 moqui_lib::env::get_property(property)
                     .ok_or_else(|| fail(format!("webhook URL property {property} is not configured")))?
@@ -590,9 +591,9 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
                 headers.push((header.clone(), value));
             }
             let response = {
-                let _suppressed = crate::telemetry::suppress();
-                crate::outbound::send(crate::outbound::Request {
-                    method: crate::outbound::Method::Post,
+                let _suppressed = moqui_core::telemetry::suppress();
+                moqui_core::outbound::send(moqui_core::outbound::Request {
+                    method: moqui_core::outbound::Method::Post,
                     url,
                     headers,
                     body: Some(payload.to_string()),
@@ -613,11 +614,11 @@ fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
 /// Save a notification group's row now, in its own transaction, outside the rule's state write.
 fn record_notification(
     ec: &ExecutionContext,
-    entity: &crate::entity::EntityFacade,
-    row: &crate::entity::EntityValue,
+    entity: &moqui_core::entity::EntityFacade,
+    row: &moqui_core::entity::EntityValue,
 ) -> Result<(), Error> {
     entity.transactions_for("moqui.report.AlertNotification")?.run(
-        crate::transaction::TransactionAttribute::ForceNew,
+        moqui_core::transaction::TransactionAttribute::ForceNew,
         None,
         || {
             let _storage = ec.disable_authz();
@@ -635,7 +636,7 @@ fn notify(
     body: &Json,
     events: &[Json],
     now: i64,
-) -> Result<Vec<crate::entity::EntityValue>, Error> {
+) -> Result<Vec<moqui_core::entity::EntityValue>, Error> {
     let entity = ec
         .factory()
         .entity()
@@ -676,7 +677,7 @@ fn notify(
             let hash = moqui_lib::json::canonical_sha256(&json!(state_key));
             let resolved = events.iter().all(|event| event["state"] == "Normal");
             let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":format!("/apps/dashboards/Alerts?definitionId={id}")});
-            let result = (|| -> Result<crate::entity::EntityValue, Error> {
+            let result = (|| -> Result<moqui_core::entity::EntityValue, Error> {
                 let existing = {
                     let _storage = ec.disable_authz();
                     entity
@@ -760,15 +761,15 @@ fn validate_silence(silence: &Json) -> Result<(), Error> {
     if !silence.is_object() {
         return Err(fail("a silence must be an object"));
     }
-    let now = crate::user::now_millis();
+    let now = moqui_core::user::now_millis();
     let at = |key: &str| {
         silence[key]
             .as_str()
             .and_then(|s| {
                 if key == "thru" {
-                    super::time::parse_thru(s, now)
+                    moqui_core::search::time::parse_thru(s, now)
                 } else {
-                    super::time::parse(s, now)
+                    moqui_core::search::time::parse(s, now)
                 }
                 .ok()
             })
@@ -961,7 +962,7 @@ const LOCK: &str = "moqui.report.AlertRuleLock";
 /// How long a claim keeps other evaluators off a rule. A claim older than this was abandoned by a stopped evaluator.
 const CLAIM_MS: i64 = 300_000;
 
-fn claim_token(lock: &crate::entity::EntityValue) -> Option<&str> {
+fn claim_token(lock: &moqui_core::entity::EntityValue) -> Option<&str> {
     lock.get("claimToken")
         .and_then(Value::as_str)
         .filter(|token| !token.is_empty())
@@ -970,14 +971,14 @@ fn claim_token(lock: &crate::entity::EntityValue) -> Option<&str> {
 /// Claims the rule in a short transaction: `None` when it ran within its interval or another evaluator holds it.
 fn claim(
     ec: &ExecutionContext,
-    entity: &crate::entity::EntityFacade,
+    entity: &moqui_core::entity::EntityFacade,
     id: &str,
     now: i64,
     interval: i64,
 ) -> Result<Option<String>, Error> {
     entity
         .transactions_for(LOCK)?
-        .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+        .run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
             let _storage = ec.disable_authz();
             let mut lock = entity
                 .find(LOCK)?
@@ -989,7 +990,7 @@ fn claim(
                 return Ok(None);
             }
             // Claims expire on the wall clock: they guard against stopped evaluators, not evaluation time.
-            let wall = crate::user::now_millis();
+            let wall = moqui_core::user::now_millis();
             let held_until = lock
                 .get("claimedUntil")
                 .map(moqui_lib::object::to_plain_string)
@@ -998,7 +999,7 @@ fn claim(
             if claim_token(&lock).is_some() && held_until > wall {
                 return Ok(None);
             }
-            let token = crate::entity::uuid_v4()?;
+            let token = moqui_core::entity::uuid_v4()?;
             lock.set("claimToken", Value::string(&token));
             lock.set("claimedUntil", Value::I64(wall + CLAIM_MS));
             lock.update(entity)?;
@@ -1009,9 +1010,9 @@ fn claim(
 /// What one evaluation writes, saved together once the query and deliveries are done.
 #[derive(Default)]
 struct Outcome {
-    saved: Vec<crate::entity::EntityValue>,
-    removed: Vec<crate::entity::EntityValue>,
-    annotations: Vec<crate::entity::document::Document>,
+    saved: Vec<moqui_core::entity::EntityValue>,
+    removed: Vec<moqui_core::entity::EntityValue>,
+    annotations: Vec<moqui_core::entity::document::Document>,
     changed: usize,
     notices: Vec<Json>,
 }
@@ -1020,7 +1021,7 @@ struct Outcome {
 /// With `outcome` `None` it only gives the claim back, so the rule runs again at the next pass.
 fn finish(
     ec: &ExecutionContext,
-    entity: &crate::entity::EntityFacade,
+    entity: &moqui_core::entity::EntityFacade,
     id: &str,
     token: &str,
     now: i64,
@@ -1028,7 +1029,7 @@ fn finish(
 ) -> Result<(), Error> {
     entity
         .transactions_for(LOCK)?
-        .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+        .run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
             let _storage = ec.disable_authz();
             let mut lock = entity
                 .find(LOCK)?
@@ -1079,7 +1080,7 @@ fn evaluate_owned(
         Ok(outcome) => {
             // History is written after the state it records is saved.
             if !outcome.annotations.is_empty() {
-                if let Err(error) = crate::search::current()
+                if let Err(error) = moqui_core::search::current()
                     .and_then(|search| search.index_entries("monitor_annotations", outcome.annotations))
                 {
                     tracing::error!(rule=id,%error,"could not record alert annotations");
@@ -1099,7 +1100,7 @@ fn evaluate_owned(
 /// Runs the query, steps each series and delivers notifications while the rule is claimed but no lock is held.
 fn evaluate_claimed(
     ec: &ExecutionContext,
-    entity: &crate::entity::EntityFacade,
+    entity: &moqui_core::entity::EntityFacade,
     definition: &Json,
     now: i64,
     interval: i64,
@@ -1150,7 +1151,7 @@ fn evaluate_claimed(
             .eq("definitionId", Value::string(id))
             .list()?
     };
-    let existing: BTreeMap<String, crate::entity::EntityValue> = rows
+    let existing: BTreeMap<String, moqui_core::entity::EntityValue> = rows
         .iter()
         .map(|row| {
             (
@@ -1312,7 +1313,7 @@ fn evaluate_claimed(
 /// One rule in its own context, authenticated as the rule's owner, with the evaluator's time as its effective time
 /// so relative query ranges and state timers agree.
 fn evaluate_rule(
-    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
     definition: &Json,
     now: i64,
     silences: &[Json],
@@ -1329,7 +1330,8 @@ fn evaluate_rule(
             .one()?
             .ok_or_else(|| fail("alert owner account no longer exists"))?
     };
-    crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or("")).map_err(fail)?;
+    moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))
+        .map_err(fail)?;
     context.set_effective_time(Some(now));
     evaluate_owned(&context, definition, now, silences)
 }
@@ -1350,9 +1352,9 @@ pub fn evaluate_rules(
             return Err(fail("selected definition is not an alert rule"));
         }
     } else {
-        crate::user::authorize_own("AT_SERVICE", "org.moqui.report.alert.evaluateAll", "update").map_err(fail)?;
+        moqui_core::user::authorize_own("AT_SERVICE", "org.moqui.report.alert.evaluateAll", "update").map_err(fail)?;
     }
-    let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
+    let now = ec.effective_time().unwrap_or_else(moqui_core::user::now_millis);
     let entity = ec
         .factory()
         .entity()
@@ -1495,7 +1497,7 @@ mod tests {
     }
     #[test]
     fn document_queries_cannot_be_alert_sources() {
-        let ec = crate::context::ExecutionContextFactory::test_context();
+        let ec = moqui_core::context::ExecutionContextFactory::test_context();
         assert!(approved_labels(
             &ec,
             &json!({"query":{"queries":[{"mode":"documents","datasetId":"otel_logs"}]}})

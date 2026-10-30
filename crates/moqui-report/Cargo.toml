@@ -1,0 +1,43 @@
+# Reports, dashboards and their alerts, scheduled report delivery and the monitoring sources' keys, on top of moqui-core
+# (plans/Crate-Split.md). Its own crate so an edit here does not rebuild the framework. Core reaches it only through
+# moqui_core::extension, which this crate fills with an inventory entry; moqui-host and moqui-browser link it in every
+# build.
+
+[package]
+name = "moqui-report"
+description = "Reports, dashboards, alerts, report schedules and monitoring keys."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+base64 = { workspace = true }
+croner = { workspace = true }
+getrandom = { workspace = true }
+indexmap = { workspace = true }
+jiff = { workspace = true }
+regex = { workspace = true }
+rust_xlsxwriter = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+
+# Default on. The host turns xlsx on with its own; the browser build leaves it out.
+[features]
+default = ["xlsx"]
+# The xlsx format of a scheduled report export.
+xlsx = ["dep:rust_xlsxwriter", "moqui-core/xlsx"]
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+# The xlsx export test reads the workbook back.
+calamine = { workspace = true }
+
+[lints]
+workspace = true

@@ -79,7 +79,7 @@ pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, sea
 #[doc(hidden)]
 pub use email_eca::install_rules as install_eca_rules;
 pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
-pub(crate) use jobs::job_time_zone;
+pub use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
 pub use jobs::{run_job_now, PassReport};

@@ -304,10 +304,7 @@ impl NativeRegistry {
 
     pub(crate) fn discover(components: &[ComponentInfo], conf: &MNode) -> Result<Self, Error> {
         let mut registry = Self::default();
-        crate::report::register(&mut registry)?;
-        crate::monitor::register(&mut registry)?;
         crate::telemetry::register(&mut registry)?;
-        crate::report_schedule::register(&mut registry)?;
         // the framework's own tool factories (VCard, ICalendar, MailCapture), which MoquiDefaultConf.xml selects
         crate::pim::register(&mut registry)?;
         // and the mail and notification captures for specs (MailCapture, NotificationCapture)
@@ -346,6 +343,13 @@ impl NativeRegistry {
             }
         }
         Ok(registry)
+    }
+
+    /// The locations of the service functions, for the tests of the crates that register them.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn service_locations(&self) -> Vec<&str> {
+        self.services.keys().map(String::as_str).collect()
     }
 
     pub(crate) fn service_at(&self, location: &str) -> Option<NativeServiceFn> {

@@ -4,10 +4,11 @@ use crate::common;
 use moqui_core::{
     entity::{document::Document, EntityFacade},
     native::{Parameters, ServiceInfo},
-    report, search,
+    search,
     transaction::TransactionAttribute,
 };
 use moqui_lib::object::Value;
+use moqui_report as report;
 use serde_json::{json, Value as Json};
 use std::collections::BTreeSet;
 
@@ -67,11 +68,11 @@ fn postgres_sunday_weeks_align_buckets_and_rounding() {
     let iso = |text: &str| local(text).to_string();
     // 2026-01-07 is a Wednesday; its Sunday week starts 2026-01-04.
     assert_eq!(
-        report::time::parse("now/w", ms("2026-01-07T15:00:00")).unwrap(),
+        search::time::parse("now/w", ms("2026-01-07T15:00:00")).unwrap(),
         ms("2026-01-04T00:00:00")
     );
     assert_eq!(
-        report::time::parse_thru("now/w", ms("2026-01-07T15:00:00")).unwrap(),
+        search::time::parse_thru("now/w", ms("2026-01-07T15:00:00")).unwrap(),
         ms("2026-01-11T00:00:00")
     );
     let point = |id: &str, time: &str| {

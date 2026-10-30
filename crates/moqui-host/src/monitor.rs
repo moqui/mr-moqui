@@ -126,7 +126,7 @@ async fn ingest(
         let _suppressed = moqui_core::telemetry::suppress();
         let ec = auth_factory.new_context();
         let _entered = ec.enter();
-        let (key, source) = moqui_core::monitor::authenticate(&ec, &token).map_err(authentication_error)?;
+        let (key, source) = moqui_report::monitor::authenticate(&ec, &token).map_err(authentication_error)?;
         let rate = auth_factory.extension(|_| RateLimit::default());
         let max = auth_factory.conf_number("telemetry/receiver", "requests-per-minute", 600_usize);
         if !rate.allow(&key, max) {
@@ -217,7 +217,7 @@ async fn ingest(
                 location: "moqui_core::report::create_annotation",
                 method: "",
             };
-            moqui_core::report::create_annotation(&ec, &service, &parameters.into_iter().collect())
+            moqui_report::create_annotation(&ec, &service, &parameters.into_iter().collect())
                 .map_err(|error| (400, error.to_string()))?;
             return Ok((0, String::new()));
         }

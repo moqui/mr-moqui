@@ -19,6 +19,7 @@ members = [
     "crates/moqui-llm",
     "crates/moqui-git",
     "crates/moqui-mail",
+    "crates/moqui-report",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -66,6 +67,9 @@ moqui-git = { path = "crates/moqui-git" }
 # The email services, on moqui-core (plans/Crate-Split.md); the host links it under its smtp feature, and turns on its
 # imap feature under its own. default-features off so a host without imap leaves it out.
 moqui-mail = { path = "crates/moqui-mail", default-features = false }
+# Reports, dashboards, alerts, report schedules and monitoring keys, on moqui-core (plans/Crate-Split.md); the host and
+# the browser link it in every build. default-features off so the browser leaves out xlsx.
+moqui-report = { path = "crates/moqui-report", default-features = false }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.

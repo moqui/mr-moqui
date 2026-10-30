@@ -7,10 +7,11 @@ dashboards, alerts and scheduled reports. The design and the build record are in
 [plans/Monitoring.md](../../plans/Monitoring.md). As of Oct 27, 2026 (M1–M7 and the review pass built).
 
 The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the bounded worker, OTLP in and out, rollups
-and retention), `crates/moqui-core/src/report/` (datasets, queries, frames, transformations, definitions, alerts,
-annotations), `crates/moqui-core/src/report_schedule.rs`, `crates/moqui-core/src/search/telemetry.rs` (the index
-mappings), and the host side in `crates/moqui-host/src/http.rs` (request spans) and `crates/moqui-host/src/monitor.rs`
-(the OTLP receiver). Screens: `runtime/base-component/tools/screen/Monitor/` and `Dashboards/`; widgets in
+and retention), `crates/moqui-report/src/` (datasets, queries, frames, transformations, definitions, alerts,
+annotations, the scheduled reports in `schedule.rs` and the ingest keys in `monitor.rs`),
+`crates/moqui-core/src/search/telemetry.rs` (the index mappings), and the host side in `crates/moqui-host/src/http.rs`
+(request spans) and `crates/moqui-host/src/monitor.rs` (the OTLP receiver). Screens:
+`runtime/base-component/tools/screen/Monitor/` and `Dashboards/`; widgets in
 `webroot/screen/webroot/js/WebrootReport.js` with TUI twins in `crates/moqui-tui/src/components/report.rs`.
 
 ## What is recorded

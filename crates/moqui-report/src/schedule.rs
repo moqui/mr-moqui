@@ -1,9 +1,9 @@
 //! Dashboard reports use the existing scheduling/delivery records and the authorized frame executor.
-use crate::{
+use base64::Engine;
+use moqui_core::{
     context::ExecutionContext,
     native::{NativeRegistry, Parameters, ServiceInfo},
 };
-use base64::Engine;
 use moqui_lib::{error::Error, object::Value};
 use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
@@ -19,11 +19,11 @@ fn jtext<'a>(p: &'a Json, k: &str, default: &'a str) -> &'a str {
     p[k].as_str().unwrap_or(default)
 }
 fn viewer() -> Result<String, Error> {
-    crate::user::current_user_id()?
+    moqui_core::user::current_user_id()?
         .filter(|s| !s.is_empty())
         .ok_or_else(|| fail("an authenticated report owner is required"))
 }
-fn entity(ec: &ExecutionContext) -> Result<crate::entity::EntityFacade, Error> {
+fn entity(ec: &ExecutionContext) -> Result<moqui_core::entity::EntityFacade, Error> {
     ec.factory().entity().ok_or_else(|| fail("entity facade unavailable"))
 }
 fn out(value: Json) -> Parameters {
@@ -43,13 +43,13 @@ fn escape(value: &str) -> String {
 fn register_fn(
     registry: &mut NativeRegistry,
     name: &str,
-    function: crate::native::NativeService,
-) -> Result<(), crate::context::Error> {
+    function: moqui_core::native::NativeService,
+) -> Result<(), moqui_core::context::Error> {
     registry.service_function(&format!("moqui_core::report_schedule::{name}"), function)
 }
-pub fn register(registry: &mut NativeRegistry) -> Result<(), crate::context::Error> {
+pub fn register(registry: &mut NativeRegistry) -> Result<(), moqui_core::context::Error> {
     for (name, f) in [
-        ("create_schedule", create_schedule as crate::native::NativeService),
+        ("create_schedule", create_schedule as moqui_core::native::NativeService),
         ("list_schedules", list_schedules),
         ("pause_schedule", pause_schedule),
         ("preview_report", preview_report),
@@ -63,7 +63,7 @@ pub fn register(registry: &mut NativeRegistry) -> Result<(), crate::context::Err
 fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let owner = viewer()?;
     let id = text(p, "definitionId");
-    let definition = crate::report::definitions::read(ec, id)?;
+    let definition = crate::definitions::read(ec, id)?;
     if !matches!(jtext(&definition, "type", ""), "report" | "dashboard") {
         return Err(fail("a schedule requires a dashboard or report definition"));
     }
@@ -130,7 +130,7 @@ fn list_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) ->
     let rows:Vec<Json>=rows.iter().map(|row|json!({"screenScheduledId":row.get("screenScheduledId").map(moqui_lib::json::to_json),"definitionId":row.get("reportDefinitionId").map(moqui_lib::json::to_json),"cronExpression":row.get("cronExpression").map(moqui_lib::json::to_json),"renderMode":row.get("renderMode").map(moqui_lib::json::to_json),"paused":row.get("paused").and_then(Value::as_str)==Some("Y")})).collect();
     Ok(out(json!({"schedules":rows})))
 }
-fn owned(ec: &ExecutionContext, id: &str) -> Result<crate::entity::EntityValue, Error> {
+fn owned(ec: &ExecutionContext, id: &str) -> Result<moqui_core::entity::EntityValue, Error> {
     let owner = viewer()?;
     let _metadata = ec.disable_authz();
     entity(ec)?
@@ -152,7 +152,7 @@ fn pause_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     Ok(Parameters::new())
 }
 fn require_file_delivery() -> Result<(), Error> {
-    if crate::user::has_permission("REPORT_SAVE_LOCATION")? {
+    if moqui_core::user::has_permission("REPORT_SAVE_LOCATION")? {
         Ok(())
     } else {
         Err(fail("REPORT_SAVE_LOCATION permission is required for report files"))
@@ -186,7 +186,7 @@ fn render(
     selection: Option<&Parameters>,
 ) -> Result<Rendered, Error> {
     validate_mode(mode)?;
-    let definition = crate::report::definitions::read(ec, id)?;
+    let definition = crate::definitions::read(ec, id)?;
     let panel_id = selection.map(|parameters| text(parameters, "panelId")).unwrap_or("");
     if !panel_id.is_empty() && definition["type"] == "report" {
         return Err(fail("panel export requires a dashboard definition"));
@@ -203,7 +203,7 @@ fn render(
     let mut link = String::new();
     for spec in specs {
         let mut dashboard =
-            crate::report::definitions::read(ec, jtext(&spec, "dashboardRef", jtext(&spec, "definitionId", "")))?;
+            crate::definitions::read(ec, jtext(&spec, "dashboardRef", jtext(&spec, "definitionId", "")))?;
         if !dashboard["body"].is_object() {
             return Err(fail("dashboard body must be an object"));
         }
@@ -214,7 +214,7 @@ fn render(
             dashboard["body"]["layout"] = layout.clone();
         }
         if !panel_id.is_empty() {
-            crate::report::select_panel(&mut dashboard, panel_id)?;
+            crate::select_panel(&mut dashboard, panel_id)?;
         }
         let from = selection
             .map(|parameters| text(parameters, "from"))
@@ -246,8 +246,7 @@ fn render(
                 );
             }
         }
-        let rendered =
-            crate::report::dashboard_frames_filtered(ec, &dashboard, &variables, from, thru, &Json::Array(filters))?;
+        let rendered = crate::dashboard_frames_filtered(ec, &dashboard, &variables, from, thru, &Json::Array(filters))?;
         if link.is_empty() {
             link = live_link(jtext(&dashboard, "id", id), &rendered);
         }
@@ -346,13 +345,13 @@ fn render(
             "xlsx",
         ),
         "png" => (
-            crate::screen::PdfRenderer::render_png(&html).map_err(fail)?,
+            moqui_core::screen::PdfRenderer::render_png(&html).map_err(fail)?,
             "image/png",
             "png",
         ),
         "html" => (html.clone().into_bytes(), "text/html", "html"),
         _ => (
-            crate::screen::PdfRenderer::render(&html).map_err(fail)?,
+            moqui_core::screen::PdfRenderer::render(&html).map_err(fail)?,
             "application/pdf",
             "pdf",
         ),
@@ -411,7 +410,7 @@ fn live_link(id: &str, dashboard: &Json) -> String {
             component(&Json::Array(filters.clone()).to_string())
         ));
     }
-    let root = crate::web::webapp_root_url("webroot", true, None);
+    let root = moqui_core::web::webapp_root_url("webroot", true, None);
     format!("{}{link}", root.trim_end_matches('/'))
 }
 fn frames_empty(frames: &[Json]) -> bool {
@@ -734,7 +733,7 @@ fn preview_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         text(p, "renderMode")
     };
     let result = render(ec, text(p, "definitionId"), mode, false, Some(p))?;
-    crate::report::audit_export(
+    crate::audit_export(
         if text(p, "panelId").is_empty() {
             "report"
         } else {
@@ -772,7 +771,7 @@ fn run_scheduled(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
     deliver(ec, &row, true)
 }
 
-struct SuspendedGroups(Vec<crate::transaction::TransactionManager>);
+struct SuspendedGroups(Vec<moqui_core::transaction::TransactionManager>);
 impl SuspendedGroups {
     fn resume_all(&mut self) -> Result<(), Error> {
         let mut first = None;
@@ -793,7 +792,7 @@ impl Drop for SuspendedGroups {
     }
 }
 fn with_suspended_groups<T>(
-    facade: &crate::entity::EntityFacade,
+    facade: &moqui_core::entity::EntityFacade,
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
     let mut suspended = SuspendedGroups(Vec::new());
@@ -815,33 +814,33 @@ fn with_suspended_groups<T>(
     }
 }
 
-fn database_now(tx: &crate::transaction::TransactionManager) -> Result<i64, Error> {
+fn database_now(tx: &moqui_core::transaction::TransactionManager) -> Result<i64, Error> {
     tx.with_connection(|connection| {
         let rows = connection.query("SELECT CURRENT_TIMESTAMP AS report_now", &[])?;
         let value = rows
             .first()
             .and_then(|row| row.get("report_now"))
             .ok_or_else(|| fail("report lease database clock is unavailable"))?;
-        crate::user::value_millis(value)
-            .or_else(|| crate::user::value_millis(&moqui_lib::object::basic_convert(value, "Timestamp").value))
+        moqui_core::user::value_millis(value)
+            .or_else(|| moqui_core::user::value_millis(&moqui_lib::object::basic_convert(value, "Timestamp").value))
             .ok_or_else(|| fail("report lease database clock could not be read"))
     })
 }
 
-fn owns_lease(row: &crate::entity::EntityValue, token: &str, now: i64) -> bool {
+fn owns_lease(row: &moqui_core::entity::EntityValue, token: &str, now: i64) -> bool {
     same_run(row, token)
         && row
             .get("reportRunningUntil")
-            .and_then(crate::user::value_millis)
+            .and_then(moqui_core::user::value_millis)
             .is_some_and(|until| until > now)
 }
 
-fn same_run(row: &crate::entity::EntityValue, token: &str) -> bool {
+fn same_run(row: &moqui_core::entity::EntityValue, token: &str) -> bool {
     row.get("reportRunId").and_then(Value::as_str) == Some(token)
 }
 
 struct ReportLease {
-    factory: std::sync::Weak<crate::context::ExecutionContextFactory>,
+    factory: std::sync::Weak<moqui_core::context::ExecutionContextFactory>,
     id: String,
     token: String,
     owner: String,
@@ -853,7 +852,7 @@ struct ReportLease {
 }
 impl ReportLease {
     fn start(
-        factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+        factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
         id: &str,
         token: &str,
         owner: &str,
@@ -869,7 +868,7 @@ impl ReportLease {
         let expected_definition = definition.to_string();
         let failed = std::sync::Arc::clone(&lost);
         let worker=std::thread::Builder::new().name("report-lease".into()).spawn(move||{
-            let _suppressed=crate::telemetry::suppress();
+            let _suppressed=moqui_core::telemetry::suppress();
             while matches!(receiver.recv_timeout(std::time::Duration::from_secs(30)),Err(std::sync::mpsc::RecvTimeoutError::Timeout)){
                 let result=weak.upgrade().ok_or_else(||fail("report factory stopped")).and_then(|factory|renew_lease(&factory,&schedule_id,&run_id,&expected_owner,&expected_definition,scheduled));
                 if let Err(error)=result{failed.store(true,std::sync::atomic::Ordering::Release);tracing::error!(schedule=%schedule_id,%error,"report lease renewal failed; further delivery is blocked");break;}
@@ -925,7 +924,7 @@ impl Drop for ReportLease {
     }
 }
 fn renew_lease(
-    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
     id: &str,
     token: &str,
     owner: &str,
@@ -946,12 +945,12 @@ fn renew_lease(
             .one()?
             .ok_or_else(|| fail("report owner no longer exists"))?
     };
-    crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
-    crate::report::definitions::read(&context, definition)?;
+    moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
+    crate::definitions::read(&context, definition)?;
     let _metadata = context.disable_authz();
     let tx = facade.transactions_for(LOCK)?;
     tx.run(
-        crate::transaction::TransactionAttribute::ForceNew,
+        moqui_core::transaction::TransactionAttribute::ForceNew,
         Some(std::time::Duration::from_secs(5)),
         || {
             let now = database_now(&tx)?;
@@ -981,16 +980,20 @@ fn renew_lease(
         },
     )
 }
-fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, scheduled: bool) -> Result<Parameters, Error> {
+fn deliver(
+    ec: &ExecutionContext,
+    schedule: &moqui_core::entity::EntityValue,
+    scheduled: bool,
+) -> Result<Parameters, Error> {
     let facade = entity(ec)?;
     let id = schedule
         .get("screenScheduledId")
         .and_then(Value::as_str)
         .ok_or_else(|| fail("schedule id missing"))?;
     let tx = facade.transactions_for(LOCK)?;
-    let token = crate::entity::uuid_v4()?;
+    let token = moqui_core::entity::uuid_v4()?;
     let expected_owner = if scheduled { None } else { Some(viewer()?) };
-    let claimed = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+    let claimed = tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
         let _authz = ec.disable_authz();
         // Lock the existing parent even on the first run, when no lock row has been loaded yet.
         let current = facade
@@ -1012,11 +1015,11 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
         if scheduled
             && (current
                 .get("fromDate")
-                .and_then(crate::user::value_millis)
+                .and_then(moqui_core::user::value_millis)
                 .is_some_and(|from| from > now)
                 || current
                     .get("thruDate")
-                    .and_then(crate::user::value_millis)
+                    .and_then(moqui_core::user::value_millis)
                     .is_some_and(|thru| thru <= now))
         {
             return Ok(None);
@@ -1037,13 +1040,13 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 .map_err(fail)?;
             let zoned = jiff::Timestamp::from_millisecond(now)
                 .map_err(fail)?
-                .to_zoned(crate::service::job_time_zone());
+                .to_zoned(moqui_core::service::job_time_zone());
             let Ok(previous) = cron.find_previous_occurrence(&zoned, true) else {
                 return Ok(None);
             };
             if lock
                 .get("lastRunTime")
-                .and_then(crate::user::value_millis)
+                .and_then(moqui_core::user::value_millis)
                 .is_some_and(|last| last >= previous.timestamp().as_millisecond())
             {
                 return Ok(None);
@@ -1090,7 +1093,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
         };
         let context = ec.factory().new_context();
         let _entered = context.enter();
-        crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
+        moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
         let definition_id = schedule
             .get("reportDefinitionId")
             .and_then(Value::as_str)
@@ -1118,7 +1121,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
             let written = (|| {
                 let permissions = ec.factory().new_context();
                 let _entered = permissions.enter();
-                crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
+                moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))?;
                 require_file_delivery()?;
                 attempted = true;
                 // Each file is its own write: one that fails is reported and the others are still saved.
@@ -1169,7 +1172,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                         if account.get("disabled").and_then(Value::as_str) != Some("Y")
                             && !account
                                 .get("terminateDate")
-                                .and_then(crate::user::value_millis)
+                                .and_then(moqui_core::user::value_millis)
                                 .is_some_and(|date| date <= now)
                         {
                             if let Some(address) = account
@@ -1192,11 +1195,11 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                     {
                         if account
                             .get("fromDate")
-                            .and_then(crate::user::value_millis)
+                            .and_then(moqui_core::user::value_millis)
                             .is_some_and(|date| date > now)
                             || account
                                 .get("thruDate")
-                                .and_then(crate::user::value_millis)
+                                .and_then(moqui_core::user::value_millis)
                                 .is_some_and(|date| date <= now)
                         {
                             continue;
@@ -1204,7 +1207,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                         if account.get("disabled").and_then(Value::as_str) != Some("Y")
                             && !account
                                 .get("terminateDate")
-                                .and_then(crate::user::value_millis)
+                                .and_then(moqui_core::user::value_millis)
                                 .is_some_and(|date| date <= now)
                         {
                             if let Some(address) = account
@@ -1226,7 +1229,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                 let image = if let Some((_, bytes)) = rendered.files.first().filter(|_| rendered.extension == "png") {
                     bytes.clone()
                 } else {
-                    crate::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
+                    moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
                 };
                 let image_id = "report-image@moqui";
                 let inline = Value::Map(indexmap::IndexMap::from([
@@ -1248,7 +1251,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                     .collect();
                 lease.check()?;
                 attempted = true;
-                let mail = crate::service::call::sync_checked(
+                let mail = moqui_core::service::call::sync_checked(
                     "org.moqui.impl.EmailServices.send#EmailTemplate",
                     &BTreeMap::from([
                         ("emailTemplateId".into(), Value::string(template)),
@@ -1281,7 +1284,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
                             ])),
                         ),
                     ]),
-                    &crate::service::call::CallOptions {
+                    &moqui_core::service::call::CallOptions {
                         ignore_transaction: Some(true),
                         require_new_transaction: Some(true),
                         no_remember_parameters: true,
@@ -1309,7 +1312,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
             }
         }
         if !delivered.is_empty() {
-            crate::report::audit_export(
+            crate::audit_export(
                 "scheduled",
                 rendered.extension,
                 definition_id,
@@ -1326,7 +1329,7 @@ fn deliver(ec: &ExecutionContext, schedule: &crate::entity::EntityValue, schedul
         Ok(out(json!({"sent":true})))
     });
     drop(lease);
-    let released = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+    let released = tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
         let _authz = ec.disable_authz();
         if let Some(mut lock) = facade
             .find(LOCK)?
@@ -1374,7 +1377,7 @@ mod tests {
     fn panel_exports_select_before_querying_and_links_keep_frozen_context() {
         let mut dashboard = json!({"body":{"panels":{"selected":{"queries":[{"datasetId":"public"}]},"other":{"queries":[{"datasetId":"private"}]}},
             "layout":{"type":"grid","items":[{"panelId":"other","x":0,"y":0,"w":12,"h":1},{"panelId":"selected","x":12,"y":0,"w":12,"h":1}]}}});
-        crate::report::select_panel(&mut dashboard, "selected").unwrap();
+        crate::select_panel(&mut dashboard, "selected").unwrap();
         assert_eq!(dashboard["body"]["panels"].as_object().unwrap().len(), 1);
         assert!(dashboard["body"]["panels"].get("other").is_none());
         assert_eq!(
@@ -1382,8 +1385,8 @@ mod tests {
             json!({"type":"autoGrid","items":[{"panelId":"selected"}]}),
             "the single-panel layout names no other panel"
         );
-        assert!(crate::report::select_panel(&mut dashboard, "missing").is_err());
-        assert!(crate::report::select_panel(&mut json!({"body":5}), "selected").is_err());
+        assert!(crate::select_panel(&mut dashboard, "missing").is_err());
+        assert!(crate::select_panel(&mut json!({"body":5}), "selected").is_err());
         let link = live_link(
             "id with%value",
             &json!({"range":{"from":"2026-10-26T00:00:00Z","thru":"2026-10-27T00:00:00Z"},"variableValues":{"status":["Approved","Held"],"literal":"%26"},"filters":[{"datasetId":"visible","query":{"field":{"name":"status","op":"eq","value":"Approved"}}}]}),
@@ -1399,7 +1402,7 @@ mod tests {
 
     #[test]
     fn lease_ownership_does_not_clear_a_newer_runner() {
-        let facade = crate::testing::open();
+        let facade = moqui_core::testing::open();
         let mut row = facade.make_value(LOCK).unwrap();
         row.set("reportRunId", Value::string("new"));
         row.set("reportRunningUntil", Value::I64(200));
@@ -1414,12 +1417,12 @@ mod tests {
         // Test workers are reused: isolate transaction/cache TLS and model discovery and
         // the later pause as separate committed operations, as separate callers do.
         std::thread::spawn(|| {
-            let context = crate::context::ExecutionContextFactory::test_context();
+            let context = moqui_core::context::ExecutionContextFactory::test_context();
             let _entered = context.enter();
             let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-            let facade = crate::testing::open_with(
-                &crate::testing::framework_dir(),
-                crate::testing::Options {
+            let facade = moqui_core::testing::open_with(
+                &moqui_core::testing::framework_dir(),
+                moqui_core::testing::Options {
                     tape: Some(tape.clone()),
                     ..Default::default()
                 },
@@ -1428,7 +1431,7 @@ mod tests {
             let tx = facade.transactions_for(SCHEDULE).unwrap();
             let snapshot = {
                 let _authz = context.disable_authz();
-                tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
                     let mut row = facade.make_value(SCHEDULE)?;
                     row.set("screenScheduledId", Value::string("paused-snapshot"));
                     row.set("paused", Value::string("N"));
@@ -1436,7 +1439,7 @@ mod tests {
                 })
                 .unwrap();
                 let snapshot = tx
-                    .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                    .run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
                         facade
                             .find(SCHEDULE)?
                             .use_cache(false)
@@ -1447,7 +1450,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(snapshot.get("paused").and_then(Value::as_str), Some("N"));
                 let changed = tx
-                    .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                    .run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
                         facade
                             .find(SCHEDULE)?
                             .eq("screenScheduledId", Value::string("paused-snapshot"))
@@ -1456,7 +1459,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(changed, 1);
                 let current = tx
-                    .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                    .run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
                         facade
                             .find(SCHEDULE)?
                             .for_update(true)

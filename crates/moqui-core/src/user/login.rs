@@ -807,7 +807,7 @@ pub fn now_effective_value() -> Value {
 }
 
 /// [`now_effective_value`] as epoch millis.
-pub(crate) fn now_effective_millis() -> i64 {
+pub fn now_effective_millis() -> i64 {
     ExecutionContext::with_current(ExecutionContext::effective_time)
         .flatten()
         .unwrap_or_else(now_millis)
@@ -1248,7 +1248,7 @@ fn value_i64(value: &Value) -> Option<i64> {
     }
 }
 
-pub(crate) fn value_millis(value: &Value) -> Option<i64> {
+pub fn value_millis(value: &Value) -> Option<i64> {
     match value {
         Value::Timestamp(timestamp) => Some(timestamp.as_millisecond()),
         other => value_i64(other),

@@ -867,7 +867,7 @@ service:
         moqui_core::telemetry::for_factory(factory).flush();
         let mut complete = true;
         for dataset in ["otel_spans", "otel_logs", "otel_metrics"] {
-            let page=moqui_core::report::documents(&context,&json!({"datasetId":dataset,"from":"now-1h","thru":"now+1h","query":{"field":{"name":"source.id","op":"eq","value":source_id}},"pageSize":20})).unwrap();
+            let page=moqui_report::documents(&context,&json!({"datasetId":dataset,"from":"now-1h","thru":"now+1h","query":{"field":{"name":"source.id","op":"eq","value":source_id}},"pageSize":20})).unwrap();
             complete &= page["total"].as_u64().unwrap_or(0) == 2;
             for hit in page["hits"].as_array().unwrap() {
                 assert_eq!(hit["body"]["source.id"], source_id);
@@ -1015,7 +1015,7 @@ fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
     loop {
         moqui_core::telemetry::for_factory(factory).flush();
         let page = |dataset: &str, query: Json| {
-            moqui_core::report::documents(
+            moqui_report::documents(
                 &context,
                 &json!({"datasetId":dataset,"from":"now-1h","thru":"now+1h","query":query,"pageSize":200}),
             )

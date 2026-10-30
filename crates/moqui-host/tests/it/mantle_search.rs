@@ -190,7 +190,7 @@ fn shipped_sales_dashboard(factory: &Arc<ExecutionContextFactory>, from: &str, t
         method: "",
     };
     let parameters = moqui_core::native::Parameters::from([("definitionId".into(), Value::string("mantle-sales"))]);
-    let saved = moqui_core::report::get_definition(&context, &service, &parameters).unwrap();
+    let saved = moqui_report::get_definition(&context, &service, &parameters).unwrap();
     let saved = moqui_lib::json::to_json(&Value::Map(saved.into_iter().collect()));
     let mut definition = saved["definition"].clone();
     assert_eq!(
@@ -209,7 +209,7 @@ fn shipped_sales_dashboard(factory: &Arc<ExecutionContextFactory>, from: &str, t
     }
     let from = from.replace(' ', "T") + "Z";
     let thru = thru.replace(' ', "T") + "Z";
-    let rendered = moqui_core::report::dashboard_frames(&context, &definition, &json!({}), &from, &thru).unwrap();
+    let rendered = moqui_report::dashboard_frames(&context, &definition, &json!({}), &from, &thru).unwrap();
     let total = |panel: &str, field: &str| -> f64 {
         let panel = &rendered["panels"][panel];
         assert!(

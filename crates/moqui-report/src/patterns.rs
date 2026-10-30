@@ -18,7 +18,7 @@ const SIMILARITY: f64 = 0.5;
 
 /// The line's tokens, with variable parts masked.
 pub fn tokens(line: &str) -> Vec<String> {
-    let masked = crate::telemetry::mask_message(line, WILDCARD);
+    let masked = moqui_core::telemetry::mask_message(line, WILDCARD);
     let mut tokens: Vec<String> = masked.split_whitespace().map(str::to_string).collect();
     if tokens.len() > MAX_TOKENS {
         tokens.truncate(MAX_TOKENS);

@@ -66,7 +66,8 @@ one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `ll
 through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
 framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
 way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
-`moqui_core::extension`. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
+`moqui_core::extension`; `moqui-report` is one too, linked in every build (the host's `xlsx` turns on its own, for the
+xlsx format of a scheduled report). The entity facade is the `moqui-entity` crate below core, in every package and in the browser
 build, with no features of its own.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
@@ -87,7 +88,7 @@ build, with no features of its own.
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
-| `xlsx` | core | The `xlsx` render mode and `org.moqui.impl.SpreadsheetServices` | | | yes | yes |
+| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.impl.SpreadsheetServices` and the xlsx format of a scheduled report | | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes | yes |
 

@@ -127,7 +127,7 @@ pub fn tabify_with_subtotals(result: &Value, subtotals: bool) -> Frame {
                 for (percent, quantile) in [("p50", 0.50), ("p95", 0.95), ("p99", 0.99)] {
                     row.insert(
                         format!("{name}.{percent}"),
-                        crate::telemetry::maintenance::histogram_percentile(&bounds, &counts, quantile)
+                        moqui_core::telemetry::maintenance::histogram_percentile(&bounds, &counts, quantile)
                             .map(numeric)
                             .unwrap_or(Value::Null),
                     );
@@ -790,7 +790,7 @@ pub fn transform(mut frame: Frame, steps: &[Value]) -> Result<Frame, Error> {
 /// joined values. Every join is bounded before constructing its output.
 pub fn transform_frames(mut frames: Vec<Frame>, steps: &[Value]) -> Result<Vec<Frame>, Error> {
     for step in steps.iter().filter(|s| s["disabled"] != true) {
-        crate::search::limits::remaining()?;
+        moqui_core::search::limits::remaining()?;
         match text(step, "type", "") {
             "comparePrevious" => {
                 if !frames.len().is_multiple_of(2) {

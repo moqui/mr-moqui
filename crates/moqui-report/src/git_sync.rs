@@ -16,7 +16,7 @@
 //! one, such as a definition whose first write failed, is only listed. Deleting a tracked definition removes its file
 //! once the delete commits, and a push removes the file of any tracked definition that no longer exists.
 use super::*;
-use crate::context::ExecutionContextFactory;
+use moqui_core::context::ExecutionContextFactory;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -26,12 +26,12 @@ const FILE: &str = "moqui.report.DefinitionGitFile";
 /// The artifact a viewer needs (update) to create, push or pull a sync.
 const ADMIN: &str = "org.moqui.report.gitSync";
 
-fn entity(ec: &ExecutionContext) -> Result<crate::entity::EntityFacade, Error> {
+fn entity(ec: &ExecutionContext) -> Result<moqui_core::entity::EntityFacade, Error> {
     ec.factory()
         .entity()
         .ok_or_else(|| fail("entity facade is unavailable"))
 }
-fn field(row: &crate::entity::EntityValue, name: &str) -> String {
+fn field(row: &moqui_core::entity::EntityValue, name: &str) -> String {
     row.get(name)
         .map(moqui_lib::object::to_plain_string)
         .unwrap_or_default()
@@ -91,7 +91,8 @@ fn as_user<T>(
             .one()?
             .ok_or_else(|| fail(format!("git sync user {user_id} does not exist")))?
     };
-    crate::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or("")).map_err(fail)?;
+    moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))
+        .map_err(fail)?;
     body(&context)
 }
 
@@ -101,7 +102,7 @@ fn record(ec: &ExecutionContext, sync_id: &str, date_field: &str, error: Option<
         let facade = entity(ec)?;
         let _metadata = ec.disable_authz();
         facade.transactions_for(ENTITY)?.run(
-            crate::transaction::TransactionAttribute::ForceNew,
+            moqui_core::transaction::TransactionAttribute::ForceNew,
             None,
             || -> Result<(), moqui_lib::error::Error> {
                 let Some(mut row) = facade
@@ -112,7 +113,7 @@ fn record(ec: &ExecutionContext, sync_id: &str, date_field: &str, error: Option<
                 else {
                     return Ok(());
                 };
-                row.set(date_field, crate::user::now_value());
+                row.set(date_field, moqui_core::user::now_value());
                 row.set("lastError", error.clone().map_or(Value::Null, Value::String));
                 row.update(&facade)?;
                 Ok(())
@@ -135,7 +136,7 @@ fn track(ec: &ExecutionContext, sync_id: &str, ids: &[String]) {
             let mut row = facade.make_value(FILE)?;
             row.set("syncId", Value::string(sync_id));
             row.set("definitionId", Value::string(id));
-            row.set("syncedDate", crate::user::now_value());
+            row.set("syncedDate", moqui_core::user::now_value());
             row.create_or_update(&facade)?;
         }
         Ok(())
@@ -222,7 +223,7 @@ fn changed_files(ec: &ExecutionContext, sync: &Json, definitions: &[Json]) -> Re
     Ok((files, unchanged))
 }
 
-fn sync_json(row: &crate::entity::EntityValue) -> Json {
+fn sync_json(row: &moqui_core::entity::EntityValue) -> Json {
     json!({"syncId":field(row,"syncId"),"folder":field(row,"folder"),"repositoryId":field(row,"repositoryId"),"path":field(row,"path"),
         "userId":field(row,"userId"),"enabled":field(row,"enabled")!="N","lastPushDate":row.get("lastPushDate").map(moqui_lib::json::to_json),
         "lastPullDate":row.get("lastPullDate").map(moqui_lib::json::to_json),"lastError":row.get("lastError").and_then(Value::as_str)})
@@ -321,7 +322,7 @@ pub fn pull(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json,
                 let note = format!("Pulled from {}", entry.location);
                 let facade = entity(ec)?;
                 facade.transactions_for(DEFINITION)?.run(
-                    crate::transaction::TransactionAttribute::UseOrBegin,
+                    moqui_core::transaction::TransactionAttribute::UseOrBegin,
                     None,
                     || definitions::save_pulled(ec, &file, &note),
                 )?;
@@ -353,7 +354,7 @@ pub fn pull(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json,
             }
             let facade = entity(ec)?;
             let result = facade.transactions_for(DEFINITION).and_then(|tx| {
-                tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+                tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
                     definitions::delete(ec, &id)
                 })
             });
@@ -536,7 +537,7 @@ pub(super) fn after_delete(ec: &ExecutionContext, definition: &Json) {
 }
 
 fn authorize() -> Result<(), Error> {
-    crate::user::authorize_own("AT_SERVICE", ADMIN, "update").map_err(fail)
+    moqui_core::user::authorize_own("AT_SERVICE", ADMIN, "update").map_err(fail)
 }
 
 pub fn store_sync(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Parameters) -> Result<Parameters, Error> {

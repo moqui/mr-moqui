@@ -49,7 +49,7 @@ imap = ["smtp", "moqui-mail/imap"]
 git = ["dep:moqui-git"]
 # Framework features, forwarded to moqui-core.
 image = ["moqui-core/image"]
-xlsx = ["moqui-core/xlsx"]
+xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
@@ -74,6 +74,8 @@ moqui-lib = { workspace = true, features = ["http"] }
 moqui-llm = { workspace = true, optional = true }
 moqui-git = { workspace = true, optional = true }
 moqui-mail = { workspace = true, optional = true }
+# Reports, dashboards, alerts and monitoring keys (crates/moqui-report), in every build.
+moqui-report = { workspace = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }

@@ -340,8 +340,8 @@ impl ExecutionContextFactory {
             native_tools: crate::native::ToolSet::default(),
         });
         factory.native.configure(&factory, &conf_node)?;
-        if let Err(error) = crate::report::load_shipped(&factory) {
-            tracing::error!(%error, "could not load component report definitions");
+        for extension in crate::extension::linked() {
+            (extension.after_boot)(&factory);
         }
         set_by_boot.keep();
         factory.pools.attach(&factory);

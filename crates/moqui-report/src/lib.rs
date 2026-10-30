@@ -1,4 +1,27 @@
-//! Authorized report queries and shared columnar results. No telemetry SDK types cross this API.
+//! Authorized report queries and shared columnar results. No telemetry SDK types cross this API. Beside them, the report
+//! definitions ([`definitions`]), dashboard alerts ([`alert`]), annotations and releases ([`annotations`]), scheduled
+//! delivery ([`schedule`]) and the monitoring sources' keys ([`monitor`]).
+//!
+//! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
+//! below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
+//! `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
+//! boot. moqui-host and moqui-browser link it in every build.
+
+moqui_core::extension::submit! {
+    moqui_core::extension::Extension {
+        register_native: |registry| {
+            register(registry)?;
+            monitor::register(registry)?;
+            schedule::register(registry)
+        },
+        after_boot: |factory| {
+            if let Err(error) = load_shipped(factory) {
+                tracing::error!(%error, "could not load component report definitions");
+            }
+        },
+        ..moqui_core::extension::Extension::EMPTY
+    }
+}
 
 pub mod alert;
 pub mod annotations;
@@ -6,16 +29,18 @@ pub mod definitions;
 pub mod frame;
 pub mod git_sync;
 pub mod graph;
+pub mod monitor;
 pub mod patterns;
 pub mod repeat;
-pub mod time;
+pub mod schedule;
+use moqui_core::search::time;
 
-use crate::{
+use indexmap::IndexMap;
+use moqui_core::{
     context::ExecutionContext,
     native::{Parameters, ServiceInfo},
     search::{self, Query, SearchRequest, SortField, Target},
 };
-use indexmap::IndexMap;
 use moqui_lib::{error::Error, object::Value};
 use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
@@ -78,7 +103,7 @@ fn output(mut value: Json) -> Parameters {
 /// `panel`, `scheduled`, `documents`), `format` the file type, and `recipients` the addresses of a
 /// scheduled delivery. The user is the authenticated viewer, or the owner a schedule runs as.
 pub fn audit_export(kind: &str, format: &str, definition: &str, rows: usize, recipients: &[String]) {
-    let user = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     tracing::info!(target: "moqui.report.audit", user = %user, kind, format, definition, rows,
         recipients = %recipients.join(","), "report data exported");
 }
@@ -91,7 +116,7 @@ pub fn audit_export_service(
     params: &Parameters,
 ) -> Result<Parameters, Error> {
     let params = input(params);
-    crate::user::current_user_id()
+    moqui_core::user::current_user_id()
         .map_err(fail)?
         .filter(|user| !user.is_empty())
         .ok_or_else(|| fail("an export audit requires an authenticated viewer"))?;
@@ -120,10 +145,10 @@ pub struct Dataset {
 
 fn authorize_dataset(id: &str) -> Result<(), Error> {
     // A background caller must enter an owner context as ordinary service calls do.
-    if !crate::user::context_entered() {
+    if !moqui_core::user::context_entered() {
         return Err(fail("a report requires an entered viewer context"));
     }
-    crate::user::authorize_own("AT_SERVICE", &format!("org.moqui.report.dataset.{id}"), "view").map_err(fail)
+    moqui_core::user::authorize_own("AT_SERVICE", &format!("org.moqui.report.dataset.{id}"), "view").map_err(fail)
 }
 
 pub fn dataset(ec: &ExecutionContext, id: &str) -> Result<Dataset, Error> {
@@ -175,7 +200,7 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
     }
     let body = &definition["body"];
     if let Some(service) = body["serviceName"].as_str() {
-        crate::user::authorize_own("AT_SERVICE", service, "view").map_err(fail)?;
+        moqui_core::user::authorize_own("AT_SERVICE", service, "view").map_err(fail)?;
         return Ok(Dataset {
             id: id.into(),
             target: Target::Documents(Vec::new()),
@@ -191,7 +216,8 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
         Target::Documents(vec![text(body, "documentType", id).into()])
     };
     let facade = search::current()?;
-    let groups = crate::user::user_group_ids(crate::user::current_user_id().map_err(fail)?.as_deref()).map_err(fail)?;
+    let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
+        .map_err(fail)?;
     let entity = ec
         .factory()
         .entity()
@@ -249,14 +275,14 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
         // so the dataset it resolves matches nothing.
         predicates.push(Query::exclude(Query::MatchAll));
     } else if let Some(service) = body["rowFilterService"].as_str() {
-        let user = crate::user::current_user_id()
+        let user = moqui_core::user::current_user_id()
             .map_err(fail)?
             .filter(|user| !user.is_empty())
             .ok_or_else(|| fail("a row-filter service requires an authenticated viewer"))?;
-        let result = crate::service::call::sync_checked(
+        let result = moqui_core::service::call::sync_checked(
             service,
             &Parameters::from([("userId".into(), Value::string(user))]),
-            &crate::service::call::CallOptions {
+            &moqui_core::service::call::CallOptions {
                 ignore_previous_error: true,
                 no_remember_parameters: true,
                 ..Default::default()
@@ -288,15 +314,15 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
 /// Scope values come from the authenticated principal, never screen parameters or the
 /// request-populated user context. Application organization ACLs belong in rowFilterService.
 fn identity_filter_value(ec: &ExecutionContext, key: &str) -> Result<Value, Error> {
-    let user = crate::user::current_user_id()
+    let user = moqui_core::user::current_user_id()
         .map_err(fail)?
         .filter(|user| !user.is_empty())
         .ok_or_else(|| fail("dataset identity filters require an authenticated viewer"))?;
     match key{
         "userId"=>Ok(Value::string(user)),
-        "username"=>crate::user::current_username().map_err(fail)?.map(Value::string).ok_or_else(||fail("authenticated username is unavailable")),
-        "userGroupIds"=>Ok(Value::List(crate::user::user_group_ids(Some(&user)).map_err(fail)?.into_iter().map(Value::string).collect())),
-        key if key.starts_with("userAccount.")=>{let field=&key[12..];if field.is_empty()||!field.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_')||crate::context::secret_parameter(field){return Err(fail("dataset userAccount filter field is not permitted"));}
+        "username"=>moqui_core::user::current_username().map_err(fail)?.map(Value::string).ok_or_else(||fail("authenticated username is unavailable")),
+        "userGroupIds"=>Ok(Value::List(moqui_core::user::user_group_ids(Some(&user)).map_err(fail)?.into_iter().map(Value::string).collect())),
+        key if key.starts_with("userAccount.")=>{let field=&key[12..];if field.is_empty()||!field.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_')||moqui_core::context::secret_parameter(field){return Err(fail("dataset userAccount filter field is not permitted"));}
             let entity=ec.factory().entity().ok_or_else(||fail("entity facade is unavailable"))?;let account=metadata(ec,||entity.find("moqui.security.UserAccount")?.eq("userId",Value::string(&user)).one())?.ok_or_else(||fail("authenticated user account is unavailable"))?;
             account.get(field).cloned().filter(|value|!value.is_null()).ok_or_else(||fail(format!("authenticated userAccount field {field} is unavailable")))
         }
@@ -407,7 +433,7 @@ fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Res
         ec,
         options,
         dataset,
-        ec.effective_time().unwrap_or_else(crate::user::now_millis),
+        ec.effective_time().unwrap_or_else(moqui_core::user::now_millis),
     )?);
     let mode = text(options, "retrievalMode", "lexical");
     if mode != "lexical" {
@@ -419,7 +445,7 @@ fn documents_of(ec: &ExecutionContext, options: &Json, dataset: &Dataset) -> Res
             ec,
             &trusted,
             dataset,
-            ec.effective_time().unwrap_or_else(crate::user::now_millis),
+            ec.effective_time().unwrap_or_else(moqui_core::user::now_millis),
         )?);
         let retrieval = search::hybrid::HybridOptions {
             text: text(options, "queryString", "").into(),
@@ -544,7 +570,7 @@ fn decorate_document(
     ec: &ExecutionContext,
     facade: &search::SearchFacade,
     hit: &search::SearchHit,
-    definitions: &mut BTreeMap<String, (String, Vec<crate::entity::EntityValue>)>,
+    definitions: &mut BTreeMap<String, (String, Vec<moqui_core::entity::EntityValue>)>,
 ) -> Result<(String, Vec<Json>), Error> {
     if !definitions.contains_key(&hit.document_id) {
         let entity = facade.entity();
@@ -571,22 +597,22 @@ fn decorate_document(
         .collect::<Vec<_>>();
         definitions.insert(hit.document_id.clone(), (title, links));
     }
-    let _frame = crate::script::ContextFrame::push();
+    let _frame = moqui_core::script::ContextFrame::push();
     for (name, value) in moqui_lib::collection::flatten_nested_map(&hit.body) {
-        crate::script::set_context_name(&name, value)?;
+        moqui_core::script::set_context_name(&name, value)?;
     }
-    crate::script::set_context_name("_id", Value::string(&hit.id))?;
-    crate::script::set_context_name("_type", Value::string(&hit.document_id))?;
+    moqui_core::script::set_context_name("_id", Value::string(&hit.id))?;
+    moqui_core::script::set_context_name("_type", Value::string(&hit.document_id))?;
     let (template, records) = &definitions[&hit.document_id];
-    let title = crate::script::expand(template)?;
+    let title = moqui_core::script::expand(template)?;
     let mut links = Vec::new();
     for link in records {
         let condition = link.get("linkCondition").and_then(Value::as_str).unwrap_or("");
         let result = (|| -> Result<Option<Json>, Error> {
-            if !condition.is_empty() && !crate::script::eval_condition(condition)? {
+            if !condition.is_empty() && !moqui_core::script::eval_condition(condition)? {
                 return Ok(None);
             }
-            let expand = |name: &str| crate::script::expand(link.get(name).and_then(Value::as_str).unwrap_or(""));
+            let expand = |name: &str| moqui_core::script::expand(link.get(name).and_then(Value::as_str).unwrap_or(""));
             Ok(Some(
                 json!({"url":expand("linkUrl")?,"label":expand("label")?,"urlType":link.get("urlType").and_then(Value::as_str).unwrap_or("plain")}),
             ))
@@ -635,7 +661,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
         return Err(fail("report exceeds 64 queries"));
     }
     *budget -= 1;
-    let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
+    let now = ec.effective_time().unwrap_or_else(moqui_core::user::now_millis);
     let range = json!({"from":jiff::Timestamp::from_millisecond(time::parse(text(options,"from","now-7d"),now)?).map_err(fail)?.to_string(),"thru":jiff::Timestamp::from_millisecond(time::parse_thru(text(options,"thru","now"),now)?).map_err(fail)?.to_string()});
     if options["comparePrevious"] == true {
         return execute_comparison(ec, options, budget, &range);
@@ -757,9 +783,12 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
                 parameters.insert(parameter.into(), moqui_lib::json::from_json(&range[key]));
             }
         }
-        let result =
-            crate::service::call::sync_checked(service, &parameters, &crate::service::call::CallOptions::default())
-                .map_err(fail)?;
+        let result = moqui_core::service::call::sync_checked(
+            service,
+            &parameters,
+            &moqui_core::service::call::CallOptions::default(),
+        )
+        .map_err(fail)?;
         let result = input(&result);
         let mut frame = if let Some(frame) = result.get("frame") {
             let frame = serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail)?;
@@ -1346,7 +1375,7 @@ fn configure_frame(
             }
             let mut find = entity
                 .find(text(&lookup, "entityName", ""))?
-                .condition(crate::entity::Condition::is_in(
+                .condition(moqui_core::entity::Condition::is_in(
                     key,
                     keys.iter()
                         .map(|key| {
@@ -1536,7 +1565,7 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
         }
         Ok(())
     }
-    let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
+    let now = ec.effective_time().unwrap_or_else(moqui_core::user::now_millis);
     child_ranges(&mut current_options, now, 0)?;
     let mut previous_options = current_options.clone();
     previous_options["from"] = json!(jiff::Timestamp::from_millisecond(
@@ -1959,7 +1988,7 @@ fn normalize_intervals(options: &mut Json, range: &Json, notices: &mut Vec<Json>
                 }
             }
             if params.get("time_zone").is_none() {
-                if let Some(zone) = crate::l10n::time_zone().iana_name() {
+                if let Some(zone) = moqui_core::l10n::time_zone().iana_name() {
                     params["time_zone"] = json!(zone);
                 }
             }
@@ -2242,7 +2271,7 @@ pub fn dashboard_frames_filtered(
     if panels.len() > 100 {
         return Err(fail("dashboard exceeds 100 panels"));
     }
-    let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
+    let now = ec.effective_time().unwrap_or_else(moqui_core::user::now_millis);
     let from = jiff::Timestamp::from_millisecond(time::parse(from, now)?)
         .map_err(fail)?
         .to_string();
@@ -2536,7 +2565,7 @@ pub fn dashboard_frames_filtered(
 /// translated on the web, in the TUI and in a printed report alike; other text stays as written.
 fn localize_title(title: &mut Json) {
     if let Some(text) = title.as_str().filter(|text| !text.is_empty()) {
-        if let Ok(localized) = crate::l10n::localize(text) {
+        if let Ok(localized) = moqui_core::l10n::localize(text) {
             *title = Json::String(localized);
         }
     }
@@ -2666,8 +2695,8 @@ pub fn render_dashboard(
     .map(|dashboard| output(json!({"dashboard":dashboard})))
 }
 
-pub fn register(registry: &mut crate::native::NativeRegistry) -> Result<(), crate::context::Error> {
-    use crate::native::NativeService;
+pub fn register(registry: &mut moqui_core::native::NativeRegistry) -> Result<(), moqui_core::context::Error> {
+    use moqui_core::native::NativeService;
     for (name, function) in [
         ("query_documents", query_documents as NativeService),
         ("run_query", run_query),
@@ -2802,7 +2831,7 @@ mod tests {
     }
     #[test]
     fn malformed_query_json_is_an_error_not_a_panic() {
-        let ec = crate::context::ExecutionContextFactory::test_context();
+        let ec = moqui_core::context::ExecutionContextFactory::test_context();
         let _entered = ec.enter();
         let result = execute_query(&ec, &json!({"queries":[1,"text",null]})).unwrap();
         let notices = result["notices"].as_array().unwrap();
@@ -2845,7 +2874,7 @@ mod tests {
     }
     #[test]
     fn one_bad_panel_or_variable_leaves_the_others_rendered() {
-        let ec = crate::context::ExecutionContextFactory::test_context();
+        let ec = moqui_core::context::ExecutionContextFactory::test_context();
         let _entered = ec.enter();
         let definition = json!({"id":"tolerant","title":"Tolerant","body":{
             "variables":[{"name":"service","kind":"query","datasetId":"otel_spans","field":"service.name"}],
@@ -2891,5 +2920,38 @@ mod tests {
         let result = input(&result);
         assert_eq!(result["hits"][0]["start_nano"], "1800000000000000001");
         assert_eq!(result["hits"][0]["count"], 3);
+    }
+
+    /// The native services register at the report, schedule and monitor locations the service files name, and at no
+    /// other.
+    #[test]
+    fn the_services_register_at_the_locations_the_service_files_name() {
+        let mut registry = moqui_core::native::NativeRegistry::default();
+        register(&mut registry).unwrap();
+        crate::monitor::register(&mut registry).unwrap();
+        crate::schedule::register(&mut registry).unwrap();
+        let registered = registry.service_locations();
+        let dir = moqui_core::context::framework_dir().join("service/org/moqui");
+        let mut named = Vec::new();
+        for file in ["report/ReportServices.xml", "monitor/MonitorServices.xml"] {
+            let text = std::fs::read_to_string(dir.join(file)).unwrap();
+            named.extend(
+                text.split("location=\"")
+                    .skip(1)
+                    .filter_map(|rest| rest.split_once('"').map(|(location, _)| location.to_string()))
+                    .filter(|location| {
+                        [
+                            "moqui_core::report::",
+                            "moqui_core::report_schedule::",
+                            "moqui_core::monitor::",
+                        ]
+                        .iter()
+                        .any(|prefix| location.starts_with(prefix))
+                    }),
+            );
+        }
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(registered, named);
     }
 }

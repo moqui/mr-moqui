@@ -5,10 +5,11 @@ use crate::common;
 use moqui_core::{
     context::{ExecutionContext, ExecutionContextFactory},
     native::{Parameters, ServiceInfo},
-    report, search,
+    search,
     transaction::TransactionAttribute,
 };
 use moqui_lib::object::Value;
+use moqui_report as report;
 use serde_json::{json, Value as Json};
 use std::{collections::BTreeSet, sync::Arc};
 fn parameters(value: Json) -> Parameters {

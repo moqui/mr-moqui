@@ -43,7 +43,7 @@ pub use login::{
     login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key, logout,
     logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login, now_value, with_client_ip,
 };
-pub(crate) use login::{now_effective_millis, value_millis};
+pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use moqui_entity::period::period_range;

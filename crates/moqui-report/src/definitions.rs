@@ -11,7 +11,7 @@ struct Shipped {
 
 /// Load component files once at boot. A bad independent file is logged and skipped; named
 /// duplicates are deterministic and never replace the earlier component's definition.
-pub fn load_shipped(factory: &crate::context::ExecutionContextFactory) -> Result<usize, Error> {
+pub fn load_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Result<usize, Error> {
     let registry = factory.extension(|_| Shipped::default());
     let definitions = scan_shipped(factory);
     let count = definitions.len();
@@ -19,7 +19,7 @@ pub fn load_shipped(factory: &crate::context::ExecutionContextFactory) -> Result
     Ok(count)
 }
 
-fn entity(ec: &ExecutionContext) -> Result<crate::entity::EntityFacade, Error> {
+fn entity(ec: &ExecutionContext) -> Result<moqui_core::entity::EntityFacade, Error> {
     ec.factory()
         .entity()
         .ok_or_else(|| fail("entity facade is unavailable"))
@@ -29,7 +29,7 @@ fn internal<T>(ec: &ExecutionContext, body: impl FnOnce() -> Result<T, Error>) -
     body()
 }
 fn viewer() -> Result<String, Error> {
-    crate::user::current_user_id()
+    moqui_core::user::current_user_id()
         .map_err(fail)?
         .filter(|s| !s.is_empty())
         .ok_or_else(|| fail("saved definitions require an authenticated viewer"))
@@ -39,15 +39,15 @@ pub(super) fn readable(definition: &Json) -> Result<bool, Error> {
     if definition["readOnly"] == true {
         return Ok(true);
     }
-    let current = crate::user::current_user_id().map_err(fail)?.unwrap_or_default();
+    let current = moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default();
     if text(definition, "ownerId", "") == current && !current.is_empty() {
         return Ok(true);
     }
     let group = text(definition, "userGroupId", "");
-    Ok(!group.is_empty() && crate::user::is_in_group(group).map_err(fail)?)
+    Ok(!group.is_empty() && moqui_core::user::is_in_group(group).map_err(fail)?)
 }
 fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
-    let viewer = crate::user::current_user_id().map_err(fail)?.unwrap_or_default();
+    let viewer = moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default();
     if text(&definition, "ownerId", "") != viewer || viewer.is_empty() {
         let kind = definition["type"].clone();
         super::alert::redact_definition_credentials(&kind, &mut definition["body"]);
@@ -69,7 +69,7 @@ fn shipped(ec: &ExecutionContext) -> std::sync::Arc<Vec<Json>> {
         .clone()
 }
 
-fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> {
+fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<Json> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
     for component in factory.components() {
@@ -143,7 +143,7 @@ fn scan_shipped(factory: &crate::context::ExecutionContextFactory) -> Vec<Json> 
     out
 }
 
-pub(super) fn row_json(row: &crate::entity::EntityValue) -> Result<Json, Error> {
+pub(super) fn row_json(row: &moqui_core::entity::EntityValue) -> Result<Json, Error> {
     let body = row.get("bodyJson").and_then(Value::as_str).unwrap_or("{}");
     Ok(
         json!({"id":row.get("definitionId").map(moqui_lib::object::to_plain_string),"type":row.get("definitionType").map(moqui_lib::object::to_plain_string),"title":row.get("title").map(moqui_lib::object::to_plain_string),"body":serde_json::from_str::<Json>(body).map_err(fail)?,"ownerId":row.get("ownerId").map(moqui_lib::object::to_plain_string),"userGroupId":row.get("userGroupId").and_then(Value::as_str).filter(|s|!s.is_empty()),"component":row.get("component").map(moqui_lib::object::to_plain_string),"readOnly":row.get("readOnly").and_then(Value::as_str)==Some("Y"),"version":row.get("versionNumber").map(moqui_lib::json::to_json)}),
@@ -206,7 +206,7 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
             for (key, value) in map {
                 if matches!(key.as_str(), "definitionId" | "panelRef" | "datasetId" | "dashboardRef") {
                     if let Some(id) = value.as_str() {
-                        if !crate::search::telemetry::is_telemetry_index(id) {
+                        if !moqui_core::search::telemetry::is_telemetry_index(id) {
                             out.insert(id.into());
                         }
                     }
@@ -258,7 +258,7 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
     }
     // Dataset/service definitions can control authority; viewers need an explicit administration grant.
     if kind == "dataset" {
-        crate::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset", "update").map_err(fail)?;
+        moqui_core::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset", "update").map_err(fail)?;
     }
     let facade = entity(ec)?;
     let existing = internal(ec, || {
@@ -374,7 +374,7 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
         ("bodyJson", Value::String(snapshot.to_string())),
         ("note", Value::string(note)),
         ("changedBy", Value::String(current)),
-        ("changedDate", crate::user::now_value()),
+        ("changedDate", moqui_core::user::now_value()),
     ] {
         history.set(name, value);
     }
@@ -446,7 +446,7 @@ fn version_snapshot(ec: &ExecutionContext, current: &Json, version: i64) -> Resu
     .ok_or_else(|| fail("definition version does not exist"))?;
     let mut snapshot: Json =
         serde_json::from_str(row.get("bodyJson").and_then(Value::as_str).unwrap_or("{}")).map_err(fail)?;
-    if text(current, "ownerId", "") != crate::user::current_user_id().map_err(fail)?.unwrap_or_default() {
+    if text(current, "ownerId", "") != moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default() {
         let kind = snapshot["type"].clone();
         super::alert::redact_definition_credentials(&kind, &mut snapshot["body"]);
     }

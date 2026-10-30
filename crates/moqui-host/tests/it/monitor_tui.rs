@@ -4,11 +4,12 @@ use crate::common;
 use moqui_core::{
     entity::document::Document,
     native::{Parameters, ServiceInfo},
-    report, search,
+    search,
     transaction::TransactionAttribute,
 };
 use moqui_host::tui::HostLink;
 use moqui_lib::object::Value;
+use moqui_report as report;
 use moqui_tui::{AppView, Key, KeyPress, Node, ScreenModel, Session};
 use serde_json::{json, Value as Json};
 use std::collections::BTreeSet;

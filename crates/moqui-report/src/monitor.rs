@@ -1,9 +1,9 @@
 //! Source-scoped ingestion credentials and operator status. Only hashes are persisted.
-use crate::{
+use base64::Engine;
+use moqui_core::{
     context::ExecutionContext,
     native::{NativeRegistry, Parameters, ServiceInfo},
 };
-use base64::Engine;
 use moqui_lib::{error::Error, object::Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -11,27 +11,27 @@ const KEYS: &str = "moqui.monitor.IngestKey";
 fn text<'a>(p: &'a Parameters, key: &str) -> &'a str {
     p.get(key).and_then(Value::as_str).unwrap_or("")
 }
-fn entity(ec: &ExecutionContext) -> Result<crate::entity::EntityFacade, Error> {
+fn entity(ec: &ExecutionContext) -> Result<moqui_core::entity::EntityFacade, Error> {
     ec.factory()
         .entity()
         .ok_or_else(|| Error::new("entity facade is unavailable"))
 }
 fn owner() -> Result<String, Error> {
-    crate::user::current_user_id()?
+    moqui_core::user::current_user_id()?
         .filter(|s| !s.is_empty())
         .ok_or_else(|| Error::new("monitor keys require an authenticated user"))
 }
 fn require_ingest() -> Result<(), Error> {
-    if crate::user::has_permission("MONITOR_INGEST").map_err(auth_unavailable)? {
+    if moqui_core::user::has_permission("MONITOR_INGEST").map_err(auth_unavailable)? {
         Ok(())
     } else {
         Err(Error::new("MONITOR_INGEST permission is required"))
     }
 }
 
-pub fn register(registry: &mut NativeRegistry) -> Result<(), crate::context::Error> {
+pub fn register(registry: &mut NativeRegistry) -> Result<(), moqui_core::context::Error> {
     for (name, function) in [
-        ("source_status", source_status as crate::native::NativeService),
+        ("source_status", source_status as moqui_core::native::NativeService),
         ("list_keys", list_keys),
         ("create_key", create_key),
         ("revoke_key", revoke_key),
@@ -96,10 +96,10 @@ fn create_key(ec: &ExecutionContext, _: &ServiceInfo<'_>, parameters: &Parameter
         ("keyId", Value::string(&key_id)),
         ("source", Value::string(source)),
         ("userId", Value::string(user)),
-        ("createdDate", Value::I64(crate::user::now_millis())),
+        ("createdDate", Value::I64(moqui_core::user::now_millis())),
         (
             "expiresDate",
-            Value::I64(crate::user::now_millis().saturating_add((days * 86_400_000.0) as i64)),
+            Value::I64(moqui_core::user::now_millis().saturating_add((days * 86_400_000.0) as i64)),
         ),
         ("revoked", Value::string("N")),
     ] {
@@ -131,8 +131,8 @@ fn revoke_key(ec: &ExecutionContext, _: &ServiceInfo<'_>, parameters: &Parameter
     Ok(Parameters::new())
 }
 fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> Result<Parameters, Error> {
-    crate::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset.otel_spans", "view")?;
-    let counters = crate::telemetry::for_factory(ec.factory()).counters();
+    moqui_core::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset.otel_spans", "view")?;
+    let counters = moqui_core::telemetry::for_factory(ec.factory()).counters();
     let mut out = BTreeMap::new();
     out.insert(
         "counters".into(),
@@ -155,7 +155,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
             ),
         ])),
     );
-    let resource = crate::telemetry::for_factory(ec.factory());
+    let resource = moqui_core::telemetry::for_factory(ec.factory());
     let mut sources = vec![Value::Map(indexmap::IndexMap::from([
         ("service".into(), Value::string(&resource.resource().service_name)),
         ("instance".into(), Value::string(&resource.resource().instance_id)),
@@ -163,7 +163,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
             "status".into(),
             Value::string(if !resource.config().enabled {
                 "disabled; health unknown"
-            } else if crate::search::installed(ec.factory()).is_none() {
+            } else if moqui_core::search::installed(ec.factory()).is_none() {
                 "search unavailable; health unknown"
             } else if counters.failed > 0 || counters.dropped > 0 {
                 "telemetry loss; health unknown"
@@ -231,8 +231,8 @@ pub fn authenticate(ec: &ExecutionContext, token: &str) -> Result<(String, Strin
         .ok_or_else(|| Error::new("ingest key is invalid or revoked"))?;
     if row
         .get("expiresDate")
-        .and_then(crate::user::value_millis)
-        .is_none_or(|expires| expires <= crate::user::now_millis())
+        .and_then(moqui_core::user::value_millis)
+        .is_none_or(|expires| expires <= moqui_core::user::now_millis())
     {
         return Err(Error::new("ingest key is expired"));
     }
@@ -255,7 +255,7 @@ pub fn authenticate(ec: &ExecutionContext, token: &str) -> Result<(String, Strin
         .ok_or_else(|| Error::new("ingest source is missing"))?
         .to_owned();
     drop(_authz);
-    crate::user::internal_login_user(&username)?;
+    moqui_core::user::internal_login_user(&username)?;
     require_ingest()?;
     Ok((key, source))
 }
@@ -265,8 +265,8 @@ fn key_hash(token: &str) -> String {
 }
 
 fn auth_unavailable(error: impl std::error::Error + Send + Sync + 'static) -> Error {
-    crate::context::Error::of_kind(
-        crate::context::ErrorKind::Unavailable,
+    moqui_core::context::Error::of_kind(
+        moqui_core::context::ErrorKind::Unavailable,
         "ingest authorization storage is unavailable",
     )
     .with_source(error)

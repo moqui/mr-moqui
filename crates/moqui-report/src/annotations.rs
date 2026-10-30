@@ -6,12 +6,12 @@ pub fn create_annotation(
     _service: &ServiceInfo<'_>,
     params: &Parameters,
 ) -> Result<Parameters, Error> {
-    if !crate::user::has_permission("MONITOR_INGEST").map_err(fail)? {
-        crate::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset.monitor_annotations", "create")
+    if !moqui_core::user::has_permission("MONITOR_INGEST").map_err(fail)? {
+        moqui_core::user::authorize_own("AT_SERVICE", "org.moqui.report.dataset.monitor_annotations", "create")
             .map_err(fail)?;
     }
     let options = input(params);
-    let now = ec.effective_time().unwrap_or_else(crate::user::now_millis);
+    let now = ec.effective_time().unwrap_or_else(moqui_core::user::now_millis);
     let time = time::parse(text(&options, "time", "now"), now)?;
     let source = text(&options, "source", "user");
     if !matches!(source, "deploy" | "config" | "release" | "user") {
@@ -25,8 +25,8 @@ pub fn create_annotation(
     if tags.len() > 32 || tags.iter().any(|v| v.as_str().is_none_or(|s| s.len() > 128)) {
         return Err(fail("annotation supports 32 string tags of at most 128 bytes"));
     }
-    let id = format!("marker-{}", crate::user::random_string(24).map_err(fail)?);
-    let mut annotation = json!({"_id":id,"time":jiff::Timestamp::from_millisecond(time).map_err(fail)?.to_string(),"source":source,"text":crate::telemetry::redact_text(message),"tags":tags,"created_by":crate::user::current_user_id().map_err(fail)?});
+    let id = format!("marker-{}", moqui_core::user::random_string(24).map_err(fail)?);
+    let mut annotation = json!({"_id":id,"time":jiff::Timestamp::from_millisecond(time).map_err(fail)?.to_string(),"source":source,"text":moqui_core::telemetry::redact_text(message),"tags":tags,"created_by":moqui_core::user::current_user_id().map_err(fail)?});
     if let Some(end) = options["timeEnd"].as_str() {
         let end = time::parse(end, now)?;
         if end < time {
@@ -47,7 +47,7 @@ pub fn create_annotation(
             if value.len() > 512 {
                 return Err(fail(format!("annotation {input} exceeds 512 bytes")));
             }
-            annotation[name] = json!(crate::telemetry::redact_text(value));
+            annotation[name] = json!(moqui_core::telemetry::redact_text(value));
         }
     }
     if let Some(Value::String(source)) = ec.shared_map().get("monitor.ingest.source") {
@@ -59,14 +59,14 @@ pub fn create_annotation(
     if search::current()?.index_entries("monitor_annotations", vec![document])? != 1 {
         return Err(fail("annotation could not be indexed"));
     }
-    tracing::info!(annotation=%id,source,actor=?crate::user::current_user_id().map_err(fail)?,"monitor annotation created");
+    tracing::info!(annotation=%id,source,actor=?moqui_core::user::current_user_id().map_err(fail)?,"monitor annotation created");
     Ok(output(json!({"annotationId":id,"annotation":annotation})))
 }
 
 /// Startup uses the same resource identity as the SDK. Repeated starts/instances of one build
 /// refer to one release marker; a failed telemetry store must never prevent server startup.
-pub fn record_release(factory: &crate::context::ExecutionContextFactory) -> Result<(), Error> {
-    let telemetry = crate::telemetry::for_factory(factory);
+pub fn record_release(factory: &moqui_core::context::ExecutionContextFactory) -> Result<(), Error> {
+    let telemetry = moqui_core::telemetry::for_factory(factory);
     if !telemetry.config().enabled {
         return Ok(());
     }

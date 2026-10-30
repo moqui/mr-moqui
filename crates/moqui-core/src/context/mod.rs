@@ -34,7 +34,7 @@ pub use factory::{
     default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,
     ExecutionContextFactory, Executor,
 };
-pub(crate) use identity::secret_parameter;
+pub use identity::secret_parameter;
 pub use locate::{framework_dir, locate};
 pub use message::{ErrorMark, MessageFacade, ValidationError};
 pub use moqui_entity::error::{client_text, DeniedArtifact, Error, ErrorKind};

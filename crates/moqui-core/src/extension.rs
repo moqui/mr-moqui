@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework crates on top of this one (moqui-git, moqui-mail, plans/Crate-Split.md). Each submits one [`Extension`], which the
+//! The framework crates on top of this one (moqui-git, moqui-mail, moqui-report, plans/Crate-Split.md). Each submits one [`Extension`], which the
 //! framework calls to register the crate's Rust services and native implementations. A binary that does not link a
 //! crate has no entry for it: a service at one of its locations still loads, and a call reports that the feature is
 //! not built into this host ([`missing_feature`]).
@@ -39,6 +39,9 @@ pub struct Extension {
     pub register_services: fn(&mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String>,
     /// Add the crate's tools, resource providers, runners and template renderers.
     pub register_native: fn(&mut NativeRegistry) -> Result<(), Error>,
+    /// Start what the crate needs once the factory is up, after its native registrations are configured: the shipped
+    /// report definitions. A failure is the crate's to log.
+    pub after_boot: fn(&ExecutionContextFactory),
     /// Stop what the crate runs, at the start of the factory's shutdown, before the service workers stop.
     pub before_shutdown: fn(&ExecutionContextFactory),
 }
@@ -50,6 +53,7 @@ impl Extension {
         features: &[],
         register_services: |_| Ok(()),
         register_native: |_| Ok(()),
+        after_boot: |_| {},
         before_shutdown: |_| {},
     };
 }

@@ -1173,9 +1173,9 @@ const NEAR_PHRASE_LIMIT: u32 = 64;
 fn relative_bound(text: &str, round_up: bool) -> Option<Timestamp> {
     let now = Timestamp::now().as_millisecond();
     let at = if round_up {
-        crate::report::time::parse_up(text, now).ok()?
+        crate::search::time::parse_up(text, now).ok()?
     } else {
-        crate::report::time::parse(text, now).ok()?
+        crate::search::time::parse(text, now).ok()?
     };
     Timestamp::from_millisecond(at).ok()
 }

@@ -63,7 +63,7 @@ const TEXT_LIMIT: usize = 4000;
 
 /// The time zone a ServiceJob cron expression is read in: the machine's zone, the one the operating
 /// system reports. It is not the server zone `default_time_zone` names.
-pub(crate) fn job_time_zone() -> jiff::tz::TimeZone {
+pub fn job_time_zone() -> jiff::tz::TimeZone {
     jiff::tz::TimeZone::system()
 }
 
