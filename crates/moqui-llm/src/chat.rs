@@ -118,9 +118,9 @@ fn out(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<Str
 }
 
 /// Call a chat service with `parameters`; its error messages are taken back out and returned as the error.
-fn chat_call(verb_noun: &str, parameters: Json) -> Result<BTreeMap<String, Value>, Error> {
+fn chat_call(verb_noun: &str, parameters: &Json) -> Result<BTreeMap<String, Value>, Error> {
     let name = format!("{CHAT}.{verb_noun}");
-    let parameters: BTreeMap<String, Value> = match moqui_lib::json::from_json(&parameters) {
+    let parameters: BTreeMap<String, Value> = match moqui_lib::json::from_json(parameters) {
         Value::Map(map) => map.into_iter().collect(),
         _ => BTreeMap::new(),
     };
@@ -450,7 +450,7 @@ fn post_reply(room_id: &str, agent_user_id: &str, thread_root: Option<i64>, text
         }
         None => "send#Message",
     };
-    if let Err(error) = quietly(|| chat_call(verb, parameters)) {
+    if let Err(error) = quietly(|| chat_call(verb, &parameters)) {
         tracing::error!("agent {agent_user_id} could not post in chat room {room_id}: {error}");
     }
 }
@@ -769,7 +769,7 @@ fn signal_typing(room_id: &str, agent_user_id: &str, on: bool, status: &str) {
     if on && !status.is_empty() {
         parameters["statusText"] = json!(status);
     }
-    if let Err(error) = quietly(|| chat_call("signal#Typing", parameters)) {
+    if let Err(error) = quietly(|| chat_call("signal#Typing", &parameters)) {
         tracing::warn!("the typing status of agent {agent_user_id} in room {room_id} was not sent: {error}");
     }
 }
@@ -916,7 +916,7 @@ fn post_approval(facade: &EntityFacade, run: &RunRow, room: &Room, card: &Json) 
     let text = format!("Approval needed for {requester}: {summary}");
     chat_call(
         "send#AssistCard",
-        json!({"chatRoomId": room.room_id, "senderUserId": room.agent_user_id, "body": html_of(&text), "bodyText": text,
+        &json!({"chatRoomId": room.room_id, "senderUserId": room.agent_user_id, "body": html_of(&text), "bodyText": text,
             "threadRootEventSeq": room.thread_root, "assist": assist}),
     )
     .map(|_| ())
@@ -935,7 +935,7 @@ fn update_approval(facade: &EntityFacade, room: &Room, payload: &Json) -> Result
     let status = payload.get("status").and_then(Json::as_str).unwrap_or_default();
     chat_call(
         "update#AssistCard",
-        json!({"chatRoomId": room.room_id, "eventSeq": seq, "fields": {"state": status,
+        &json!({"chatRoomId": room.room_id, "eventSeq": seq, "fields": {"state": status,
             "decision": payload.get("decision"), "channel": payload.get("channel"), "decidedBy": decided_by,
             "feedback": payload.get("feedback")}}),
     )
@@ -960,7 +960,7 @@ fn post_question(facade: &EntityFacade, run: &RunRow, room: &Room, payload: &Jso
         "state": "pending"});
     chat_call(
         "send#AssistCard",
-        json!({"chatRoomId": room.room_id, "senderUserId": room.agent_user_id, "body": html_of(&format!("{requester}: {text}")),
+        &json!({"chatRoomId": room.room_id, "senderUserId": room.agent_user_id, "body": html_of(&format!("{requester}: {text}")),
             "bodyText": text, "threadRootEventSeq": room.thread_root, "assist": assist}),
     )
     .map(|_| ())
@@ -986,7 +986,7 @@ fn settle_cards(facade: &EntityFacade, run: &RunRow, room: &Room) {
         let updated = card_of(facade, room, &view.approval_id).and_then(|seq| match seq {
             Some(seq) => chat_call(
                 "update#AssistCard",
-                json!({"chatRoomId": room.room_id, "eventSeq": seq, "fields": {"state": view.status.as_str()}}),
+                &json!({"chatRoomId": room.room_id, "eventSeq": seq, "fields": {"state": view.status.as_str()}}),
             )
             .map(|_| ()),
             None => Ok(()),
@@ -1072,7 +1072,10 @@ pub(crate) fn room_approval(
     if moqui_core::user::is_external_user(user_id) {
         return Ok(None);
     }
-    let access = chat_call("get#RoomAccess", json!({"chatRoomId": room.room_id, "userId": user_id}))?;
+    let access = chat_call(
+        "get#RoomAccess",
+        &json!({"chatRoomId": room.room_id, "userId": user_id}),
+    )?;
     let can_post = access.get("canPost").map(to_plain_string).as_deref() == Some("true");
     Ok(can_post.then_some(view))
 }
@@ -1169,7 +1172,7 @@ fn decide_chat_card(parameters: &Parameters, facade: &EntityFacade) -> Out {
                     let answered = quietly(|| {
                         chat_call(
                             "update#AssistCard",
-                            json!({"chatRoomId": room_id, "eventSeq": seq, "fields": {"state": "answered",
+                            &json!({"chatRoomId": room_id, "eventSeq": seq, "fields": {"state": "answered",
                                 "answer": param(parameters, "choice").unwrap_or(text.clone())}}),
                         )
                     });

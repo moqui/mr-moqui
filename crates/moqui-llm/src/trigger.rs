@@ -943,7 +943,7 @@ fn failed(
             factory,
             &users,
             &format!("Agent trigger {} stopped", trigger.trigger_id),
-            json!({"kind": "breaker", "triggerId": trigger.trigger_id, "runId": run_id, "reason": why}),
+            &json!({"kind": "breaker", "triggerId": trigger.trigger_id, "runId": run_id, "reason": why}),
         );
     }
     Ok(())
@@ -979,11 +979,11 @@ fn admin_users(facade: &EntityFacade) -> Result<Vec<String>, Error> {
 }
 
 /// A message to users' agent inbox (the `AgentInbox` topic, kept); a failure is logged.
-pub fn inbox(_factory: &ExecutionContextFactory, user_ids: &[String], title: &str, message: Json) {
+pub fn inbox(_factory: &ExecutionContextFactory, user_ids: &[String], title: &str, message: &Json) {
     if user_ids.is_empty() {
         return;
     }
-    let map = match moqui_lib::json::from_json(&message) {
+    let map = match moqui_lib::json::from_json(message) {
         Value::Map(map) => map,
         _ => indexmap::IndexMap::new(),
     };
@@ -1035,7 +1035,7 @@ pub(crate) fn observe(factory: &ExecutionContextFactory, batch: &RunEvents) {
                     factory,
                     std::slice::from_ref(&run.user_id),
                     &format!("Approval waiting: {}", crate::tools::format::cut(summary, 120)),
-                    json!({"kind": "approval", "runId": run.run_id, "conversationId": run.conversation_id,
+                    &json!({"kind": "approval", "runId": run.run_id, "conversationId": run.conversation_id,
                         "approvalId": payload.get("approvalId"), "triggerId": trigger_id, "summary": summary}),
                 );
             }
@@ -1088,7 +1088,7 @@ pub(crate) fn observe(factory: &ExecutionContextFactory, batch: &RunEvents) {
                     factory,
                     std::slice::from_ref(&run.user_id),
                     &format!("Agent {} {title}", run.agent_id),
-                    json!({"kind": "result", "runId": run.run_id, "conversationId": run.conversation_id,
+                    &json!({"kind": "result", "runId": run.run_id, "conversationId": run.conversation_id,
                         "triggerId": trigger_id, "state": state.map(RunState::wire),
                         "summary": crate::tools::format::cut(&summary, 600)}),
                 );

@@ -138,7 +138,7 @@ impl AgentTool for ScreenTool {
             emit_follow(ctx, &answer.follow, stamp.as_ref());
         }
         match answer.held.take() {
-            Some(write) => held_write(ctx, &factory, &answer, write),
+            Some(write) => held_write(ctx, &factory, &answer, &write),
             None => ToolOutcome::Done(ToolResult {
                 text: answer.text.clone(),
                 data: Some(json!({"ok": answer.ok, "path": answer.path, "parameters": answer.parameters})),
@@ -218,7 +218,7 @@ fn held_write(
     ctx: &mut TurnContext<'_>,
     factory: &ExecutionContextFactory,
     answer: &ScreenAnswer,
-    write: PendingWrite,
+    write: &PendingWrite,
 ) -> ToolOutcome {
     let transition = write.transition().to_string();
     let location = write.held["screenLocation"].as_str().unwrap_or_default().to_string();
@@ -260,7 +260,7 @@ fn held_write(
             return refused(answer, &format!("{transition} could not be checked ({error}), so nothing was saved"))
         }
     }
-    let request = approval_request(answer, &write);
+    let request = approval_request(answer, write);
     match approval::request(ctx, &request) {
         Requested::Pause(pause) => ToolOutcome::Pause(pause),
         Requested::Refused(why) => refused(answer, &why),

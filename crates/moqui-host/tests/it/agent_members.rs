@@ -357,12 +357,12 @@ fn the_inbox_screen_shows_only_the_viewers_own(gate: &crate::common::Gate, facto
     in_context(factory, || {
         let mine = ["EX_JOHN_DOE".to_string()];
         let theirs = ["AGM_OTHER".to_string()];
-        moqui_llm::trigger::inbox(factory, &mine, "Inbox note for John", json!({"kind": "result"}));
+        moqui_llm::trigger::inbox(factory, &mine, "Inbox note for John", &json!({"kind": "result"}));
         moqui_llm::trigger::inbox(
             factory,
             &theirs,
             "Inbox note for another user",
-            json!({"kind": "result", "secret": "theirs"}),
+            &json!({"kind": "result", "secret": "theirs"}),
         );
     });
     let request = http_request(

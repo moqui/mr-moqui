@@ -960,7 +960,7 @@ fn add_active_time(facade: &EntityFacade, run_id: &str, node: &str, millis: i64)
         let mut row = held(facade, run_id, node, Hold::LeaseOrNone)?;
         let carried = int_of(&row, "activeSeconds").unwrap_or(0) * 1000;
         row.set("activeSeconds", Value::I64((carried + millis + 500) / 1000));
-        row.update(&facade.clone())
+        row.update(facade)
     })
 }
 
@@ -982,7 +982,7 @@ impl Turn {
             .filter(StoredCall::is_open)
             .collect();
         if !open.is_empty() {
-            match self.run_calls(open, &mut inputs)? {
+            match self.run_calls(&open, &mut inputs)? {
                 ToolsEnd::Continue => {}
                 ToolsEnd::Paused => return Ok(Next::Stop),
                 ToolsEnd::Canceled => return self.end_canceled(),
@@ -1594,7 +1594,7 @@ impl Turn {
                 let open: Vec<StoredCall> = calls.into_iter().filter(StoredCall::is_open).collect();
                 let any_calls = !reply.tool_calls.is_empty() || !reply.bad_tool_calls.is_empty();
                 if any_calls {
-                    return match self.run_calls(open, &mut Vec::new())? {
+                    return match self.run_calls(&open, &mut Vec::new())? {
                         ToolsEnd::Continue => Ok(Next::Continue),
                         ToolsEnd::Paused => Ok(Next::Stop),
                         ToolsEnd::Canceled => self.end_canceled(),
@@ -1942,7 +1942,7 @@ impl Turn {
     /// Run the open calls in model order; consecutive READ calls run in parallel when the model allows it. A call left
     /// running by a node that stopped is `UnknownOutcome`: a READ runs again, anything else is reported to the model and
     /// not run. A paused call resumes with the first input for it.
-    fn run_calls(&mut self, calls: Vec<StoredCall>, inputs: &mut Vec<OpenInput>) -> Result<ToolsEnd, Error> {
+    fn run_calls(&mut self, calls: &[StoredCall], inputs: &mut Vec<OpenInput>) -> Result<ToolsEnd, Error> {
         let facade = self.facade.clone();
         let mut index = 0;
         while index < calls.len() {

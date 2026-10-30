@@ -774,7 +774,7 @@ fn larger(left: QuotaLimit, right: QuotaLimit) -> QuotaLimit {
         }
     }
     QuotaLimit {
-        period: left.period.clone(),
+        period: left.period,
         max_tokens: max_of(left.max_tokens, right.max_tokens),
         max_cost: max_of(left.max_cost, right.max_cost),
         requests_per_minute: max_of(left.requests_per_minute, right.requests_per_minute),

@@ -99,7 +99,7 @@ impl AgentTool for Search {
                 add_group(
                     &mut lines,
                     "Screens",
-                    rank(&entries.screens, &text, &index),
+                    &rank(&entries.screens, &text, &index),
                     limit,
                     &text,
                 );
@@ -108,7 +108,7 @@ impl AgentTool for Search {
                 add_group(
                     &mut lines,
                     "Actions",
-                    rank(&entries.actions, &text, &index),
+                    &rank(&entries.actions, &text, &index),
                     limit,
                     &text,
                 );
@@ -189,7 +189,7 @@ fn add_hits(lines: &mut Vec<String>, label: &str, hits: &[Hit]) {
     }
 }
 
-fn add_group(lines: &mut Vec<String>, label: &str, hits: Vec<Hit>, limit: usize, text: &str) {
+fn add_group(lines: &mut Vec<String>, label: &str, hits: &[Hit], limit: usize, text: &str) {
     add_hits(lines, label, &hits[..hits.len().min(limit)]);
     if hits.len() > limit {
         lines.push(format!(
