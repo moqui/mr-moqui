@@ -6,8 +6,9 @@ that keep an app's code and screens good. The reference guides for each tool (en
 facades) are separate; they are being ported from the Moqui Java documentation and extended.
 
 Most of these practices come from reviews of the Products app (`runtime/component/mr-boss/plan/impl-products.md`,
-section "R — Review" and findings F43–F46), measured against the Projects app, which is the reference implementation
-of the screen archetypes. They cover code quality, organization and UI quality, not individual bugs.
+section "R — Review" and findings F43–F46) and of Accounting P0–P3 (`impl-accounting.md` "R — Review", F61 on),
+measured against the Projects app, which is the reference implementation of the screen archetypes. They cover code
+quality, organization and UI quality, not individual bugs.
 
 Contents: [1 tools and artifacts](#1-tools-and-artifacts) · [2 references](#2-references) ·
 [3 where logic goes](#3-where-logic-goes) · [4 services and scripts](#4-services-and-scripts) ·
@@ -107,13 +108,20 @@ Each component is its own git repository. Commit in each repository that a chang
   service after the app's access check (for example in `always-actions` after `get#SharedContext`).
 - **Check access in services, from permissions.** The check runs where the data is read or written, so it holds for
   imports, exports, search, shared mounts and direct requests. Derive capabilities from Moqui permissions
-  (`ec.user.hasPermission`, `UserGroupPermission` rows in setup data), not from a map of BOSS group names. Grant
-  permissions to groups in data.
+  (`ec.user.hasPermission`, `UserGroupPermission` rows in setup data), not from a map of BOSS group names, and not
+  from `ec.user.isInGroup` in a service, the palette or a record link. Grant permissions to groups in data.
+- **Reads come from view permissions.** Do not make an app's read capability "holds any of its permissions": another
+  app's group is given an edit permission for its own work (Projects' managers hold `RECEIVABLE_EDIT` to bill), and it
+  then opens this app's lists, search and links. Give each kind of record a view permission
+  (`RECEIVABLE_VIEW`, `PAYABLE_VIEW`), let an edit permission alone open nothing, and spec what a neighboring app's
+  group can reach.
 - **Restricted values stay on the server.** A service leaves out of its answer what the user may not read (costs,
   supplier prices, margins); nothing is fetched and then hidden by the screen. Declare a service's out-parameters:
   declared ones are the only ones returned (none declared returns everything, internal helpers included).
-- **Compare reason codes, not message text.** A policy that refuses returns a code (`denied(reason, message)`), and
-  callers test the code. Matching on an error's wording breaks when the wording changes.
+- **Compare reason codes, not message text.** A policy that refuses returns a code (`denied(reason, message)` in
+  `mantle/product/PricePolicy.js`), and callers test the code. Matching on an error's wording breaks when the wording
+  changes. A new policy module starts with codes; Accounting's `AccountingPolicy.js` throws plain messages and is
+  still to be converted.
 - **Shared screens** (`screen/Shared/*.xml`) take `appRoot` and compute capabilities on the server through the app's
   shared-context service; the mounting app's context adds tabs and filters, never authority (design-crosscut §1.1).
   `sharedLinks` gives the paths to other shared screens under the current app.
@@ -127,7 +135,9 @@ Each component is its own git repository. Commit in each repository that a chang
 - Give each service a `<description>`: what it does and what it refuses.
 - Share parameter lists through an interface: a `type="interface"` service (`define#MethodParameters`) and
   `<implements service="..."/>` in each service that uses it. Products had service files of thousands of lines of
-  copied parameter unions before this.
+  copied parameter unions before this. An interface holds the in-parameters its services share; each service declares
+  its own out-parameters. An interface that lists every service's outputs is the copied union again, and copying the
+  interface into a second file to reuse it is a copy too: implement the first.
 - Undeclared in-parameters are dropped before the service runs. A screen that passes `context` passes only what the
   service declares.
 
@@ -160,6 +170,12 @@ Each component is its own git repository. Commit in each repository that a chang
 - Use `.selectField(...)` and `.distinct(true)` when only a few values are needed.
 - Cap lists that could grow without bound (a dropdown of every product capped at 200 is not a dropdown; use a
   server-search choice, §5) and paginate long lists.
+- **Search ignoring case, in the query, before the limit:**
+  `makeCondition(field, "like", "%" + term + "%").ignoreCase()` on the record's names as well as its id. Filtering in
+  JavaScript after `limit` finds nothing past the first page, and a plain `like` misses "Cash" for "cash".
+- `makeCondition` takes three arguments for a value: `(field, "equals", value)`. With two, the second is read as the
+  operator. And `not-equals "Y"` leaves out rows where the field is null; add an `is-null` alternative when null means
+  "not Y".
 
 ### Failure tolerance and errors
 
@@ -175,7 +191,13 @@ Each component is its own git repository. Commit in each repository that a chang
 
 - **No hard-coded defaults** for currency (`'USD'`), units (`'OTH_ea'`), languages (`'es'`) or purposes. Take them
   from the organization's settings, then the user's preferences, else leave the choice empty for the user.
-- **Dates in the user's zone:** `ec.l10n.format(date, pattern)`, not `toISOString()` and a `UTC` label.
+- **Dates in the user's zone:** `ec.l10n.format(date, pattern)`, not `toISOString()` and a `UTC` label. This holds in
+  specs too: a day computed with `toISOString().slice(0, 10)` is tomorrow's from evening on in the Americas, and a
+  spec that locks "yesterday" that way fails every evening.
+- **Display values come from the service.** A row for a screen carries its display text: dates as text in the user's
+  zone (Accounting's `AccountingPolicy.display` adds a `<field>Text` for each date and stamp), names for ids, status
+  names. JSON drops date types, and a screen that loads a script module to format dates evaluates the whole module on
+  every render.
 - **Amounts round to their currency** (`ec.l10n.roundCurrency`), not a fixed `setScale(6)`.
 - **Changes by effective date:** a policy, price or setting change starts a dated row and ends the one in effect;
   history stays readable.
@@ -191,10 +213,29 @@ Each component is its own git repository. Commit in each repository that a chang
   its own (a standalone tab render, a TUI tab) runs its parents' `always-actions` but not their `actions`, so data a
   tab needs from its parent goes in `always-actions`; everything else goes in the tab's own `actions`. A screen path
   rendered with a trailing `/` renders the default subscreen's widgets, not the parent's.
+- **A detail screen reads its record in `actions`, not `always-actions`.** `always-actions` also run for each request
+  to a transition, so a read there runs on every drop-down keystroke of the screen's `choices`. Read it with
+  `transaction="force-new" ignore-error="true"`, set `recordFound`, and show a "Not available" state that links back
+  to the list (ProjectDetail), instead of failing the page.
 - **Do not repeat the access check** in every transition and section. Check once in `always-actions` and read
   `sharedMountContext.capabilities` where a widget depends on a capability.
 - **Shared transitions** go in a `transition-include` file (`template/CatalogChoiceTransitions.xml`), not copied into
-  each screen.
+  each screen. A `transition-include` copies **one** transition by its name: a template with several needs one include
+  per transition, and a form whose `transition` is not on its own screen posts to nothing. Shared widgets go in a
+  `section-include` of the same file (`template/AccountingParts.xml`: the organization picker, a list's find form,
+  report options).
+- **Screens that differ only by record kind share one template.** Accounting's invoice and bill screens were 5-line
+  diffs of each other; now each route screen sets the kind in its actions and includes
+  `template/AccountingDocuments.xml`'s sections. Look for such pairs in the diff before calling a phase done.
+- **Declare only the parameters a screen reads.** A transition's response adds every declared parameter of its target
+  that is in the context, so a copied block of parameters carries stale values to other screens (Accounting's
+  delete of a draft went back to a list filtered by the deleted id). A response then needs no `parameter` list beyond
+  what the target lacks.
+- **A form's `map` falls back to the context.** A field missing or empty in the map takes the context's value, so an
+  empty map does not keep a form blank, and an Edit form that `extends` an Add form in a list row reads the row's
+  values. Do not keep a page variable named like a field of a form on the page unless the form should show it.
+- **The screen context holds data, not functions.** A `set` of an arrow function fails when the context is
+  converted; compute the values instead.
 - **A transition with no actions is a link.** The form that targets it renders as a GET link form (`m-form-link`),
   which does not post a row-selection's checked rows. A row-selection action that opens another screen with the
   selection needs at least one action in its transition (Products' `bulkPrice` normalizes the id list).
@@ -243,21 +284,34 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   End), and a "More" menu for the rest; not a box of per-row forms below the list.
 - **Bulk actions** are `row-selection` actions on the list, not a separate screen where the user types IDs.
 - `paginate` long lists; `select-columns` on main lists.
+- **Pagination comes from the service.** A list a service pages returns its `<list>PageIndex`, `PageSize`,
+  `PageMaxIndex`, `PageRangeLow` and `PageRangeHigh` (`ProductsLib.page`, Accounting's `find#Records`). A short,
+  bounded list (a preview's findings, an audit trail, a document's lines) is `paginate="false"`. Never set the page
+  fields by hand to fake one page: Accounting P2 had sixty such lines.
+- **A row action's dialog id carries the row's key** (`EditLine_${acctgTransEntrySeqId}`); a fixed id repeats on
+  every row.
 
 ### Inputs
 
 - **Choose records with server-search drop-downs:** `drop-down` with `dynamic-options transition="choices"
   server-search="true" min-length="0"`, through the shared choices transition, which also returns the label of the
-  selected value. No text inputs for IDs, and no drop-downs that load every record.
+  selected value. No text inputs for IDs, and no drop-downs that load every record. The choices service is a table of
+  named sources, like an operations table: each finds its authorized rows, searches its fields in the query (§4), and
+  reads a selected value outside the page on its own; an unknown choice throws. A spec calls every choice once with a
+  selected value that is not in the page.
 - **Closed lists** (languages, currencies, units, types) are drop-downs from the server's options.
 - **Wording:** dialog titles and buttons in the user's words, saying what they do ("Edit category membership",
-  "Review price changes"), not form names. Hints go in `tooltip`, not in the field title.
+  "Review price changes"), not form names. Hints go in `tooltip`, not in the field title ("Through", not "Through
+  (exclusive)"). Option labels are words, not code tokens (`financialType`). Titles in sentence case.
+- **No implementation words in the UI:** "phase", "later", "scheduled", "placeholder". An area that is not built is
+  left out of the menu, and its page says what it is not yet, in the user's terms.
 - Group related fields with `field-layout`, `field-row` and `field-row-big`; a wide dialog uses two columns.
 
 ### Hygiene
 
-- The XML declaration, the component's license header and a final newline in every file; one element per line;
-  4-space indentation.
+- The XML declaration, the component's full license header (copy it from a neighboring file; a one-line "See
+  LICENSE.md" is not it) and a final newline in every file; one element per line; 4-space indentation. A rewrite of a
+  placeholder keeps its header and its section's `menu-image`.
 - Lint every changed screen (`moqui lint --screens` with a report file) and keep its idiom count from growing.
 
 ## 6. Vue single-file screens (`.qvue`)
@@ -283,8 +337,20 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   it at the top level.
 - Every new screen is in `AppStructure.spec.js` (it renders, with a text that is there in every data state) and in
   `TuiRender.spec.js`. A screen whose content depends on data needs a check text present whatever the data.
+- **A widget that fails renders its error into the output**, not into `errorMessages`: a check of status 200 and no
+  error messages passes a broken page. Check the output for `Error rendering` and `Exception in render`, and check
+  a text the page shows. List rows are in the html render; a qvt render needs `withStaticData()` and the app root with
+  `lastStandalone: "-2"`, and a chip that has only qvt and tui texts is in neither html nor print.
 - Every new service with an access rule gets a spec with a user who has the permission and one who lacks it
-  (Products' `ProductsAccess`).
+  (Products' `ProductsAccess`). **The negative case must fail for the permission:** use the same parameters as a
+  positive case that succeeds, or compare a reason code. A helper that counts any error as a refusal passes on a
+  validation error (Accounting's `store#DraftEntry` without its fields was "refused" for everyone).
+- A spec of a control's absence also checks its presence for a user who has it: Accounting checked that readers do
+  not see "New batch", a button that was named "New journal batch".
+- Spec helpers an app's specs share (sign in as a user, the demo record ids) go in one place, not a copy in each spec;
+  four copies of Accounting's demo ids disagreed about an account.
+- A spec line that begins with `(` or `[` continues the line before it (no semicolons): compute the value in `when`
+  and compare it in `then`.
 - A Mantle spec creates its own data and does not depend on BOSS.
 - Run the specs of the screens and services you touched while working, and the whole component before a commit.
 
@@ -308,13 +374,15 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 
 ## 8. Formatting and mechanical changes
 
-- **JavaScript** (service scripts and specs) is formatted with Prettier, used as a one-off tool, not a dependency:
-  `{"semi": false, "tabWidth": 4, "printWidth": 130, "bracketSpacing": false, "trailingComma": "none",
-  "arrowParens": "avoid", "singleQuote": false}` with `--parser babel`. Spec conditions are found by syntax, so
-  formatting a spec is safe. After formatting a service script, check that its module value is still the last
-  expression.
-- **XML:** `XMLLINT_INDENT="    " xmllint --format`, then confirm with a canonical comparison (`xmllint --c14n` of both
-  versions with blank text removed) that only whitespace changed before replacing the file.
+- **JavaScript** (service scripts and specs) is formatted with Prettier, used as a one-off tool, not a dependency, with
+  the repository's `.prettierrc.json`: `{"semi": false, "tabWidth": 4, "printWidth": 130, "bracketSpacing": false,
+  "trailingComma": "none", "arrowParens": "avoid", "singleQuote": false}` with `--parser babel`. Prettier finds the
+  file from the formatted file's directory; Prettier run with its defaults (width 80, `{ a }`, trailing commas) is the
+  wrong style, as Accounting P1–P3's scripts and specs were. Spec conditions are found by syntax, so formatting a spec
+  is safe. After formatting a service script, check that its module value is still the last expression.
+- **XML:** only `XMLLINT_INDENT="    " xmllint --format`, then confirm with a canonical comparison (`xmllint --c14n` of
+  both versions with blank text removed) that only whitespace changed before replacing the file. Another formatter
+  writes `" />` and reorders attributes.
 - **Scripted edits** assert that each old text is present exactly once before replacing it; a replacement that matched
   nothing looks like a passing change. Re-indent a moved block to its new depth.
 - Commit per phase and per repository, with the tests run named in the record (`plan/impl-<app>.md`).
@@ -330,6 +398,21 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Records chosen with server-search drop-downs; no typed IDs.
 - Empty boxes hidden, empty states explained, user wording in titles and buttons.
 - `tui` texts built with `JSON.stringify`; the screen renders in `tui`.
+- Every detail screen has the record header and a not-available state; every ending, bulk or irreversible action
+  confirms, naming the record or the count.
+- Screens that differ by record kind share a template; each screen declares only the parameters it reads.
 - `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, the shots and walks run, and
   the screenshots looked at.
+- A mechanical pass over the changed files:
+  - `isInGroup(` in a service or script;
+  - `PageRangeHigh` set in a screen;
+  - `toISOString` in a script or spec;
+  - `like` without `ignoreCase`, and a `limit` before a JavaScript filter;
+  - a form whose `transition` is not on its screen;
+  - more than one `type="primary"`/`btn-type="primary"` on a screen at a time;
+  - `" />` and the one-line license header in XML, and a long `parameter-map` or expression that could be named once
+    in `actions` (report options, a record's link parameters);
+  - Prettier with the repository's config shows no change.
 - The design and implementation records updated: what was built, the commits, the findings, and what is left for later.
+  Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Testing](Testing.md) for
+  the Chromium setting, and to a report file of the reader's choosing.

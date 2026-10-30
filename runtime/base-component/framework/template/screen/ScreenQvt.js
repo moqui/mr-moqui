@@ -1306,8 +1306,11 @@
                 }
                 out += "</q-list></q-btn-dropdown>";
             }
+            // a list with no <list>Count (an unpaginated list from a service) counts its own rows
+            const rows = ctx(listName);
+            const listed = rows === "" ? 0 : typeof rows.size === "function" ? rows.size() : rows.length || 0;
             const count = ctx(listName + "Count");
-            if ((count === "" ? 0 : count) === 0) {
+            if ((count === "" ? listed : count) === 0) {
                 out += '<span class="text-warning text-weight-medium q-ml-sm q-my-auto">' + t(L(ec.context.sharedMap._entityListNoSearchParms ? "Find Options required to view results" : "No results found")) + "</span>";
             }
             out += "</div></div>";
