@@ -241,11 +241,11 @@ struct CompilerText(Mutex<Option<Arc<str>>>);
 
 pub fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
     let kept = factory.extension(|_| CompilerText(Mutex::new(None)));
-    if let Some(text) = kept.0.lock().unwrap_or_else(|err| err.into_inner()).as_ref() {
+    if let Some(text) = moqui_lib::sync::lock(&kept.0).as_ref() {
         return Ok(Arc::clone(text));
     }
     let text: Arc<str> = read_compiler_source(factory)?.into();
-    *kept.0.lock().unwrap_or_else(|err| err.into_inner()) = Some(Arc::clone(&text));
+    *moqui_lib::sync::lock(&kept.0) = Some(Arc::clone(&text));
     Ok(text)
 }
 

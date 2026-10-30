@@ -102,6 +102,24 @@ pub(crate) struct AuthInfo {
     pub(crate) aacv: Option<Arc<AuthzCheck>>,
 }
 
+/// What a check reads from the artifact stack: the frame below, whether a frame on the stack carries a deny, and whether
+/// authorization is disabled.
+#[derive(Debug)]
+pub(crate) struct StackAuthz {
+    pub(crate) last: Option<AuthInfo>,
+    pub(crate) ancestor_deny: bool,
+    pub(crate) authz_disabled: bool,
+}
+
+impl StackAuthz {
+    /// Outside an execution context: nothing below, no deny, and authorization disabled.
+    const NO_CONTEXT: Self = Self {
+        last: None,
+        ancestor_deny: false,
+        authz_disabled: true,
+    };
+}
+
 impl AuthInfo {
     fn from_check(check: &Arc<AuthzCheck>, user_id: &str, granted: bool) -> Self {
         Self {
@@ -175,8 +193,11 @@ pub fn authorize(artifact_type: &str, name: &str, action: &str) -> Result<(), Er
     if !context_entered() {
         return Ok(());
     }
-    let (last, ancestor_deny, disabled) =
-        ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or((None, false, true));
+    let StackAuthz {
+        last,
+        ancestor_deny,
+        authz_disabled: disabled,
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
     let (permitted, info) = is_permitted(
         artifact_type,
         name,
@@ -206,8 +227,11 @@ pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<()
     if !context_entered() {
         return Ok(());
     }
-    let (_, ancestor_deny, disabled) =
-        ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or((None, false, true));
+    let StackAuthz {
+        ancestor_deny,
+        authz_disabled: disabled,
+        ..
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
     let (permitted, info) = is_permitted(
         artifact_type,
         name,

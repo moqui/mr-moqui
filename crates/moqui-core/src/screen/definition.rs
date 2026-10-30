@@ -1193,14 +1193,20 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
         actions_extend.with_attribute("when", |value| match value {
             Some("replace") => {
                 current.clear_children();
-                copies.into_iter().for_each(|copy| current.append_node(copy));
+                for copy in copies {
+                    current.append_node(copy);
+                }
             }
             Some("before") => {
                 for (offset, copy) in copies.into_iter().enumerate() {
                     current.insert_node(offset, copy);
                 }
             }
-            _ => copies.into_iter().for_each(|copy| current.append_node(copy)),
+            _ => {
+                for copy in copies {
+                    current.append_node(copy);
+                }
+            }
         })
     }
     for widgets_extend in extend.children_named("widgets-extend") {

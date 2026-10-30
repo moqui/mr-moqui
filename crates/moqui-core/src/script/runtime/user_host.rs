@@ -256,8 +256,13 @@ fn user_get_login_key(ctx: Ctx<'_>, hours: Opt<f64>) -> rquickjs::Result<String>
 
 /// The `user-facade` attributes the user services read from `ec.ecfi.confXmlRoot` in Java.
 fn login_rules<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    let (max_failures, disable_minutes, history_limit, email_expire_hours, email_require_change) =
-        crate::user::policy_login_rules();
+    let crate::user::LoginRules {
+        max_failures,
+        disable_minutes,
+        history_limit,
+        email_expire_hours,
+        email_require_change,
+    } = crate::user::policy_login_rules();
     let mut map = indexmap::IndexMap::new();
     map.insert("maxFailures".to_string(), Value::I64(max_failures));
     map.insert("disableMinutes".to_string(), Value::I64(disable_minutes));

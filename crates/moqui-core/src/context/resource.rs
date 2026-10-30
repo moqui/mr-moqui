@@ -950,7 +950,7 @@ impl ResourceFacade {
     }
 
     fn installed(&self) -> Option<EntityFacade> {
-        self.entity.read().unwrap_or_else(|err| err.into_inner()).clone()
+        moqui_lib::sync::read(&self.entity).clone()
     }
 
     fn db_ref(&self, location: &str) -> Result<ResourceRef, Error> {

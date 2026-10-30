@@ -2031,9 +2031,15 @@ pub(crate) fn strip_credential_parameters(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             map.retain(|key, _| !CREDENTIAL_PARAMETER_NAMES.contains(&key.to_ascii_lowercase().as_str()));
-            map.values_mut().for_each(strip_credential_parameters);
+            for nested in map.values_mut() {
+                strip_credential_parameters(nested);
+            }
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_credential_parameters),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_credential_parameters(item);
+            }
+        }
         _ => {}
     }
 }

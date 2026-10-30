@@ -15,7 +15,7 @@
 //! Entity find filters from `ArtifactAuthzFilter` and `EntityFilter`.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::Condition;
@@ -187,7 +187,7 @@ fn filter_sets(authz_id: &str) -> Result<Arc<[FilterSet]>, Error> {
     let cache = factory.extension(|_| FilterSetCache::default());
     let loaded_at = generation();
     {
-        let guard = cache.by_authz.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = moqui_lib::sync::lock(&cache.by_authz);
         if guard.generation == loaded_at {
             if let Some(found) = guard.sets.get(authz_id) {
                 return Ok(Arc::clone(found));
@@ -195,7 +195,7 @@ fn filter_sets(authz_id: &str) -> Result<Arc<[FilterSet]>, Error> {
         }
     }
     let sets: Arc<[FilterSet]> = read_filter_sets(authz_id)?.into();
-    let mut guard = cache.by_authz.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut guard = moqui_lib::sync::lock(&cache.by_authz);
     if generation() == loaded_at {
         if guard.generation != loaded_at {
             *guard = GenerationSets {

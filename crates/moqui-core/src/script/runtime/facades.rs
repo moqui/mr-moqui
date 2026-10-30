@@ -392,11 +392,11 @@ impl HostUser {
     #[qjs(get, rename = "passwordRules")]
     fn password_rules<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
-            let (length, digits, others) = crate::user::policy_password_rules();
+            let rules = crate::user::policy_password_rules();
             let mut map = indexmap::IndexMap::new();
-            map.insert("minLength".to_string(), Value::I64(length));
-            map.insert("minDigits".to_string(), Value::I64(digits));
-            map.insert("minOthers".to_string(), Value::I64(others));
+            map.insert("minLength".to_string(), Value::I64(rules.min_length));
+            map.insert("minDigits".to_string(), Value::I64(rules.min_digits));
+            map.insert("minOthers".to_string(), Value::I64(rules.min_others));
             host_to_js(&ctx, Value::Map(map))
         })
     }

@@ -22,7 +22,7 @@
 //! `extends="DbForm#formId"` extends a form made of `DbForm` records.
 
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use moqui_db::model::{EntityDefinition, EntityModel};
 use moqui_lib::node::MNode;
@@ -168,7 +168,9 @@ fn form_select_fields(form: &MNode) -> Vec<String> {
             }
         }
     } else {
-        column_refs.into_iter().for_each(&mut push);
+        for name in column_refs {
+            push(name);
+        }
     }
     for field in &fields {
         if list_field_hidden_widget(field) && field.first_named("default-field").is_some() {
@@ -1082,7 +1084,7 @@ impl EntityShapes {
         // The model's address tells a replaced entity facade apart, so its shapes are not reused.
         let model_key = std::ptr::from_ref(model) as usize;
         {
-            let guard = self.by_name.read().unwrap_or_else(PoisonError::into_inner);
+            let guard = moqui_lib::sync::read(&self.by_name);
             if guard.0 == model_key {
                 if let Some(shape) = guard.1.get(entity_name) {
                     return Ok(Arc::clone(shape));
@@ -1090,7 +1092,7 @@ impl EntityShapes {
             }
         }
         let shape = Arc::new(read_entity_shape(model, entity_name)?);
-        let mut guard = self.by_name.write().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = moqui_lib::sync::write(&self.by_name);
         if guard.0 != model_key {
             *guard = (model_key, HashMap::new());
         }

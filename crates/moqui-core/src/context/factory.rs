@@ -45,7 +45,7 @@ use super::message::MessageFacade;
 use super::resource::ResourceFacade;
 use super::Error;
 use crate::entity::EntityFacade;
-use crate::user::AuthInfo;
+use crate::user::{AuthInfo, StackAuthz};
 
 const ENV_HEADER: &str = "# This file holds secrets and must be kept with the instance backup.\n";
 /// The `response-header` entries of the shipped `MoquiDefaultConf.xml` webapp, `(type, name, value, add)`, for a conf
@@ -913,7 +913,11 @@ impl ExecutionContext {
         count_tarpit: bool,
         parameters: Option<&std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     ) -> Result<(), Error> {
-        let (last, ancestor_deny, authz_disabled) = self.stack_authz_state();
+        let StackAuthz {
+            last,
+            ancestor_deny,
+            authz_disabled,
+        } = self.stack_authz_state();
         // A frame of an isolated check asks whether the user may (a menu item, a link), it is not a use: Java's isAccess.
         let is_access = !self.state.artifacts.borrow().in_isolated_check();
         // The decision reads entities, which push their own frames, so no borrow is held here.
@@ -948,10 +952,14 @@ impl ExecutionContext {
     }
 
     /// The frame below, any deny on the stack, and whether authorization is disabled.
-    pub(crate) fn stack_authz_state(&self) -> (Option<AuthInfo>, bool, bool) {
+    pub(crate) fn stack_authz_state(&self) -> StackAuthz {
         let artifacts = self.state.artifacts.borrow();
-        let (last, deny) = artifacts.authz_state();
-        (last, deny, artifacts.authz_disabled())
+        let (last, ancestor_deny) = artifacts.authz_state();
+        StackAuthz {
+            last,
+            ancestor_deny,
+            authz_disabled: artifacts.authz_disabled(),
+        }
     }
 
     /// Start an isolated check: the frames pushed from here on are decided against a fresh stack, neither inheriting from

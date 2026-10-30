@@ -377,7 +377,11 @@ fn serve_servlet(
 
 /// The HTTP log's session, visitor, and username. Read before the session guard drops.
 fn stamp_http_log(response: &mut WebResponse) {
-    let (session, visitor_id, remote_user) = user::http_log_identity();
+    let user::HttpLogIdentity {
+        session_id: session,
+        visitor_id,
+        username: remote_user,
+    } = user::http_log_identity();
     let mut attributes = crate::entity::document::Document::new();
     for key in ["type", "name", "action", "sub_type", "slow"] {
         if let Some(value) = web::attribute(&format!("moqui.telemetry.artifact.{key}")) {

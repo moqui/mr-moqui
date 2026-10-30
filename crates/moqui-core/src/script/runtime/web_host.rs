@@ -365,7 +365,7 @@ fn web_attribute_names(ctx: Ctx<'_>) -> rquickjs::Result<Vec<String>> {
 }
 
 fn web_session_id(ctx: Ctx<'_>) -> rquickjs::Result<Option<String>> {
-    host_guard(&ctx, || Ok(crate::user::http_log_identity().0))
+    host_guard(&ctx, || Ok(crate::user::http_log_identity().session_id))
 }
 
 fn web_set_status(ctx: Ctx<'_>, status: i32) -> rquickjs::Result<()> {

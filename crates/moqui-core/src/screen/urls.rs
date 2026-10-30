@@ -686,12 +686,13 @@ fn link_parameters<'a>(
     let add = |out: &mut IndexMap<String, ParameterDef>, parameter: &ParameterDef| {
         out.insert(parameter.name.clone(), parameter.clone());
     };
-    screens.for_each(|parameter| add(&mut out, parameter));
+    for parameter in screens {
+        add(&mut out, parameter);
+    }
     if let Some(transition) = transition {
-        transition
-            .parameters
-            .iter()
-            .for_each(|parameter| add(&mut out, parameter));
+        for parameter in &transition.parameters {
+            add(&mut out, parameter);
+        }
         if let Some(service) = &transition.single_service {
             for name in service_parameter_names(service) {
                 out.entry(name.clone()).or_insert(ParameterDef {
@@ -703,7 +704,9 @@ fn link_parameters<'a>(
             }
         }
     }
-    extra.iter().for_each(|parameter| add(&mut out, parameter));
+    for parameter in extra {
+        add(&mut out, parameter);
+    }
     out.into_values().collect()
 }
 

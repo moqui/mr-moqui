@@ -27,7 +27,7 @@ mod visit;
 
 pub(crate) use authz::current_user_groups;
 pub use authz::{authorize, authorize_own, context_entered, group_permits};
-pub(crate) use authz::{denied, is_permitted, note_entity_write, AuthInfo, Permit};
+pub(crate) use authz::{denied, is_permitted, note_entity_write, AuthInfo, Permit, StackAuthz};
 pub use factor::{
     login_with_code, random_code, random_string, second_factor_required, send_login_code, single_use_hash,
     totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
@@ -60,25 +60,39 @@ pub use session::{
     error_parameters, flash_messages, format_session_cookie, format_visitor_cookie, http_log_identity, invalidate,
     is_anonymous, live_session_user_id, locale, saved_parameters, screen_history, session_attribute_values,
     session_attributes, set_current_log_actor, set_session_attribute, set_session_attribute_json, time_zone,
-    verify_session_cookie, visit_id, visitor_id, SessionGuard, SESSION_COOKIE_NAME, VISITOR_COOKIE_NAME,
+    verify_session_cookie, visit_id, visitor_id, HttpLogIdentity, SessionGuard, SESSION_COOKIE_NAME,
+    VISITOR_COOKIE_NAME,
 };
 pub use visit::record_visit;
 
-/// `(min length, min digits, min others)` of the password policy.
-pub(crate) fn policy_password_rules() -> (i64, i64, i64) {
+/// The minimums of the password policy.
+pub(crate) fn policy_password_rules() -> policy::PasswordRules {
     policy::password_rules()
 }
 
-/// The `user-facade` settings the user services read: `(max-failures, disable-minutes,
-/// history-limit, email-expire-hours, email-require-change)`.
-pub(crate) fn policy_login_rules() -> (i64, i64, i64, i64, bool) {
-    (
-        policy::max_failures(),
-        policy::disable_minutes(),
-        policy::history_limit(),
-        policy::email_expire_hours(),
-        policy::email_require_change(),
-    )
+/// The `user-facade` settings the user services read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LoginRules {
+    /// `login/max-failures`
+    pub(crate) max_failures: i64,
+    /// `login/disable-minutes`
+    pub(crate) disable_minutes: i64,
+    /// `password/history-limit`
+    pub(crate) history_limit: i64,
+    /// `password/email-expire-hours`
+    pub(crate) email_expire_hours: i64,
+    /// `password/email-require-change`
+    pub(crate) email_require_change: bool,
+}
+
+pub(crate) fn policy_login_rules() -> LoginRules {
+    LoginRules {
+        max_failures: policy::max_failures(),
+        disable_minutes: policy::disable_minutes(),
+        history_limit: policy::history_limit(),
+        email_expire_hours: policy::email_expire_hours(),
+        email_require_change: policy::email_require_change(),
+    }
 }
 
 /// `passwordsMatch` for scripts: `plain` against a stored hash of any supported type.

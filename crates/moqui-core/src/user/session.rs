@@ -869,21 +869,29 @@ pub fn current_log_actor() -> Option<(Option<String>, Option<String>)> {
     })
 }
 
-/// Session id, visitor id, and username of the bound session, for HTTP telemetry. All three are
-/// absent when no context is entered or no session is bound. The username is absent when nobody is logged in.
-pub fn http_log_identity() -> (Option<String>, Option<String>, Option<String>) {
+/// Who an HTTP log line is for. All three are absent when no context is entered or no session is bound. The username is
+/// absent when nobody is logged in.
+#[derive(Clone, Debug, Default)]
+pub struct HttpLogIdentity {
+    pub session_id: Option<String>,
+    pub visitor_id: Option<String>,
+    pub username: Option<String>,
+}
+
+/// The session id, visitor id, and username of the bound session, for HTTP telemetry.
+pub fn http_log_identity() -> HttpLogIdentity {
     ExecutionContext::with_current(|ec| {
         let session = ec.session();
         if session.bound_id.is_none() {
-            return (None, None, None);
+            return HttpLogIdentity::default();
         }
-        (
-            session.bound_id.clone(),
-            session.visitor_id.clone(),
-            session.username.clone(),
-        )
+        HttpLogIdentity {
+            session_id: session.bound_id.clone(),
+            visitor_id: session.visitor_id.clone(),
+            username: session.username.clone(),
+        }
     })
-    .unwrap_or((None, None, None))
+    .unwrap_or_default()
 }
 
 /// The user and visitor [`current_log_actor`] reads. The username stored with the user id is the same text.

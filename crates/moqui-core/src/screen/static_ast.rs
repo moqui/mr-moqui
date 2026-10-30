@@ -163,7 +163,11 @@ fn check_path(path: &[String], found: &mut Vec<AstViolation>) {
 /// Visit a node. `inside_chain` is true for the object of a member expression, whose path the outer node already checked.
 fn walk(node: &Json, inside_chain: bool, found: &mut Vec<AstViolation>) {
     match node {
-        Json::Array(items) => items.iter().for_each(|item| walk(item, false, found)),
+        Json::Array(items) => {
+            for item in items {
+                walk(item, false, found);
+            }
+        }
         Json::Object(map) => {
             let kind = map.get("type").and_then(Json::as_str).unwrap_or("");
             match kind {
