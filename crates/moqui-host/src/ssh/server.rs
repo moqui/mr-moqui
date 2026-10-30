@@ -275,11 +275,7 @@ pub fn start(
         git_password_auth,
     });
     crate::edge::handle().spawn(accept_loop(listener, config, shared, watch, max_sessions));
-    *factory
-        .extension(|_| SshAddress::default())
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+    *moqui_lib::sync::lock(&factory.extension(|_| SshAddress::default()).0) = Some(address);
     tracing::info!("SSH server listening on {address}");
     // For the cluster member row: peers pin this key, and the ssh:// base URL defaults to this address.
     moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, fingerprint);

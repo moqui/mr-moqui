@@ -182,10 +182,7 @@ impl Remote {
         let Some((name, rest)) = file.strip_prefix("component://").and_then(|rest| rest.split_once('/')) else {
             return PathBuf::from(file);
         };
-        let mut known = self
-            .components
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut known = moqui_lib::sync::lock(&self.components);
         let map = known.get_or_insert_with(component_dirs);
         map.get(name).map_or_else(|| PathBuf::from(file), |dir| dir.join(rest))
     }

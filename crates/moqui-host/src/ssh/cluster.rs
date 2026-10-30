@@ -23,12 +23,13 @@
 //! give), after applying it through the same path as a POST.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::cluster::Sender;
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use russh::client;
 use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::ChannelStream;
@@ -138,7 +139,7 @@ impl Sender for SshSender {
 impl Drop for SshSender {
     /// The sessions and channel streams need the runtime they were opened on to close.
     fn drop(&mut self) {
-        let peers = std::mem::take(&mut *self.peers.lock().unwrap_or_else(PoisonError::into_inner));
+        let peers = std::mem::take(&mut *lock(&self.peers));
         if !peers.is_empty() {
             crate::edge::handle().spawn(async move { drop(peers) });
         }
@@ -149,7 +150,7 @@ impl SshSender {
     /// The session slot of `base_url`, now marked used. A slot unused for [`PEER_IDLE`] is dropped, closing its
     /// session, so one to a member that left the cluster is not kept.
     fn slot(&self, base_url: &str) -> PeerSlot {
-        let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut peers = lock(&self.peers);
         let idle: Vec<_> = peers.extract_if(|_, (_, used)| used.elapsed() >= PEER_IDLE).collect();
         let (slot, used) = peers
             .entry(base_url.to_string())

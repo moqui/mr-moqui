@@ -295,7 +295,7 @@ struct RateLimit(std::sync::Mutex<std::collections::HashMap<String, (i64, usize)
 impl RateLimit {
     fn allow(&self, key: &str, max: usize) -> bool {
         let minute = crate::logging::now_millis() / 60000;
-        let mut entries = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut entries = moqui_lib::sync::lock(&self.0);
         entries.retain(|_, (at, _)| *at == minute);
         if entries.len() >= 4096 && !entries.contains_key(key) {
             return false;

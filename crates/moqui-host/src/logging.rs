@@ -170,14 +170,12 @@ pub fn tap(capacity: usize) -> std::sync::mpsc::Receiver<String> {
 /// [`tap`] with only the lines at `least` and above: WARN and ERROR for the log pane of an SSH session.
 pub fn tap_at(capacity: usize, least: Level) -> std::sync::mpsc::Receiver<String> {
     let (tx, rx) = std::sync::mpsc::sync_channel(capacity.max(1));
-    TAPS.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push((tx, least));
+    lock(&TAPS).push((tx, least));
     rx
 }
 
 fn feed_taps(level: Level, line: &str) {
-    let mut taps = TAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut taps = lock(&TAPS);
     if taps.is_empty() {
         return;
     }

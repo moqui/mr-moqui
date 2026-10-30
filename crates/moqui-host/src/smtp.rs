@@ -365,11 +365,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         }
     );
     crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
-    *factory
-        .extension(|_| SmtpAddress::default())
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+    *moqui_lib::sync::lock(&factory.extension(|_| SmtpAddress::default()).0) = Some(address);
     Ok(Some(SmtpServer { address, shutdown }))
 }
 

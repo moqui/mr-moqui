@@ -1105,7 +1105,7 @@ impl Browser {
                 }
             };
         }
-        let (key, code, key_code) = key_codes(key);
+        let KeyCodes { key, code, key_code } = key_codes(key);
         let typed = key.chars().count() == 1 && modifiers & 7 == 0;
         let down = if typed { "keyDown" } else { "rawKeyDown" };
         let mut event =
@@ -1160,8 +1160,26 @@ impl Browser {
     }
 }
 
+/// A key as `Input.dispatchKeyEvent` names it: the DOM key and code, and the Windows key code.
+#[derive(Debug, PartialEq, Eq)]
+struct KeyCodes {
+    key: String,
+    code: String,
+    key_code: u32,
+}
+
+impl KeyCodes {
+    fn new(key: impl Into<String>, code: impl Into<String>, key_code: u32) -> Self {
+        Self {
+            key: key.into(),
+            code: code.into(),
+            key_code,
+        }
+    }
+}
+
 /// The DOM key, code and Windows key code of a Playwright key name.
-fn key_codes(key: &str) -> (String, String, u32) {
+fn key_codes(key: &str) -> KeyCodes {
     let named = match key {
         "Enter" => Some(("Enter", 13)),
         "Escape" => Some(("Escape", 27)),
@@ -1176,21 +1194,21 @@ fn key_codes(key: &str) -> (String, String, u32) {
         "End" => Some(("End", 35)),
         "PageUp" => Some(("PageUp", 33)),
         "PageDown" => Some(("PageDown", 34)),
-        "Space" | " " => return (" ".to_string(), "Space".to_string(), 32),
+        "Space" | " " => return KeyCodes::new(" ", "Space", 32),
         _ => None,
     };
     if let Some((code, key_code)) = named {
-        return (key.to_string(), code.to_string(), key_code);
+        return KeyCodes::new(key, code, key_code);
     }
     let mut chars = key.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphabetic() => (
-            key.to_string(),
+        (Some(c), None) if c.is_ascii_alphabetic() => KeyCodes::new(
+            key,
             format!("Key{}", c.to_ascii_uppercase()),
             u32::from(c.to_ascii_uppercase()),
         ),
-        (Some(c), None) if c.is_ascii_digit() => (key.to_string(), format!("Digit{c}"), u32::from(c)),
-        _ => (key.to_string(), key.to_string(), 0),
+        (Some(c), None) if c.is_ascii_digit() => KeyCodes::new(key, format!("Digit{c}"), u32::from(c)),
+        _ => KeyCodes::new(key, key, 0),
     }
 }
 
@@ -1254,14 +1272,14 @@ impl Drop for ChildGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::key_codes;
+    use super::{key_codes, KeyCodes};
 
     #[test]
     fn keys_have_their_codes() {
-        assert_eq!(key_codes("Enter"), ("Enter".to_string(), "Enter".to_string(), 13));
-        assert_eq!(key_codes("a"), ("a".to_string(), "KeyA".to_string(), 65));
-        assert_eq!(key_codes("7"), ("7".to_string(), "Digit7".to_string(), 55));
-        assert_eq!(key_codes("Space"), (" ".to_string(), "Space".to_string(), 32));
+        assert_eq!(key_codes("Enter"), KeyCodes::new("Enter", "Enter", 13));
+        assert_eq!(key_codes("a"), KeyCodes::new("a", "KeyA", 65));
+        assert_eq!(key_codes("7"), KeyCodes::new("7", "Digit7", 55));
+        assert_eq!(key_codes("Space"), KeyCodes::new(" ", "Space", 32));
     }
 
     /// A page at https://moqui.test with no server: the webroot stylesheet and a repo file, and a parent path is not

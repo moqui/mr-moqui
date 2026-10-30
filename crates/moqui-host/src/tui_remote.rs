@@ -19,13 +19,14 @@
 //! Plain `http://` is refused except to this machine.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use moqui_core::screen::RenderOutput;
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use moqui_tui::{CodeAsk, LinkError, PushSink, Sendable, Subscription};
 
 use crate::tui::{Ask, Link, Transport};
@@ -80,7 +81,7 @@ impl HttpLink {
 
 impl Http {
     fn stored(&self) -> Option<Stored> {
-        self.login.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.login).clone()
     }
 }
 
@@ -257,7 +258,7 @@ impl Transport for Http {
             if let Some(path) = &self.store {
                 write_stored(path, &stored);
             }
-            *self.login.lock().unwrap_or_else(PoisonError::into_inner) = Some(stored);
+            *lock(&self.login) = Some(stored);
             return Ok(());
         }
         if status < 400 && value.get("secondFactorRequired").and_then(serde_json::Value::as_bool) == Some(true) {
