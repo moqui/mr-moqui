@@ -29,6 +29,7 @@ mod load;
 mod offline;
 mod raw;
 mod serve;
+mod video;
 mod ws;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -90,6 +91,8 @@ pub struct ClientArgs {
     pub headed: bool,
     /// `--offline`: run only specs with `server: false`, and do not check or start a server.
     pub offline: bool,
+    /// `--video`: record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json`.
+    pub video: bool,
 }
 
 fn seconds_option(name: &str, text: &str) -> Result<f64, Error> {
@@ -147,6 +150,7 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
             "--chromium" => parsed.chromium = Some(value("--chromium")?),
             "--headed" => parsed.headed = true,
             "--offline" => parsed.offline = true,
+            "--video" => parsed.video = true,
             other if other.starts_with("--") => {
                 return Err(Error::new(format!(
                     "unknown option {other}\nRun 'moqui help test-client' for details."
@@ -262,6 +266,12 @@ fn run_against(
     if !all_offline {
         check_server(&client, &server, wait)?;
     }
+    let chromium = args.chromium.clone().or_else(|| {
+        std::env::var("MOQUI_CHROMIUM")
+            .ok()
+            .filter(|text| !text.trim().is_empty())
+    });
+    let encode_video = args.video && video_tools(chromium.as_deref());
     let host = Arc::new_cyclic(|me| ClientHost {
         me: me.clone(),
         server,
@@ -279,17 +289,15 @@ fn run_against(
         current: Mutex::new((String::new(), String::new())),
         output: Mutex::new(Vec::new()),
         browser_config: browser::BrowserConfig {
-            chromium: args.chromium.clone().or_else(|| {
-                std::env::var("MOQUI_CHROMIUM")
-                    .ok()
-                    .filter(|text| !text.trim().is_empty())
-            }),
+            chromium,
             headed: args.headed,
             insecure: args.insecure,
             runtime: Some(crate::runtime_framework_dirs().0),
         },
         browser: Mutex::new(None),
         offline: Mutex::new(false),
+        video: args.video,
+        recording: Arc::new(Mutex::new(None)),
     });
     let host_dyn: Arc<dyn SpecHost> = host.clone();
     let options = RunOptions {
@@ -302,9 +310,18 @@ fn run_against(
         for spec in &component.specs {
             *lock(&host.current) = (component.name.clone(), spec.name.clone());
             *lock(&host.offline) = spec_offline(&spec.source);
+            if args.video {
+                *lock(&host.recording) = Some(video::Recorder::new(&spec.name, out_dir, encode_video));
+            }
+            let note_case = |case: &moqui_core::testkit::CaseResult| {
+                if let Some(recorder) = lock(&host.recording).as_mut() {
+                    recorder.case(case);
+                }
+            };
             let missing = spec_missing_features(&spec.source);
             let result = if missing.is_empty() {
                 let result = run_spec(spec, &options, &mut |case| {
+                    note_case(case);
                     print(&report::case_line(&spec.name, case));
                     for line in report::output_lines(case) {
                         print(&line);
@@ -321,10 +338,15 @@ fn run_against(
             } else {
                 let result = skipped_spec(spec, &missing);
                 for case in &result.cases {
+                    note_case(case);
                     print(&report::case_line(&spec.name, case));
                 }
                 result
             };
+            let recorder = lock(&host.recording).take();
+            if let Some(path) = recorder.and_then(video::Recorder::finish) {
+                print(&format!("{} video: {}", spec.name, path.display()));
+            }
             results.push(report::ComponentSpec {
                 component: component.name.clone(),
                 result,
@@ -334,8 +356,25 @@ fn run_against(
     Ok(results)
 }
 
+/// With `--video`: whether the video can be encoded, that is Chromium and ffmpeg are found. When one is not, an error
+/// names it, and the specs still run with only their timelines written.
+fn video_tools(chromium: Option<&str>) -> bool {
+    let runtime = crate::runtime_framework_dirs().0;
+    let mut found = true;
+    if let Err(reason) = crate::chromium::find_test_browser(Some(&runtime), chromium.unwrap_or("")) {
+        tracing::error!("--video: no Chromium ({reason}); the specs run and no video is written");
+        found = false;
+    }
+    if let Err(reason) = video::check_ffmpeg() {
+        tracing::error!("--video: {reason}; the specs run and no video is written");
+        found = false;
+    }
+    found
+}
+
 /// The components and specs to run: those named (a component, a `test/client` directory or a spec file), or every
-/// component with client specs; then `--spec` with the specs their `dependsOn` names.
+/// component with client specs; then `--spec` with the specs their `dependsOn` names, where a process spec
+/// (`test/client/process/*.spec.js`) can be named too.
 fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error> {
     let add = |component: TestComponent, components: &mut Vec<TestComponent>| match components
         .iter_mut()
@@ -350,11 +389,17 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
         }
         None => components.push(component),
     };
-    let discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
+    let mut discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
         discover(runtime, "test/client")?
     } else {
         Vec::new()
     };
+    // Process specs (test/client/process/<businessProcessId>.spec.js) run only when --spec names them
+    if !args.specs.is_empty() && (args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty()) {
+        for component in discover(runtime, "test/client/process")? {
+            add(component, &mut discovered);
+        }
+    }
     let mut components: Vec<TestComponent> = Vec::new();
     if args.targets.is_empty() {
         components = discovered;
@@ -410,8 +455,8 @@ fn is_path(target: &str) -> bool {
     target.contains('/') || target.ends_with(".spec.js") || target == "." || target == ".."
 }
 
-/// The component of a `test/client` directory, a component directory, or one spec file in `test/client`: the directory
-/// above `test`. A file brings its own spec only, with what its `dependsOn` names.
+/// The component of a `test/client` directory, a component directory, or one spec file in `test/client` or
+/// `test/client/process`: the directory above `test`. A file brings its own spec only, with what its `dependsOn` names.
 fn path_component(path: &Path) -> Result<TestComponent, Error> {
     let missing = || {
         Error::new(format!(
@@ -420,7 +465,16 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
         ))
     };
     let path = std::fs::canonicalize(path).map_err(|_| missing())?;
-    let (client_dir, file) = if path.is_file() {
+    let process_dir = path
+        .parent()
+        .filter(|parent| path.is_file() && parent.ends_with("test/client/process"))
+        .map(Path::to_path_buf);
+    let (client_dir, file) = if let Some(process_dir) = &process_dir {
+        (
+            process_dir.parent().ok_or_else(missing)?.to_path_buf(),
+            Some(path.clone()),
+        )
+    } else if path.is_file() {
         (path.parent().ok_or_else(missing)?.to_path_buf(), Some(path.clone()))
     } else if path.join("test/client").is_dir() {
         (path.join("test/client"), None)
@@ -447,6 +501,13 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
         name,
         dir,
     };
+    if let Some(process_dir) = &process_dir {
+        for spec in component_specs(&component.name, process_dir, "test/client/process")? {
+            if !component.specs.iter().any(|have| have.name == spec.name) {
+                component.specs.push(spec);
+            }
+        }
+    }
     if let Some(file) = file {
         let spec_name = file
             .file_name()
@@ -593,6 +654,9 @@ pub(crate) struct ClientHost {
     browser: Mutex<Option<browser::SpecBrowser>>,
     /// The spec running has `server: false`.
     offline: Mutex<bool>,
+    /// `--video`: each spec's browser screencasts its pages into `recording`.
+    video: bool,
+    recording: video::Shared,
 }
 
 /// The time now, as `Date.now()` gives it.
@@ -1112,7 +1176,11 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            *held = Some(browser::SpecBrowser::launch(&self.browser_config)?);
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            if self.video {
+                launched.record_to(Arc::clone(&self.recording));
+            }
+            *held = Some(launched);
             if *lock(&self.offline) {
                 let runtime = self.browser_config.runtime.clone().unwrap_or_default();
                 held.as_mut()
@@ -1136,7 +1204,11 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            *held = Some(browser::SpecBrowser::launch(&self.browser_config)?);
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            if self.video {
+                launched.record_to(Arc::clone(&self.recording));
+            }
+            *held = Some(launched);
             if *lock(&self.offline) {
                 let runtime = self.browser_config.runtime.clone().unwrap_or_default();
                 held.as_mut()
@@ -1315,7 +1387,13 @@ impl SpecHost for ClientHost {
 
     /// Close the spec's browser (its profile removed) and sockets, and drop its sessions and kept bodies.
     fn after_spec(&self) {
-        let spec_browser = lock(&self.browser).take();
+        let mut spec_browser = lock(&self.browser).take();
+        if let Some(spec_browser) = spec_browser.as_mut() {
+            spec_browser.stop_video();
+        }
+        if let Some(recorder) = lock(&self.recording).as_mut() {
+            recorder.mark_end();
+        }
         drop(spec_browser);
         let sockets: Vec<_> = lock(&self.sockets).drain().map(|(_, socket)| socket).collect();
         for socket in sockets {
@@ -1329,6 +1407,44 @@ impl SpecHost for ClientHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_specs_run_only_by_name() {
+        let runtime = std::env::temp_dir().join(format!("moqui-test-client-process-{}", std::process::id()));
+        let process = runtime.join("component/pv/test/client/process");
+        std::fs::create_dir_all(&process).unwrap();
+        std::fs::write(runtime.join("component/pv/component.xml"), "<component name=\"pv\"/>").unwrap();
+        std::fs::write(process.join("Greeting.spec.js"), "spec({})").unwrap();
+        let names = |components: &[TestComponent]| -> Vec<String> {
+            components
+                .iter()
+                .flat_map(|component| component.specs.iter().map(|spec| spec.display.clone()))
+                .collect()
+        };
+        let named = ClientArgs {
+            targets: vec!["pv".to_string()],
+            specs: vec!["Greeting".to_string()],
+            ..ClientArgs::default()
+        };
+        assert_eq!(
+            names(&select(&runtime, &named).unwrap()),
+            vec!["pv/test/client/process/Greeting.spec.js"]
+        );
+        let whole = ClientArgs {
+            targets: vec!["pv".to_string()],
+            ..ClientArgs::default()
+        };
+        assert!(select(&runtime, &whole).is_err());
+        let file = ClientArgs {
+            targets: vec![process.join("Greeting.spec.js").to_string_lossy().into_owned()],
+            ..ClientArgs::default()
+        };
+        assert_eq!(
+            names(&select(&runtime, &file).unwrap()),
+            vec!["pv/test/client/process/Greeting.spec.js"]
+        );
+        let _ = std::fs::remove_dir_all(runtime);
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| (*arg).to_string()).collect()
@@ -1355,6 +1471,7 @@ mod tests {
             "2.5",
             "--insecure",
             "--fail-on-skip",
+            "--video",
         ]))
         .unwrap();
         assert_eq!(
@@ -1371,7 +1488,7 @@ mod tests {
             ]
         );
         assert_eq!((parsed.wait, parsed.timeout), (Some(30.0), 2.5));
-        assert!(parsed.insecure && parsed.fail_on_skip && !parsed.allow_http && !parsed.serve);
+        assert!(parsed.insecure && parsed.fail_on_skip && parsed.video && !parsed.allow_http && !parsed.serve);
         assert!(parse_client_args(&args(&["framework", "--serve"])).unwrap().serve);
         for (bad, says) in [
             (&["--param", "novalue"][..], "--param needs name=value"),

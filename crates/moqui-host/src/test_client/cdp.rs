@@ -105,6 +105,25 @@ pub struct Browser {
     page_mark: usize,
     /// The page test that has started and not finished. A timeout names it.
     page_current: String,
+    /// The sessions [`Browser::start_screencast`] records.
+    screencasting: HashSet<String>,
+    /// The screencast frames received and not yet taken ([`Browser::take_frames`]).
+    frames: Vec<ScreencastFrame>,
+    /// The ids of the frame acks sent, whose replies nobody waits for.
+    acks: HashSet<u64>,
+}
+
+/// One `Page.screencastFrame`: the image of a page when it changed.
+#[derive(Clone, Debug)]
+pub struct ScreencastFrame {
+    /// The page's session.
+    pub session: String,
+    /// The image, as the screencast's format (JPEG here).
+    pub data: Vec<u8>,
+    /// When the frame was drawn, Unix seconds (`metadata.timestamp`), when the browser gave it.
+    pub timestamp: Option<f64>,
+    /// When it was read, Unix seconds.
+    pub received: f64,
 }
 
 /// One `test()` the page harness reported.
@@ -210,6 +229,9 @@ impl Browser {
             page_cases: Vec::new(),
             page_mark: 0,
             page_current: String::new(),
+            screencasting: HashSet::new(),
+            frames: Vec::new(),
+            acks: HashSet::new(),
         };
         browser.set_timeout(READ_WAIT)?;
         Ok(browser)
@@ -265,6 +287,7 @@ impl Browser {
             let _ = self.call_browser("Target.disposeBrowserContext", json!({"browserContextId": context}));
         }
         self.network.remove(session);
+        self.screencasting.remove(session);
         self.problems.retain(|problem| problem.session != session);
         if self.session == session {
             self.session.clear();
@@ -430,7 +453,9 @@ impl Browser {
                 return Self::command_result(method, &message);
             }
             if let Some(other) = message["id"].as_u64() {
-                self.responses.insert(other, message);
+                if !self.acks.remove(&other) {
+                    self.responses.insert(other, message);
+                }
             }
         }
     }
@@ -552,6 +577,10 @@ impl Browser {
             self.paused.push_back(event.clone());
             return;
         }
+        if method == "Page.screencastFrame" {
+            self.screencast_frame(params, &session);
+            return;
+        }
         match method {
             "Runtime.exceptionThrown" => {
                 let details = &params["exceptionDetails"];
@@ -647,6 +676,77 @@ impl Browser {
             self.events.drain(..KEPT_EVENTS / 2);
         }
         self.events.push(event.clone());
+    }
+
+    /// Record the page of `session` with the CDP screencast: a JPEG frame each time it changes, kept until
+    /// [`Browser::take_frames`]. Each frame is acknowledged as it is read, so the browser sends the next.
+    ///
+    /// # Errors
+    ///
+    /// Returns the browser's error.
+    pub fn start_screencast(&mut self, session: &str) -> Result<(), String> {
+        self.send(
+            "Page.startScreencast",
+            json!({"format": "jpeg", "quality": 80, "everyNthFrame": 1}),
+            Some(session),
+        )?;
+        self.screencasting.insert(session.to_string());
+        Ok(())
+    }
+
+    /// Stop recording the page of `session`, when it is recorded.
+    pub fn stop_screencast(&mut self, session: &str) {
+        if self.screencasting.remove(session) {
+            let _ = self.send("Page.stopScreencast", json!({}), Some(session));
+        }
+    }
+
+    /// The sessions recorded.
+    #[must_use]
+    pub fn screencasting(&self) -> Vec<String> {
+        self.screencasting.iter().cloned().collect()
+    }
+
+    /// The frames received since the last call, in the order read.
+    pub fn take_frames(&mut self) -> Vec<ScreencastFrame> {
+        std::mem::take(&mut self.frames)
+    }
+
+    /// Keep a `Page.screencastFrame` and acknowledge it. The ack is sent without waiting for its reply, which is
+    /// dropped when it comes.
+    fn screencast_frame(&mut self, params: &Value, session: &str) {
+        if let Some(id) = params["sessionId"].as_u64() {
+            self.next_id += 1;
+            let ack_id = self.next_id;
+            let ack = json!({"id": ack_id, "method": "Page.screencastFrameAck", "params": {"sessionId": id},
+                "sessionId": session});
+            if self.acks.len() > 10_000 {
+                self.acks.clear();
+            }
+            self.acks.insert(ack_id);
+            if let Err(err) = self.ws.send(Message::Text(ack.to_string().into())) {
+                tracing::error!("the screencast frame ack of page {session}: {err}");
+            }
+        }
+        if !self.screencasting.contains(session) {
+            return;
+        }
+        let data = match base64::engine::general_purpose::STANDARD.decode(params["data"].as_str().unwrap_or("")) {
+            Ok(data) => data,
+            Err(err) => {
+                tracing::error!("a screencast frame of page {session} did not decode: {err}");
+                return;
+            }
+        };
+        let received = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64());
+        self.frames.push(ScreencastFrame {
+            session: session.to_string(),
+            data,
+            timestamp: params["metadata"]["timestamp"].as_f64(),
+            received,
+        });
     }
 
     /// Read events for `duration`, and no longer: each read waits at most what is left of it, not [`READ_WAIT`].
