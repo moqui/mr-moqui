@@ -165,6 +165,10 @@ sets never mix, and a component can have both. `test/client/suite.js`, `suite(["
 the order; the other spec files run after it, by name. Each spec gets a default session, and its sessions, sockets,
 pages and browser are closed after `cleanupSpec`.
 
+A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, tells one business process as a story
+(Chisel's Process Story Diff records it with `--video`). It runs only when named: by `--spec <businessProcessId>` with
+its component, or by its file path. A whole-component run leaves it out. It can `dependsOn` the component's other specs.
+
 `spec({...})` and `feature(name, {...})` take what they take in `moqui test` (`dependsOn`, `requires`, `stepwise`,
 `timeout`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
 `allowMessageErrors`: there is no `ec.message` to check.

@@ -373,7 +373,8 @@ fn video_tools(chromium: Option<&str>) -> bool {
 }
 
 /// The components and specs to run: those named (a component, a `test/client` directory or a spec file), or every
-/// component with client specs; then `--spec` with the specs their `dependsOn` names.
+/// component with client specs; then `--spec` with the specs their `dependsOn` names, where a process spec
+/// (`test/client/process/*.spec.js`) can be named too.
 fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error> {
     let add = |component: TestComponent, components: &mut Vec<TestComponent>| match components
         .iter_mut()
@@ -388,11 +389,17 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
         }
         None => components.push(component),
     };
-    let discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
+    let mut discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
         discover(runtime, "test/client")?
     } else {
         Vec::new()
     };
+    // Process specs (test/client/process/<businessProcessId>.spec.js) run only when --spec names them
+    if !args.specs.is_empty() && (args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty()) {
+        for component in discover(runtime, "test/client/process")? {
+            add(component, &mut discovered);
+        }
+    }
     let mut components: Vec<TestComponent> = Vec::new();
     if args.targets.is_empty() {
         components = discovered;
@@ -448,8 +455,8 @@ fn is_path(target: &str) -> bool {
     target.contains('/') || target.ends_with(".spec.js") || target == "." || target == ".."
 }
 
-/// The component of a `test/client` directory, a component directory, or one spec file in `test/client`: the directory
-/// above `test`. A file brings its own spec only, with what its `dependsOn` names.
+/// The component of a `test/client` directory, a component directory, or one spec file in `test/client` or
+/// `test/client/process`: the directory above `test`. A file brings its own spec only, with what its `dependsOn` names.
 fn path_component(path: &Path) -> Result<TestComponent, Error> {
     let missing = || {
         Error::new(format!(
@@ -458,7 +465,16 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
         ))
     };
     let path = std::fs::canonicalize(path).map_err(|_| missing())?;
-    let (client_dir, file) = if path.is_file() {
+    let process_dir = path
+        .parent()
+        .filter(|parent| path.is_file() && parent.ends_with("test/client/process"))
+        .map(Path::to_path_buf);
+    let (client_dir, file) = if let Some(process_dir) = &process_dir {
+        (
+            process_dir.parent().ok_or_else(missing)?.to_path_buf(),
+            Some(path.clone()),
+        )
+    } else if path.is_file() {
         (path.parent().ok_or_else(missing)?.to_path_buf(), Some(path.clone()))
     } else if path.join("test/client").is_dir() {
         (path.join("test/client"), None)
@@ -485,6 +501,13 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
         name,
         dir,
     };
+    if let Some(process_dir) = &process_dir {
+        for spec in component_specs(&component.name, process_dir, "test/client/process")? {
+            if !component.specs.iter().any(|have| have.name == spec.name) {
+                component.specs.push(spec);
+            }
+        }
+    }
     if let Some(file) = file {
         let spec_name = file
             .file_name()
@@ -1384,6 +1407,44 @@ impl SpecHost for ClientHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_specs_run_only_by_name() {
+        let runtime = std::env::temp_dir().join(format!("moqui-test-client-process-{}", std::process::id()));
+        let process = runtime.join("component/pv/test/client/process");
+        std::fs::create_dir_all(&process).unwrap();
+        std::fs::write(runtime.join("component/pv/component.xml"), "<component name=\"pv\"/>").unwrap();
+        std::fs::write(process.join("Greeting.spec.js"), "spec({})").unwrap();
+        let names = |components: &[TestComponent]| -> Vec<String> {
+            components
+                .iter()
+                .flat_map(|component| component.specs.iter().map(|spec| spec.display.clone()))
+                .collect()
+        };
+        let named = ClientArgs {
+            targets: vec!["pv".to_string()],
+            specs: vec!["Greeting".to_string()],
+            ..ClientArgs::default()
+        };
+        assert_eq!(
+            names(&select(&runtime, &named).unwrap()),
+            vec!["pv/test/client/process/Greeting.spec.js"]
+        );
+        let whole = ClientArgs {
+            targets: vec!["pv".to_string()],
+            ..ClientArgs::default()
+        };
+        assert!(select(&runtime, &whole).is_err());
+        let file = ClientArgs {
+            targets: vec![process.join("Greeting.spec.js").to_string_lossy().into_owned()],
+            ..ClientArgs::default()
+        };
+        assert_eq!(
+            names(&select(&runtime, &file).unwrap()),
+            vec!["pv/test/client/process/Greeting.spec.js"]
+        );
+        let _ = std::fs::remove_dir_all(runtime);
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| (*arg).to_string()).collect()
