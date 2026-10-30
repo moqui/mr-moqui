@@ -1,0 +1,42 @@
+# git:// resource locations, org.moqui.impl.GitServices and the git server (smart HTTP and SSH, LFS), on gitoxide, on
+# top of moqui-core (plans/Crate-Split.md). Its own crate so an edit here does not rebuild the framework, and gix stays
+# out of core. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry;
+# moqui-host links it under its git feature.
+
+[package]
+name = "moqui-git"
+description = "git:// locations, the git services and the git server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# http as the git feature of moqui-core had it: the webhooks and fetch over HTTPS.
+moqui-core = { workspace = true, features = ["http"] }
+moqui-lib = { workspace = true, features = ["http"] }
+moqui-db = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+flate2 = { workspace = true }
+getrandom = { workspace = true }
+gix = { workspace = true }
+gix-pack = { workspace = true }
+hmac = { workspace = true }
+indexmap = { workspace = true }
+inventory = { workspace = true }
+jiff = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open; image and xlsx for the file services' previews.
+moqui-core = { workspace = true, features = ["http", "test-support", "image", "xlsx"] }
+# The file services' image thumbnails and spreadsheet previews, written by the tests.
+image = { workspace = true }
+rust_xlsxwriter = { workspace = true }
+
+[lints]
+workspace = true

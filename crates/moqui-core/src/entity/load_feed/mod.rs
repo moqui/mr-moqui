@@ -40,8 +40,8 @@ use moqui_lib::node::MNode;
 use super::facade::EntityFacade;
 
 pub use check::{check_entity_data, check_entity_xml_text, check_info_with, check_with, list_with, CheckResult};
-#[cfg(test)]
-pub(crate) use eca::add_eca_rules;
+#[cfg(any(test, feature = "test-support"))]
+pub use eca::add_eca_rules;
 pub use eca::{eca_rule_count, eca_rules, match_rules, reload_eca_rules, EcaRule};
 pub(crate) use eca::{match_rules_with, EcaIndex};
 pub(super) use feed::clear_frame_touches;

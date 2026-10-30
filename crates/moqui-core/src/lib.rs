@@ -24,6 +24,7 @@ pub mod devtools;
 pub mod driver;
 pub mod edi;
 pub mod entity;
+pub mod extension;
 pub mod l10n;
 pub mod llm_hooks;
 pub mod monitor;

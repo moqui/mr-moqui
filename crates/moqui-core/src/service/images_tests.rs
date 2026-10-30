@@ -105,58 +105,6 @@ fn the_original_is_written_as_the_output_format_when_it_can_be() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The variants of an image go into a git repository in one commit, its PNGs in LFS.
-#[cfg(feature = "git")]
-#[test]
-fn the_variants_of_an_image_are_one_commit() {
-    let ctx = crate::context::ExecutionContextFactory::test_context();
-    let facade = crate::testing::open();
-    ctx.factory().set_entity(facade.clone());
-    ctx.factory().resource().install_git().unwrap();
-    let _entered = ctx.enter();
-    let mut repository = facade.make_value("moqui.resource.GitRepository").unwrap();
-    repository.set("repositoryId", Value::string("media"));
-    repository.set("repositoryKind", Value::string("db"));
-    repository.create(&facade).unwrap();
-    let resources = ctx.factory().resource();
-    let provider = resources.git().unwrap().clone();
-    provider
-        .setup_lfs("media", &crate::resource::git::attributes::DEFAULT_LFS_PATTERNS)
-        .unwrap();
-    let mut parameters = BTreeMap::new();
-    parameters.insert("inputImageStream".to_string(), Value::Bytes(png_with_alpha()));
-    parameters.insert("outputImageFormat".to_string(), Value::string("png"));
-    for suffix in ["Original", "Small", "Thumbnail"] {
-        parameters.insert(
-            format!("outputResourceReference{suffix}"),
-            Value::string(format!("git://media/logo_{suffix}.png")),
-        );
-    }
-    convert_image(&parameters, &facade).unwrap();
-    let versions: Vec<String> = ["Original", "Small", "Thumbnail"]
-        .iter()
-        .map(|suffix| {
-            let history = resources
-                .version_history(&format!("git://media/logo_{suffix}.png"))
-                .unwrap();
-            assert_eq!(history.len(), 1);
-            history[0].version_name.clone()
-        })
-        .collect();
-    assert!(versions.iter().all(|version| *version == versions[0]), "{versions:?}");
-    let (small, _) = decode(
-        &resources
-            .get("git://media/logo_Small.png")
-            .unwrap()
-            .read_bytes()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(small.width(), 360);
-    let lfs = facade.find("moqui.resource.GitLfsObject").unwrap().list().unwrap();
-    assert_eq!(lfs.len(), 3, "the PNGs are LFS files");
-}
-
 #[test]
 fn a_location_is_text_or_a_resource_reference() {
     assert_eq!(

@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
 
-    <!-- Git repositories for git:// resource locations (crates/moqui-core/src/resource/git, docs/data/Revision-Management.md).
+    <!-- Git repositories for git:// resource locations (crates/moqui-git, docs/data/Revision-Management.md).
         No Java counterpart. The repositoryId is the first segment of a location: git://<repositoryId>/<path>. -->
     <entity entity-name="GitRepository" package="moqui.resource" use="nontransactional" short-alias="gitRepositories">
         <field name="repositoryId" type="id" is-pk="true"/>
@@ -326,7 +326,7 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
-    <!-- Git LFS (crates/moqui-core/src/resource/git/server/lfs.rs, docs/interfaces/Git-Hosting.md). No Java counterpart. -->
+    <!-- Git LFS (crates/moqui-git/src/server/lfs.rs, docs/interfaces/Git-Hosting.md). No Java counterpart. -->
     <entity entity-name="GitLfsObject" package="moqui.resource" use="nontransactional" cache="never">
         <description>A Git LFS object of a repository, its content the ContentBlob of the same SHA-256. A repository
             has an object only once it was uploaded to it: the same content in another repository is stored once,

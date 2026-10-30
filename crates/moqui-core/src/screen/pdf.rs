@@ -404,8 +404,9 @@ fn image_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// Tests that install an engine hold this, since the slot is process-wide.
-#[cfg(test)]
-pub(crate) fn pdf_test_lock() -> std::sync::MutexGuard<'static, ()> {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn pdf_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     moqui_lib::sync::lock(&LOCK)
 }

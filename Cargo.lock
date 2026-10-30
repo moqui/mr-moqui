@@ -4149,8 +4149,6 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "getrandom 0.3.4",
- "gix",
- "gix-pack",
  "hmac 0.12.1",
  "html5ever",
  "image",
@@ -4203,6 +4201,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-git"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "flate2",
+ "getrandom 0.3.4",
+ "gix",
+ "gix-pack",
+ "hmac 0.12.1",
+ "image",
+ "indexmap",
+ "inventory",
+ "jiff",
+ "moqui-core",
+ "moqui-db",
+ "moqui-lib",
+ "rust_xlsxwriter",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "zip",
+]
+
+[[package]]
 name = "moqui-host"
 version = "0.1.0"
 dependencies = [
@@ -4229,6 +4252,7 @@ dependencies = [
  "lsp-types",
  "moqui-core",
  "moqui-db",
+ "moqui-git",
  "moqui-lib",
  "moqui-llm",
  "moqui-tui",

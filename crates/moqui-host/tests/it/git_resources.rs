@@ -15,7 +15,7 @@
 //! `git://` files in a database repository on the seeded embedded Postgres: elFinder writes them (each write a commit,
 //! the objects `bytea` rows of `GitObject`), the file download reads one back, `export#GitRepository` writes the
 //! repository to disk, and the git command line, when installed, reads the export. The provider over each storage is
-//! `moqui-core/src/resource/git/tests.rs`.
+//! `moqui-git/src/tests.rs`.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "git"))]
 

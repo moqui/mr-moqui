@@ -543,7 +543,7 @@
         <resource-reference scheme="content" class="org.moqui.impl.context.reference.ContentResourceReference"/>
         <resource-reference scheme="dbresource" class="org.moqui.impl.context.reference.DbResourceReference"/>
         <!-- git://repositoryId/path: files on a branch of a moqui.resource.GitRepository, versions are commits (no Java
-            counterpart; crates/moqui-core/src/resource/git) -->
+            counterpart; crates/moqui-git) -->
         <resource-reference scheme="git" class="org.moqui.impl.context.reference.GitResourceReference"/>
 
         <!-- renderer class needs to implement the org.moqui.context.TemplateRenderer interface -->

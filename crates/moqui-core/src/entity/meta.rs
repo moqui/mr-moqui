@@ -308,7 +308,7 @@ impl EntityFacade {
 
     /// Before a find: the runtime check when the group adds missing tables at runtime, then whether there is a
     /// table to read. False only when the find check is on and the table is known not to exist.
-    pub(crate) fn table_ready(&self, entity_name: &str) -> bool {
+    pub fn table_ready(&self, entity_name: &str) -> bool {
         self.check_table_runtime(entity_name);
         if !self.inner.tables.find_check.load(Ordering::Relaxed) {
             return true;

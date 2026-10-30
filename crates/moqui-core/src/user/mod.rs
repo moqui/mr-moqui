@@ -44,7 +44,8 @@ pub use login::{
     login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key, logout,
     logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login, now_value, with_client_ip,
 };
-pub(crate) use login::{now_effective_millis, now_effective_value, now_millis, value_millis};
+pub(crate) use login::{now_effective_millis, value_millis};
+pub use login::{now_effective_value, now_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use password::{hash_login_key, hash_password};
 pub use period::period_range;
@@ -96,7 +97,7 @@ pub(crate) fn stored_password_matches(
 /// shares the caller's transaction but not the caller's user, authorization or messages. None when there is no
 /// context or the user is not found. For deciding what another user may see or do (the chat record rule, the
 /// approvals a merge request counts).
-pub(crate) fn as_user<T>(user_id: &str, work: impl FnOnce() -> T) -> Option<T> {
+pub fn as_user<T>(user_id: &str, work: impl FnOnce() -> T) -> Option<T> {
     use crate::context::ExecutionContext;
     let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))?;
     let facade = factory.entity()?;

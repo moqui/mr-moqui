@@ -48,8 +48,6 @@ static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new
 /// prefix that matches decides. A service at one of these locations still loads in a build without the feature, and a
 /// call reports that the feature is not built into this host.
 const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
-    ("moqui_core::service::git::", "git", cfg!(feature = "git")),
-    ("moqui_core::service::git_hosting::", "git", cfg!(feature = "git")),
     ("moqui_core::service::images::", "image", cfg!(feature = "image")),
     ("moqui_core::service::spreadsheet::", "xlsx", cfg!(feature = "xlsx")),
     (
@@ -79,6 +77,7 @@ pub(crate) fn missing_feature(location: &str) -> Option<&'static str> {
         .iter()
         .find(|(prefix, _, _)| location.starts_with(prefix))
         .and_then(|(_, feature, built)| (!built).then_some(*feature))
+        .or_else(|| crate::extension::missing_feature(location))
         .or_else(|| (location.starts_with("moqui_llm::") && !crate::llm_hooks::linked()).then_some("llm"))
 }
 
@@ -114,13 +113,14 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::devtools::register(&mut map),
         super::chat::register(&mut map),
         super::chat_link::register(&mut map),
-        #[cfg(feature = "git")]
-        super::git::register(&mut map),
-        #[cfg(feature = "git")]
-        super::git_hosting::register(&mut map),
         crate::llm_hooks::get().map_or(Ok(()), |hooks| (hooks.register_services)(&mut map)),
     ] {
         if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    for extension in crate::extension::linked() {
+        if let Err(error) = (extension.register_services)(&mut map) {
             errors.push(error);
         }
     }

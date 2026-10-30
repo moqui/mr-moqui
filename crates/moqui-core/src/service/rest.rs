@@ -270,8 +270,8 @@ fn insert_file(roots: &mut BTreeMap<String, Node>, path: &Path) -> Result<(), Er
 }
 
 /// Replace a factory's resources with those in `paths`, for tests that bring their own files.
-#[cfg(test)]
-pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) {
     let mut resources = BTreeMap::new();
     for path in paths {
         insert_file(&mut resources, path).expect("rest file");

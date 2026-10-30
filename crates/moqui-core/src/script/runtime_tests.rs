@@ -744,7 +744,7 @@ fn heap_pressure_releases_cached_code_without_losing_live_values() {
             let array: rquickjs::Array = ctx.eval("new Array(3200000).fill(42)").map_err(js_error)?;
             Ok(rquickjs::Persistent::save(&ctx, array))
         })?;
-        assert!(engine.scripts.borrow().len() > 0);
+        assert!(!engine.scripts.borrow().is_empty());
         assert!(
             engine.reclaim_cache_pressure(),
             "heap usage: {:?}",

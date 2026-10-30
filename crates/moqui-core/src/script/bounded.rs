@@ -21,7 +21,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-pub(crate) struct BoundedMap<K, V> {
+pub struct BoundedMap<K, V> {
     entries: HashMap<K, Entry<V>>,
     tick: u64,
     cap: usize,
@@ -36,12 +36,12 @@ struct Entry<V> {
 }
 
 impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
-    pub(crate) fn new(cap: usize) -> Self {
+    pub fn new(cap: usize) -> Self {
         Self::with_bytes(cap, usize::MAX)
     }
 
     /// A map of at most `cap` entries whose sizes, as given to [`Self::insert_sized`], total at most `max_bytes`.
-    pub(crate) fn with_bytes(cap: usize, max_bytes: usize) -> Self {
+    pub fn with_bytes(cap: usize, max_bytes: usize) -> Self {
         Self {
             entries: HashMap::new(),
             tick: 0,
@@ -51,7 +51,7 @@ impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
         }
     }
 
-    pub(crate) fn get<Q>(&mut self, key: &Q) -> Option<V>
+    pub fn get<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -64,12 +64,12 @@ impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
         })
     }
 
-    pub(crate) fn insert(&mut self, key: K, value: V) {
+    pub fn insert(&mut self, key: K, value: V) {
         self.insert_sized(key, value, 0);
     }
 
     /// Insert an entry of `bytes`, its approximate size. An entry larger than the whole budget is not kept.
-    pub(crate) fn insert_sized(&mut self, key: K, value: V, bytes: usize) {
+    pub fn insert_sized(&mut self, key: K, value: V, bytes: usize) {
         if bytes > self.max_bytes {
             return;
         }
@@ -93,9 +93,8 @@ impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
         );
     }
 
-    /// Drop one entry. Only the git attributes cache drops one.
-    #[cfg_attr(not(feature = "git"), allow(dead_code))]
-    pub(crate) fn remove<Q>(&mut self, key: &Q)
+    /// Drop one entry. Only the git attributes cache (moqui-git) drops one.
+    pub fn remove<Q>(&mut self, key: &Q)
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -106,16 +105,20 @@ impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
     }
 
     /// Drop every entry.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.entries.clear();
         self.bytes = 0;
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub(crate) fn bytes(&self) -> usize {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn bytes(&self) -> usize {
         self.bytes
     }
 

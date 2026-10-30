@@ -1762,7 +1762,7 @@ fn write_field_json(out: &mut String, value: &Value, iso: bool) {
 /// A web response's JSON, as Java's `ContextJavaUtil.jacksonMapper` writes it: indented as Jackson's default pretty
 /// printer (`INDENT_OUTPUT`), a time stamp or date as epoch millis (`WRITE_DATES_AS_TIMESTAMPS`), and a time as
 /// `HH:mm:ss` text, as Jackson's `SqlTimeSerializer`.
-pub(crate) fn encode_json(value: &Value) -> String {
+pub fn encode_json(value: &Value) -> String {
     let mut out = String::new();
     write_response_json(&mut out, value, 0);
     out

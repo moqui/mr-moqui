@@ -15,7 +15,7 @@
 //! The git server through the host on the seeded embedded Postgres: smart HTTP at `/git/<id>.git` (the request
 //! streamed into and the response out of the git pool), and `git-upload-pack` / `git-receive-pack` over the built-in
 //! SSH server with a `UserSshKey`, by the git command line (skipped when git, or for SSH ssh, is not installed). The
-//! protocol itself, over each storage, is `moqui-core/src/resource/git/server/tests.rs`.
+//! protocol itself, over each storage, is `moqui-git/src/server/tests.rs`.
 
 #![cfg(all(
     unix,

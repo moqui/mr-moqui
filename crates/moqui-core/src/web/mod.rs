@@ -39,7 +39,7 @@ pub fn effective_http_port(raw: &str) -> Result<u16, moqui_lib::error::Error> {
 }
 
 /// Configured HTTP port text for a URL. Invalid non-empty values are kept for listener validation.
-pub(crate) fn http_url_port(raw: &str) -> String {
+pub fn http_url_port(raw: &str) -> String {
     effective_http_port(raw)
         .map(|port| port.to_string())
         .unwrap_or_else(|_| raw.to_string())
@@ -264,7 +264,7 @@ impl Drop for WebGuard {
 }
 
 /// Install the parameter map for this request. A second install replaces the first.
-pub(crate) fn install(parameters: BTreeMap<String, Value>) -> WebGuard {
+pub fn install(parameters: BTreeMap<String, Value>) -> WebGuard {
     install_with(parameters, String::new())
 }
 
@@ -418,7 +418,7 @@ pub(crate) fn visit_request(request: &WebRequest) -> crate::user::session::Visit
     }
 }
 
-pub(crate) fn set_request_info(request: &WebRequest) {
+pub fn set_request_info(request: &WebRequest) {
     let scheme = if request.https { "https" } else { "http" };
     let url = full_url(request);
     let mut details = format!(
@@ -492,7 +492,7 @@ pub(crate) fn request_details() -> String {
 }
 
 /// The URL [`set_request_info`] kept. None with no request, or for a render with no socket.
-pub(crate) fn request_url() -> Option<String> {
+pub fn request_url() -> Option<String> {
     WEB.with(|slot| slot.borrow().as_ref().map(|web| web.request_url.clone()))
         .filter(|url| !url.is_empty())
 }
@@ -1400,7 +1400,7 @@ pub(crate) fn output_sent() -> bool {
 }
 
 /// Forget what was written, so a response can be sent after a body was taken for another use.
-pub(crate) fn clear_output() {
+pub fn clear_output() {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.sent = false;
@@ -1439,7 +1439,7 @@ pub(crate) fn restore_output(stash: OutputStash) {
 }
 
 /// Move the status, headers, body, and sent flag out of the slot.
-pub(crate) fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
+pub fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
     WEB.with(|slot| {
         slot.borrow_mut()
             .as_mut()
@@ -2112,15 +2112,16 @@ pub(crate) fn status_for(err: &Error) -> u16 {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// A test's `instance_purpose` for this thread only, so it does not change other tests' instance.
-    pub(crate) static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    #[doc(hidden)]
+    pub static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// Whether this instance runs with `instance_purpose` production.
 pub(crate) fn is_production() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(production) = TEST_PRODUCTION.with(std::cell::Cell::get) {
         return production;
     }

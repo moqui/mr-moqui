@@ -74,7 +74,7 @@ pub(crate) fn query_tx(tx: &TransactionManager, sql: &str, params: &[Value]) -> 
     tx.with_connection(|conn| query_conn(conn, sql, params))
 }
 
-pub(crate) fn execute_tx(tx: &TransactionManager, sql: &str, params: &[Value]) -> Result<u64, Error> {
+pub fn execute_tx(tx: &TransactionManager, sql: &str, params: &[Value]) -> Result<u64, Error> {
     tx.with_connection(|conn| execute_conn(conn, sql, params))
 }
 

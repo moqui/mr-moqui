@@ -16,6 +16,7 @@ members = [
     "crates/moqui-db",
     "crates/moqui-core",
     "crates/moqui-llm",
+    "crates/moqui-git",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -55,6 +56,9 @@ moqui-db = { path = "crates/moqui-db" }
 moqui-core = { path = "crates/moqui-core", default-features = false }
 # The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.
 moqui-llm = { path = "crates/moqui-llm" }
+# git:// locations, the git services and the git server, on moqui-core (plans/Crate-Split.md); the host links it under
+# its git feature.
+moqui-git = { path = "crates/moqui-git" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.
@@ -195,7 +199,7 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 similar = { version = "3.2", default-features = false, features = ["text", "inline"] }
 # The Yjs CRDT, wire-compatible with the Yjs of the browser editor (m-coedit): co-edited documents (moqui-core collab).
 yrs = { version = "0.28", default-features = false }
-# Git resource locations (git://, crates/moqui-core/src/resource/git). gitoxide is pure Rust; libgit2 (git2) fails the
+# Git resource locations (git://, crates/moqui-git). gitoxide is pure Rust; libgit2 (git2) fails the
 # license gate and links OpenSSL. Defaults stay off; HTTPS fetch goes through the workspace reqwest 0.13 on rustls
 # (aws-lc). No push upstream yet, SSH remotes run the system ssh binary.
 gix = { version = "0.90", default-features = false, features = [
@@ -209,7 +213,7 @@ gix = { version = "0.90", default-features = false, features = [
 # ReadDirectoryChangesW behind one API. CC0-1.0.
 notify = { version = "8.2" }
 # The pack writer (data::output, the `generate` feature) and a delta-base cache for the git server
-# (crates/moqui-core/src/resource/git/server): gix reaches gix-pack without either. The version moves with gix's.
+# (crates/moqui-git/src/server): gix reaches gix-pack without either. The version moves with gix's.
 gix-pack = { version = "0.77", default-features = false, features = ["generate", "pack-cache-lru-dynamic"] }
 # gzip request bodies of the git server (git compresses an upload-pack request over 1 KB). Already in the graph
 # through russh and zip; the miniz_oxide backend.

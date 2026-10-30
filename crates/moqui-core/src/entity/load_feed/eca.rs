@@ -85,8 +85,9 @@ pub fn eca_rule_count(facade: &EntityFacade) -> usize {
 }
 
 /// Add the `<eeca>` rules of an `<eecas>` document after the stored ones, for a test that needs its own rules.
-#[cfg(test)]
-pub(crate) fn add_eca_rules(facade: &EntityFacade, eecas: &str) -> Result<(), moqui_lib::error::Error> {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn add_eca_rules(facade: &EntityFacade, eecas: &str) -> Result<(), moqui_lib::error::Error> {
     let root = MNode::parse_text("eecas", eecas)?;
     let mut index = (*eca_index(facade)).clone();
     index.ingest(facade, &root, "eecas");

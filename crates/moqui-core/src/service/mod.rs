@@ -24,25 +24,19 @@ mod chat_link;
 mod chat_tests;
 mod collab;
 mod content;
-mod external_agent;
 pub mod coverage;
 mod dav;
 pub(crate) mod define;
 mod devtools;
 mod eca;
 mod eca_rules;
+mod external_agent;
 pub use eca_rules::reload as reload_eca_rules;
 mod elfinder;
 mod email_eca;
 #[cfg(test)]
 mod fence_tests;
-#[cfg(all(test, feature = "git"))]
-mod files_tests;
-#[cfg(feature = "git")]
-mod git;
-pub(crate) mod git_eca;
-#[cfg(feature = "git")]
-mod git_hosting;
+pub mod git_eca;
 #[cfg(feature = "image")]
 mod images;
 pub mod info;
@@ -71,8 +65,6 @@ mod tools;
 mod user_keys;
 pub(crate) mod util;
 mod validate;
-#[cfg(all(test, feature = "git"))]
-mod wiki_tests;
 
 pub use call::is_service_defined;
 pub use call::{
@@ -84,8 +76,6 @@ pub use define::{check, configured_service_files, lint, reload as reload_definit
 pub(crate) use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
-#[cfg(all(test, feature = "git"))]
-pub(crate) use git_hosting::signature as git_hosting_signature;
 pub(crate) use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
@@ -101,8 +91,9 @@ pub use remote::shared_http_client;
 pub use request_pool::{caps, check_serve_caps, spare_connections, RequestPool};
 #[cfg(test)]
 pub(crate) use rest::install;
-#[cfg(test)]
-pub(crate) use rest::install as install_rest;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use rest::install as install_rest;
 pub(crate) use rest::openapi_document;
 pub use rest::reload_roots as reload_rest_roots;
 pub use rest::{resolve_service as resolve_rest_service, root_resource_infos, run};

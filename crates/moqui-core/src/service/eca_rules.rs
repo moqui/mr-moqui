@@ -33,8 +33,7 @@ pub(super) struct EcaRules {
     pub(super) seca_index: SecaIndex,
     pub(super) email: Vec<Arc<EmailRule>>,
     /// gitECA rules in priority order, a later rule with the same id having replaced an earlier one. Read only by the
-    /// git events, so unread without the `git` feature.
-    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    /// git events (moqui-git).
     pub(super) git: Vec<Arc<GitRule>>,
 }
 
@@ -49,7 +48,7 @@ impl EcaRules {
     }
 
     /// The same rules with gitECA rules from XML text, for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn with_git(mut self, git_xml: &str) -> Self {
         let root = MNode::parse_text("gitecas", git_xml).expect("gitecas xml");
         self.git = git_rules(root.children_named("giteca").iter(), &mut 0);
@@ -223,7 +222,7 @@ fn seca_in_load_order(loaded: Vec<(Option<String>, Arc<SecaRule>)>) -> Vec<Arc<S
 }
 
 /// Parse rules from XML text, for tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn from_xml(seca_xml: &str, email_xml: &str) -> EcaRules {
     let mut seca: Vec<Arc<SecaRule>> = Vec::new();
     let mut email = Vec::new();

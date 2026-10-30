@@ -925,8 +925,8 @@ impl russh::server::Handler for Connection {
         }
         let line = String::from_utf8_lossy(data).into_owned();
         #[cfg(feature = "git")]
-        if moqui_core::resource::git::server::parse_ssh_command(&line).is_some()
-            || moqui_core::resource::git::server::lfs::parse_ssh_command(&line).is_some()
+        if moqui_git::server::parse_ssh_command(&line).is_some()
+            || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
             let (Some(username), true) = (self.username.clone(), self.can_git) else {
                 return session.channel_failure(channel);

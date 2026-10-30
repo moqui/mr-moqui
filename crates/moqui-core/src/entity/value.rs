@@ -286,7 +286,7 @@ enum Probe {
 }
 
 impl EntityValue {
-    pub(crate) fn make(facade: &EntityFacade, entity_name: &str) -> Result<Self, Error> {
+    pub fn make(facade: &EntityFacade, entity_name: &str) -> Result<Self, Error> {
         let (entity_name, names) = facade.with_entity(entity_name, |entity, dialect, _| {
             if entity.is_view {
                 return Ok((Arc::from(entity.full_name.as_str()), None));

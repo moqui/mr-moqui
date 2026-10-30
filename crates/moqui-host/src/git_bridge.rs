@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Blocking streams over channels, for the git server (`moqui_core::resource::git::server`), which speaks the
+//! Blocking streams over channels, for the git server (`moqui_git::server`), which speaks the
 //! protocol with blocking `Read` and `Write` on a job of its own pool, while the HTTP connection or SSH channel is an
 //! async task here. A bounded channel each way gives back pressure: a slow client stalls the pack writer rather than
 //! filling memory. A side that goes away ends the other: a closed channel is the end of the input, or a broken pipe

@@ -102,49 +102,16 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::user_keys::revoke_access_token",
         "moqui_core::service::user_keys::revoke_app_password",
     ];
-    if cfg!(feature = "git") {
-        expected.extend([
-            "moqui_core::service::git::commit_files",
-            "moqui_core::service::git::export_repository",
-            "moqui_core::service::git::fetch_all_repositories",
-            "moqui_core::service::git::fetch_repository",
-            "moqui_core::service::git::fsck_repository",
-            "moqui_core::service::git::gc_repositories",
-            "moqui_core::service::git::get_blob",
-            "moqui_core::service::git::get_clone_urls",
-            "moqui_core::service::git::get_commit",
-            "moqui_core::service::git::get_commit_diff",
-            "moqui_core::service::git::get_log",
-            "moqui_core::service::git::get_refs",
-            "moqui_core::service::git::import_repository",
-            "moqui_core::service::git::init_repository",
-            "moqui_core::service::git::process_pending_updates",
-            "moqui_core::service::git::process_update",
-            "moqui_core::service::git::setup_lfs",
-            "moqui_core::service::git_hosting::archive_repository",
-            "moqui_core::service::git_hosting::create_commit_status",
-            "moqui_core::service::git_hosting::create_ref",
-            "moqui_core::service::git_hosting::delete_ref",
-            "moqui_core::service::git_hosting::find_repositories",
-            "moqui_core::service::git_hosting::find_updates",
-            "moqui_core::service::git_hosting::get_branch_rules",
-            "moqui_core::service::git_hosting::get_commit_statuses",
-            "moqui_core::service::git_hosting::get_compare",
-            "moqui_core::service::git_hosting::get_merge_request_approvals",
-            "moqui_core::service::git_hosting::get_repository_access",
-            "moqui_core::service::git_hosting::get_tree",
-            "moqui_core::service::git_hosting::merge_merge_request",
-            "moqui_core::service::git_hosting::merge_refs",
-            "moqui_core::service::git_hosting::queue_webhook_event",
-            "moqui_core::service::git_hosting::queue_webhook_push",
-            "moqui_core::service::git_hosting::send_webhook_delivery",
-            "moqui_core::service::git_hosting::test_webhook",
-            "moqui_core::service::git_hosting::unarchive_repository",
-            "moqui_core::service::git_hosting::update_repository",
-        ]);
-        expected.sort_unstable();
-    }
+    expected.sort_unstable();
     // A feature this build leaves out registers nothing; its locations resolve through missing_feature.
     expected.retain(|location| super::missing_feature(location).is_none());
     assert_eq!(keys, expected);
+}
+
+/// A framework crate's service this binary does not link loads and reports its feature missing; core's tests link no
+/// framework crate.
+#[test]
+fn an_unlinked_framework_crate_service_reports_its_feature() {
+    assert_eq!(super::missing_feature("moqui_git::service::get_refs"), Some("git"));
+    assert!(!crate::build_info::core_features().contains(&"git"));
 }

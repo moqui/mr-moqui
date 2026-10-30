@@ -28,7 +28,7 @@ mod data_writer;
 mod dbresource;
 pub(crate) mod derived;
 mod etl;
-pub(crate) mod exec;
+pub mod exec;
 mod facade;
 mod find;
 mod fk;

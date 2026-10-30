@@ -63,7 +63,9 @@ The framework features are in `crates/moqui-core`; the host features, and the pa
 `crates/moqui` (and the crate `./moq build` generates in `target/moqui-app` for add-on component crates) forwards the
 package features `dev`, `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
 one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
-through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in.
+through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
+framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`) are linked the same way by a host
+feature of the same name, and core reaches them through `moqui_core::extension`.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|---|
@@ -81,7 +83,7 @@ through `moqui_core::llm_hooks`, so in a binary without them their services repo
 | `devtools` | host, core | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
 | `smtp` | core | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
 | `imap` | core | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
-| `git` | core | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
+| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
 | `xlsx` | core | The `xlsx` render mode and `org.moqui.impl.SpreadsheetServices` | | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |

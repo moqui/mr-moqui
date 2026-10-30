@@ -802,7 +802,7 @@ pub fn stamp_value(millis: i64) -> Value {
 }
 
 /// Java's `ec.user.nowTimestamp`: the entered context's effective time, or the clock.
-pub(crate) fn now_effective_value() -> Value {
+pub fn now_effective_value() -> Value {
     stamp_value(now_effective_millis())
 }
 
@@ -813,7 +813,7 @@ pub(crate) fn now_effective_millis() -> i64 {
         .unwrap_or_else(now_millis)
 }
 
-pub(crate) fn now_millis() -> i64 {
+pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()

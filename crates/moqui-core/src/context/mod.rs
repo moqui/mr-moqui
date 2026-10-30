@@ -39,10 +39,9 @@ pub use factory::{
 pub(crate) use identity::secret_parameter;
 pub use locate::{framework_dir, locate};
 pub use message::{ErrorMark, MessageFacade, ValidationError};
-#[cfg(feature = "git")]
-pub(crate) use resource::millis_of;
+pub use resource::millis_of;
 pub(crate) use resource::split_version;
-pub(crate) use resource::version_author;
+pub use resource::version_author;
 pub(crate) use resource::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
 pub use resource::{
     with_version_author, ChangeLogEntry, ChangeSetOutcome, Opened, ResourceChange, ResourceChangeInfo, ResourceEntry,

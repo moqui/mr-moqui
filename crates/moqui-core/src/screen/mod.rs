@@ -71,8 +71,9 @@ pub use gate::{
     clear_transition_observer, held_write_hash, install_transition_observer, interactive_request, HeldWrite,
     InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
 };
-#[cfg(test)]
-pub(crate) use pdf::pdf_test_lock;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use pdf::pdf_test_lock;
 pub use pdf::{
     clear_pdf_engine, install_pdf_engine, install_pdf_unavailable, PdfEngine, PdfLibrary, PdfPreview,
     PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE, PREVIEW_UNSUPPORTED,

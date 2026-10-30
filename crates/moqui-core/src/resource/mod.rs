@@ -12,12 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Resource revision support behind the resource facade (`crate::context::resource`): line diffs of versions, and
-//! the `git://` location scheme. Guide: `docs/data/Revision-Management.md`.
+//! Resource revision support behind the resource facade (`crate::context::resource`): line diffs of versions. The
+//! `git://` location scheme is moqui-git's. Guide: `docs/data/Revision-Management.md`.
 
 pub mod blob;
-#[cfg(feature = "git")]
-pub mod git;
 pub mod locks;
 pub mod source;
 pub mod textdiff;

@@ -29,6 +29,9 @@
 // The agent runtime. Naming it keeps its moqui_core::llm_hooks entry in the binary.
 #[cfg(feature = "llm")]
 use moqui_llm as _;
+// git:// locations and the git services. Naming it keeps its moqui_core::extension entry in the binary.
+#[cfg(feature = "git")]
+use moqui_git as _;
 
 pub mod chromium;
 pub mod db;

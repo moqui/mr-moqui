@@ -405,8 +405,9 @@ impl ServicePools {
     }
 
     /// Test pool. `workers` is at least 1. Same Drop as a booted pool.
-    #[cfg(test)]
-    pub(crate) fn bounded(workers: usize, queue: usize) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn bounded(workers: usize, queue: usize) -> Self {
         start(Settings::test(workers.max(1), queue)).expect("service worker pool")
     }
 
@@ -757,7 +758,7 @@ struct Settings {
     job_runner: bool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Settings {
     fn test(workers: usize, queue: usize) -> Self {
         Self {

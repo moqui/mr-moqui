@@ -24,7 +24,7 @@ static HOST: OnceLock<(&'static str, Vec<&'static str>)> = OnceLock::new();
 /// Source revision embedded at build time, or `unknown` for a source archive without Git metadata.
 pub const GIT_REVISION: &str = env!("MOQUI_GIT_REVISION");
 
-/// The framework features in this build.
+/// The framework features in this build, with those of the linked framework crates (crate::extension).
 #[must_use]
 pub fn core_features() -> Vec<&'static str> {
     [
@@ -32,7 +32,6 @@ pub fn core_features() -> Vec<&'static str> {
         ("imap", cfg!(feature = "imap")),
         ("http", cfg!(feature = "http")),
         ("cluster-tls", cfg!(feature = "cluster-tls")),
-        ("git", cfg!(feature = "git")),
         ("image", cfg!(feature = "image")),
         ("xlsx", cfg!(feature = "xlsx")),
         ("llm", crate::llm_hooks::linked()),
@@ -40,6 +39,7 @@ pub fn core_features() -> Vec<&'static str> {
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))
+    .chain(crate::extension::features())
     .collect()
 }
 

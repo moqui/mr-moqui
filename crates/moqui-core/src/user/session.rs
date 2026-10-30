@@ -1127,7 +1127,7 @@ pub(crate) fn set_visit(visit_id: &str, visitor_id: &str) {
 
 /// Clears the user and the anonymous flag. Visit ids and screen state stay. The CSRF token and
 /// cached authorization data go, so a later login cannot reuse them.
-pub(crate) fn clear_login() {
+pub fn clear_login() {
     with_session(|session| {
         session.user_id = None;
         session.username = None;

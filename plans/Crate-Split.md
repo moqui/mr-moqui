@@ -1,6 +1,6 @@
 # Crate Split
 
-Status 2026-10-29: Phase 0 done (baseline below); Phase 1 next. Splits `moqui-core` along hook seams, above it for the tool subsystems and
+Status 2026-10-30: Phases 0 and 1 done (`moqui_core::extension`, `moqui-git`); Phase 2 next. Splits `moqui-core` along hook seams, above it for the tool subsystems and
 below it for the entity facade, and then the host, so an edit rebuilds less and more of the build runs in parallel. It
 revises [Crate-Layout](archive/Crate-Layout.md), whose "few, larger crates" rule this replaces
 ([Practices-Rust §1, §8](../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes)).
@@ -21,8 +21,10 @@ frontend.
 ## The seam rules
 
 - A crate above core reaches it through `pub` items and registers through `moqui_core::extension` (Phase 1): an
-  inventory entry with its Rust services, its native registrations (tools, resource providers, runners) and its boot
-  and shutdown steps. The binary links it with `use crate_name as _;` under the host feature, as `moqui_llm`.
+  inventory entry with the features it is, its Rust services and its native registrations (tools, resource providers,
+  runners). A crate that needs a boot or shutdown step (mail's IDLE stop, the shipped reports) adds that hook to
+  `Extension` when it moves; the others start from `Extension::EMPTY`. The binary links it with `use crate_name as _;`
+  under the host feature, as `moqui_llm`.
 - A service of a framework crate the binary does not link still loads and reports that the feature is not built into
   this host, as a service of a feature left out does now (`service/rust_services.rs` `missing_feature`).
 - A crate below core does not know the ExecutionContext. Where it needs the thread's context (the user, authorization,
@@ -77,21 +79,24 @@ The touch set: one probe edit (a dead private function appended, then the file r
 dev -p moqui` (the Dev package, `./moq build`), on a warm cache with no other build running. A file that moved is
 probed at its new path.
 
-| Edit in | Before (2026-10-29) |
-|---|---|
-| core `entity/value.rs` | 16.4 s, 15.2 s |
-| core `service/call.rs` | 15.5 s, 15.5 s |
-| core `screen/render.rs` | 15.1 s, 14.8 s |
-| core `resource/git/mod.rs` | 15.1 s, 15.0 s |
-| core `service/mail/sync.rs` | 0.2 s (`imap` is not in the Dev package, so the file is not compiled) |
-| host `http.rs` | 2.0 s, 1.9 s |
-| host `db/pgwire.rs` | 2.5 s, 2.3 s |
-| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s |
+| Edit in | Before (2026-10-29) | After Phase 1 |
+|---|---|---|
+| core `entity/value.rs` | 16.4 s, 15.2 s | 13.1 s, 13.0 s |
+| core `service/call.rs` | 15.5 s, 15.5 s | 13.5 s, 13.4 s |
+| core `screen/render.rs` | 15.1 s, 14.8 s | 13.0 s, 13.0 s |
+| git `lib.rs` (core `resource/git/mod.rs` before) | 15.1 s, 15.0 s | 2.5 s, 2.5 s |
+| core `service/mail/sync.rs` | 0.2 s (`imap` is not in the Dev package, so the file is not compiled) | |
+| host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s |
+| host `db/pgwire.rs` | 2.5 s, 2.3 s | |
+| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s |
 
 Where a core edit's 15 s goes (`--timings`, `service/call.rs`): `moqui-core` 14.5 s, its metadata ready at about 5 s, so
 `moqui-llm` (2.1 s) and `moqui-host` (3.1 s) finish while core is still in codegen, and the binary links (0.3 s) after
 core. Core's own compile is the whole critical path; a host edit is 2 s. Measured on a 24-thread Linux machine, Rust
 1.99.
+
+After Phase 1, the same edit: `moqui-core` 12.6 s, then `moqui-git` (1.0 s), `moqui-llm` (3.3 s) and `moqui-host`
+(1.9 s) beside its codegen, and the binary link (0.3 s).
 
 So the host splits of Phase 6 save little on an edit (the host is 2 s) and are for modularity and the clean build;
 they wait on the numbers after Phase 3.

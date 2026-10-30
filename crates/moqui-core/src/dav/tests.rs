@@ -35,7 +35,6 @@ fn setup() -> (ExecutionContext, EntityFacade) {
     let facade = crate::testing::open();
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
-    ctx.factory().resource().install_git().unwrap();
     (ctx, facade)
 }
 

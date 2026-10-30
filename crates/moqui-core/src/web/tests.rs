@@ -23,7 +23,6 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
         "webapp_http_host",
         "webapp_https_enabled",
         "webapp_https_port",
-        "git_public_url",
         "dav_public_url",
     ];
     struct Restore(Vec<(&'static str, String)>);
@@ -51,8 +50,6 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     let factory = context.factory();
     let check = |expected: &str| {
         assert_eq!(crate::dav::public_base_url(factory), expected);
-        #[cfg(feature = "git")]
-        assert_eq!(crate::resource::git::server::public_base_url(), expected);
     };
     assert_eq!(factory.webapp_root_url("webroot"), "http://localhost:8080");
     check("http://localhost:8080");
@@ -70,13 +67,7 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     request.set_header("host", "public.example:10443");
     super::set_request_info(&request);
     check("https://public.example:10443");
-    moqui_lib::env::set_property("git_public_url", "https://git.example/base/");
     moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
-    #[cfg(feature = "git")]
-    assert_eq!(
-        crate::resource::git::server::public_base_url(),
-        "https://git.example/base"
-    );
     assert_eq!(crate::dav::public_base_url(factory), "https://dav.example/base");
 }
 

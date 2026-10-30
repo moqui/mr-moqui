@@ -338,6 +338,8 @@ fn attribute_pairs_keep_scalar_arrays_literal_dotted_keys_and_original_values() 
                 .any(|value| value == &Value::string(if text.contains("tenant") { "tenant.id" } else { "tags" })),
             "{sql:?}"
         );
+        // the OpenSearch backend is behind http, which the browser build leaves out
+        #[cfg(feature = "http")]
         assert!(opensearch::query_json(&mapping, &query).to_string().contains("nested"));
     }
 }
@@ -354,13 +356,19 @@ fn query_suffixes_round_trip_and_preserve_group_weights_and_capabilities() {
         assert_eq!(Query::from_value(&query.to_value()).unwrap(), query);
         let mapping = telemetry::telemetry_mapping("otel_logs").unwrap();
         assert!(postgres::compile::Compiler::new(&mapping).where_sql(&query).is_ok());
-        let json = opensearch::query_json(&mapping, &query).to_string();
         if text.contains('~') {
-            assert!(json.contains("AUTO"));
             assert!(query.capabilities().contains(&Capability::Fuzzy));
         }
-        if text.contains('^') {
-            assert!(json.contains("boost"));
+        // the OpenSearch backend is behind http, which the browser build leaves out
+        #[cfg(feature = "http")]
+        {
+            let json = opensearch::query_json(&mapping, &query).to_string();
+            if text.contains('~') {
+                assert!(json.contains("AUTO"));
+            }
+            if text.contains('^') {
+                assert!(json.contains("boost"));
+            }
         }
     }
 }

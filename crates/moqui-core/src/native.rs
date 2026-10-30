@@ -313,6 +313,9 @@ impl NativeRegistry {
         // and the mail and notification captures for specs (MailCapture, NotificationCapture)
         crate::service::mail_capture::register(&mut registry)?;
         crate::notify::capture::register(&mut registry)?;
+        for extension in crate::extension::linked() {
+            (extension.register_native)(&mut registry)?;
+        }
         for component in components {
             let mut entries = inventory::iter::<NativeComponent>
                 .into_iter()
@@ -401,9 +404,7 @@ impl NativeRegistry {
                 if let Some(constructor) = self.resources.get(&class) {
                     factory.resource().install_provider(&scheme, constructor(factory)?)?;
                 } else if scheme == "git" && class == GIT_RESOURCE_CLASS {
-                    // Built in, behind the `git` cargo feature; without it the scheme stays unsupported.
-                    #[cfg(feature = "git")]
-                    factory.resource().install_git()?;
+                    // moqui-git registers it; a binary without that crate leaves the scheme unsupported.
                 } else if !builtin_resource(&scheme, &class) {
                     return Err(Error::new(format!(
                         "resource-reference {scheme}: implementation {class} is not linked"
@@ -424,8 +425,8 @@ impl NativeRegistry {
     }
 }
 
-/// The class `MoquiDefaultConf.xml` names for `git://` locations (crate::resource::git).
-pub(crate) const GIT_RESOURCE_CLASS: &str = "org.moqui.impl.context.reference.GitResourceReference";
+/// The class `MoquiDefaultConf.xml` names for `git://` locations (moqui-git).
+pub const GIT_RESOURCE_CLASS: &str = "org.moqui.impl.context.reference.GitResourceReference";
 
 fn builtin_resource(scheme: &str, class: &str) -> bool {
     matches!(

@@ -4,7 +4,7 @@ MR Moqui hosts the `moqui.resource.GitRepository` repositories of [Revision-Mana
 git command line and any git client: clone, fetch and push over HTTPS (smart HTTP) and over the built-in SSH server,
 shallow clones for CI, branches and tags, and Git LFS. A push or a mirror fetch runs **gitECA rules**, the git
 counterpart of email ECA rules, and Mantle uses them to tie commits, branches and tags to projects and tasks. gitoxide
-has no server side; the protocol is ours (`crates/moqui-core/src/resource/git/server/`) over gitoxide's objects and
+has no server side; the protocol is ours (`crates/moqui-git/src/server/`) over gitoxide's objects and
 packs.
 
 ## Clone URLs
@@ -158,7 +158,7 @@ webhooks get pushes and tags ([Hosting through Moqui](#hosting-through-moqui)).
 
 ## Hosting through Moqui
 
-The services of `org.moqui.impl.GitServices` (Rust: `crates/moqui-core/src/service/git_hosting.rs` over
+The services of `org.moqui.impl.GitServices` (Rust: `crates/moqui-git/src/service/hosting.rs` over
 `resource/git/hosting.rs`, `merge.rs` and `rules.rs`) and `org.moqui.impl.GitReviewServices` serve the code screens of
 an application (IronStone Projects' Code). Each checks the repository's rights as the git server does; the rows they
 keep (`GitCommitStatus`, `GitWebhook`, `GitBranchRule`, `GitMergeRequest`, `GitMergeRequestReviewer`) are `moqui.*`

@@ -120,7 +120,7 @@ pub fn with_version_author<T>(author: Option<VersionAuthor>, body: impl FnOnce()
 }
 
 /// The author [`with_version_author`] set for the writes on this thread, if any.
-pub(crate) fn version_author() -> Option<VersionAuthor> {
+pub fn version_author() -> Option<VersionAuthor> {
     VERSION_AUTHOR.with(|cell| cell.borrow().clone())
 }
 
@@ -345,7 +345,7 @@ fn info_of(stat: &ResourceStat, version: Option<&ResourceVersion>) -> ResourceCh
 }
 
 /// A version date as milliseconds since the epoch.
-pub(crate) fn millis_of(value: &Value) -> Option<i64> {
+pub fn millis_of(value: &Value) -> Option<i64> {
     match moqui_lib::object::basic_convert(value, "Timestamp").value {
         Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
         _ => None,

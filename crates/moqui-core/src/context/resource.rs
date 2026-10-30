@@ -15,7 +15,7 @@
 //! `file`, `runtime`, `component`, `dbresource`, and `http` resources. Other schemes are named errors.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use moqui_lib::object::Value;
@@ -27,9 +27,8 @@ use crate::resource::textdiff::{self, TextDiff};
 
 mod changes;
 use changes::db_file_size;
-#[cfg(feature = "git")]
-pub(crate) use changes::millis_of;
-pub(crate) use changes::version_author;
+pub use changes::millis_of;
+pub use changes::version_author;
 pub(crate) use changes::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
 pub use changes::{
     with_version_author, ChangeLogEntry, ChangeSetOutcome, ResourceChange, ResourceChangeInfo, VersionAuthor,
@@ -398,9 +397,6 @@ pub struct ResourceFacade {
     /// Shared with the factory. `None` until the host installs an entity facade.
     entity: Arc<RwLock<Option<EntityFacade>>>,
     providers: RwLock<HashMap<String, Arc<dyn crate::native::ResourceProvider>>>,
-    /// The `git` scheme, once `MoquiDefaultConf.xml` names it; the `GitServices` reach it here.
-    #[cfg(feature = "git")]
-    git: OnceLock<crate::resource::git::GitProvider>,
 }
 
 impl ResourceFacade {
@@ -414,28 +410,22 @@ impl ResourceFacade {
             components,
             entity,
             providers: RwLock::new(HashMap::new()),
-            #[cfg(feature = "git")]
-            git: OnceLock::new(),
         }
     }
 
-    /// Install the `git` scheme (`resource-reference scheme="git"` in the conf).
-    #[cfg(feature = "git")]
-    pub(crate) fn install_git(&self) -> Result<(), Error> {
-        let provider = crate::resource::git::GitProvider::new(Arc::clone(&self.entity), self.runtime_dir.clone());
-        self.install_provider("git", Arc::new(provider.clone()))?;
-        self.git
-            .set(provider)
-            .map_err(|_| Error::new("the git resource scheme is installed twice"))
+    /// The entity facade slot shared with the factory, for a provider that reads and writes through it (the `git`
+    /// scheme of moqui-git).
+    pub fn entity_slot(&self) -> Arc<RwLock<Option<EntityFacade>>> {
+        Arc::clone(&self.entity)
     }
 
-    /// The `git` scheme's provider, when it is installed.
-    #[cfg(feature = "git")]
-    pub fn git(&self) -> Option<&crate::resource::git::GitProvider> {
-        self.git.get()
+    /// The runtime directory, which `runtime://` locations resolve against.
+    pub fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
     }
 
-    pub(crate) fn install_provider(
+    /// Serve the `scheme://` locations with `provider`. The built-in schemes cannot be replaced.
+    pub fn install_provider(
         &self,
         scheme: &str,
         provider: Arc<dyn crate::native::ResourceProvider>,
