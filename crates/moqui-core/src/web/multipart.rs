@@ -632,48 +632,47 @@ fn base_name(name: &str) -> String {
 
 /// `name="x"` or `name=x` in a `Content-Disposition` value. A quoted value may hold `\"` and `\\`.
 fn disposition_param(value: &str, wanted: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        // A parameter starts after a semicolon.
-        let semicolon = value[index..].find(';')?;
-        index += semicolon + 1;
-        let rest = value[index..].trim_start();
-        index = value.len() - rest.len();
-        let equals = rest.find('=')?;
-        let key = rest[..equals].trim();
-        let after = &rest[equals + 1..];
-        let (parsed, used) = if let Some(quoted) = after.strip_prefix('"') {
-            let mut out = String::new();
-            let mut chars = quoted.char_indices();
-            let mut end = quoted.len();
-            while let Some((at, ch)) = chars.next() {
-                match ch {
-                    '\\' => match quoted[at + 1..].chars().next() {
-                        Some(escaped @ ('"' | '\\')) => {
-                            chars.next();
-                            out.push(escaped);
-                        }
-                        _ => out.push('\\'),
-                    },
-                    '"' => {
-                        end = at + 1;
-                        break;
-                    }
-                    other => out.push(other),
-                }
+    // A parameter starts after a semicolon.
+    let (_, mut rest) = value.split_once(';')?;
+    loop {
+        let (key, after) = rest.trim_start().split_once('=')?;
+        let key = key.trim();
+        // what follows the value, where the next semicolon is looked for
+        let next = if let Some(quoted) = after.strip_prefix('"') {
+            let (parsed, after_quote) = unquote(quoted);
+            if key.eq_ignore_ascii_case(wanted) {
+                return Some(parsed);
             }
-            (out, 1 + end)
+            after_quote
         } else {
-            let end = after.find(';').unwrap_or(after.len());
-            (after[..end].trim().to_string(), end)
+            if key.eq_ignore_ascii_case(wanted) {
+                let parsed = after.split_once(';').map_or(after, |(parsed, _)| parsed);
+                return Some(parsed.trim().to_string());
+            }
+            after
         };
-        if key.eq_ignore_ascii_case(wanted) {
-            return Some(parsed);
-        }
-        index += equals + 1 + used;
+        (_, rest) = next.split_once(';')?;
     }
-    None
+}
+
+/// The text of a quoted value up to its closing quote (or the end), with `\"` and `\\` unescaped, and what follows it.
+fn unquote(quoted: &str) -> (String, &str) {
+    let mut out = String::new();
+    let mut chars = quoted.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.clone().next() {
+                Some(escaped @ ('"' | '\\')) => {
+                    chars.next();
+                    out.push(escaped);
+                }
+                _ => out.push('\\'),
+            },
+            '"' => break,
+            other => out.push(other),
+        }
+    }
+    (out, chars.as_str())
 }
 
 #[cfg(test)]

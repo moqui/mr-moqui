@@ -1035,8 +1035,8 @@ fn db_snap(location: &str, info: &DbResourceInfo, facade: EntityFacade) -> DbSna
 }
 
 fn scheme_of(location: &str) -> &str {
-    match location.find(':') {
-        Some(index) if index > 1 && !location[..index].contains('/') => &location[..index],
+    match location.split_once(':') {
+        Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme,
         _ => "file",
     }
 }
@@ -1050,15 +1050,14 @@ enum Versioned {
 
 /// `location#versionName` as the location and the version name; `None` without a non-empty suffix.
 pub(crate) fn split_version(location: &str) -> Option<(&str, &str)> {
-    match location.find('#') {
-        Some(index) if index > 0 && index + 1 < location.len() => Some((&location[..index], &location[index + 1..])),
-        _ => None,
-    }
+    location
+        .split_once('#')
+        .filter(|(path, version)| !path.is_empty() && !version.is_empty())
 }
 
 fn strip_hash(location: &str) -> &str {
-    match location.find('#') {
-        Some(index) if index > 0 => &location[..index],
+    match location.split_once('#') {
+        Some((path, _)) if !path.is_empty() => path,
         _ => location,
     }
 }
@@ -1256,5 +1255,30 @@ mod tests {
         assert!(err.to_string().contains("scheme db"), "{err}");
         let err = facade().get("db://notes/hello.txt").unwrap_err();
         assert!(err.to_string().contains("scheme db"), "{err}");
+    }
+
+    #[test]
+    fn a_location_splits_into_its_scheme_path_and_version() {
+        assert_eq!(scheme_of("component://a/b.xml"), "component");
+        assert_eq!(scheme_of("dbresource://x"), "dbresource");
+        // one letter is a drive, a slash before the colon is a path
+        assert_eq!(scheme_of("c:/tmp/a.txt"), "file");
+        assert_eq!(scheme_of("runtime/a:b"), "file");
+        assert_eq!(scheme_of("plain.txt"), "file");
+        assert_eq!(scheme_of("é:x"), "é");
+
+        assert_eq!(
+            split_version("dbresource://a.txt#v2"),
+            Some(("dbresource://a.txt", "v2"))
+        );
+        assert_eq!(split_version("a#b#c"), Some(("a", "b#c")));
+        assert_eq!(split_version("a.txt#"), None);
+        assert_eq!(split_version("#v2"), None);
+        assert_eq!(split_version("a.txt"), None);
+
+        assert_eq!(strip_hash("a.txt#v2"), "a.txt");
+        assert_eq!(strip_hash("a.txt#"), "a.txt");
+        assert_eq!(strip_hash("#v2"), "#v2");
+        assert_eq!(strip_hash("é#ü"), "é");
     }
 }

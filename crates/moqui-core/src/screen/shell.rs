@@ -605,7 +605,9 @@ impl<'a> Shell<'a> {
     /// The name, title, image and path of an app as its menu entry gives them, or None when it is disabled or a required
     /// parameter is missing.
     fn app_head(&self, app: &App) -> Result<Option<Item>, Error> {
-        let parents = &app.defs[..app.defs.len() - 1];
+        let Some((_, parents)) = app.defs.split_last() else {
+            return Ok(None);
+        };
         let Some(Value::Map(entry)) =
             menu::subscreen_entry(self.state, parents, &self.apps_names, &self.link_base, &app.item, "")?
         else {
@@ -624,7 +626,9 @@ impl<'a> Shell<'a> {
     /// The menu entries below the last of `parents`, each followed by its own to [`MENU_DEPTH`], as the menu data lists
     /// a screen's subscreens. One that fails is logged and left out, and a disabled one is left out.
     fn menu_level(&self, parents: &[Arc<ScreenDef>], names: &[String], path: &str, depth: usize, out: &mut Vec<Value>) {
-        let def = &parents[parents.len() - 1];
+        let Some(def) = parents.last() else {
+            return;
+        };
         for item in def.subscreens.sorted() {
             if !item.menu_include || !item.is_valid_in_current_context() {
                 continue;

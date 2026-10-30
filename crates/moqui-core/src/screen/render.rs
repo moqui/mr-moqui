@@ -584,8 +584,8 @@ fn uri_char(ch: char) -> bool {
 /// `getRawPath` and `getRawQuery`.
 fn url_path_and_query(url: &str) -> String {
     let after = url.split_once("://").map_or("", |(_, rest)| rest);
-    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-    let rest = &after[end..];
+    // past the host and port
+    let rest = after.trim_start_matches(|ch| !matches!(ch, '/' | '?' | '#'));
     let (path, query) = match rest.split_once('?') {
         Some((path, query)) => (path, Some(query.split('#').next().unwrap_or(""))),
         None => (rest.split('#').next().unwrap_or(""), None),
@@ -1087,9 +1087,10 @@ fn json_envelope(
     };
     // The whole path for the breadcrumb, and how many of its last names are an extra path (the wiki space and page after
     // Wiki/wiki), which are not levels the client asks the tabs of.
-    let extra_path_count = match info.full_path.len().checked_sub(info.extra_path.len()) {
-        Some(count) if info.full_path[count..] == info.extra_path[..] => info.extra_path.len(),
-        _ => 0,
+    let extra_path_count = if info.full_path.ends_with(&info.extra_path) {
+        info.extra_path.len()
+    } else {
+        0
     };
     let path_list: Vec<String> = info.full_path.iter().map(|name| strip(name)).collect();
     let render_modes: Vec<String> = target.render_modes.iter().map(|mode| strip(mode)).collect();

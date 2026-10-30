@@ -217,11 +217,10 @@ impl Walk<'_> {
             let mut name = self.info.full_path[index].clone();
             let mut extension = None;
             let mut before_dot = None;
-            if let Some(dot) = name.find('.').filter(|dot| *dot > 0) {
-                let candidate = &name[dot + 1..];
+            if let Some((before, candidate)) = name.split_once('.').filter(|(before, _)| !before.is_empty()) {
                 if self.facade.is_render_mode_valid(candidate) {
                     extension = Some(candidate.to_string());
-                    before_dot = Some(name[..dot].to_string());
+                    before_dot = Some(before.to_string());
                 }
             }
 
@@ -520,12 +519,12 @@ pub fn prepare_screen_path(
     }
     let mut inline = BTreeMap::new();
     // Java strips a query only when `?` is not the first character.
-    if let Some(index) = screen_path.rfind('?').filter(|index| *index > 0) {
-        let query = screen_path[index + 1..].replace("&amp;", "&");
+    if let Some((before, query)) = screen_path.rsplit_once('?').filter(|(before, _)| !before.is_empty()) {
+        let (path_len, query) = (before.len(), query.replace("&amp;", "&"));
         for (name, value) in crate::web::form_pairs(&query) {
             inline.insert(name, value);
         }
-        screen_path.truncate(index);
+        screen_path.truncate(path_len);
     }
     if let Some(trimmed) = screen_path.strip_prefix("//") {
         let names = cleanup_path_names(trimmed.split('/'), &mut inline);
@@ -638,8 +637,8 @@ fn cleanup_path_names<'a>(
             while parts.last().is_some_and(|part| part.is_empty()) {
                 parts.pop();
             }
-            if parts.len() == 2 {
-                inline.insert(parts[0].to_string(), crate::web::percent_decode(parts[1]));
+            if let [name, value] = parts.as_slice() {
+                inline.insert(name.to_string(), crate::web::percent_decode(value));
             }
             continue;
         }
@@ -657,11 +656,12 @@ fn find_subscreen_path(
     remaining: &[String],
     depth: usize,
 ) -> Option<Vec<String>> {
-    if remaining.is_empty() || depth >= FIND_DEPTH {
+    let [cur, rest @ ..] = remaining else {
+        return None;
+    };
+    if depth >= FIND_DEPTH {
         return None;
     }
-    let cur = &remaining[0];
-    let rest = &remaining[1..];
     if let Some(item) = screen.subscreens.get(cur) {
         if rest.is_empty() {
             return Some(vec![cur.clone()]);

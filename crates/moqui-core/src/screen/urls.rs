@@ -640,7 +640,10 @@ pub fn static_url(state: &RenderState, text: &str, url_type: &str) -> Result<Sta
             let def = sri::active_def(state);
             let local = names
                 .strip_prefix(active.as_slice())
-                .and_then(|rest| (rest.len() == 1).then(|| rest[0].clone()))
+                .and_then(|rest| match rest {
+                    [name] => Some(name.clone()),
+                    _ => None,
+                })
                 .and_then(|name| def.transition(&name, None).cloned());
             let screen_url = local
                 .as_ref()
@@ -925,6 +928,6 @@ pub fn active_in_current_menu(state: &RenderState) -> bool {
         .any(|item| {
             let mut names = active_screen_path(state);
             names.push(item.name.clone());
-            path.len() >= names.len() && path[..names.len()] == names[..]
+            path.starts_with(&names)
         })
 }

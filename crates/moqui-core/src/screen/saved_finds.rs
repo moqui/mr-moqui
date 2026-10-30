@@ -411,13 +411,13 @@ pub(crate) fn form_list_find_screen_scheduled(find_id: &str) -> Result<Option<Va
 /// The form a posted `formLocation` names: a full location, else the name of a form of the screen at `screen_location`.
 /// Returns the full location, the screen location, the form name, and the location extension.
 fn split_form_location(posted: &str, screen_location: &str) -> Option<(String, String, String, String)> {
-    let (base, extension) = match posted.rfind('#') {
-        Some(at) if at > 0 => (&posted[..at], posted[at + 1..].to_string()),
+    let (base, extension) = match posted.rsplit_once('#') {
+        Some((base, extension)) if !base.is_empty() => (base, extension.to_string()),
         _ => (posted, String::new()),
     };
-    if let Some(at) = base.rfind('$') {
-        let screen = base[..at].rsplit_once('.').map(|(screen, _)| screen)?.to_string();
-        return Some((posted.to_string(), screen, base[at + 1..].to_string(), extension));
+    if let Some((before, form)) = base.rsplit_once('$') {
+        let (screen, _) = before.rsplit_once('.')?;
+        return Some((posted.to_string(), screen.to_string(), form.to_string(), extension));
     }
     if base.is_empty() || base.contains('/') {
         return None;

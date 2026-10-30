@@ -79,13 +79,12 @@ fn entity_rest(call: &Call<'_>, master: bool) -> Result<bool, Error> {
         web::send_json_error(401, ENTITY_AUTH);
         return Ok(true);
     }
-    if call.extra.is_empty() {
+    let Some(entity_name) = call.extra.first() else {
         web::send_json_error(400, "No entity name or alias specified in path");
         return Ok(true);
-    }
+    };
     let facade = facade()?;
     let verb = effective_verb(call.request);
-    let entity_name = &call.extra[0];
     query_rest::begin_page_info();
     let result = match call.json_list {
         Some(items) => entity_list(&facade, &verb, entity_name, call, master, items),

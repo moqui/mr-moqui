@@ -183,10 +183,10 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
     if !extra.is_empty() {
         full_path.truncate(full_path.len().saturating_sub(extra.len()));
     }
-    if full_path.is_empty() {
+    let Some(last_item) = full_path.last().cloned() else {
         web::send_json_error(404, &format!("Screen not found for path {path_names:?}"));
         return Ok(None);
-    }
+    };
 
     // Menu titles may come from values set in pre-actions: they run for every screen except the first two
     // (webroot and the app root), and an error in one is logged and does not stop the menu.
@@ -209,7 +209,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
 
     let mut current_path = String::new();
     let mut out: Vec<Value> = Vec::new();
-    let mut cur_screen = std::sync::Arc::clone(&info.path_defs[0]);
+    let mut cur_screen = std::sync::Arc::clone(info.path_defs.first().ok_or_else(|| Error::new("no root screen"))?);
     for index in 0..full_path.len() - 1 {
         let path_item = &full_path[index];
         let next_item = &full_path[index + 1];
@@ -266,7 +266,6 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         out.push(Value::Map(entry));
     }
 
-    let last_item = full_path[full_path.len() - 1].clone();
     let mut last_url = urls::build_url_names(state, full_path.clone())?;
     for (name, value) in web::parameters() {
         last_url.add_parameter(&name, &value);

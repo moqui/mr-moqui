@@ -12,7 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{cookie_value, form_pairs, host_without_port, is_localhost, pairs_to_parameters, percent_decode};
+use super::{
+    cookie_value, form_pairs, host_without_port, is_localhost, pairs_to_parameters, parse_size, percent_decode,
+};
 use moqui_lib::object::Value;
 
 #[test]
@@ -184,6 +186,22 @@ fn localhost_hosts_get_no_hsts() {
     assert!(!is_localhost(""));
     assert_eq!(host_without_port("[::1]:8443"), "[::1]");
     assert_eq!(host_without_port("example.com:8080"), "example.com");
+    assert_eq!(host_without_port("[::1]"), "[::1]");
+    assert_eq!(host_without_port("[::1"), "[::1");
+    assert_eq!(host_without_port("example.com"), "example.com");
+}
+
+#[test]
+fn an_upload_size_is_bytes_or_a_number_with_a_unit() {
+    assert_eq!(parse_size("1000"), Some(1000));
+    assert_eq!(parse_size(" 2K "), Some(2048));
+    assert_eq!(parse_size("3 m"), Some(3 * 1024 * 1024));
+    assert_eq!(parse_size("1g"), Some(1024 * 1024 * 1024));
+    assert_eq!(parse_size(""), None);
+    assert_eq!(parse_size("k"), None);
+    assert_eq!(parse_size("0"), None);
+    assert_eq!(parse_size("12x"), None);
+    assert_eq!(parse_size("5é"), None);
 }
 
 #[test]
@@ -261,6 +279,10 @@ fn percent_decode_keeps_bad_escapes_and_never_panics() {
     assert_eq!(percent_decode("%a\u{e9}"), "%a\u{e9}");
     assert_eq!(percent_decode("tail%"), "tail%");
     assert_eq!(percent_decode("%zz%41"), "%zzA");
+    assert_eq!(percent_decode("%4"), "%4");
+    assert_eq!(percent_decode("a%41"), "aA");
+    assert_eq!(percent_decode("%%41"), "%A");
+    assert_eq!(percent_decode("%C3%A9"), "\u{e9}");
 }
 
 #[test]

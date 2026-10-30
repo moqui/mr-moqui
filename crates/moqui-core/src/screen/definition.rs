@@ -120,12 +120,14 @@ impl Condition {
         if children.is_empty() {
             return Ok(None);
         }
-        if children.len() == 1 && children[0].has_name("expression") && children[0].children().is_empty() {
-            let text = children[0].text().unwrap_or_default();
-            if text.trim().is_empty() {
-                return Ok(None);
+        if let [only] = children.as_slice() {
+            if only.has_name("expression") && only.children().is_empty() {
+                let text = only.text().unwrap_or_default();
+                if text.trim().is_empty() {
+                    return Ok(None);
+                }
+                return Self::from_attr(text.trim(), label).map(Some);
             }
-            return Self::from_attr(text.trim(), label).map(Some);
         }
         let inner: String = children.iter().map(MNode::write_string).collect();
         let xml = format!(
@@ -1101,7 +1103,7 @@ fn apply_screen_extends(
     sources: &mut Vec<Source>,
 ) -> Result<Extended, Error> {
     let after_scheme = location.split_once("://").map_or(location, |(_, rest)| rest);
-    let after_screen = after_scheme.find("/screen/").map(|index| &after_scheme[index + 8..]);
+    let after_screen = after_scheme.split_once("/screen/").map(|(_, rest)| rest);
     let mut extended = Extended::default();
     for component in factory.components() {
         let directory = component.location.join("screen-extend");

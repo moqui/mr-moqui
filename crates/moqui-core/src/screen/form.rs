@@ -1147,15 +1147,16 @@ fn entity_shape_of(entity: &EntityDefinition) -> EntityShape {
     for relationship in &entity.relationships {
         // The expanded keys, so a relationship with no key-map (the related entity's primary key of the
         // same name) counts, as in Java.
-        if relationship.relationship_type != "one" || relationship.is_auto_reverse || relationship.key_pairs.len() != 1
-        {
+        if relationship.relationship_type != "one" || relationship.is_auto_reverse {
             continue;
         }
-        let (field, related_key) = relationship.key_pairs[0].clone();
+        let [(field, related_key)] = relationship.key_pairs.as_slice() else {
+            continue;
+        };
         one_relations.push(OneRelation {
-            field,
+            field: field.clone(),
             related: relationship.related.clone(),
-            related_key,
+            related_key: related_key.clone(),
             title: relationship.title.clone(),
         });
     }

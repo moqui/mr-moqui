@@ -101,16 +101,17 @@ impl Pattern {
     fn covers(&self, path: &str) -> bool {
         match self {
             Self::Exact(exact) => path == exact,
-            Self::Prefix(prefix) => under(path, prefix),
+            Self::Prefix(prefix) => under(path, prefix).is_some(),
             Self::Extension(extension) => extension_of(path) == Some(extension.as_str()),
             Self::Default => true,
         }
     }
 }
 
-/// `path` is `prefix` or under it, on a segment boundary.
-fn under(path: &str, prefix: &str) -> bool {
-    prefix.is_empty() || path == prefix || path.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/'))
+/// The rest of `path` after `prefix` when `path` is `prefix` or under it, on a segment boundary.
+fn under<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = path.strip_prefix(prefix)?;
+    (prefix.is_empty() || rest.is_empty() || rest.starts_with('/')).then_some(rest)
 }
 
 fn extension_of(path: &str) -> Option<&str> {
@@ -422,18 +423,19 @@ impl WebappScripts {
                 return Some(found(servlet, path, None));
             }
         }
-        let mut best: Option<(&Arc<ServletDef>, &str)> = None;
+        let mut best: Option<(&Arc<ServletDef>, &str, &str)> = None;
         for servlet in &self.servlets {
             for pattern in &servlet.patterns {
                 if let Pattern::Prefix(prefix) = pattern {
-                    if under(path, prefix) && best.is_none_or(|(_, known)| prefix.len() > known.len()) {
-                        best = Some((servlet, prefix.as_str()));
+                    if let Some(rest) = under(path, prefix) {
+                        if best.is_none_or(|(_, known, _)| prefix.len() > known.len()) {
+                            best = Some((servlet, prefix.as_str(), rest));
+                        }
                     }
                 }
             }
         }
-        if let Some((servlet, prefix)) = best {
-            let rest = &path[prefix.len()..];
+        if let Some((servlet, prefix, rest)) = best {
             return Some(found(servlet, prefix, (!rest.is_empty()).then_some(rest)));
         }
         let extension = extension_of(path);
@@ -619,9 +621,9 @@ pub fn chain_next() -> Result<(), Error> {
         let state = chains
             .last_mut()
             .ok_or_else(|| Error::new("chain.doFilter called with no filter chain running"))?;
-        Ok::<_, Error>(if state.next < state.filters.len() {
+        Ok::<_, Error>(if let Some(filter) = state.filters.get(state.next).cloned() {
             state.next += 1;
-            Step::Filter(Arc::clone(&state.filters[state.next - 1]))
+            Step::Filter(filter)
         } else {
             state.terminal.take().map_or(Step::Done, Step::Terminal)
         })

@@ -372,8 +372,9 @@ fn full_url(request: &WebRequest) -> String {
     let host = request.header("host").unwrap_or("localhost");
     let scheme = if request.https { "https" } else { "http" };
     let name = host_without_port(host);
-    let port = host[name.len()..]
-        .strip_prefix(':')
+    let port = host
+        .strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix(':'))
         .filter(|port| !port.is_empty() && *port != "80" && *port != "443");
     let mut url = match port {
         Some(port) => format!("{scheme}://{name}:{port}{}", request.path),
@@ -1109,8 +1110,8 @@ fn mark_email_message_viewed() -> Result<(), Error> {
     let Some(raw) = raw.as_str().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    let id = match raw.find('.') {
-        Some(index) if index > 0 => raw[..index].to_string(),
+    let id = match raw.split_once('.') {
+        Some((id, _)) if !id.is_empty() => id.to_string(),
         _ => raw.to_string(),
     };
     let facade = ExecutionContext::with_current(|ec| ec.factory().entity())
@@ -1539,11 +1540,14 @@ pub fn max_upload() -> usize {
 /// Bytes, or a number with a `k`, `m` or `g` suffix. `None` when `text` is not a size.
 pub fn parse_size(text: &str) -> Option<usize> {
     let text = text.trim().to_ascii_lowercase();
-    let (digits, unit) = match text.chars().last()? {
-        'k' => (&text[..text.len() - 1], 1024),
-        'm' => (&text[..text.len() - 1], 1024 * 1024),
-        'g' => (&text[..text.len() - 1], 1024 * 1024 * 1024),
-        _ => (text.as_str(), 1),
+    let (digits, unit) = if let Some(digits) = text.strip_suffix('k') {
+        (digits, 1024)
+    } else if let Some(digits) = text.strip_suffix('m') {
+        (digits, 1024 * 1024)
+    } else if let Some(digits) = text.strip_suffix('g') {
+        (digits, 1024 * 1024 * 1024)
+    } else {
+        (text.as_str(), 1)
     };
     digits
         .trim()
@@ -1697,13 +1701,11 @@ fn pairs_to_parameters(pairs: Vec<(String, String)>) -> BTreeMap<String, Value> 
     }
     grouped
         .into_iter()
-        .map(|(key, mut values)| {
-            let value = if values.len() == 1 && values[0] == NO_PARAMETER {
-                Value::Null
-            } else if values.len() == 1 {
-                Value::string(values.remove(0))
-            } else {
-                Value::List(values.into_iter().map(Value::string).collect())
+        .map(|(key, values)| {
+            let value = match <[String; 1]>::try_from(values) {
+                Ok([only]) if only == NO_PARAMETER => Value::Null,
+                Ok([only]) => Value::string(only),
+                Err(values) => Value::List(values.into_iter().map(Value::string).collect()),
             };
             (key, value)
         })
@@ -1741,10 +1743,16 @@ pub fn percent_decode(text: &str) -> String {
                 out.push(b' ');
                 index += 1;
             }
-            b'%' if index + 2 < bytes.len() && hex_pair(bytes[index + 1], bytes[index + 2]).is_some() => {
-                out.push(hex_pair(bytes[index + 1], bytes[index + 2]).unwrap_or(b'%'));
-                index += 3;
-            }
+            b'%' => match bytes.get(index + 1..index + 3) {
+                Some(&[high, low]) if let Some(byte) = hex_pair(high, low) => {
+                    out.push(byte);
+                    index += 3;
+                }
+                _ => {
+                    out.push(b'%');
+                    index += 1;
+                }
+            },
             byte => {
                 out.push(byte);
                 index += 1;
@@ -1983,7 +1991,7 @@ fn configured_webapp_host() -> String {
 /// `example.com:8080` is `example.com`, and `[::1]:8080` is `[::1]`.
 pub(crate) fn host_without_port(host: &str) -> &str {
     if host.starts_with('[') {
-        return host.find(']').map_or(host, |end| &host[..=end]);
+        return host.split_inclusive(']').next().unwrap_or(host);
     }
     host.split(':').next().unwrap_or(host)
 }

@@ -133,10 +133,9 @@ fn check_path(path: &[String], found: &mut Vec<AstViolation>) {
             operation,
         }),
         Some(name) if UTILITIES.contains(&name) => {
-            let allowed = path.len() == 2
-                && UTILITIES_ALLOWED
-                    .iter()
-                    .any(|(object, method)| *object == name && path[1] == *method);
+            let allowed = matches!(path, [_, called] if UTILITIES_ALLOWED
+                .iter()
+                .any(|(object, method)| *object == name && called == method));
             if !allowed {
                 found.push(AstViolation {
                     kind: "utilities",

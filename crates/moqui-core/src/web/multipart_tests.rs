@@ -202,6 +202,36 @@ fn the_boundary_is_read_with_or_without_quotes() {
 }
 
 #[test]
+fn a_disposition_parameter_is_read_quoted_or_bare() {
+    let value = "form-data; name=\"a\\\"b\"; filename=\"x\\\\y.txt\"";
+    assert_eq!(disposition_param(value, "name").as_deref(), Some("a\"b"));
+    assert_eq!(disposition_param(value, "FileName").as_deref(), Some("x\\y.txt"));
+    assert_eq!(disposition_param(value, "size"), None);
+    // a semicolon or a parameter inside a quoted value is part of it
+    let value = "form-data; name=\"a; filename=b\"; filename=c.txt";
+    assert_eq!(disposition_param(value, "name").as_deref(), Some("a; filename=b"));
+    assert_eq!(disposition_param(value, "filename").as_deref(), Some("c.txt"));
+    assert_eq!(
+        disposition_param("form-data;name= bare ;filename=f", "name").as_deref(),
+        Some("bare")
+    );
+    assert_eq!(
+        disposition_param("form-data; name=\"open", "name").as_deref(),
+        Some("open")
+    );
+    assert_eq!(
+        disposition_param("form-data; name=\"\\n\"", "name").as_deref(),
+        Some("\\n")
+    );
+    assert_eq!(
+        disposition_param("form-data; name=\"é\"; x=ü", "x").as_deref(),
+        Some("ü")
+    );
+    assert_eq!(disposition_param("form-data", "name"), None);
+    assert_eq!(disposition_param("form-data; name", "name"), None);
+}
+
+#[test]
 fn programs_are_recognised_by_their_first_bytes() {
     assert!(is_executable(b"MZ\x90\x00"));
     assert!(is_executable(&[0x7f, 0x45, 0x4c, 0x46, 2]));
