@@ -391,8 +391,16 @@ fn list_tags_split_at_the_last_as_word() {
 #[test]
 fn tag_rows_take_the_first_cell_of_placeholders_alone() {
     let held = vec![
-        ("p0x".to_string(), "<#if a>".to_string(), true),
-        ("p1x".to_string(), "${b}".to_string(), false),
+        Held {
+            placeholder: "p0x".to_string(),
+            original: "<#if a>".to_string(),
+            is_tag: true,
+        },
+        Held {
+            placeholder: "p1x".to_string(),
+            original: "${b}".to_string(),
+            is_tag: false,
+        },
     ];
     assert_eq!(tag_row_text("<tr><td>p0x</td><td></td></tr>", "p", &held), Some("p0x"));
     assert_eq!(

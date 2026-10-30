@@ -441,11 +441,10 @@ fn files_thumbnail<'js>(
         } else {
             256
         };
-        let Some(png) = thumbnail_png(&bytes, max) else {
+        let Some(Thumbnail { width, height, png }) = thumbnail_png(&bytes, max) else {
             return Null.into_js(&ctx);
         };
-        let (width, height, data) = png;
-        with_resources(&ctx, |resources| resources.write_bytes(&target, &data))?;
+        with_resources(&ctx, |resources| resources.write_bytes(&target, &png))?;
         let mut map = indexmap::IndexMap::new();
         map.insert("width".to_string(), Value::I64(i64::from(width)));
         map.insert("height".to_string(), Value::I64(i64::from(height)));
@@ -454,9 +453,16 @@ fn files_thumbnail<'js>(
     })
 }
 
-/// The image in `bytes` scaled to fit `max` by `max` (never up), as PNG: `(width, height, png)`.
+/// A scaled image as PNG, with its size.
+pub(crate) struct Thumbnail {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) png: Vec<u8>,
+}
+
+/// The image in `bytes` scaled to fit `max` by `max` (never up), as PNG.
 #[cfg(feature = "image")]
-pub(crate) fn thumbnail_png(bytes: &[u8], max: u32) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn thumbnail_png(bytes: &[u8], max: u32) -> Option<Thumbnail> {
     let image = ::image::load_from_memory(bytes).ok()?;
     let small = if image.width() > max || image.height() > max {
         image.thumbnail(max, max)
@@ -465,12 +471,16 @@ pub(crate) fn thumbnail_png(bytes: &[u8], max: u32) -> Option<(u32, u32, Vec<u8>
     };
     let mut out = Cursor::new(Vec::new());
     small.write_to(&mut out, ::image::ImageFormat::Png).ok()?;
-    Some((small.width(), small.height(), out.into_inner()))
+    Some(Thumbnail {
+        width: small.width(),
+        height: small.height(),
+        png: out.into_inner(),
+    })
 }
 
 /// No image decoder in this build (the `image` feature): no thumbnail.
 #[cfg(not(feature = "image"))]
-pub(crate) fn thumbnail_png(_bytes: &[u8], _max: u32) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn thumbnail_png(_bytes: &[u8], _max: u32) -> Option<Thumbnail> {
     None
 }
 
@@ -871,9 +881,9 @@ mod tests {
         ::image::DynamicImage::ImageRgb8(image)
             .write_to(&mut png, ::image::ImageFormat::Png)
             .unwrap();
-        let (width, height, data) = thumbnail_png(&png.into_inner(), 100).unwrap();
+        let Thumbnail { width, height, png } = thumbnail_png(&png.into_inner(), 100).unwrap();
         assert_eq!((width, height), (100, 50));
-        assert!(data.starts_with(b"\x89PNG"));
+        assert!(png.starts_with(b"\x89PNG"));
         assert!(thumbnail_png(b"not an image", 100).is_none());
     }
 }

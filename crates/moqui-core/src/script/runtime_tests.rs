@@ -12,10 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
+use super::convert::{MAX_NESTING, TOO_DEEP};
 use super::{
     clear_context_stack, context_value, eval_compiled, eval_condition, eval_source, eval_value, expand, flush_current,
     js_error, push_context_frame, run_script, run_script_location, set_context_name, with_ctx, with_screen_runner,
-    MAX_NESTING, STACK, TOO_DEEP,
+    STACK,
 };
 use crate::context::{Error, ExecutionContextFactory};
 use moqui_lib::object::{basic_convert, Value};

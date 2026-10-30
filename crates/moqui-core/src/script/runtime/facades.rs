@@ -16,6 +16,7 @@
 
 use super::*;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 /// A named framework cache. A name the conf does not define is made with the default settings on first use, as Java.
 #[derive(Trace, JsLifetime)]
@@ -139,16 +140,13 @@ pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
     let canonical = |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let files: Vec<std::path::PathBuf> = files.iter().map(|file| canonical(file)).collect();
     let mut dropped = Vec::new();
-    script_texts()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .retain(|location, kept| {
-            let stale = files.contains(&canonical(&kept.path));
-            if stale {
-                dropped.push(location.clone());
-            }
-            !stale
-        });
+    lock(script_texts()).retain(|location, kept| {
+        let stale = files.contains(&canonical(&kept.path));
+        if stale {
+            dropped.push(location.clone());
+        }
+        !stale
+    });
     dropped
 }
 
@@ -158,7 +156,7 @@ pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
 pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
     let production = crate::web::is_production();
     {
-        let mut texts = script_texts().lock().unwrap_or_else(|err| err.into_inner());
+        let mut texts = lock(script_texts());
         if let Some(found) = texts.get_mut(location) {
             if production || found.checked.elapsed() < SCRIPT_CHECK {
                 return Ok(Arc::clone(&found.text));
@@ -174,7 +172,7 @@ pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
     let text = std::fs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read script {location}")).with_source(err))?;
     let text: Arc<str> = crate::script::parse::file_function(&text).into();
-    script_texts().lock().unwrap_or_else(|err| err.into_inner()).insert(
+    lock(script_texts()).insert(
         location.to_string(),
         ScriptText {
             path,
