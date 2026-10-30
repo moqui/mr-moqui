@@ -198,15 +198,18 @@ impl Histogram {
         for histogram in [&mut left, &mut right] {
             histogram.zero_threshold = threshold;
             for buckets in [&mut histogram.positive, &mut histogram.negative] {
-                let absorbed: Vec<i32> = buckets
-                    .keys()
-                    .copied()
-                    .filter(|index| threshold > 0.0 && 2_f64.powf(f64::from(*index) * 2_f64.powi(-scale)) < threshold)
+                let absorbed: Vec<(i32, u64)> = buckets
+                    .iter()
+                    .filter(|(index, _)| {
+                        threshold > 0.0 && 2_f64.powf(f64::from(**index) * 2_f64.powi(-scale)) < threshold
+                    })
+                    .map(|(&index, &count)| (index, count))
                     .collect();
-                for index in absorbed {
+                for (index, count) in absorbed {
+                    buckets.remove(&index);
                     histogram.zero = histogram
                         .zero
-                        .checked_add(buckets.remove(&index).unwrap())
+                        .checked_add(count)
                         .ok_or_else(|| fail("exponential zero count overflow"))?;
                 }
             }
@@ -256,15 +259,13 @@ impl Histogram {
             (&mut current.positive, previous.positive),
             (&mut current.negative, previous.negative),
         ] {
-            if old
-                .iter()
-                .any(|(index, count)| buckets.get(index).copied().unwrap_or(0) < *count)
-            {
-                return Ok(None);
-            }
+            // A bucket that decreased is a reset. `current` is this call's copy, so returning partway is safe.
             for (index, count) in old {
-                let value = buckets.get_mut(&index).unwrap();
-                *value -= count;
+                match buckets.get_mut(&index) {
+                    Some(value) if *value >= count => *value -= count,
+                    None if count == 0 => {}
+                    _ => return Ok(None),
+                }
             }
             buckets.retain(|_, count| *count != 0);
         }
@@ -281,10 +282,9 @@ impl Histogram {
 
     pub(super) fn json(&self) -> Json {
         let dense = |buckets: &BTreeMap<i32, u64>| {
-            let Some((&first, _)) = buckets.first_key_value() else {
+            let (Some(&first), Some(&last)) = (buckets.keys().next(), buckets.keys().next_back()) else {
                 return json!({"offset":0,"bucketCounts":[]});
             };
-            let last = *buckets.last_key_value().unwrap().0;
             json!({"offset":first,"bucketCounts":(first..=last).map(|index| buckets.get(&index).copied().unwrap_or(0)).collect::<Vec<_>>()})
         };
         let mut point = json!({"count":self.count,"scale":self.scale,"zeroCount":self.zero,

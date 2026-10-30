@@ -1666,12 +1666,15 @@ fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], fields: &[FieldSn
     if key_map.is_empty() && one {
         return pks.into_iter().map(|pk| (pk.clone(), pk)).collect();
     }
-    if key_map.len() == 1 {
-        let map = &key_map[0];
-        let related = match map.related.as_deref().filter(|value| !value.is_empty()) {
-            Some(related) => related.to_string(),
-            None if one && pks.len() == 1 => pks[0].clone(),
-            None => map.field_name.clone(),
+    let single_pk = match pks.as_slice() {
+        [pk] if one => Some(pk),
+        _ => None,
+    };
+    if let [map] = key_map {
+        let related = match (map.related.as_deref().filter(|value| !value.is_empty()), single_pk) {
+            (Some(related), _) => related.to_string(),
+            (None, Some(pk)) => pk.clone(),
+            (None, None) => map.field_name.clone(),
         };
         return vec![(map.field_name.clone(), related)];
     }
@@ -1684,8 +1687,8 @@ fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], fields: &[FieldSn
                 .clone()
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| map.field_name.clone());
-            if one && pks.len() == 1 && !names.contains(related.as_str()) {
-                related = pks[0].clone();
+            if let Some(pk) = single_pk.filter(|_| !names.contains(related.as_str())) {
+                related = pk.clone();
             }
             (map.field_name.clone(), related)
         })

@@ -4,6 +4,17 @@ use super::*;
 fn w3c_context_validates_and_restores() {
     assert!(TraceContext::extract("00-00000000000000000000000000000000-0123456789abcdef-01", "").is_none());
     assert!(TraceContext::extract("00-0123456789abcdef0123456789abcdef-0000000000000000-01", "").is_none());
+    for traceparent in [
+        "01-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef",
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01-00",
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-1",
+        "00-0123456789abcdef0123456789abcdeg-0123456789abcdef-01",
+    ] {
+        assert!(TraceContext::extract(traceparent, "").is_none(), "{traceparent}");
+    }
+    let unsampled = TraceContext::extract(" 00-0123456789abcdef0123456789abcdef-0123456789abcdef-02 ", "").unwrap();
+    assert!(!unsampled.sampled);
     let context = TraceContext::extract(
         "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
         "vendor=state",

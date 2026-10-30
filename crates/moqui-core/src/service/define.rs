@@ -602,7 +602,8 @@ pub(crate) fn defined_name(name: &str) -> Option<String> {
     if split == 0 {
         return None;
     }
-    let candidate = format!("{path}.{}#{}", &verb_noun[..split], &verb_noun[split..]);
+    let (verb, noun) = verb_noun.split_at(split);
+    let candidate = format!("{path}.{verb}#{noun}");
     find(&candidate).map(|_| candidate)
 }
 
@@ -618,7 +619,8 @@ pub(crate) fn registration_failures(name: &str) -> Vec<String> {
             .find(|ch: char| ch.is_ascii_uppercase())
             .filter(|split| *split > 0)
         {
-            names.push(format!("{path}.{}#{}", &verb_noun[..split], &verb_noun[split..]));
+            let (verb, noun) = verb_noun.split_at(split);
+            names.push(format!("{path}.{verb}#{noun}"));
         }
     }
     snapshot(&shared)
@@ -1725,10 +1727,9 @@ fn find_member(root: &MNode, verb: &str, noun: &str) -> Option<MNode> {
 /// (`service/moqui/example/ExampleServices.xml` is `moqui.example.ExampleServices`), empty outside one.
 pub fn service_prefix(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
-    let Some(index) = text.rfind("/service/") else {
+    let Some((_, rest)) = text.rsplit_once("/service/") else {
         return String::new();
     };
-    let rest = &text[index + "/service/".len()..];
     let rest = rest.strip_suffix(".xml").unwrap_or(rest);
     if rest.is_empty() {
         String::new()

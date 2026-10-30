@@ -242,10 +242,8 @@ fn split_host_port(text: &str, default_port: u16) -> Result<(String, u16), Error
             None => Err(Error::new(format!("SFTP host {text} has text after the bracket"))),
         };
     }
-    match text.find(':') {
-        Some(index) if index > 0 && text.matches(':').count() == 1 => {
-            Ok((text[..index].to_string(), parse_port(&text[index + 1..])?))
-        }
+    match text.split_once(':') {
+        Some((host, port)) if !host.is_empty() && !port.contains(':') => Ok((host.to_string(), parse_port(port)?)),
         _ => Ok((text.to_string(), default_port)),
     }
 }
@@ -511,11 +509,10 @@ impl SftpClient {
     ///
     /// Not connected, or the server's error.
     pub fn rename_file(&mut self, file_path: &str, new_name: &str) -> Result<String, Error> {
-        let dir = match file_path.rfind('/') {
-            Some(index) if index > 0 => &file_path[..=index],
-            _ => "",
+        let new_path = match file_path.rsplit_once('/') {
+            Some((dir, _)) if !dir.is_empty() => format!("{dir}/{new_name}"),
+            _ => new_name.to_string(),
         };
-        let new_path = format!("{dir}{new_name}");
         self.session()?.rename(file_path, &new_path)?;
         Ok(new_path)
     }
@@ -703,9 +700,9 @@ fn child_path(dir: &str, name: &str) -> String {
 /// `new File(path).parent`.
 fn parent_of(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
-    match trimmed.rfind('/') {
-        Some(0) => "/".to_string(),
-        Some(index) => trimmed[..index].to_string(),
+    match trimmed.rsplit_once('/') {
+        Some(("", _)) => "/".to_string(),
+        Some((parent, _)) => parent.to_string(),
         None => String::new(),
     }
 }

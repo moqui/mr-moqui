@@ -181,14 +181,13 @@ pub fn parse_archive_name(name: &str) -> Option<ParsedName> {
         Some(tier) => (tier, true),
         None => (rest, false),
     };
-    let bytes = tier_text.as_bytes();
-    if bytes.len() != 1 {
+    let &[tier] = tier_text.as_bytes() else {
         return None;
-    }
+    };
     Some(ParsedName {
         prefix: prefix.to_string(),
         stamp,
-        tier: Tier::parse(bytes[0])?,
+        tier: Tier::parse(tier)?,
         dump,
     })
 }
@@ -458,12 +457,12 @@ fn parse_stamp(text: &str) -> Option<Timestamp> {
     if bytes.len() != 16 || bytes[8] != b'T' || bytes[15] != b'Z' {
         return None;
     }
-    let year: i16 = text[0..4].parse().ok()?;
-    let month: i8 = text[4..6].parse().ok()?;
-    let day: i8 = text[6..8].parse().ok()?;
-    let hour: i8 = text[9..11].parse().ok()?;
-    let minute: i8 = text[11..13].parse().ok()?;
-    let second: i8 = text[13..15].parse().ok()?;
+    let year: i16 = text.get(0..4)?.parse().ok()?;
+    let month: i8 = text.get(4..6)?.parse().ok()?;
+    let day: i8 = text.get(6..8)?.parse().ok()?;
+    let hour: i8 = text.get(9..11)?.parse().ok()?;
+    let minute: i8 = text.get(11..13)?.parse().ok()?;
+    let second: i8 = text.get(13..15)?.parse().ok()?;
     let date = Date::new(year, month, day).ok()?;
     let time = Time::new(hour, minute, second, 0).ok()?;
     Some(date.to_datetime(time).to_zoned(TimeZone::UTC).ok()?.timestamp())

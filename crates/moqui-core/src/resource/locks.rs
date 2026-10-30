@@ -55,8 +55,8 @@ fn live() -> std::sync::MutexGuard<'static, HashMap<String, Lock>> {
 
 /// The lock key of a location: no `#version`, no trailing slash.
 pub fn key(location: &str) -> String {
-    let location = match location.find('#') {
-        Some(index) if index > 0 => &location[..index],
+    let location = match location.split_once('#') {
+        Some((path, _)) if !path.is_empty() => path,
         _ => location,
     };
     location.trim_end_matches('/').to_string()
@@ -204,5 +204,13 @@ mod tests {
         put(location, expired);
         assert!(check(location, Some("bob"), false).is_ok());
         assert!(get(location).is_none());
+    }
+
+    #[test]
+    fn a_key_drops_the_version_and_trailing_slashes() {
+        assert_eq!(key("dbresource://é/a.txt#v2#v3"), "dbresource://é/a.txt");
+        assert_eq!(key("dbresource://docs//"), "dbresource://docs");
+        assert_eq!(key("#v2/"), "#v2");
+        assert_eq!(key("dbresource://a.txt"), "dbresource://a.txt");
     }
 }

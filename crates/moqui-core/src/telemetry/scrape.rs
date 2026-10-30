@@ -118,14 +118,13 @@ fn family_name(sample: &str, types: &HashMap<String, String>) -> String {
 
 fn sample(line: &str) -> Option<Sample> {
     let name_end = line.find(|c: char| c == '{' || c.is_whitespace())?;
-    let name = &line[..name_end];
+    let (name, mut rest) = line.split_at(name_end);
     if name.is_empty()
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
         || name.starts_with(|c: char| c.is_ascii_digit())
     {
         return None;
     }
-    let mut rest = &line[name_end..];
     let mut labels = Vec::new();
     if let Some(after) = rest.strip_prefix('{') {
         let mut chars = after.char_indices().peekable();

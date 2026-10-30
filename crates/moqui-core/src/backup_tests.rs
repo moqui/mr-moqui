@@ -162,3 +162,25 @@ fn a_remote_name_already_promoted_is_not_renamed_again() {
     assert!(plan.uploads.is_empty());
     assert_eq!(plan.deletes, vec!["moqui-20260311T020000Z-d.dump".to_string()]);
 }
+
+#[test]
+fn archive_names_parse_their_prefix_stamp_and_tier_and_reject_the_rest() {
+    let parsed = parse_archive_name("search-20260311T020000Z-w").unwrap();
+    assert_eq!(parsed.prefix, "search");
+    assert_eq!(parsed.stamp, stamp("20260311T020000Z"));
+    assert_eq!(parsed.tier, Tier::Weekly);
+    assert!(!parsed.dump);
+    assert!(parse_archive_name("moqui-20260311T020000Z-d.dump").unwrap().dump);
+    for name in [
+        "other-20260311T020000Z-d.dump",
+        "moqui-20260311T020000Z-dw.dump",
+        "moqui-20260311T020000Z-.dump",
+        "moqui-2026031T020000Z-d.dump",
+        "moqui-20261311T020000Z-d.dump",
+        // 16 bytes, with a two-byte character across a field boundary
+        "moqui-202\u{e9}010T123456Z-d.dump",
+        "moqui-20260311T1234\u{e9}Z-d.dump",
+    ] {
+        assert!(parse_archive_name(name).is_none(), "{name}");
+    }
+}

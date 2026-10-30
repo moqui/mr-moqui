@@ -200,7 +200,10 @@ impl Runtime {
         // The configured ratio decides from the trace id, not a caller's sampled flag, so a client cannot turn full
         // tracing on, and every span of a trace (and every service with the same ratio) decides alike.
         let sampled = retain || {
-            let value = u64::from_str_radix(&trace_id[..16], 16).unwrap_or(0);
+            let value = trace_id
+                .get(..16)
+                .and_then(|high| u64::from_str_radix(high, 16).ok())
+                .unwrap_or(0);
             (value as f64 / u64::MAX as f64) < sample_ratio
         };
         let context = TraceContext {

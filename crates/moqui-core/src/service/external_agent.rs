@@ -36,23 +36,22 @@ fn request(params: &BTreeMap<String, Value>, _: &EntityFacade) -> Result<BTreeMa
     })
 }
 fn invoke(argv: &[String], input: &Json, timeout: Duration) -> Result<Json, Error> {
-    let executable = argv
-        .first()
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| Error::new("External agent command is empty"))?;
+    let Some((executable, args)) = argv.split_first().filter(|(executable, _)| !executable.is_empty()) else {
+        return Err(Error::new("External agent command is empty"));
+    };
     let bytes = serde_json::to_vec(input).map_err(|_| Error::new("Invalid external agent request"))?;
     if bytes.len() > MAX_BYTES {
         return Err(Error::new("External agent request too large"));
     }
     let mut child = Command::new(executable)
-        .args(&argv[1..])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| Error::new("Cannot start configured external agent adapter"))?;
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
+    let mut stdin = child.stdin.take().expect("stdin is piped above");
+    let stdout = child.stdout.take().expect("stdout is piped above");
     let (send, receive) = mpsc::channel();
     std::thread::spawn(move || {
         let result = stdin.write_all(&bytes);

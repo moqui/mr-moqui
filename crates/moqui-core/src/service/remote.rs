@@ -116,15 +116,14 @@ fn choose_method(method: Option<&str>, verb: &str) -> Method {
 fn expand_location(location: &str, parameters: &BTreeMap<String, Value>) -> Result<String, Error> {
     let mut out = String::with_capacity(location.len());
     let mut rest = location;
-    while let Some(start) = rest.find("${") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        let Some(end) = after.find('}') else {
-            out.push_str(&rest[start..]);
+    while let Some((before, after)) = rest.split_once("${") {
+        out.push_str(before);
+        let Some((name, tail)) = after.split_once('}') else {
+            out.push_str("${");
+            out.push_str(after);
             rest = "";
             break;
         };
-        let name = &after[..end];
         if let Some(value) = parameters.get(name) {
             out.push_str(&percent_encode(&to_plain_string(value)));
         } else {
@@ -132,7 +131,7 @@ fn expand_location(location: &str, parameters: &BTreeMap<String, Value>) -> Resu
             out.push_str(name);
             out.push('}');
         }
-        rest = &after[end + 1..];
+        rest = tail;
     }
     out.push_str(rest);
     Ok(moqui_lib::env::expand(&out)?)

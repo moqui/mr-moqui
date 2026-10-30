@@ -46,24 +46,24 @@ type Shared = RwLock<Arc<Roots>>;
 ///
 /// Returns an error when the path or method is not served, or the operation fails.
 pub fn run(path: &[&str], method: &str, parameters: &BTreeMap<String, Value>) -> Result<Value, Error> {
-    if path.is_empty() {
+    let [root_name, ..] = path else {
         return Err(Error::of_kind(
             ErrorKind::NotFound,
             "Cannot run REST service with no path",
         ));
-    }
+    };
     let method = method.trim().to_ascii_lowercase();
     let mut params = parameters.clone();
     let mut roots = current_roots()?;
     // As Java's `getRootResourceNode`: a root not loaded reads the REST files again, for one added since. Here at
     // most once in ten seconds, so requests for unknown roots do not read the files each time.
-    if !roots.resources.contains_key(path[0]) && miss_reload_due() {
+    if !roots.resources.contains_key(*root_name) && miss_reload_due() {
         roots = reload_current_roots()?;
     }
-    let root = roots.resources.get(path[0]).ok_or_else(|| {
+    let root = roots.resources.get(*root_name).ok_or_else(|| {
         Error::of_kind(
             ErrorKind::NotFound,
-            format!("Service REST API root resource not found with name {}", path[0]),
+            format!("Service REST API root resource not found with name {root_name}"),
         )
     })?;
     root.visit(path, 0, &method, &mut params)
@@ -92,12 +92,11 @@ pub fn resolve_service(path: &str, method: &str) -> Result<Value, Error> {
         .filter(|part| !part.is_empty())
         .collect();
     let roots = current_roots()?;
-    let mut node = parts
-        .first()
-        .and_then(|root| roots.resources.get(*root))
-        .ok_or_else(|| Error::new("REST root resource not found"))?;
+    let not_found = || Error::new("REST root resource not found");
+    let (root, below) = parts.split_first().ok_or_else(not_found)?;
+    let mut node = roots.resources.get(*root).ok_or_else(not_found)?;
     let mut path_parameters = Vec::new();
-    for part in &parts[1..] {
+    for part in below {
         node = node
             .resources
             .get(*part)
@@ -801,17 +800,17 @@ fn unwrap_frame(frame: moqui_lib::context_stack::Frame) -> Value {
 ///
 /// Returns an error when the root name is missing or that root is not loaded.
 pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
-    if segments.is_empty() {
+    let [root_name, below @ ..] = segments else {
         return Err(Error::of_kind(
             ErrorKind::BadRequest,
             "No root resource name specified in path",
         ));
-    }
+    };
     let roots = current_roots()?;
-    let root = roots.resources.get(&segments[0]).ok_or_else(|| {
+    let root = roots.resources.get(root_name).ok_or_else(|| {
         Error::of_kind(
             ErrorKind::NotFound,
-            format!("Service REST API root resource not found with name {}", segments[0]),
+            format!("Service REST API root resource not found with name {root_name}"),
         )
     })?;
     let facade = current_facade().ok();
@@ -820,9 +819,9 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
         enums: facade.as_ref().map(crate::entity::FieldEnums::new),
     };
     let mut paths = IndexMap::new();
-    collect_paths(root, "", &segments[1..], &[], &mut schemas, &mut paths);
+    collect_paths(root, "", below, &[], &mut schemas, &mut paths);
     let mut info = IndexMap::new();
-    info.insert("title".to_string(), Value::string(&segments[0]));
+    info.insert("title".to_string(), Value::string(root_name));
     info.insert("version".to_string(), Value::string("1.0"));
     let mut server = IndexMap::new();
     server.insert("url".to_string(), Value::string("/rest/s1"));

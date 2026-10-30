@@ -397,6 +397,17 @@ fn hosts_split_with_ipv6_brackets() {
     assert!(split_host_port("[::1", SSH_PORT).is_err());
     assert!(split_host_port("[::1]x", SSH_PORT).is_err());
     assert!(split_host_port("host:port", SSH_PORT).is_err());
+    assert_eq!(split(":2222"), (":2222".to_string(), 22));
+    assert_eq!(split("h\u{e9}te:2222"), ("h\u{e9}te".to_string(), 2222));
+}
+
+#[test]
+fn parents_drop_the_last_segment_and_trailing_slashes() {
+    assert_eq!(parent_of("/in/a.txt"), "/in");
+    assert_eq!(parent_of("/in/sub/"), "/in");
+    assert_eq!(parent_of("/a.txt"), "/");
+    assert_eq!(parent_of("a.txt"), "");
+    assert_eq!(parent_of("in/\u{e9}t\u{e9}.txt"), "in");
 }
 
 #[test]

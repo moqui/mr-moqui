@@ -87,13 +87,14 @@ pub struct TraceContext {
 impl TraceContext {
     pub fn extract(traceparent: &str, tracestate: &str) -> Option<Self> {
         let parts: Vec<_> = traceparent.trim().split('-').collect();
-        if parts.len() != 4
-            || parts[0] != "00"
-            || !valid_hex(parts[1], 32)
-            || !valid_hex(parts[2], 16)
-            || !valid_hex(parts[3], 2)
-            || parts[1].bytes().all(|b| b == b'0')
-            || parts[2].bytes().all(|b| b == b'0')
+        let ["00", trace_id, span_id, flags] = parts.as_slice() else {
+            return None;
+        };
+        if !valid_hex(trace_id, 32)
+            || !valid_hex(span_id, 16)
+            || !valid_hex(flags, 2)
+            || trace_id.bytes().all(|b| b == b'0')
+            || span_id.bytes().all(|b| b == b'0')
         {
             return None;
         }
@@ -104,9 +105,9 @@ impl TraceContext {
             tracestate
         };
         Some(Self {
-            trace_id: parts[1].to_string(),
-            span_id: parts[2].to_string(),
-            sampled: u8::from_str_radix(parts[3], 16).ok()? & 1 != 0,
+            trace_id: trace_id.to_string(),
+            span_id: span_id.to_string(),
+            sampled: u8::from_str_radix(flags, 16).ok()? & 1 != 0,
             tracestate: tracestate.to_string(),
             local: false,
         })
