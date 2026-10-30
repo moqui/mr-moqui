@@ -404,10 +404,7 @@ fn image_slot() -> Slot {
         .unwrap_or(2);
     let mut used = moqui_lib::sync::lock(&SLOTS.used);
     while *used >= most {
-        used = SLOTS
-            .freed
-            .wait(used)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        used = moqui_lib::sync::wait(&SLOTS.freed, used);
     }
     *used += 1;
     Slot(&SLOTS)

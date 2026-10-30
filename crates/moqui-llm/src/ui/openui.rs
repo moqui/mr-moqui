@@ -494,7 +494,7 @@ fn run_script(sources: &Sources, script: &str) -> Result<String, Error> {
 pub fn sources(factory: &ExecutionContextFactory) -> Result<Sources, Error> {
     struct Kept(std::sync::Mutex<Option<Sources>>);
     let kept = factory.extension(|_| Kept(std::sync::Mutex::new(None)));
-    if let Some(found) = kept.0.lock().unwrap_or_else(|err| err.into_inner()).as_ref() {
+    if let Some(found) = moqui_lib::sync::lock(&kept.0).as_ref() {
         return Ok(found.clone());
     }
     let read = |location: &str, file: &str| -> Result<Arc<str>, Error> {
@@ -518,7 +518,7 @@ pub fn sources(factory: &ExecutionContextFactory) -> Result<Sources, Error> {
         bundle: read(BUNDLE_LOCATION, "libs/openui/lang-core.min.js")?,
         spec: read(SPEC_LOCATION, "js/openui-library.spec.json")?,
     };
-    *kept.0.lock().unwrap_or_else(|err| err.into_inner()) = Some(made.clone());
+    *moqui_lib::sync::lock(&kept.0) = Some(made.clone());
     Ok(made)
 }
 

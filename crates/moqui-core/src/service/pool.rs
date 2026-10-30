@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait, wait_timeout};
 
 use super::call::AsyncCall;
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -909,7 +909,7 @@ fn job_loop(shared: Arc<Shared>) {
                     state.jobs_active += 1;
                     break run;
                 }
-                state = shared.job_wake.wait(state).unwrap_or_else(|err| err.into_inner());
+                state = wait(&shared.job_wake, state);
             }
         };
         run_job_work(run);
@@ -958,7 +958,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if state.stop {
             return None;
         }
-        state = shared.wake.wait(state).unwrap_or_else(|err| err.into_inner());
+        state = wait(&shared.wake, state);
     }
 }
 
@@ -1201,11 +1201,7 @@ fn drain(shared: &Shared, limit: Duration) {
             );
             return;
         }
-        state = shared
-            .wake
-            .wait_timeout(state, left)
-            .unwrap_or_else(|err| err.into_inner())
-            .0;
+        state = wait_timeout(&shared.wake, state, left).0;
     }
 }
 

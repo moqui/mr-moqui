@@ -33,7 +33,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use moqui_lib::error::Error;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 use serde_json::{json, Map, Value as Json};
 
 use super::sse::Frame;
@@ -202,10 +202,7 @@ fn wait_for_gate(name: &str) {
             tracing::error!("the fake's gate {name} was not opened within {} s", GATE_WAIT.as_secs());
             return;
         }
-        gates = GATE_OPENED
-            .wait_timeout(gates, left)
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .0;
+        gates = wait_timeout(&GATE_OPENED, gates, left).0;
     }
 }
 

@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use moqui_db::sql::Condition;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 use serde_json::Value as Json;
 
 use moqui_core::context::ExecutionContextFactory;
@@ -183,11 +183,7 @@ impl RunHub {
             if !found.is_empty() || now >= deadline {
                 return found;
             }
-            state = self
-                .wake
-                .wait_timeout(state, deadline - now)
-                .map(|(state, _)| state)
-                .unwrap_or_else(|error| error.into_inner().0);
+            state = wait_timeout(&self.wake, state, deadline - now).0;
         }
     }
 

@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 
 use crate::error::Error;
-use crate::sync::{lock, read, write};
+use crate::sync::{lock, read, wait_timeout, write};
 
 /// Time source for cache expiry. [`ManualClock`] lets a test move time without sleeping.
 pub trait Clock: Send + Sync {
@@ -802,11 +802,7 @@ fn run_evictor() {
         };
         let now = Instant::now();
         if soonest > now {
-            state = EVICTOR
-                .wake
-                .wait_timeout(state, soonest - now)
-                .unwrap_or_else(|err| err.into_inner())
-                .0;
+            state = wait_timeout(&EVICTOR.wake, state, soonest - now).0;
             continue;
         }
         let due: Vec<Arc<dyn EvictTarget>> = state

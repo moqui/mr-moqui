@@ -39,7 +39,7 @@ use moqui_db::sql::{
 use moqui_lib::codec::hex_encode;
 use moqui_lib::env;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 use sha2::{Digest, Sha256};
 
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -575,10 +575,7 @@ fn send_loop(state: &ClusterState) {
         let batch: Vec<(&'static str, TopicMessage)> = {
             let mut queue = lock(&state.queue);
             while queue.messages.is_empty() {
-                let (next, waited) = state
-                    .ready
-                    .wait_timeout(queue, SENDER_IDLE)
-                    .unwrap_or_else(|err| err.into_inner());
+                let (next, waited) = wait_timeout(&state.ready, queue, SENDER_IDLE);
                 queue = next;
                 if waited.timed_out() && queue.messages.is_empty() {
                     queue.sending = false;

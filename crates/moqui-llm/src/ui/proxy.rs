@@ -71,7 +71,7 @@ struct Counts(Mutex<HashMap<String, (Instant, u32)>>);
 /// Count one read of `user_id`: false when the user is past [`READS_PER_MINUTE`] in this minute.
 fn counted(factory: &ExecutionContextFactory, user_id: &str) -> bool {
     let counts = factory.extension(|_| Counts(Mutex::new(HashMap::new())));
-    let mut map = counts.0.lock().unwrap_or_else(|err| err.into_inner());
+    let mut map = moqui_lib::sync::lock(&counts.0);
     let now = Instant::now();
     if map.len() > 10_000 {
         map.retain(|_, (start, _)| now.duration_since(*start) < Duration::from_secs(60));

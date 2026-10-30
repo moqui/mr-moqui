@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 
 use croner::parser::{CronParser, Seconds};
 use croner::Cron;
@@ -41,10 +41,7 @@ pub(crate) fn scheduler_loop(shared: Arc<Shared>) {
             if state.stop {
                 return;
             }
-            let (state, _) = shared
-                .wake
-                .wait_timeout(state, SLICE)
-                .unwrap_or_else(|err| err.into_inner());
+            let (state, _) = wait_timeout(&shared.wake, state, SLICE);
             if state.stop {
                 return;
             }

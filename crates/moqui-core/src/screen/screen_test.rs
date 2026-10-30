@@ -145,7 +145,7 @@ impl ScreenTest {
 
     /// The counts of the renders so far.
     pub fn stats(&self) -> ScreenTestStats {
-        *self.stats.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        *moqui_lib::sync::lock(&self.stats)
     }
 
     /// When this test setup was made, epoch millis.
@@ -272,7 +272,7 @@ impl ScreenTest {
             }
         }
         {
-            let mut stats = self.stats.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut stats = moqui_lib::sync::lock(&self.stats);
             stats.render_count += 1;
             stats.error_count += error_messages.len() as u64;
             stats.total_chars += text.chars().count() as u64;

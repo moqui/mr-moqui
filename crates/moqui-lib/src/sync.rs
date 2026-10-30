@@ -12,13 +12,16 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Lock guards that ignore poisoning, and a process-wide install slot.
+//! Lock guards and condition-variable waits that ignore poisoning, and a process-wide install slot.
 //!
 //! A panic while a lock is held leaves the data as the panicking thread left it. Every lock here
 //! guards state that stays usable after such a panic (maps, queues, counters), so the guard is taken
 //! anyway rather than spreading the panic to every later caller.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{
+    Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitTimeoutResult,
+};
+use std::time::Duration;
 
 /// Lock `mutex`, taking the guard of a poisoned lock too.
 pub fn lock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -33,6 +36,22 @@ pub fn read<T: ?Sized>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 /// Write-lock `lock`, taking the guard of a poisoned lock too.
 pub fn write<T: ?Sized>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Wait on `condvar`, taking the guard back from a poisoned lock too.
+pub fn wait<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
+    condvar.wait(guard).unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Wait on `condvar` for at most `timeout`, taking the guard back from a poisoned lock too.
+pub fn wait_timeout<'a, T>(
+    condvar: &Condvar,
+    guard: MutexGuard<'a, T>,
+    timeout: Duration,
+) -> (MutexGuard<'a, T>, WaitTimeoutResult) {
+    condvar
+        .wait_timeout(guard, timeout)
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// One installed implementation of `T` for the process, such as the client a host crate installs
@@ -91,6 +110,10 @@ mod tests {
         *lock(&mutex) += 1;
         *write(&rw) += 1;
         assert_eq!((*lock(&mutex), *read(&rw)), (2, 3));
+        let condvar = Condvar::new();
+        let (guard, waited) = wait_timeout(&condvar, lock(&mutex), Duration::from_millis(1));
+        assert!(waited.timed_out());
+        assert_eq!(*guard, 2);
     }
 
     #[test]

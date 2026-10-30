@@ -22,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use moqui_lib::node::MNode;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait};
 
 use super::pool::WorkCleanup;
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
@@ -310,7 +310,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if let Some(work) = state.queue.pop_front() {
             return Some(work);
         }
-        state = shared.wake.wait(state).unwrap_or_else(|err| err.into_inner());
+        state = wait(&shared.wake, state);
     }
 }
 

@@ -32,7 +32,7 @@ use moqui_db::sql::{
 use moqui_lib::codec::hex_encode;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait};
 use serde_json::Value as Json;
 use sha2::Sha256;
 
@@ -1893,7 +1893,7 @@ impl<'a> FlushClaim<'a> {
         let mut table = lock_sessions(factory);
         let flushed = Arc::clone(&table.flushed);
         while table.flushing.contains(id) {
-            table = flushed.wait(table).unwrap_or_else(|err| err.into_inner());
+            table = wait(&flushed, table);
         }
         table.flushing.insert(id.to_string());
         Self {

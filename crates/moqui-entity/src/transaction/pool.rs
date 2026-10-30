@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 
@@ -458,11 +458,7 @@ impl Pool {
                 publish(&state, wait_started.elapsed());
                 return Ok(false);
             }
-            let waited = self.inner.available.wait_timeout(state, remaining);
-            let (mut state, result) = match waited {
-                Ok(pair) => pair,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            let (mut state, result) = wait_timeout(&self.inner.available, state, remaining);
             state.waiting = state.waiting.saturating_sub(1);
             publish(&state, wait_started.elapsed());
             if result.timed_out() {

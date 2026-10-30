@@ -351,7 +351,11 @@ impl LoginCheck {
         let checking = Self::checking();
         let running = moqui_lib::sync::lock(&checking.running);
         if running.get(user_id).is_some_and(|count| *count > 0) {
-            drop(checking.ended.wait_timeout(running, Duration::from_secs(1)));
+            drop(moqui_lib::sync::wait_timeout(
+                &checking.ended,
+                running,
+                Duration::from_secs(1),
+            ));
         }
     }
 }
