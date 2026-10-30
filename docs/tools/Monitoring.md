@@ -10,7 +10,7 @@ The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the boun
 and retention), `crates/moqui-report/src/` (datasets, queries, frames, transformations, definitions, alerts,
 annotations, the scheduled reports in `schedule.rs` and the ingest keys in `monitor.rs`),
 `crates/moqui-core/src/search/telemetry.rs` (the index mappings), and the host side in `crates/moqui-host/src/http.rs`
-(request spans) and `crates/moqui-host/src/monitor.rs` (the OTLP receiver). Screens:
+(request spans) and `crates/moqui-host/src/monitor/` (the OTLP receiver: `receiver.rs` over HTTP, `grpc.rs` over gRPC). Screens:
 `runtime/base-component/tools/screen/Monitor/` and `Dashboards/`; widgets in
 `webroot/screen/webroot/js/WebrootReport.js` with TUI twins in `crates/moqui-tui/src/components/report.rs`.
 
@@ -81,10 +81,14 @@ with an `artifact` override and the receiver limits written out:
 ## OTLP in and out
 
 **In.** `POST /v1/traces`, `/v1/logs` and `/v1/metrics` take OTLP/HTTP as `application/x-protobuf` or
-`application/json`, gzip allowed, and answer as OTLP does, with partial success.
+`application/json`, gzip allowed, and answer as OTLP does, with partial success. In a build with the `grpc` feature
+(Enterprise and Maximal), `<telemetry><receiver grpc-enabled="true">` also opens OTLP/gRPC on `grpc-port` (4317) at
+`grpc-bind` (the HTTP listener's address by default); the dev conf turns it on. It is TLS with the HTTPS listener's
+certificates, else plain h2c, takes gzip, and answers refusals as gRPC statuses (`UNAUTHENTICATED`,
+`RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INVALID_ARGUMENT`; `OUT_OF_RANGE` over the body limit).
 
 - Each sender needs an ingest key: Monitor › Sources › Create key, which shows the token once. Send it as
-  `Authorization: Bearer <token>` or an `api_key` header. A key names its source, which is recorded on everything it
+  `Authorization: Bearer <token>` or an `api_key` header (gRPC metadata of the same names). A key names its source, which is recorded on everything it
   sends, and belongs to a user who must keep the `MONITOR_INGEST` permission. Keys expire (90 days by default) and
   can be revoked. They cannot sign in.
 - Limits per `telemetry/receiver`: body size (4 MiB), requests per minute per key (600) and concurrent requests (8).

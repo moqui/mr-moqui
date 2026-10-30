@@ -61,6 +61,7 @@ mod lsp;
 mod mantle_search;
 mod mcp;
 mod monitor_edge;
+mod monitor_grpc;
 mod monitor_readers;
 mod monitor_tui;
 mod notws;

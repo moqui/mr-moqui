@@ -308,4 +308,6 @@ The resolve behind the tables is a throwaway package with the feature flags in t
 
 ## Monitoring dependencies (2026-10-26)
 
-OpenTelemetry API/SDK/proto 0.32 (Apache-2.0) and prost 0.14 (Apache-2.0): direct instrumentation and OTLP/HTTP messages. Default features disabled; proto message generation only, no gRPC client/server, tracing bridge, or second HTTP client. Versions resolved in Cargo.lock.
+OpenTelemetry API/SDK/proto 0.32 (Apache-2.0) and prost 0.14 (Apache-2.0): direct instrumentation and OTLP/HTTP messages. Default features disabled; no tracing bridge or second HTTP client. Versions resolved in Cargo.lock.
+
+The OTLP/gRPC receiver (2026-10-30, moqui-host `grpc`, in Enterprise and Maximal): tonic 0.14 (MIT) with `server`, `router` and `gzip`, and opentelemetry-proto's `gen-tonic` services, which bring tonic-prost 0.14 (MIT) and hyper-timeout 0.5 (MIT/Apache-2.0) and tonic's `channel` client (used only by the tests). It shares the hyper 1, h2 0.4, axum 0.8 and tower 0.5 already linked: no second HTTP stack. Off in the browser and in builds without `grpc`.

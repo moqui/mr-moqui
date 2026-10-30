@@ -77,6 +77,12 @@ impl Decoder {
             "application/x-protobuf" => decode_protobuf(signal, body)?,
             _ => return Err(Error::new("OTLP requires application/json or application/x-protobuf")),
         };
+        Ok(self.decode_value(signal, &json, source_id, source))
+    }
+
+    /// An OTLP export request already in its JSON form: the OTLP/JSON body, or a protobuf message through its serde
+    /// form, as the gRPC receiver has it.
+    pub fn decode_value(&self, signal: Signal, json: &Json, source_id: &str, source: &str) -> Decoded {
         let mut decoded = Decoded {
             index: match signal {
                 Signal::Traces => "otel_spans",
@@ -93,7 +99,7 @@ impl Decoder {
             Signal::Logs => ("resourceLogs", "scopeLogs", "logRecords"),
             Signal::Metrics => ("resourceMetrics", "scopeMetrics", "metrics"),
         };
-        for resource in array(field(&json, resources)) {
+        for resource in array(field(json, resources)) {
             let resource_attrs = attributes(field(field(resource, "resource"), "attributes"));
             for scope in array(field(resource, scope_key)) {
                 for entry in array(field(scope, entries)) {
@@ -133,7 +139,7 @@ impl Decoder {
                 format!("{}; {} records skipped", decoded.message, decoded.rejected)
             };
         }
-        Ok(decoded)
+        decoded
     }
 
     fn metric_documents(&self, metric: &Json, resource: &Document, source: &str, decoded: &mut Decoded) {

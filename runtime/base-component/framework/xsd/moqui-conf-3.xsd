@@ -175,7 +175,8 @@ along with this software (see the LICENSE.md file). If not, see
                 routes are redacted as the global list's are.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="receiver" minOccurs="0"><xs:complexType>
-            <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics, and the
+            <xs:annotation><xs:documentation>The OTLP/HTTP receiver at /v1/traces, /v1/logs and /v1/metrics (and
+                OTLP/gRPC with grpc-enabled), and the
                 deploy markers at /v1/annotations, each authorized by an ingest key. A request refused before it is
                 decoded (busy, over the rate, too large) answers an error status and is not counted; each record a
                 request rejects, or the queue cannot take, counts as dropped.
@@ -190,6 +191,17 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:annotation></xs:attribute>
             <xs:attribute name="concurrent-requests" type="xs:positiveInteger"><xs:annotation><xs:documentation>
                 Requests decoded at once; more answer 503. Default 8.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-enabled" type="boolean"><xs:annotation><xs:documentation>true opens the
+                OTLP/gRPC receiver (the trace, logs and metrics collector services) in a build with the grpc feature.
+                It takes the same ingest keys (authorization: Bearer or api_key metadata), limits and queue; refusals
+                are gRPC statuses (UNAUTHENTICATED, RESOURCE_EXHAUSTED, UNAVAILABLE, INVALID_ARGUMENT). With the HTTPS
+                listener's certificates it is TLS, else plain h2c. Default false.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="grpc-port" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The gRPC
+                port; 0 is any free port. Default 4317.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the gRPC
+                receiver listens on. Default the HTTP listener's (webapp_http_bind).</xs:documentation></xs:annotation>
+            </xs:attribute>
         </xs:complexType></xs:element></xs:sequence>
         <xs:attribute name="enabled" type="boolean"/>
         <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of traces, 0 to

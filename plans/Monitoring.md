@@ -99,7 +99,7 @@ Support backend services, browser, mobile and desktop applications, background w
 Decisions, Oct 25, 2026:
 - **SDK:** use the OpenTelemetry SDK directly, with spans made from the artifact stack and no `tracing` bridge.
 - **Storage:** SearchFacade indexes, on the Postgres or OpenSearch backend.
-- **Ingest:** OTLP over HTTP first, with gRPC deferred.
+- **Ingest:** OTLP over HTTP first, with gRPC deferred (built Oct 30: tonic on 4317, behind the `grpc` feature).
 - **Dashboards and reports:** a framework engine (datasets, report queries, frames, panels, dashboards, alerts) with its own Dashboards app in the tools component. Monitor is its first user. Business reporting, app landing pages and BOSS Insights use the same pieces.
 - **Definitions:** dashboards, panels, datasets and rules are saved as JSON in entities, with versions and named references. Components ship them as JSON files, which are read-only until saved as a copy.
 - **Order:** the report tool comes early (M2 and M3), so the Monitor screens are built from panels from the start.
@@ -188,7 +188,7 @@ Internal and external sources share the same documents and the same screens, tol
 | `opentelemetry-otlp` (http-proto) | Not used. The optional external exporter is our own: it posts OTLP protobuf (or JSON, by `otlp-protocol`) through `moqui_lib::http::RestClient` (`telemetry/otlp.rs`), encoded with the `opentelemetry-proto` messages the receiver uses |
 
 - **Versions.** All `opentelemetry*` crates go on one minor version, pinned by `Cargo.lock`.
-- **Not used:** `tracing-subscriber`, `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Spans come from the artifact stack and logs from `LineSubscriber`, so neither needs a `Registry`. tonic is deferred along with gRPC.
+- **Not used:** `tracing-subscriber`, `tracing-opentelemetry` and `opentelemetry-appender-tracing`. Spans come from the artifact stack and logs from `LineSubscriber`, so neither needs a `Registry`. tonic is only the gRPC receiver's server, under moqui-host's `grpc` feature.
 - **Check before adding.** Run `cargo tree` and look for:
   - tonic or a gRPC transport pulled in by the proto features
   - a second hyper or reqwest
@@ -279,7 +279,7 @@ These go into `Agg` and both backends, with tests on each. The report tool needs
 - **Limits:** body size, rate per key, and a bounded queue that rejects when full and counts what it rejects. Redaction rules run before indexing. One rule for sensitive names (`context/identity.rs`) covers parameters, URL queries and span attributes.
 - **Decoding:** `opentelemetry-proto` decodes into the same documents the local exporter writes, so every screen works on external data unchanged.
 - **Temporality:** many senders, Prometheus-style ones among them, send cumulative points. These become deltas through a bounded per-series cache of the last point, keyed by series fingerprint and start time; a lower value or a new start time is a reset. Exponential histograms became deltas the same way in the completion wave, and are merged for the rollups by scaling down to common buckets (`telemetry/exponential.rs`).
-- **gRPC** (tonic on 4317) is deferred behind a feature.
+- **gRPC** (built Oct 30): tonic on 4317 behind the moqui-host `grpc` feature (in Enterprise and Maximal), opened by `<telemetry><receiver grpc-enabled="true">`. The collector services share the HTTP receiver's key check, rate limit, concurrency budget, decoder and queue (`monitor/receiver.rs`); the request message reaches the decoder through its serde form (`Decoder::decode_value`), as a protobuf body does. TLS uses the HTTPS listener's certificates with ALPN h2; refusals are gRPC statuses (`monitor/grpc.rs`, test `tests/it/monitor_grpc.rs`).
 - **Pulling** (built Oct 28): ServiceJobs scrape Prometheus-text endpoints (`moqui.monitor.ScrapeTarget`) into `otel_metrics` through the same decoder, so cumulative series become deltas, and run synthetic HTTP checks (`moqui.monitor.SyntheticCheck`), each recorded as a kept, fully sampled root span with its request as a CLIENT child (`telemetry/scrape.rs`, Monitor › Checks).
 
 ### Failure tolerance
@@ -760,7 +760,7 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
   - Require compatibility checks and approvals, with cooldowns, deadlines and an emergency stop.
   - Verify against business health.
   - Advisory by default. Never reverse committed business transactions automatically.
-- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver.
+- **Partitions and gRPC.** Day partitions on the Postgres backend, and the gRPC receiver (built Oct 30).
 - **Dashboards, later:**
   - repeating rows and panels (built Oct 28)
   - node graph, flame graph, funnel and geomap (built Oct 28)
