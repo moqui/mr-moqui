@@ -79,7 +79,7 @@ pub fn install(facade: &EntityFacade, db: &EntityDb, search: Option<&crate::sear
     }
     let runtime = runtime.to_path_buf();
     let runner = Arc::new(move |request: &BackupRequest| run(&targets, &runtime, request));
-    facade.set_backup_runner(Some(runner));
+    moqui_core::backup::set_runner(facade, Some(runner));
 }
 
 fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Result<BackupOutcome, Error> {

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use moqui_lib::env;
 use moqui_lib::node::MNode;
 
-use super::error::Error;
+use super::Error;
 
 #[derive(Clone, Debug)]
 pub struct ComponentInfo {

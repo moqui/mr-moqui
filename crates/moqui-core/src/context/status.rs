@@ -135,16 +135,16 @@ fn data_sources(factory: &ExecutionContextFactory) -> Vec<Value> {
     let Some(facade) = factory.entity() else {
         return Vec::new();
     };
-    let mut groups: Vec<_> = facade.inner.groups.iter().collect();
+    let mut groups: Vec<_> = facade.groups().collect();
     groups.sort_by(|left, right| left.0.cmp(right.0));
     groups
         .into_iter()
-        .map(|(name, group)| {
-            let stats = group.transactions.stats();
+        .map(|(name, dialect, transactions)| {
+            let stats = transactions.stats();
             map(vec![
                 ("group", Value::string(name)),
-                ("uniqueName", Value::string(format!("{name}_{}", group.dialect.name))),
-                ("database", Value::string(&group.dialect.name)),
+                ("uniqueName", Value::string(format!("{name}_{}", dialect.name))),
+                ("database", Value::string(&dialect.name)),
                 (
                     "detail",
                     Value::string(format!(

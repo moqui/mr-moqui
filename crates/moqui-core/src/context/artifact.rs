@@ -22,7 +22,7 @@ use std::time::{Instant, SystemTime};
 
 use moqui_lib::object::Value;
 
-use super::error::Error;
+use super::Error;
 use crate::user::AuthInfo;
 
 struct Frame {

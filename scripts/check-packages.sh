@@ -4,7 +4,7 @@
 # Dev, Lite, Maximal and Enterprise packages of the binary, the host with no features (`cargo lint-min`) and with only
 # the terminal client (the client-only build of `moqui tui --server`) and with only the SMTP listener (which shares the
 # SSH server's request worker handoff and must build without SSH), and the framework with none (what the browser build
-# links); the mail crate without imap (the send half alone, as Lite and Dev link it); the terminal client on its own
+# links); the entity crate alone (without the test-support the workspace's tests turn on); the mail crate without imap (the send half alone, as Lite and Dev link it); the terminal client on its own
 # feature sets (the model alone is what moqui-core's tests link); then the scripted TUI screens on embedded Postgres,
 # which `cargo test` leaves out.
 #   scripts/check-packages.sh [extra clippy args...]
@@ -23,6 +23,7 @@ run -p moqui-host --no-default-features --all-targets "$@"
 run -p moqui-host --no-default-features --features tui --all-targets "$@"
 run -p moqui-host --no-default-features --features inbound-smtp --all-targets "$@"
 run -p moqui-core --no-default-features --all-targets "$@"
+run -p moqui-entity --all-targets "$@"
 run -p moqui-mail --no-default-features --all-targets "$@"
 run -p moqui-tui --no-default-features --features model --all-targets "$@"
 echo "== cargo test -p moqui-host --test tui_screens" >&2

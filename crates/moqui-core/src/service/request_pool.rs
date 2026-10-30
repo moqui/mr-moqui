@@ -184,12 +184,11 @@ pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> 
 }
 
 fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transaction::TransactionManager, Error> {
-    let group = facade.inner.default_group.clone();
+    let group = facade.default_group();
     facade
-        .inner
-        .groups
-        .get(&group)
-        .map(|runtime| runtime.transactions.clone())
+        .groups()
+        .find(|(name, _, _)| *name == group)
+        .map(|(_, _, transactions)| transactions.clone())
         .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group}")))
 }
 

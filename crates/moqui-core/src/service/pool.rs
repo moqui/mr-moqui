@@ -129,8 +129,8 @@ pub(crate) fn cleanup_step(what: &str, work: impl FnOnce()) {
 /// A frame still open after a unit of work was never ended by the code that began it, so nothing decided to keep
 /// its writes; Java's `destroyAllInThread` commits it, and this rolls it back.
 pub(crate) fn rollback_frames(facade: &EntityFacade) {
-    for runtime in facade.inner.groups.values() {
-        rollback_manager(&runtime.transactions);
+    for (_, _, transactions) in facade.groups() {
+        rollback_manager(transactions);
     }
     if let Some(sim) = facade.sim_transactions() {
         rollback_manager(&sim);

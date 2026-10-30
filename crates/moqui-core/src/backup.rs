@@ -79,6 +79,22 @@ pub struct BackupOutcome {
 /// The host's backup. Core calls it and does not start a postmaster itself.
 pub type BackupRunner = Arc<dyn Fn(&BackupRequest) -> Result<BackupOutcome, Error> + Send + Sync>;
 
+/// The facade's slot of the installed runner.
+#[derive(Default)]
+struct RunnerSlot(Option<BackupRunner>);
+
+/// Install the host's embedded-database backup. Absent when this process has no embedded cluster, and the backup
+/// service then reports `skipped`.
+pub fn set_runner(facade: &crate::entity::EntityFacade, runner: Option<BackupRunner>) {
+    facade.with_slot(RunnerSlot::default, |slot| slot.0 = runner);
+}
+
+/// Clone of the installed runner. The slot is not held across the backup.
+#[must_use]
+pub fn runner(facade: &crate::entity::EntityFacade) -> Option<BackupRunner> {
+    facade.with_slot_read(RunnerSlot::default, |slot| slot.0.clone())
+}
+
 /// Tier letter in the archive name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {

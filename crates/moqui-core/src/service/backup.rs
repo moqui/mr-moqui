@@ -46,7 +46,7 @@ pub(super) fn backup_embedded_database(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     // a backup writes files and may upload them: nothing a read or a preview may do
     crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, "backup#EmbeddedDatabase")?;
-    let Some(runner) = facade.backup_runner() else {
+    let Some(runner) = crate::backup::runner(facade) else {
         tracing::info!("embedded database backup skipped, this process has no embedded cluster");
         return Ok(outcome_map(
             &backup::BackupOutcome {

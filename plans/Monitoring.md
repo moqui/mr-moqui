@@ -121,7 +121,7 @@ This is the code as it stood when the plan was written. M1 and M2 replaced the l
   - There is no `tracing-subscriber`, and no OpenTelemetry, prost or tonic crate in `Cargo.lock`.
 - **Spans.** There are two `tracing` spans:
   - `artifact`, opened at each artifact-stack push and closed at pop ([`context/artifact.rs`](../crates/moqui-core/src/context/artifact.rs)). Screens, transitions, services, entities, REST and LLM calls all push frames.
-  - `sql`, in [`entity/exec.rs`](../crates/moqui-core/src/entity/exec.rs).
+  - `sql`, in [`entity/exec.rs`](../crates/moqui-entity/src/entity/exec.rs).
   - There is no request span and no job span.
 - **Hits.** `ExecutionContext::pop` calls `count_artifact_hit` ([`context/factory.rs`](../crates/moqui-core/src/context/factory.rs)).
   - [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs) queues ArtifactHit rows and 900 s ArtifactHitBin bins, and writes them on the scheduler tick and at shutdown.
@@ -337,7 +337,7 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 
 **ArtifactHit and ArtifactHitBin (M2)**
 - **Removed:**
-  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../crates/moqui-core/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
+  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../crates/moqui-entity/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
   - Recording: [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs), `count_artifact_hit`, and the bin flush at shutdown in `moqui-host`.
   - Screens and REST: the System `ArtifactHitSummary.xml` and `ArtifactHitBins.xml` screens, and their REST list entries in `tools/service/moqui.rest.xml`.
   - Cleanup: `clean#ArtifactData` and its `clean_ArtifactData_daily` job, replaced by the telemetry retention job.

@@ -19,7 +19,6 @@ mod cache;
 mod component;
 mod conf;
 mod confcache;
-mod error;
 mod factory;
 pub(crate) mod identity;
 mod locate;
@@ -31,7 +30,6 @@ pub use artifact::AuthzGuard;
 pub use cache::CacheFacade;
 pub use component::{component_entity_dirs, discover_components, ComponentInfo};
 pub use conf::{load_merged_conf, merge_component_confs, merge_conf};
-pub use error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use factory::{
     default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,
     ExecutionContextFactory, Executor,
@@ -39,6 +37,7 @@ pub use factory::{
 pub(crate) use identity::secret_parameter;
 pub use locate::{framework_dir, locate};
 pub use message::{ErrorMark, MessageFacade, ValidationError};
+pub use moqui_entity::error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use resource::millis_of;
 pub(crate) use resource::split_version;
 pub use resource::version_author;

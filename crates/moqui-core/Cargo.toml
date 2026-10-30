@@ -17,7 +17,7 @@ bytes = { workspace = true }
 inventory = { workspace = true }
 moqui-lib = { workspace = true }
 moqui-db = { workspace = true }
-csv = { workspace = true }
+moqui-entity = { workspace = true }
 encoding_rs = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
@@ -28,11 +28,6 @@ opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
 rquickjs = { workspace = true, features = ["macro"] }
-aes = { workspace = true }
-cbc = { workspace = true }
-des = { workspace = true }
-pbkdf2 = { workspace = true }
-md-5 = { workspace = true }
 sha2 = { workspace = true }
 memchr = { workspace = true }
 hmac = { workspace = true }
@@ -56,7 +51,6 @@ rust_xlsxwriter = { workspace = true, optional = true }
 calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
-similar = { workspace = true }
 yrs = { workspace = true }
 pulldown-cmark = { workspace = true }
 notify = { workspace = true, optional = true }
@@ -85,12 +79,14 @@ image = ["dep:image"]
 xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).
-test-support = []
+test-support = ["moqui-entity/test-support"]
 # What only development needs (plans/design-dev-aide.md 3.3): the file watcher that reloads changed artifacts on a dev
 # instance. Off in moqui-core's default; the host's Dev and Debug packages turn it on.
 devtools = ["dep:notify"]
 
 [dev-dependencies]
+# moqui_core::testing in core's own tests.
+moqui-entity = { workspace = true, features = ["test-support"] }
 # Model types only. Revue stays behind moqui-tui's ui feature, which this does not turn on.
 moqui-tui = { workspace = true, default-features = false, features = ["model"] }
 

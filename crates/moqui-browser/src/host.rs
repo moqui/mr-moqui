@@ -299,7 +299,7 @@ pub fn open_entity_facade_for_factory(
         .into_iter()
         .map(|name| moqui_core::entity::EntityGroup::new(name, DIALECT, transactions.clone()))
         .collect();
-    EntityFacade::open_for_factory(factory, "transactional", groups)
+    moqui_core::entity::open_for_factory(factory, "transactional", groups)
 }
 
 #[cfg(test)]

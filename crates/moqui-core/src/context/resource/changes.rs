@@ -28,11 +28,9 @@
 //!   commit's author (name, email and date; the committer stays the current user, now) and its `Moqui-User-Id`; on
 //!   `dbresource://` the history row's `userId` and `versionDate`.
 
-use std::cell::RefCell;
-
 use moqui_lib::object::Value;
 
-use super::{join_location, scheme_of, strip_hash, DbSnap, Error, ResourceFacade, ResourceVersion};
+use super::{join_location, scheme_of, strip_hash, DbSnap, Error, ResourceChangeInfo, ResourceFacade, ResourceVersion};
 use crate::context::{ResourceEntry, ResourceStat};
 use crate::native::ResourceProvider;
 
@@ -91,39 +89,6 @@ impl ResourceChange {
     }
 }
 
-/// Who wrote a version and when, when that is not the current user now: a version copied with its history from other
-/// storage. Either part may be empty, which is the current user or now.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct VersionAuthor {
-    pub user_id: Option<String>,
-    /// Milliseconds since the epoch.
-    pub date: Option<i64>,
-}
-
-thread_local! {
-    static VERSION_AUTHOR: RefCell<Option<VersionAuthor>> = const { RefCell::new(None) };
-}
-
-/// Run `body` with the versions it writes (on `git://` and `dbresource://`) attributed to `author`, then put back the
-/// author that was set before. `None` writes as the current user, now.
-pub fn with_version_author<T>(author: Option<VersionAuthor>, body: impl FnOnce() -> T) -> T {
-    struct Restore(Option<VersionAuthor>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            let previous = self.0.take();
-            VERSION_AUTHOR.with(|cell| *cell.borrow_mut() = previous);
-        }
-    }
-    let previous = VERSION_AUTHOR.with(|cell| cell.replace(author));
-    let _restore = Restore(previous);
-    body()
-}
-
-/// The author [`with_version_author`] set for the writes on this thread, if any.
-pub fn version_author() -> Option<VersionAuthor> {
-    VERSION_AUTHOR.with(|cell| cell.borrow().clone())
-}
-
 /// What a change set did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChangeSetOutcome {
@@ -133,40 +98,6 @@ pub struct ChangeSetOutcome {
     pub applied: Vec<String>,
     /// `(path, error)` for each change that did not apply.
     pub failures: Vec<(String, String)>,
-}
-
-/// The last change of a file or directory.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ResourceChangeInfo {
-    pub is_file: bool,
-    /// A file's bytes.
-    pub size: Option<u64>,
-    /// The version that last changed it: a commit id on `git://` (for a directory, the last commit under it), the
-    /// current version on `dbresource://`.
-    pub version_name: Option<String>,
-    /// Milliseconds since the epoch.
-    pub date: Option<i64>,
-    pub user_id: Option<String>,
-    pub note: Option<String>,
-}
-
-impl ResourceChangeInfo {
-    /// `{isFile, size, versionName, date, userId, note}` for a script.
-    pub fn to_value(&self) -> Value {
-        let mut map = indexmap::IndexMap::new();
-        map.insert("isFile".to_string(), Value::Bool(self.is_file));
-        map.insert(
-            "size".to_string(),
-            self.size
-                .map_or(Value::Null, |size| Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
-        );
-        let text = |value: &Option<String>| value.as_ref().map_or(Value::Null, Value::string);
-        map.insert("versionName".to_string(), text(&self.version_name));
-        map.insert("date".to_string(), self.date.map_or(Value::Null, Value::I64));
-        map.insert("userId".to_string(), text(&self.user_id));
-        map.insert("note".to_string(), text(&self.note));
-        Value::Map(map)
-    }
 }
 
 /// One entry of a change log: a version, and the paths it changed under the location asked about (relative to it;

@@ -14,6 +14,7 @@ resolver = "2"
 members = [
     "crates/moqui-lib",
     "crates/moqui-db",
+    "crates/moqui-entity",
     "crates/moqui-core",
     "crates/moqui-llm",
     "crates/moqui-git",
@@ -53,6 +54,8 @@ unexpected_cfgs = { level = "deny", priority = -1 }
 [workspace.dependencies]
 moqui-lib = { path = "crates/moqui-lib" }
 moqui-db = { path = "crates/moqui-db" }
+# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/Crate-Split.md).
+moqui-entity = { path = "crates/moqui-entity" }
 # default-features off so moqui-browser can leave out mail, http, and cluster-tls; moqui-host names them.
 moqui-core = { path = "crates/moqui-core", default-features = false }
 # The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.

@@ -23,7 +23,7 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 
 ```
 moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features)
-              moqui-host → moqui-core → moqui-db → moqui-lib
+              moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
 moqui-llm, moqui-git, moqui-mail → moqui-core
 moqui-browser → moqui-core (default-features = false)
 ```
@@ -32,6 +32,7 @@ moqui-browser → moqui-core (default-features = false)
 | --- | --- |
 | `moqui-lib` | Helpers that need no ExecutionContext and know nothing of the framework: text, numbers, dates, XML nodes, barcodes, `sync`. |
 | `moqui-db` | The entity model, SQL text and dialects. No facades and no database driver. |
+| `moqui-entity` | The entity facade, the transaction manager and the `DbDriver` port. No ExecutionContext: what it needs of the thread's context (the user, authorization, scripts, services, entity ECA rules) it calls through `moqui_entity::hooks`, which core fills. Core re-exports it at `moqui_core::entity`, `transaction`, `driver` and `context::Error`; code above core uses those paths. |
 | `moqui-core` | The framework: the ExecutionContext and facades, screens, services, scripts. Synchronous, on `std::thread`. |
 | `moqui-llm` | The agent runtime and model providers. Core reaches it only through the hook traits in `moqui_core::llm_hooks`, so an edit here does not rebuild the framework. |
 | `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/Crate-Split.md)). |
@@ -47,9 +48,12 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 
 - Put code in the lowest crate that can hold it. A helper that needs no ExecutionContext goes in `moqui-lib`.
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the
-  lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm`. A crate
-  that only adds services, tools and resource providers submits a `moqui_core::extension::Extension` (`moqui-git`,
-  `moqui-mail`).
+  lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm` and core's
+  `entity_hooks.rs` does for `moqui_entity::hooks`. A crate that only adds services, tools and resource providers
+  submits a `moqui_core::extension::Extension` (`moqui-git`, `moqui-mail`).
+- An entity facade test that needs an entered ExecutionContext, a script or a service is in core
+  (`crates/moqui-core/src/entity/*_tests.rs`); the others are in `moqui-entity`, where no hooks are linked and each
+  hook answers as with no context entered.
 - Do not move code between crates as part of other work; a new crate or a move needs its own plan
   ([Crate-Split](../../plans/Crate-Split.md) is the current one, with the seam rules and the files a new crate touches).
 - A feature-gated module has an off stub with the same API, so callers need no `cfg` of their own:
@@ -238,7 +242,7 @@ let (Some(&first), Some(&last)) = (buckets.keys().next(), buckets.keys().next_ba
 
 ### 5f. Already right
 
-- `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-core/src/entity/facade.rs`) states its
+- `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-entity/src/entity/facade.rs`) states its
   invariant. This is the model for `expect` messages: say why the value is there, not "failed to …".
 - `unwrap_or`, `unwrap_or_default`, `unwrap_or_else(PoisonError::into_inner)`.
 

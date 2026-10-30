@@ -66,7 +66,8 @@ one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `ll
 through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
 framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
 way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
-`moqui_core::extension`.
+`moqui_core::extension`. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
+build, with no features of its own.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|---|

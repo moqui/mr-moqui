@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use moqui_lib::node::MNode;
 
-use super::error::Error;
+use super::Error;
 
 /// The runtime conf merged over the default, like Java's `moqui.conf`. A process property `MOQUI_CONF` names it,
 /// then the environment variable of the same name. Relative to the runtime directory or absolute, and a named file

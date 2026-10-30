@@ -1,0 +1,41 @@
+# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/Crate-Split.md). Its own crate so an
+# edit in core (screens, services, scripts) does not recompile it. It does not know the ExecutionContext: where it
+# needs the thread's context (the user, authorization, scripts, services, ECA rules) it calls moqui_entity::hooks,
+# which core fills with an inventory entry. Core re-exports its modules at their old paths (moqui_core::entity,
+# transaction, driver, context::Error).
+
+[package]
+name = "moqui-entity"
+description = "Entity facade, transaction manager and DbDriver. No ExecutionContext and no database driver."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-lib = { workspace = true }
+moqui-db = { workspace = true }
+aes = { workspace = true }
+base64 = { workspace = true }
+cbc = { workspace = true }
+csv = { workspace = true }
+des = { workspace = true }
+getrandom = { workspace = true }
+indexmap = { workspace = true }
+inventory = { workspace = true }
+jiff = { workspace = true }
+md-5 = { workspace = true }
+pbkdf2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+similar = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+
+[features]
+# moqui_entity::testing, the in-memory entity facade, and the test helpers of the crates on this one.
+test-support = []
+
+[lints]
+workspace = true

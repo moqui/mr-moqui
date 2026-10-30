@@ -19,7 +19,7 @@ use moqui_lib::cache::{CacheConfig, CacheInfo, MCache, MCacheManager};
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
-use super::error::Error;
+use super::Error;
 
 pub struct CacheFacade {
     manager: MCacheManager,

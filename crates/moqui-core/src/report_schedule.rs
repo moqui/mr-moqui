@@ -797,9 +797,9 @@ fn with_suspended_groups<T>(
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
     let mut suspended = SuspendedGroups(Vec::new());
-    for group in facade.inner.groups.values() {
-        if group.transactions.suspend()? {
-            suspended.0.push(group.transactions.clone());
+    for (_, _, transactions) in facade.groups() {
+        if transactions.suspend()? {
+            suspended.0.push(transactions.clone());
         }
     }
     if let Some(tx) = facade.sim_transactions() {

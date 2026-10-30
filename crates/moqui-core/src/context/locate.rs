@@ -119,29 +119,7 @@ pub fn locate(location: &str) -> Result<PathBuf, Error> {
     Ok(PathBuf::from(location))
 }
 
-/// Resolve a local file location without turning a relative directory into an authority.
-pub(super) fn file_path(location: &str) -> Result<PathBuf, Error> {
-    let Some(rest) = location.strip_prefix("file:") else {
-        return Ok(PathBuf::from(location));
-    };
-    let path = match rest.strip_prefix("//") {
-        Some(rest) => {
-            let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
-            if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-                return Err(Error::new(format!(
-                    "file resource has a non-local authority: {location}"
-                )));
-            }
-            if path.is_empty() {
-                "/".to_string()
-            } else {
-                format!("/{path}")
-            }
-        }
-        None => rest.to_string(),
-    };
-    Ok(PathBuf::from(path))
-}
+pub(super) use moqui_entity::resource::file_path;
 
 fn component_root(roots: &Roots, name: &str) -> Option<PathBuf> {
     if let Some((_, location)) = roots.components.iter().find(|(known, _)| known == name) {

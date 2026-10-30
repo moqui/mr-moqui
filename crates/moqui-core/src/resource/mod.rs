@@ -15,10 +15,8 @@
 //! Resource revision support behind the resource facade (`crate::context::resource`): line diffs of versions. The
 //! `git://` location scheme is moqui-git's. Guide: `docs/data/Revision-Management.md`.
 
-pub mod blob;
 pub mod locks;
-pub mod source;
-pub mod textdiff;
+pub use moqui_entity::resource::{blob, source, textdiff, version};
 
 /// An attribute of the conf's `resource-facade` in the current context's factory, `${}` expanded and trimmed; empty
 /// when there is no current context or the conf leaves it out.

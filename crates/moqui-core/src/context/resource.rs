@@ -18,33 +18,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
-use moqui_lib::object::Value;
 use moqui_lib::resource::{FileResource, Resource};
 
-use super::error::Error;
+use super::Error;
 use crate::entity::{DbResourceInfo, EntityFacade};
 use crate::resource::textdiff::{self, TextDiff};
 
 mod changes;
+pub use crate::resource::version::version_author;
+pub use crate::resource::version::{with_version_author, ResourceChangeInfo, ResourceVersion, VersionAuthor};
 use changes::db_file_size;
 pub use changes::millis_of;
-pub use changes::version_author;
 pub(crate) use changes::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
-pub use changes::{
-    with_version_author, ChangeLogEntry, ChangeSetOutcome, ResourceChange, ResourceChangeInfo, VersionAuthor,
-};
-
-/// One version of a file, as Java's `ResourceReference.Version`: a `dbresource` history row, or a commit of a `git`
-/// file. `version_date` is a Timestamp value. `note` is what was written with the version: the commit message (without
-/// its `Moqui-User-Id` trailer) of a `git` file, the `versionNote` of a `dbresource` one.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResourceVersion {
-    pub version_name: String,
-    pub previous_version_name: Option<String>,
-    pub version_date: Value,
-    pub user_id: Option<String>,
-    pub note: Option<String>,
-}
+pub use changes::{ChangeLogEntry, ChangeSetOutcome, ResourceChange};
 
 /// A resolved resource with its logical location.
 ///

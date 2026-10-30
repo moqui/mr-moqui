@@ -4136,16 +4136,12 @@ dependencies = [
 name = "moqui-core"
 version = "0.1.0"
 dependencies = [
- "aes",
  "ammonia",
  "argon2",
  "base64 0.22.1",
  "bytes",
  "calamine",
- "cbc",
  "croner",
- "csv",
- "des",
  "encoding_rs",
  "flate2",
  "getrandom 0.3.4",
@@ -4155,9 +4151,9 @@ dependencies = [
  "indexmap",
  "inventory",
  "jiff",
- "md-5 0.10.6",
  "memchr",
  "moqui-db",
+ "moqui-entity",
  "moqui-lib",
  "moqui-tui",
  "notify",
@@ -4168,7 +4164,6 @@ dependencies = [
  "oxc_ast",
  "oxc_parser",
  "oxc_span",
- "pbkdf2 0.12.2",
  "prost",
  "pulldown-cmark",
  "rcgen",
@@ -4179,7 +4174,6 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
- "similar",
  "tar",
  "totp-rs",
  "tracing",
@@ -4193,6 +4187,31 @@ version = "0.1.0"
 dependencies = [
  "moqui-lib",
  "tracing",
+]
+
+[[package]]
+name = "moqui-entity"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64 0.22.1",
+ "cbc",
+ "csv",
+ "des",
+ "getrandom 0.3.4",
+ "indexmap",
+ "inventory",
+ "jiff",
+ "md-5 0.10.6",
+ "moqui-db",
+ "moqui-lib",
+ "pbkdf2 0.12.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "similar",
+ "tracing",
+ "zip",
 ]
 
 [[package]]

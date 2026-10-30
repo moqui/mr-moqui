@@ -41,9 +41,9 @@ use super::cache::CacheFacade;
 use super::component::{self, ComponentInfo};
 use super::conf;
 use super::confcache::ConfCache;
-use super::error::Error;
 use super::message::MessageFacade;
 use super::resource::ResourceFacade;
+use super::Error;
 use crate::entity::EntityFacade;
 use crate::user::AuthInfo;
 

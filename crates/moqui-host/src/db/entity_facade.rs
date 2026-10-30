@@ -84,7 +84,7 @@ pub fn open_entity_facade_for_factory(
     tx.configure_from_conf(&conf)?;
     let mut groups = vec![moqui_core::entity::EntityGroup::new("transactional", dialect, tx)];
     groups.extend(other_groups(&conf, &driver));
-    EntityFacade::open_for_factory(factory, "transactional", groups)
+    moqui_core::entity::open_for_factory(factory, "transactional", groups)
 }
 
 /// The entity groups of the conf's other `<datasource>` elements, each with a pool of its own, as Java opens each

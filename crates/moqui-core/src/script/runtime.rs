@@ -1771,12 +1771,12 @@ fn transaction_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
 
 fn default_transactions(ctx: &Ctx<'_>) -> rquickjs::Result<crate::transaction::TransactionManager> {
     let facade = facade_of(ctx)?;
-    let group = facade.inner.default_group.clone();
-    facade
-        .inner
-        .groups
-        .get(&group)
-        .map(|runtime| runtime.transactions.clone())
+    let group = facade.default_group();
+    let transactions = facade
+        .groups()
+        .find(|(name, _, _)| *name == group)
+        .map(|(_, _, transactions)| transactions.clone());
+    transactions
         .ok_or_else(|| Exception::throw_message(ctx, &format!("no transaction manager for entity group {group}")))
 }
 

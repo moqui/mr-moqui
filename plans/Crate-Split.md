@@ -1,7 +1,8 @@
 # Crate Split
 
-Status 2026-10-30: Phases 0 to 2 done (9788e711, 0bda5fdc, 9aa631f9: `moqui_core::extension`, `moqui-git`,
-`moqui-mail`); Phase 3 next ([Phase 3 in detail](#phase-3-in-detail), [Resuming](#resuming)). Splits
+Status 2026-10-30: Phases 0 to 3 done (9788e711, 0bda5fdc, 9aa631f9 and the Phase 3 commit: `moqui_core::extension`,
+`moqui-git`, `moqui-mail`, `moqui-entity`); Phase 4 next ([Phases 4 to 6 in detail](#phases-4-to-6-in-detail),
+[Resuming](#resuming)). Splits
 `moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
 so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
 whose "few, larger crates" rule this replaces
@@ -46,7 +47,7 @@ frontend.
 | 0 (done, 9788e711) | | baseline, this plan, the SMTP listener's build without SSH | | |
 | 1 (done, 0bda5fdc) | `moqui-git` | core `resource/git/`, `service/git.rs`, `service/git_hosting.rs` | 17,500 | `moqui_core::extension` (new): services, the `git://` resource provider |
 | 2 (done, 9aa631f9) | `moqui-mail` | core `service/mail/` except `contacts.rs` (now `service/contacts.rs`) | 13,200 | services, idle stop at shutdown (`before_shutdown`) |
-| 3 | `moqui-entity` (below core) | core `entity/`, `transaction/`, `driver.rs`, `testing.rs`, `context/error.rs`, `resource/{blob,source,textdiff}.rs` | 31,000 | `EntityHooks`: ambient, authz, script, services (EECA run), observers |
+| 3 (done) | `moqui-entity` (below core) | core `entity/`, `transaction/`, `driver.rs`, `testing.rs`, `context/error.rs`, `resource/{blob,source,textdiff}.rs`, `user/period.rs` | 31,000 | `moqui_entity::hooks::EntityHooks`: ambient, authz, script, services (EECA run), observers |
 | 4 | `moqui-report` | core `report/`, `report_schedule.rs`, `monitor.rs` | 10,700 | native registrations, shipped reports after boot |
 | 5 | `moqui-collab`, `moqui-dav`, `moqui-devkit` | core `collab/`; `dav/`, `pim/`, elFinder; devtools, typegen, the lint and convert tools, testkit | 1,900; 8,000; 14,000 | services, tools |
 | 6 | `moqui-drivers`, `moqui-test-client` | host `db/`; host `test_client/` and test discovery | 9,000; 7,000 | none (direct calls) |
@@ -64,53 +65,53 @@ hosts. SSH protocol code is host `ssh/` (3,600 lines), a hub over the terminal, 
 core's part is the 750-line `sftp.rs` port. It is split only if the host edit timings after Phase 6 call for it, with a
 shared host-edge crate (the edge runtime, TLS, the cluster edge, the request-worker handoff) first.
 
-## Phase 3 in detail
+## Phase 3, as done
 
-`moqui-entity` depends only on `moqui-db` and `moqui-lib`, and core depends on it. It gets:
+`moqui-entity` depends only on `moqui-db` and `moqui-lib`, and core depends on it. It has `entity/`, `transaction/`,
+`driver.rs`, `testing.rs` (behind its `test-support`, which core's turns on), `error.rs` (core's `context/error.rs`),
+`period.rs` (core's `user/period.rs`), and `resource/{blob,source,textdiff,version}.rs`, `version.rs` holding
+`ResourceVersion`, `ResourceChangeInfo`, `VersionAuthor` and the version-author thread-local, taken out of
+`context/resource.rs` and `context/resource/changes.rs`.
 
-- all of `entity/`, except `EntityFacade::open_for_factory` (`entity/facade.rs`), which becomes a core free function;
-- `transaction/` and `driver.rs`;
-- `testing.rs`, the in-memory facade, behind `test-support`;
-- `context/error.rs` (`Error`, `ErrorKind`);
-- what dbresource needs: `resource/blob.rs`, `source.rs` and `textdiff.rs`, with `ResourceVersion`,
-  `ResourceChangeInfo`, `VersionAuthor` and the thread-local of `context/resource/changes.rs`. Moving them is simpler
-  than turning `impl EntityFacade` blocks into an extension trait.
+Core keeps its paths: `driver` and `transaction` are re-exports, `context::Error` and `ErrorKind`, `resource::{blob,
+source, textdiff, version}`, `user::period_range` and `telemetry::redact_sql` too. Core's `entity` module is its own
+(`pub use moqui_entity::entity::*`) and adds `open_for_factory`, which was an `EntityFacade` associated function and is
+now `moqui_core::entity::open_for_factory` (the host and the browser call it).
 
-The research behind it: EntityFacade, EntityValue and EntityFind hold no ExecutionContext. Every reach into core goes
-through the ambient thread-local (`ExecutionContext::with_current`) or a free function that wraps it: about 70 call
-sites in about 20 files. `transaction/` and `driver.rs` use only `context::Error` and one executor check.
+The hook table is `moqui_entity::hooks::EntityHooks`, one struct of fn pointers that core submits through inventory
+(`crates/moqui-core/src/entity_hooks.rs`); `hooks::get()` answers `EntityHooks::NONE` when none is linked, which is what
+code outside an entered context saw before. Its entries are the ones listed in the plan, plus:
 
-**Core keeps its paths.** It re-exports `pub use moqui_entity::{entity, driver, transaction}`, `context::Error` and
-`resource::{blob, source, textdiff}`, so the host (about 118 references), moqui-llm (about 115), dev-aide and
-moqui-browser keep their `moqui_core::entity::...` paths.
+- `inline_executor` in place of a flag on the TransactionManager for `single_threaded`: managers are made before the
+  factory that knows its executor, and the check was per entered context anyway.
+- `trace_statement`, returning a `StatementTrace` that holds the span, its attached context and the duration metric;
+  the statement counters and the slow-statement warning stay in `entity/exec.rs`, and so does `redact_sql`.
+- `locate`, whose no-context answer resolves a plain or `file:` path as core did (`moqui_entity::resource::file_path`,
+  which core's `context/locate.rs` uses too).
+- the script entries are frame push and pop, set name, eval, expand, context value and the map and items of a script
+  value, so each call site keeps its shape (`hooks::ScriptFrame`).
 
-**One hook table**, `moqui_entity::hooks::EntityHooks`, which core submits through inventory (as `llm_hooks`). When none
-is linked, each entry answers as "no context entered", the branch the context-free tests already exercise. The entries:
+Smaller changes: the backup runner is a facade slot (`moqui_core::backup::set_runner` and `runner`, called by the host
+and `service/backup.rs`); the sites that read `facade.inner` use `EntityFacade::groups`, `default_group` and
+`identity`; `db_system` is an accessor; `rule_actions::first_condition` is `entity::load_feed::first_condition`; about
+40 entity items core uses are `pub`, and a few only core's tests use (`FkScope`, `expand_prefix`,
+`EntityFind::conditions`, `EntityValue::from_read_fields`, `transaction::single_threaded`) are `pub` behind
+`test-support` with `#[doc(hidden)]`.
 
-- ambient: entered, the current facade, effective now, user, visit and agent id, in-group, locale and time zone (for an
-  entity-local `convert` that replaces `l10n::basic_convert`), period range, entity ECA disabled, conf setting, locate,
-  messages and errors, and the no-search-params flag;
-- authz: disabled, a disable guard, the push and pop of `AT_ENTITY` (`entity/value.rs`), hit detail, stack names, the
-  find and view filters (`entity/find.rs`, `entity/query_rest.rs`) and `note_write` (`entity/value.rs`);
-- script: eval, expand, context value, and the object map and items;
-- services: `run_eca`, which runs core `service/eca.rs`. Rule parsing and matching (`load_feed/eca.rs`) moves down, and
-  `rule_actions::first_condition` with it. The others are the audit-log create (`entity/field_rw.rs`), entity-auto REST
-  writes (`entity/query_rest.rs`), `store_entity`, data-file services, the service name and registration failures (the
-  loader), and feed receive;
-- observers: the cluster cache-invalidation note (`entity/cache.rs`) and the SQL span and duration (`entity/exec.rs`).
+Tests: 232 moved with the crate and pass there with no hooks linked. Those that need an entered context, the script
+runtime or a service (a field default that is an expression, the audit-log service, ECA rules, `store_entity`, the
+session time zone and locale, the shared entity values of a script) are in core, `crates/moqui-core/src/entity/
+{tests, load_feed_tests, search_form_tests, dbresource_tests, field_rw_tests, document_tests}.rs`, with copies of the
+fake drivers they use. The blob and most dbresource tests entered a context only for authorization and now run
+without one.
 
-Smaller changes: `transaction`'s `single_threaded` becomes a flag core sets on the TransactionManager; `backup_runner`
-becomes a `with_slot` entry; the six sites that read `facade.inner.groups` or `default_group` directly get accessors
-(`report_schedule.rs`, `service/pool.rs`, `testkit/run.rs`, `service/request_pool.rs`, `script/runtime.rs`,
-`context/status.rs`); about 35 `pub(crate)` entity items that core uses become `pub` (`exec::{execute_tx,
-with_reserve_tx}`, `find_by_pk`, the generation counters).
+What Phase 3 showed about a move below core:
 
-Order within the phase, one checkable step at a time: (1) `error.rs`, `driver.rs` and `transaction/`; (2) the hook table
-and the call-site rewrite, done inside core while entity is still a module there; (3) the move itself; (4) the tests.
-The cache, document, data_writer, find, etl, fence, sequence, datasource and transaction tests move unchanged; about 23
-tests that call `test_context` stay in core as `entity_ec_tests` (in `entity/tests.rs`, `load_feed/tests.rs`,
-`search_form_tests`, `dbresource_tests`, `field_rw_tests` and the `exec.rs` inline tests). Build the wasm browser
-(`scripts/wasm-env.sh`, then moqui-browser) after the move: it links core without features.
+- Rewrite the call sites to the hook table while the code is still in core (it compiles and its tests run unchanged),
+  then move; the move is then the visibility changes the compiler names and the test split.
+- A test that compiles in the lower crate can still need core at run time: run the crate's tests and move those that
+  fail on a hook's no-context answer ("no script runtime", "no service facade").
+- `cargo fix` clears the imports the split leaves unused; a scripted split that copies helpers can copy one twice.
 
 ## Phases 4 to 6 in detail
 
@@ -177,20 +178,22 @@ Verification of a phase:
 - `cargo tree -p moqui-core -e normal` to confirm the dependencies that left;
 - the touch set below, before and after, in the commit message and the table.
 
-Test infrastructure since Phase 2 (in place for Phase 3): a host integration test is a module of `crates/moqui-host/
+Test infrastructure since Phase 2: a host integration test is a module of `crates/moqui-host/
 tests/it`, not a new file under `tests/`; one that starts a server begins with `if !crate::common::own_process() {
 return; }` (78b74633); a test over about 15 seconds is for special cases and one over 30 seconds is marked slow
 (docs/Build-Test.md "Slow tests"); the dev profile keeps dependency debug info to line tables and splits the rest out
-of the binaries (e98c1c8e), so the `cargo test --no-run` row below must be measured again before it is compared.
+of the binaries (e98c1c8e); the `cargo test --no-run` row below was measured again under it for Phase 3.
 
 ## Measuring
 
-The touch set: one probe edit (a dead private function appended, then the file restored) in each of core
-`entity/value.rs`, `service/call.rs`, `screen/render.rs`, `resource/git/mod.rs`, `service/mail/implementation.rs`
-(the send path; `sync.rs` is `imap`, which the Dev package leaves out), host `http.rs` and `db/pgwire.rs`, each rebuilt
-twice with `cargo build --profile develop --no-default-features --features dev -p moqui` (the Dev package, `./moq
-build`), on a warm cache with no other build running. A file that moved is probed at its new path. The probe, for each
-file (restore the file afterwards, and build once more so the cache is warm for the next):
+The touch set: one probe edit (a dead private function appended, then the file restored) in each of
+`entity/value.rs` (moqui-entity since Phase 3), core `service/call.rs`, `screen/render.rs`, `resource/git/mod.rs`,
+`service/mail/implementation.rs` (the send path; `sync.rs` is `imap`, which the Dev package leaves out), host `http.rs`
+and `db/pgwire.rs`, each rebuilt twice with `cargo build --profile develop --no-default-features --features dev -p
+moqui` (the Dev package, `./moq build`), on a warm cache with no other build running. A file that moved is probed at
+its new path. To take the "Before" column of a phase with its work in the tree, commit the work on a branch, switch
+back to master's HEAD for the probe, and switch back. The probe, for each file (restore the file afterwards, and build
+once more so the cache is warm for the next):
 
 ```sh
 cp "$f" "$f.orig"
@@ -206,16 +209,16 @@ mv "$f.orig" "$f"
 
 Add `--timings` to one run to see where an edit's time goes (`target/cargo-timings/`).
 
-| Edit in | Before (2026-10-29) | After Phase 1 | After Phase 2 |
-|---|---|---|---|
-| core `entity/value.rs` | 16.4 s, 15.2 s | 13.1 s, 13.0 s | 13.7 s, 13.7 s |
-| core `service/call.rs` | 15.5 s, 15.5 s | 13.5 s, 13.4 s | 13.7 s, 13.6 s |
-| core `screen/render.rs` | 15.1 s, 14.8 s | 13.0 s, 13.0 s | 13.8 s, 13.7 s |
-| git `lib.rs` (core `resource/git/mod.rs` before) | 15.1 s, 15.0 s | 2.5 s, 2.5 s | 2.5 s, 2.5 s |
-| mail `implementation.rs` (core `service/mail/implementation.rs` before) | | 13.2 s, 13.1 s | 2.2 s, 2.2 s |
-| host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s | 2.0 s, 2.0 s |
-| host `db/pgwire.rs` | 2.5 s, 2.3 s | | |
-| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s | (not taken; the dev profile changed in e98c1c8e) |
+| Edit in | Before (2026-10-29) | After Phase 1 | After Phase 2 | Before Phase 3 (86c9e10e) | After Phase 3 |
+|---|---|---|---|---|---|
+| `entity/value.rs` (entity since Phase 3, core before) | 16.4 s, 15.2 s | 13.1 s, 13.0 s | 13.7 s, 13.7 s | 14.2 s, 13.9 s | 10.6 s, 10.5 s |
+| core `service/call.rs` | 15.5 s, 15.5 s | 13.5 s, 13.4 s | 13.7 s, 13.6 s | 13.8 s, 14.7 s | 10.8 s, 9.9 s |
+| core `screen/render.rs` | 15.1 s, 14.8 s | 13.0 s, 13.0 s | 13.8 s, 13.7 s | 13.9 s, 13.9 s | 9.9 s, 9.9 s |
+| git `lib.rs` (core `resource/git/mod.rs` before) | 15.1 s, 15.0 s | 2.5 s, 2.5 s | 2.5 s, 2.5 s | 2.7 s, 2.6 s | 2.6 s, 2.6 s |
+| mail `implementation.rs` (core `service/mail/implementation.rs` before) | | 13.2 s, 13.1 s | 2.2 s, 2.2 s | 2.2 s, 2.2 s | 2.2 s, 2.3 s |
+| host `http.rs` | 2.0 s, 1.9 s | 2.0 s, 1.9 s | 2.0 s, 2.0 s | 2.0 s, 2.0 s | 2.0 s, 2.0 s |
+| host `db/pgwire.rs` | 2.5 s, 2.3 s | | | 2.5 s, 2.0 s | 2.0 s, 3.0 s |
+| `cargo test -p moqui-core --no-run`, core `service/call.rs` | 9.5 s, 9.7 s | 9.5 s, 8.7 s | (not taken) | 7.7 s, 7.7 s | 6.7 s, 7.0 s |
 
 Where a core edit's 15 s goes (`--timings`, `service/call.rs`): `moqui-core` 14.5 s, its metadata ready at about 5 s, so
 `moqui-llm` (2.1 s) and `moqui-host` (3.1 s) finish while core is still in codegen, and the binary links (0.3 s) after
@@ -230,5 +233,11 @@ and `moqui-host` (3.0 s) beside its codegen, and the binary link (0.3 s). The De
 so a core edit there is unchanged within the spread of these runs; what the phase buys is an edit in mail (13.2 s to
 2.2 s), and core no longer compiles lettre, imap and mail-parser, nor the receive half in the packages with `imap`.
 
-So the host splits of Phase 6 save little on an edit (the host is 2 s) and are for modularity and the clean build;
-they wait on the numbers after Phase 3.
+Before Phase 3, the same edit: `moqui-core` 13.4 s, with `moqui-llm` (2.6 s) and `moqui-host` (3.0 s) beside it.
+After Phase 3: `moqui-core` 9.4 s, then `moqui-git` (0.6 s), `moqui-llm` (2.1 s) and `moqui-host` (1.9 s) beside its
+codegen, and the binary link (0.3 s). An edit in the entity facade compiles `moqui-entity` (0.8 s) and then core
+(9.5 s): core depends on it, so it still rebuilds core, but core's own frontend is smaller by the 31,000 lines, and
+every core edit is about 4 s shorter.
+
+So the host splits of Phase 6 save little on an edit (the host is 2 s) and are for modularity and the clean build; a
+core edit is now about 10 s, all of it core's own compile.

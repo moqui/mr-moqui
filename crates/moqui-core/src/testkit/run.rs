@@ -1118,10 +1118,10 @@ fn run_thread(
     };
     let out = if transaction {
         match factory.entity() {
-            Some(facade) => match facade.inner.groups.get(&facade.inner.default_group) {
-                Some(group) => group
-                    .transactions
-                    .run(crate::transaction::TransactionAttribute::UseOrBegin, None, body),
+            Some(facade) => match facade.default_transactions().ok() {
+                Some(transactions) => {
+                    transactions.run(crate::transaction::TransactionAttribute::UseOrBegin, None, body)
+                }
                 None => body(),
             },
             None => body(),

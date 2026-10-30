@@ -280,8 +280,7 @@ impl std::fmt::Debug for ExpandedParams {
 
 /// The facade's identity. The weak reference keeps the address from being reused while it is held.
 fn facade_key(facade: &EntityFacade) -> Weak<dyn Any + Send + Sync> {
-    let inner: Arc<dyn Any + Send + Sync> = facade.inner.clone();
-    Arc::downgrade(&inner)
+    facade.identity()
 }
 
 /// The in-parameters of `def` with `auto-parameters` expanded, made at the first call and kept on the definition.

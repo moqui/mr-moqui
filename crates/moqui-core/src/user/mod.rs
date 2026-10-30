@@ -20,7 +20,6 @@ mod factor;
 mod filter;
 mod login;
 mod password;
-mod period;
 mod policy;
 mod preference;
 pub mod session;
@@ -47,8 +46,8 @@ pub use login::{
 pub(crate) use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
+pub use moqui_entity::period::period_range;
 pub use password::{hash_login_key, hash_password};
-pub use period::period_range;
 pub use policy::password_acceptable;
 pub use preference::{
     current_user_external, get_preference, get_preference_for, get_preferences, has_permission, is_external_user,

@@ -21,9 +21,10 @@ pub mod collab;
 pub mod context;
 pub mod dav;
 pub mod devtools;
-pub mod driver;
+pub use moqui_entity::driver;
 pub mod edi;
 pub mod entity;
+pub mod entity_hooks;
 pub mod extension;
 pub mod l10n;
 pub mod llm_hooks;
@@ -46,9 +47,9 @@ pub mod telemetry;
 // the in-memory entity facade of the tests, here and in moqui-llm's (the test-support feature)
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
-pub mod testing;
+pub use moqui_entity::testing;
 pub mod testkit;
-pub mod transaction;
+pub use moqui_entity::transaction;
 pub mod typegen;
 pub mod user;
 pub mod web;
