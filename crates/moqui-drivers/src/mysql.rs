@@ -27,7 +27,7 @@ mod driver {
     use mysql::prelude::Queryable;
     use mysql::Value as MysqlValue;
 
-    use crate::db::statement_lru::StatementLru;
+    use crate::statement_lru::StatementLru;
 
     const STATEMENT_CACHE_CAP: usize = 100;
     /// MySQL `character_set` 63 is `binary`.
@@ -99,7 +99,7 @@ mod driver {
     /// has `max_statement_time` in seconds; MySQL has `max_execution_time` in milliseconds, which bounds only SELECT.
     fn timeout_sql(mariadb: bool, remaining: Option<std::time::Duration>) -> Result<String, Error> {
         let ms = match remaining {
-            Some(remaining) => crate::db::timeout_millis(remaining)?,
+            Some(remaining) => crate::timeout_millis(remaining)?,
             None => 0,
         };
         Ok(if mariadb {

@@ -1,0 +1,48 @@
+# The database drivers (plans/Crate-Split.md): Postgres on the host's own blocking client (postgres-protocol, over TCP,
+# TLS or a Unix socket), MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens
+# the entity facade over them. Taken out of moqui-host so a host edit does not compile them or rewrite their part of
+# its rlib; no Tokio. moqui-host links it as `moqui_host::db` and forwards the features.
+
+[package]
+name = "moqui-drivers"
+description = "Database drivers: Postgres, MySQL and embedded Postgres."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Postgres embedded in the process (theseus archive, staged by build.rs).
+embedded-postgres = ["postgres", "dep:postgresql_embedded", "dep:tar", "dep:flate2"]
+postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterator", "dep:webpki-roots"]
+mysql = ["dep:mysql"]
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+jiff = { workspace = true }
+rustls = { workspace = true }
+tracing = { workspace = true }
+postgresql_embedded = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+postgres-protocol = { workspace = true, optional = true }
+postgres-types = { workspace = true, optional = true }
+fallible-iterator = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+mysql = { workspace = true, optional = true }
+
+# build.rs stages and checks the Postgres archive of embedded-postgres.
+[build-dependencies]
+tar = { workspace = true }
+flate2 = { workspace = true }
+
+[dev-dependencies]
+moqui-core = { workspace = true, features = ["test-support"] }
+# The pgwire tests' TLS server certificate.
+rcgen = { workspace = true }
+
+[lints]
+workspace = true

@@ -63,16 +63,13 @@ struct Physical {
 
 /// Register the runner when this process runs at least one embedded postmaster. An empty target list
 /// leaves the service to report `skipped`.
-pub fn install(facade: &EntityFacade, db: &EntityDb, search: Option<&crate::search::SearchStore>, runtime: &Path) {
+/// `search` is the search store's cluster when it runs one of its own (the host's `SearchStore::tool_target`).
+pub fn install(facade: &EntityFacade, db: &EntityDb, search: Option<ToolTarget>, runtime: &Path) {
     let mut targets = Vec::new();
     if let Some(target) = db.tool_target() {
         targets.push(target);
     }
-    if let Some(store) = search {
-        if let Some(target) = store.tool_target() {
-            targets.push(target);
-        }
-    }
+    targets.extend(search);
     if targets.is_empty() {
         tracing::info!("embedded database backup is off, this process runs no embedded cluster");
         return;

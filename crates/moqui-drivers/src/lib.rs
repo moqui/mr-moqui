@@ -12,7 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `DbDriver` implementations. The pool stays in `moqui-core`.
+//! `DbDriver` implementations: Postgres (the host's own blocking client on postgres-protocol, over TCP, TLS or a Unix
+//! socket), MySQL and the embedded Postgres cluster with its backups, and how the host opens the entity facade over them.
+//! The pool stays in moqui-entity. moqui-host links this crate (plans/Crate-Split.md) and keeps it at its old path,
+//! `moqui_host::db`, forwarding its `postgres`, `mysql` and `embedded-postgres` features; no Tokio here.
+// Without a database client the conf and the facade code is still compiled, for the host without its default features.
+#![cfg_attr(not(any(feature = "postgres", feature = "mysql")), allow(dead_code, unused_imports))]
 
 use std::sync::Arc;
 
@@ -34,6 +39,8 @@ pub mod postgres;
 pub mod sim;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 mod statement_lru;
+#[cfg(feature = "embedded-postgres")]
+mod xmlshim;
 
 /// `remaining` in whole milliseconds for a server statement timeout. Both servers read 0 as no limit, so a remainder
 /// under a millisecond is 1, and a remainder of zero, a deadline that has already passed, is an error.

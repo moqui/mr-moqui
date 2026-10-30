@@ -248,15 +248,11 @@ fn tls_server(issued: &rcgen::CertifiedKey<rcgen::KeyPair>, connections: usize) 
     (port, server)
 }
 
-fn tls_connect(
-    host: &str,
-    port: u16,
-    options: &crate::db::pg_tls::TlsOptions,
-) -> Result<Wire, moqui_lib::error::Error> {
+fn tls_connect(host: &str, port: u16, options: &crate::pg_tls::TlsOptions) -> Result<Wire, moqui_lib::error::Error> {
     let endpoint = Endpoint::Tcp {
         host: host.to_string(),
         port,
-        tls: Some(crate::db::pg_tls::client_config(options)?),
+        tls: Some(crate::pg_tls::client_config(options)?),
     };
     Wire::connect(&endpoint, "moqui", "moqui", None, None)
 }
@@ -265,7 +261,7 @@ fn tls_connect(
 /// authority, as a managed database with its own is.
 #[test]
 fn tls_modes_check_what_sslmode_says() {
-    use crate::db::pg_tls::TlsOptions;
+    use crate::pg_tls::TlsOptions;
     use moqui_core::entity::datasource::TlsVerify;
 
     let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
@@ -303,7 +299,7 @@ fn tls_modes_check_what_sslmode_says() {
     server.join().unwrap();
 
     let missing = TlsOptions::new(TlsVerify::Full, &dir.join("missing.pem").display().to_string());
-    let err = crate::db::pg_tls::client_config(&missing).err().unwrap();
+    let err = crate::pg_tls::client_config(&missing).err().unwrap();
     assert!(err.message().contains("missing.pem"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }

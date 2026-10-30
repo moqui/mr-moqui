@@ -23,6 +23,7 @@ members = [
     "crates/moqui-collab",
     "crates/moqui-dav",
     "crates/moqui-devkit",
+    "crates/moqui-drivers",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -81,6 +82,9 @@ moqui-dav = { path = "crates/moqui-dav" }
 # The development kit (reload, the file watcher, check, the artifact index, typegen, the spec runner), on moqui-core
 # (plans/Crate-Split.md); the host links it in every build, and its watch feature under devtools.
 moqui-devkit = { path = "crates/moqui-devkit" }
+# The database drivers, out of moqui-host (plans/Crate-Split.md); the host links it and forwards postgres, mysql and
+# embedded-postgres.
+moqui-drivers = { path = "crates/moqui-drivers" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.

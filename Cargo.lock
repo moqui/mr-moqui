@@ -4239,6 +4239,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-drivers"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "fallible-iterator 0.2.0",
+ "flate2",
+ "jiff",
+ "moqui-core",
+ "moqui-lib",
+ "mysql",
+ "postgres-protocol",
+ "postgres-types",
+ "postgresql_embedded",
+ "rcgen",
+ "rustls",
+ "tar",
+ "tracing",
+ "webpki-roots",
+]
+
+[[package]]
 name = "moqui-entity"
 version = "0.1.0"
 dependencies = [
@@ -4300,7 +4322,6 @@ dependencies = [
  "calamine",
  "dev-aide",
  "example",
- "fallible-iterator 0.2.0",
  "flate2",
  "form_urlencoded",
  "futures-util",
@@ -4320,17 +4341,14 @@ dependencies = [
  "moqui-dav",
  "moqui-db",
  "moqui-devkit",
+ "moqui-drivers",
  "moqui-git",
  "moqui-lib",
  "moqui-llm",
  "moqui-mail",
  "moqui-report",
  "moqui-tui",
- "mysql",
  "p256",
- "postgres-protocol",
- "postgres-types",
- "postgresql_embedded",
  "rcgen",
  "regex",
  "reqwest",
@@ -4339,7 +4357,6 @@ dependencies = [
  "rustls",
  "serde_json",
  "sha2 0.10.9",
- "tar",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

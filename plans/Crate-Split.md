@@ -2,8 +2,8 @@
 
 Status 2026-10-30: Phases 0 to 4 done (9788e711, 0bda5fdc, 9aa631f9, 4e962f93, 27ab3317: `moqui_core::extension`,
 `moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`) and Phase 5 (8bebad83, ccbd0ca3, b6be4155:
-`moqui-collab`, `moqui-dav`, `moqui-devkit`), and moqui-lib's unused `hmac` and `sha1`; Phase 6's host edits measured
-again and waiting on a decision ([Phases 5 and 6 in detail](#phases-5-and-6-in-detail), [Resuming](#resuming)). Splits
+`moqui-collab`, `moqui-dav`, `moqui-devkit`), moqui-lib's unused `hmac` and `sha1` (19179589), and Phase 6's
+`moqui-drivers`; `moqui-test-client` left out on purpose ([Phases 5 and 6 in detail](#phases-5-and-6-in-detail)). Splits
 `moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
 so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
 whose "few, larger crates" rule this replaces
@@ -51,7 +51,7 @@ frontend.
 | 3 (done, 4e962f93) | `moqui-entity` (below core) | core `entity/`, `transaction/`, `driver.rs`, `testing.rs`, `context/error.rs`, `resource/{blob,source,textdiff}.rs`, `user/period.rs` | 31,000 | `moqui_entity::hooks::EntityHooks`: ambient, authz, script, services (EECA run), observers |
 | 4 (done, 27ab3317) | `moqui-report` | core `report/` (but `time.rs`), `report_schedule.rs`, `monitor.rs` | 10,700 | native registrations, shipped reports after boot (`after_boot`, new) |
 | 5 (done) | `moqui-collab`, `moqui-dav`, `moqui-devkit` | core `collab/`; `dav/`, `pim/`, elFinder; devtools, typegen, the lint and convert tools, testkit | 1,900; 8,000; 14,000 | services, tools |
-| 6 | `moqui-drivers`, `moqui-test-client` | host `db/`; host `test_client/` and test discovery | 9,000; 7,000 | none (direct calls) |
+| 6 (drivers done; test client not done) | `moqui-drivers`, `moqui-test-client` | host `db/`; host `test_client/` and test discovery | 9,000; 7,000 | none (direct calls) |
 
 Phase 3 is where the layout departs from Moqui Java, whose entity facade calls the service facade, the artifact stack,
 `ec.user`, `ec.l10n` and the expression evaluator directly. The entity crate parses, indexes and matches EECA rules
@@ -164,7 +164,14 @@ report tests import `moqui_report as report`.
   1.55 s (frontend 1.2 s, codegen 0.3 s, which writes the 68 MB rlib) and the binary link 0.3 s. Taking the drivers
   (about 9,000 lines) or the test client (about 7,000) out of the host would save part of that 1.5 s on a host edit,
   and an edit in the moved code would rebuild that crate and the host: the split is for modularity and the clean build
-  more than for an edit.
+  more than for an edit. Decided 2026-10-30: `moqui-drivers` only, for the clean build and to keep the database clients
+  out of the host; `moqui-test-client` stays in the host, where it saves a fraction of a 2 s edit.
+  `moqui-drivers` (done): host `db/` (its `mod.rs` the crate root), `build.rs` and `xmlshim` (now the crate's), about
+  9,000 lines; the host keeps `pub use moqui_drivers as db`, so `moqui_host::db::…` and `crate::db::…` stay, forwards
+  `postgres`, `mysql` and `embedded-postgres`, and no longer depends on the database clients or postgresql_embedded;
+  `backup::install` takes the search store's `ToolTarget` instead of the host's `SearchStore`. The host rlib went from
+  68.7 MB to 40.2 MB (the drivers' 29.4 MB is mostly the embedded archive); `scripts/pg-payload.sh` finds the staged
+  archive under `build/moqui-drivers-*`.
 - Done: `moqui-lib`'s unused `hmac` 0.12 and `sha1` 0.10 dependencies are gone (the signer uses `sha1-digest-011`).
 
 ## Adding a crate
@@ -268,6 +275,17 @@ spread of these runs, 9.8 to 10.0 s; dav's 8,000 lines took about 0.6 s off a co
 | devkit `index/mod.rs` (core `devtools/index/mod.rs` before) | 9.2 s, 9.3 s (ccbd0ca3) | 3.7 s, 3.8 s |
 | devkit `testkit/run.rs` (core `testkit/run.rs` before) | 9.1 s, 9.3 s | 3.9 s, 3.9 s |
 | core `service/call.rs`, before and after devkit | 9.2 s, 9.3 s | 9.4 s, 9.4 s |
+
+Phase 6, `moqui-drivers` (before 19179589):
+
+| Edit in | Before | After |
+|---|---|---|
+| host `http.rs` | 2.1 s, 2.1 s | 1.8 s, 1.8 s |
+| host `test_client/mod.rs` | 2.1 s, 2.1 s | 1.8 s, 1.8 s |
+| drivers `embedded.rs` (host `db/embedded.rs` before) | 2.2 s, 2.2 s | 2.2 s, 2.9 s |
+| drivers `pgwire.rs` (host `db/pgwire.rs` before) | 2.3 s, 4.1 s | 2.1 s, 2.1 s |
+
+A drivers edit is `moqui-drivers` (0.2 s), then `moqui-host` (1.5 s) and the link: the host depends on it.
 
 Where a core edit's 15 s goes (`--timings`, `service/call.rs`): `moqui-core` 14.5 s, its metadata ready at about 5 s, so
 `moqui-llm` (2.1 s) and `moqui-host` (3.1 s) finish while core is still in codegen, and the binary links (0.3 s) after

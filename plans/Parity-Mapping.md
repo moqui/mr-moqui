@@ -188,15 +188,15 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-entity/src/driver.rs` | `EntityDatasourceFactory` as a trait. No Postgres or MySQL types in core. | Port |
 | `moqui-entity/src/entity/datasource.rs` | `EntityDatasourceFactoryImpl`. Registers the host driver. | Port |
 | `moqui-entity/src/entity/cache.rs` | `EntityCache`, `EntityTxCache`, `TransactionCache`, and the in-memory half of `TransactionCacheDb` (per-frame cache, sim sequence banks, production-entity list). | Port |
-| `moqui-host/src/db/postgres.rs` | The PostgreSQL JDBC driver, as the sync `postgres` client. | Port |
-| `moqui-host/src/db/mysql.rs` | MySQL Connector/J, as the sync `mysql` crate. | Port |
-| `moqui-host/src/db/embedded.rs` | H2 embedded lifecycle, replaced by `postgresql_embedded`. [EmbeddedPostgres](archive/EmbeddedPostgres.md). | Redesign |
-| `moqui-host/src/db/sim.rs` | `TransactionCacheDb` overlay cluster: one schema per sim on a second postmaster. | Port |
-| `moqui-host/src/db/jdbc_extract.rs` | `impl/util/JdbcExtractor.java`. | Port |
-| `moqui-host/src/db/entity_db.rs` | Which conf datasource is embedded Postgres, external Postgres, or MySQL. | Native |
-| `moqui-host/src/db/entity_facade.rs` | Installs the host driver on the core facade. | Native |
-| `moqui-host/src/db/statement_lru.rs` | Prepared-statement cache, cap 100. Java cached these inside the JDBC driver. | Native |
-| `moqui-host/src/db/mod.rs` | Module spine. | Native |
+| `moqui-drivers/src/postgres.rs` | The PostgreSQL JDBC driver, as the sync `postgres` client. | Port |
+| `moqui-drivers/src/mysql.rs` | MySQL Connector/J, as the sync `mysql` crate. | Port |
+| `moqui-drivers/src/embedded.rs` | H2 embedded lifecycle, replaced by `postgresql_embedded`. [EmbeddedPostgres](archive/EmbeddedPostgres.md). | Redesign |
+| `moqui-drivers/src/sim.rs` | `TransactionCacheDb` overlay cluster: one schema per sim on a second postmaster. | Port |
+| `moqui-drivers/src/jdbc_extract.rs` | `impl/util/JdbcExtractor.java`. | Port |
+| `moqui-drivers/src/entity_db.rs` | Which conf datasource is embedded Postgres, external Postgres, or MySQL. | Native |
+| `moqui-drivers/src/entity_facade.rs` | Installs the host driver on the core facade. | Native |
+| `moqui-drivers/src/statement_lru.rs` | Prepared-statement cache, cap 100. Java cached these inside the JDBC driver. | Native |
+| `moqui-drivers/src/lib.rs` | Crate root: the conf driver. | Native |
 | `moqui-entity/src/testing.rs` | In-memory SQL for unit tests. Not H2. | Native |
 
 `impl/context/SimFence.java` and `SimTerminatedException.java` are the sim fence on `entity/cache.rs` and the outbound-HTTP denial in `moqui-lib/src/http.rs`.
@@ -539,7 +539,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `context/CacheFacadeImpl.groovy` | `context/cache.rs` | Port |
 | `context/ElasticFacadeImpl.groovy` | `search/` | Redesign |
 | `context/EntityTxCache.groovy`, `TransactionCache.groovy` | `entity/cache.rs` | Port |
-| `context/TransactionCacheDb.java` | `entity/cache.rs`, `moqui-host/src/db/sim.rs` | Port |
+| `context/TransactionCacheDb.java` | `entity/cache.rs`, `moqui-drivers/src/sim.rs` | Port |
 | `context/TransactionFacadeImpl.groovy` | `transaction/manager.rs` | Port |
 | `context/TransactionInternalBitronix.groovy` | `transaction/` as a behavior reference | Partial |
 | `context/L10nFacadeImpl.java` | `l10n.rs`, `moqui-lib/src/format.rs` | Port |
@@ -600,7 +600,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
 | `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](Monitoring.md)) | Redesign |
 | `util/ElFinderConnector.groovy` | `moqui-dav/src/elfinder.rs` | Port |
-| `util/JdbcExtractor.java` | `moqui-host/src/db/jdbc_extract.rs` | Port |
+| `util/JdbcExtractor.java` | `moqui-drivers/src/jdbc_extract.rs` | Port |
 | `util/RestSchemaUtil.groovy` | `entity/schema.rs`, `screen/schema.rs` | Partial |
 | `util/SimpleSigner.java` | `moqui-lib/src/signer.rs` | Port |
 | `util/UserSecurityChecks.groovy` | `service/security_checks.rs` | Port |

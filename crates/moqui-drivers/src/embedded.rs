@@ -614,7 +614,7 @@ mod cluster {
         tool_bin(&install_dir.join(SHIPPED_VERSION).join("bin"), "pg_ctl")
     }
 
-    pub(crate) fn process_live(pid: u32) -> bool {
+    pub fn process_live(pid: u32) -> bool {
         if pid == 0 {
             return false;
         }
@@ -772,9 +772,11 @@ mod cluster {
 }
 
 #[cfg(feature = "embedded-postgres")]
+pub use cluster::process_live;
+#[cfg(feature = "embedded-postgres")]
 pub use cluster::{load_save, save_db, shared_install_dir, ClusterRole, EmbeddedCluster, StartOptions, ToolTarget};
 #[cfg(feature = "embedded-postgres")]
-pub(crate) use cluster::{pg_ctl_path, postmaster_live, process_live};
+pub(crate) use cluster::{pg_ctl_path, postmaster_live};
 
 /// Where the embedded Postgres of a runtime is unpacked: `postgres` under `MOQUI_INSTALL` (a process property, then
 /// the environment variable, as `MOQUI_CONF`) when it is set, else under `install` in the runtime directory, where

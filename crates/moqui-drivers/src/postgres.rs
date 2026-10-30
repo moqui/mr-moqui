@@ -32,8 +32,8 @@ mod driver {
     use moqui_lib::object::{basic_convert, Value};
     use postgres_types::Type;
 
-    use crate::db::pgwire::{self, Column, Endpoint, Wire};
-    use crate::db::statement_lru::StatementLru;
+    use crate::pgwire::{self, Column, Endpoint, Wire};
+    use crate::statement_lru::StatementLru;
 
     /// Statements kept prepared on a connection, as pgjdbc's `preparedStatementCacheQueries` default. A data load of
     /// many entities prepares several statements of each (see [`BATCH_SIZES`]); at 100 they pushed each other out.
@@ -269,7 +269,7 @@ mod driver {
             host: impl Into<String>,
             port: u16,
         ) -> Result<Self, Error> {
-            Self::external_with(user, database, host, port, &crate::db::pg_tls::TlsOptions::default())
+            Self::external_with(user, database, host, port, &crate::pg_tls::TlsOptions::default())
         }
 
         /// TCP host and TLS as `tls` says: the authorities trusted and what of the certificate is checked.
@@ -282,9 +282,9 @@ mod driver {
             database: impl Into<String>,
             host: impl Into<String>,
             port: u16,
-            tls: &crate::db::pg_tls::TlsOptions,
+            tls: &crate::pg_tls::TlsOptions,
         ) -> Result<Self, Error> {
-            let tls = crate::db::pg_tls::client_config(tls)?;
+            let tls = crate::pg_tls::client_config(tls)?;
             Ok(Self {
                 user: user.into(),
                 database: database.into(),
@@ -736,7 +736,7 @@ mod driver {
             let Some(remaining) = remaining else {
                 return Ok(());
             };
-            let ms = crate::db::timeout_millis(remaining)?;
+            let ms = crate::timeout_millis(remaining)?;
             self.wire
                 .queue_simple(&format!("SET LOCAL statement_timeout = {ms}"), "statement_timeout")
         }

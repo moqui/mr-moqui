@@ -5,7 +5,7 @@
 #                                           checked), and repack it without bin/psql (the original stays as .orig)
 #   scripts/pg-payload.sh check [archive...] fail on bin/psql, a readline library, or an ELF that NEEDs readline
 #   scripts/pg-payload.sh path [target]     print where the archive is kept
-# crates/moqui-host/build.rs embeds ~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz (or MOQUI_PG_ARCHIVE) and
+# crates/moqui-drivers/build.rs embeds ~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz (or MOQUI_PG_ARCHIVE) and
 # downloads nothing; it refuses an archive that still holds psql or readline, so strip runs before the first build
 # (./moq build runs it when the archive is missing). check with no arguments reads that archive and every archive
 # staged under target/. Run both on every POSTGRESQL_VERSION bump.
@@ -96,7 +96,7 @@ case "${1:-}" in
             [ -f "$(cached_archive "$host_target")" ] && archives+=("$(cached_archive "$host_target")")
             while IFS= read -r -d '' staged; do
                 archives+=("$staged")
-            done < <(find "${CARGO_TARGET_DIR:-$root/target}" -path '*/build/moqui-host-*/out/postgresql.tar.gz' -print0 2>/dev/null)
+            done < <(find "${CARGO_TARGET_DIR:-$root/target}" -path '*/build/moqui-drivers-*/out/postgresql.tar.gz' -print0 2>/dev/null)
         fi
         [ "${#archives[@]}" -gt 0 ] || { echo "no archive to check" >&2; exit 1; }
         failed=0

@@ -75,9 +75,9 @@ build, with no features of its own.
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|---|
 | `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes | yes |
-| `postgres` | host | The Postgres driver | yes | yes | yes | yes |
-| `embedded-postgres` | host | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
-| `mysql` | host | The MySQL driver | | | yes | yes |
+| `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes | yes |
+| `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
+| `mysql` | host (`moqui-drivers`) | The MySQL driver | | | yes | yes |
 | `pdf` | host | The DevTools client of the external Chromium that prints `html-print` to PDF | yes | yes | yes | yes |
 | `ssh` | host | The SFTP client, the built-in SSH server (SFTP, admin shell, git over SSH, and `apps` with `tui`), the SSH cluster channel | yes | | yes | yes |
 | `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | | yes | yes |
@@ -143,7 +143,7 @@ has its own, so the artifacts of one never replace another's and switching packa
 The `embedded-postgres` feature embeds the theseus Postgres archive (the version `.cargo/config.toml` forces through
 `POSTGRESQL_VERSION`) and unpacks it once into `install/postgres/<version>` in the runtime directory (or under
 `MOQUI_INSTALL`), shared by the entity, search and sim clusters. An install an earlier build unpacked in
-`runtime/db/install` is moved there on the first start. `crates/moqui-host/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
+`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
 the file `MOQUI_PG_ARCHIVE` names, and downloads nothing. It refuses an archive that still holds `bin/psql` or a
 readline library (GPL, plans/archive/License-Review.md).
 

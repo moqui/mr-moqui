@@ -23,6 +23,7 @@ One workspace, one `src/` tree per crate. The cut and its reasons are in
 
 ```
 moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report, moqui-collab, moqui-dav, moqui-devkit
+              moqui-host → moqui-drivers → moqui-core
               moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
 moqui-llm → moqui-devkit
 moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-dav, moqui-devkit → moqui-core
@@ -43,7 +44,8 @@ moqui-browser → moqui-core (default-features = false), moqui-report, moqui-dav
 | `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
-| `moqui-host` | The process edge: the HTTP server (Tokio, axum), drivers, process spawn, the integration tests. |
+| `moqui-drivers` | The database drivers: Postgres on the host's own blocking client, MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens the entity facade over them. No Tokio. The host links it as `moqui_host::db` and forwards its features. |
+| `moqui-host` | The process edge: the HTTP server (Tokio, axum), process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
 | `moqui` | The binary: the CLI and the build packages and their features ([Packaging](../Build-Test.md#packages)). |
 
