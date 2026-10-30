@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 use crate::context::ExecutionContextFactory;
 use crate::entity::fence;
@@ -106,7 +107,7 @@ pub fn merge_local() {
         return;
     }
     let tick = TICK.load(Ordering::Relaxed);
-    let mut merged = MERGED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut merged = lock(&MERGED);
     let merged = merged.get_or_insert_with(HashMap::new);
     for (pair, count) in counts {
         let entry = merged.entry(pair).or_insert((0, tick));
@@ -154,11 +155,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
 /// Returns an error when the rows cannot be written; the counts are then dropped.
 pub fn flush(factory: &Arc<ExecutionContextFactory>) -> Result<usize, moqui_lib::error::Error> {
     merge_local();
-    let taken = MERGED
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-        .unwrap_or_default();
+    let taken = lock(&MERGED).take().unwrap_or_default();
     if taken.is_empty() {
         return Ok(0);
     }

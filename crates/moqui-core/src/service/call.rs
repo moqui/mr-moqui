@@ -20,6 +20,7 @@ use std::sync::Arc;
 use moqui_db::model::{EntityDefinition, KeyMap};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, Value};
+use moqui_lib::sync::{lock, read, write};
 
 use super::define::{Authenticate, ServiceDef, ServiceKind};
 use super::util::has_error;
@@ -562,11 +563,7 @@ fn record_failure(service: &str, err: &LibError) -> bool {
         // a tool this package leaves out (git, imap): its callers are told each time, the log once per service
         static TOLD: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
             std::sync::OnceLock::new();
-        let first = TOLD
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(service.to_string());
+        let first = lock(TOLD.get_or_init(Default::default)).insert(service.to_string());
         if first {
             tracing::info!(service, "Service {service} is not available: {err}");
         }
@@ -816,21 +813,11 @@ fn callbacks() -> &'static Callbacks {
 
 /// Java's `ServiceFacade.registerCallback`: `callback` hears of every later call of `name`.
 pub fn register_callback(name: &str, callback: Arc<dyn ServiceCallback>) {
-    callbacks()
-        .write()
-        .unwrap_or_else(|err| err.into_inner())
-        .entry(canonical(name))
-        .or_default()
-        .push(callback);
+    write(callbacks()).entry(canonical(name)).or_default().push(callback);
 }
 
 fn call_callbacks(name: &str, context: &BTreeMap<String, Value>, outcome: Result<&BTreeMap<String, Value>, &LibError>) {
-    let list = callbacks()
-        .read()
-        .unwrap_or_else(|err| err.into_inner())
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
+    let list = read(callbacks()).get(name).cloned().unwrap_or_default();
     for callback in list.iter().filter(|callback| callback.is_enabled()) {
         match outcome {
             Ok(result) => callback.receive_result(context, result),

@@ -30,6 +30,7 @@ use serde::Serialize;
 
 use crate::Problem;
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::service::EcaRuleCounts;
 
 /// How many reports a factory keeps (Home's reload log, the agents' `check` with no file).
 const KEPT_REPORTS: usize = 200;
@@ -476,7 +477,7 @@ fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]
     if !parse_all(files, &changed, "reload.eca") {
         return;
     }
-    let (seca, email, git) = moqui_core::service::reload_eca_rules(factory);
+    let EcaRuleCounts { seca, email, git } = moqui_core::service::reload_eca_rules(factory);
     for at in changed {
         files[at].summary = format!("ECA rules reloaded: {seca} SECA, {email} EmECA, {git} gitECA");
     }

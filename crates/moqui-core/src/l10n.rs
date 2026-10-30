@@ -30,6 +30,7 @@ use jiff::tz::TimeZone;
 use moqui_lib::format;
 use moqui_lib::format::Decimal;
 use moqui_lib::object::{to_plain_string, Converted, Value};
+use moqui_lib::sync::{read, write};
 
 use crate::context::{Error, ExecutionContext};
 
@@ -75,9 +76,7 @@ pub fn init_server_time_zone() {
     }
     match TimeZone::get(name) {
         Ok(zone) => {
-            *SERVER_TIME_ZONE
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(zone);
+            *write(&SERVER_TIME_ZONE) = Some(zone);
             tracing::info!("Default time zone {name}");
         }
         Err(err) => tracing::error!("Error setting default time zone to {name}: {err}"),
@@ -88,10 +87,7 @@ pub fn init_server_time_zone() {
 /// default with no property), else UTC. A unit test with no start has UTC, MoquiDefaultConf's default, so it reads the
 /// same on any machine.
 pub fn server_time_zone() -> TimeZone {
-    let named = SERVER_TIME_ZONE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let named = read(&SERVER_TIME_ZONE).clone();
     named.unwrap_or_else(|| {
         if cfg!(test) {
             TimeZone::UTC

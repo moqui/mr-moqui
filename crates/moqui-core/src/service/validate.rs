@@ -16,11 +16,12 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use moqui_lib::object::{
     basic_convert, convert_checked, decimal_compare, decimal_eq, is_empty, regex_full_match, to_plain_string, Value,
 };
+use moqui_lib::sync::lock;
 
 use super::define::{merge_param, AllowHtml, AutoParams, Check, Include, ParamDef, Required, ServiceDef};
 use crate::context::Error;
@@ -294,7 +295,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         .filter(|_| reads_entity)
         .map_or(0, crate::entity::derived::generation);
     {
-        let cached = def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let cached = lock(&def.expanded_in.0);
         if let Some(cached) = cached.as_ref() {
             let same = match (&cached.facade, &key) {
                 (None, None) => true,
@@ -307,7 +308,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         }
     }
     let params: Arc<[ParamDef]> = expand_params(def, &def.in_params, facade)?.into();
-    *def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Expanded {
+    *lock(&def.expanded_in.0) = Some(Expanded {
         facade: key,
         generation,
         params: Arc::clone(&params),

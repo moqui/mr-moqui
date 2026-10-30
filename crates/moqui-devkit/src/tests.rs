@@ -142,7 +142,7 @@ fn a_changed_seca_file_rebuilds_the_rule_set() {
     bed.write("service/devtest/Things.xml", &services(&service("run", "first")));
     let path = bed.write("service/Things.secas.xml", &format!("<secas>{}</secas>", rule("one")));
     let _entered = bed.ctx.enter();
-    let (before, _, _) = moqui_core::service::reload_eca_rules(bed.factory());
+    let before = moqui_core::service::reload_eca_rules(bed.factory()).seca;
     bed.write(
         "service/Things.secas.xml",
         &format!("<secas>{}{}</secas>", rule("one"), rule("two")),

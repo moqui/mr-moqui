@@ -20,6 +20,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use moqui_lib::sync::lock;
+
 static REQUESTED: AtomicBool = AtomicBool::new(false);
 
 type Shutdown = Box<dyn Fn() + Send + Sync>;
@@ -28,13 +30,13 @@ static SHUTDOWN: Mutex<Option<Shutdown>> = Mutex::new(None);
 
 /// The host's graceful shutdown, which [`request_restart`] calls. The HTTP server installs it when it starts.
 pub fn set_shutdown(shutdown: impl Fn() + Send + Sync + 'static) {
-    *SHUTDOWN.lock().unwrap_or_else(|err| err.into_inner()) = Some(Box::new(shutdown));
+    *lock(&SHUTDOWN) = Some(Box::new(shutdown));
 }
 
 /// Ask for a restart: the host shuts down gracefully, then runs again. False when no host can shut down (a command,
 /// not a server), and nothing happens.
 pub fn request_restart() -> bool {
-    let shutdown = SHUTDOWN.lock().unwrap_or_else(|err| err.into_inner());
+    let shutdown = lock(&SHUTDOWN);
     let Some(shutdown) = shutdown.as_ref() else {
         return false;
     };

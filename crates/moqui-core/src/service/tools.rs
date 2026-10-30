@@ -676,7 +676,11 @@ fn find_nested(key: &str, value: &Value, found: &mut BTreeSet<String>) {
         }
         match item {
             Value::Map(_) => find_nested(key, item, found),
-            Value::List(items) => items.iter().for_each(|entry| find_nested(key, entry, found)),
+            Value::List(items) => {
+                for entry in items {
+                    find_nested(key, entry, found);
+                }
+            }
             _ => {}
         }
     }

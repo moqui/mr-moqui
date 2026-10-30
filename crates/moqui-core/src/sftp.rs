@@ -21,9 +21,10 @@
 //! else trusts the key on first use and refuses a key that changed (`runtime/conf/ssh_known_hosts`); the host does
 //! the check.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::{read, write};
 
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 
@@ -204,20 +205,20 @@ struct Slot {
 /// Use `connector` for the SFTP connections made under `factory`.
 pub fn install_sftp_connector(factory: &ExecutionContextFactory, connector: Arc<dyn SftpConnector>) {
     let slot = factory.extension(|_| Slot::default());
-    *slot.connector.write().unwrap_or_else(PoisonError::into_inner) = Some(connector);
+    *write(&slot.connector) = Some(connector);
 }
 
 /// Remove the connector installed on `factory`.
 pub fn clear_sftp_connector(factory: &ExecutionContextFactory) {
     let slot = factory.extension(|_| Slot::default());
-    *slot.connector.write().unwrap_or_else(PoisonError::into_inner) = None;
+    *write(&slot.connector) = None;
 }
 
 /// The connector of the entered context's factory.
 fn connector() -> Result<Arc<dyn SftpConnector>, Error> {
     ExecutionContext::with_current(|ec| {
         let slot = ec.factory().extension(|_| Slot::default());
-        let found = slot.connector.read().unwrap_or_else(PoisonError::into_inner).clone();
+        let found = read(&slot.connector).clone();
         found
     })
     .flatten()

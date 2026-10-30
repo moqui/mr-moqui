@@ -23,6 +23,7 @@ use indexmap::IndexMap;
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_lib::sync::{lock, read, write};
 
 use super::call;
 use super::define::{ParamDef, Required};
@@ -184,7 +185,7 @@ fn current_roots() -> Result<Arc<Roots>, Error> {
 /// True at most once in ten seconds, process wide.
 fn miss_reload_due() -> bool {
     static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|err| err.into_inner());
+    let mut last = lock(&LAST);
     let due = last.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(10));
     if due {
         *last = Some(std::time::Instant::now());
@@ -208,13 +209,13 @@ fn reload_current_roots() -> Result<Arc<Roots>, Error> {
         .ok_or_else(|| Error::new("no execution context is entered"))?;
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
     let fresh = Arc::new(load(&factory));
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::clone(&fresh);
+    *write(&shared) = Arc::clone(&fresh);
     Ok(fresh)
 }
 
 fn roots_of(factory: &ExecutionContextFactory) -> Arc<Roots> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
-    let guard = shared.read().unwrap_or_else(|err| err.into_inner());
+    let guard = read(&shared);
     Arc::clone(&guard)
 }
 
@@ -280,7 +281,7 @@ pub fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) {
             resources: BTreeMap::new(),
         }))
     });
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::new(Roots { resources });
+    *write(&shared) = Arc::new(Roots { resources });
 }
 
 struct Node {

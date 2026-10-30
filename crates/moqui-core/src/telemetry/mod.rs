@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::document::Document;
@@ -67,10 +68,6 @@ const MAX_TRACES: usize = 1024;
 const MAX_TRACE_SPANS: usize = 512;
 const MAX_DECISIONS: usize = 4096;
 const MAX_SERIES: usize = 20_000;
-
-fn lock<T>(value: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    value.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 /// A W3C context that can cross worker and async boundaries without an SDK or a thread guard.
 #[derive(Clone, Debug, PartialEq, Eq)]

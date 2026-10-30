@@ -163,11 +163,18 @@ pub(crate) fn user_ids(value: Option<&Value>) -> Vec<String> {
         }
     };
     match value {
-        Some(Value::List(items)) => items
-            .iter()
-            .filter(|item| !is_empty(item))
-            .for_each(|item| add(to_plain_string(item))),
-        Some(other) if !is_empty(other) => to_plain_string(other).split(',').for_each(|id| add(id.to_string())),
+        Some(Value::List(items)) => {
+            for item in items {
+                if !is_empty(item) {
+                    add(to_plain_string(item));
+                }
+            }
+        }
+        Some(other) if !is_empty(other) => {
+            for id in to_plain_string(other).split(',') {
+                add(id.to_string());
+            }
+        }
         _ => {}
     }
     out

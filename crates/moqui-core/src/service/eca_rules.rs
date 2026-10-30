@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
 
 use moqui_lib::node::MNode;
+use moqui_lib::sync::{read, write};
 
 use super::email_eca::{email_rule_from, EmailRule};
 use super::git_eca::{git_rule_from, GitRule};
@@ -92,24 +93,36 @@ pub(super) fn current() -> Option<Arc<EcaRules>> {
 
 fn rules_of(factory: &ExecutionContextFactory) -> Arc<EcaRules> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
-    let guard = shared.read().unwrap_or_else(|err| err.into_inner());
+    let guard = read(&shared);
     Arc::clone(&guard)
 }
 
 /// Read a factory's SECA, EmECA and gitECA rules again from their files and swap them in (plans/design-dev-aide.md
 /// 6.1, F4); a call in flight keeps the rules it has. A file that does not parse is logged and skipped, as at a boot.
-/// Answers how many SECA, EmECA and gitECA rules there are now.
-pub fn reload(factory: &ExecutionContextFactory) -> (usize, usize, usize) {
+/// Answers how many rules of each kind there are now.
+pub fn reload(factory: &ExecutionContextFactory) -> EcaRuleCounts {
     let rules = load(factory);
-    let counts = (rules.seca.len(), rules.email.len(), rules.git.len());
+    let counts = EcaRuleCounts {
+        seca: rules.seca.len(),
+        email: rules.email.len(),
+        git: rules.git.len(),
+    };
     install(factory, rules);
     counts
+}
+
+/// How many SECA, EmECA and gitECA rules a factory has: [`reload`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EcaRuleCounts {
+    pub seca: usize,
+    pub email: usize,
+    pub git: usize,
 }
 
 /// Replace a factory's rules: tests that bring their own XML, and [`reload`].
 pub(super) fn install(factory: &ExecutionContextFactory, rules: EcaRules) {
     let shared = factory.extension::<Shared>(|_| RwLock::new(Arc::new(EcaRules::default())));
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::new(rules);
+    *write(&shared) = Arc::new(rules);
 }
 
 fn load(factory: &ExecutionContextFactory) -> EcaRules {

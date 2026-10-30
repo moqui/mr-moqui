@@ -109,9 +109,7 @@ impl Bus {
 
 fn lock() -> std::sync::MutexGuard<'static, Bus> {
     static BUS: OnceLock<Mutex<Bus>> = OnceLock::new();
-    BUS.get_or_init(|| Mutex::new(Bus::new()))
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
+    moqui_lib::sync::lock(BUS.get_or_init(|| Mutex::new(Bus::new())))
 }
 
 /// This process's origin id, stable for the life of the process.

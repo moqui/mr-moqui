@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use moqui_lib::error::Error;
 use moqui_lib::object::{HostObject, Value};
+use moqui_lib::sync::lock;
 
 use super::rule_actions::{condition_allows, publish_names, run_stored_actions};
 use super::util::{has_error, take_errors_string};
@@ -137,7 +138,7 @@ pub fn run_matched_eca(
         run_stored_actions(&rule.actions).map_err(to_lib).map_err(in_rule)?;
         if before {
             // Fields set on `entityValue` are fields of the write, as the Java value is the one written.
-            let shared = cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let shared = lock(&cell);
             for (name, value) in shared.fields() {
                 if values.get(&**name) != Some(value) {
                     values.insert(name.clone(), value.clone());

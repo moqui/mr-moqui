@@ -108,8 +108,8 @@ pub(crate) fn ssh_key_fingerprint(line: &str) -> Result<(String, String, String)
         .map_err(|_| "the SSH public key is not valid base64".to_string())?;
     // the blob starts with its own type, length-prefixed
     let named = blob
-        .get(..4)
-        .map(|length| u32::from_be_bytes([length[0], length[1], length[2], length[3]]) as usize)
+        .first_chunk::<4>()
+        .map(|length| u32::from_be_bytes(*length) as usize)
         .and_then(|length| blob.get(4..4 + length))
         .map(|name| String::from_utf8_lossy(name).into_owned());
     if named.as_deref() != Some(kind) {
