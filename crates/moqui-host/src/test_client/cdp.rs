@@ -898,7 +898,11 @@ impl Browser {
         if event != "pass" && event != "fail" {
             return;
         }
-        let problems = self.problems[self.page_mark..]
+        // take_problems and closing a page drop problems, so the mark may be past the end
+        let problems = self
+            .problems
+            .get(self.page_mark..)
+            .unwrap_or_default()
             .iter()
             .map(|problem| format!("{}: {}", problem.kind, problem.text))
             .collect();

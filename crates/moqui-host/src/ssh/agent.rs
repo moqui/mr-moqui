@@ -160,11 +160,13 @@ fn opened(id: &str, answer: &AgentAnswer) -> String {
 /// One `agent-apps <args>` exec: its output and exit status. `None` when there are no arguments, for the line mode.
 pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String, u32)> {
     let words: Vec<&str> = args.split_whitespace().collect();
-    let first = *words.first()?;
+    let [first, rest @ ..] = words.as_slice() else {
+        return None;
+    };
     access.agents.reap();
-    Some(match first {
+    Some(match *first {
         "help" | "--help" => (format!("{AGENT_HELP}\n\nagent-apps open [path] [--size CxR] [--json] starts a session; agent-apps <id> <command> runs one command in it.\n--- ok"), 0),
-        "open" => match parse_open(&words[1..]) {
+        "open" => match parse_open(rest) {
             Err(reason) => (format!("--- error {reason}"), 2),
             Ok(open) => match new_agent(access, open).await {
                 Err(reason) => (format!("--- error {reason}"), 2),

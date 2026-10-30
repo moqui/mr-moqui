@@ -267,19 +267,21 @@ impl CookieJar {
 }
 
 fn domain_match(host: &str, domain: &str) -> bool {
-    host == domain || (host.ends_with(domain) && host[..host.len() - domain.len()].ends_with('.'))
+    host == domain || host.strip_suffix(domain).is_some_and(|sub| sub.ends_with('.'))
 }
 
 fn path_match(request: &str, cookie: &str) -> bool {
     request == cookie
-        || (request.starts_with(cookie) && (cookie.ends_with('/') || request[cookie.len()..].starts_with('/')))
+        || request
+            .strip_prefix(cookie)
+            .is_some_and(|rest| cookie.ends_with('/') || rest.starts_with('/'))
 }
 
 /// The directory of a request path, the path a cookie without `Path` gets.
 fn default_path(path: &str) -> String {
-    match path.rfind('/') {
-        Some(0) | None => "/".to_string(),
-        Some(at) => path[..at].to_string(),
+    match path.rsplit_once('/') {
+        Some(("", _)) | None => "/".to_string(),
+        Some((dir, _)) => dir.to_string(),
     }
 }
 
@@ -303,30 +305,29 @@ pub(crate) fn session_token(headers: &[(String, String)], content_type: &str, bo
 /// `<meta name="moquiSessionToken" content="...">`, its attributes in either order.
 fn meta_token(html: &str) -> Option<String> {
     let mut rest = html;
-    while let Some(at) = rest.find("<meta") {
-        let tag_end = rest[at..].find('>').map_or(rest.len(), |end| at + end);
-        let tag = &rest[at..tag_end];
+    while let Some((_, from_meta)) = rest.split_once("<meta") {
+        let (tag, after) = from_meta.split_once('>').unwrap_or((from_meta, ""));
         if attribute(tag, "name").as_deref() == Some("moquiSessionToken") {
             return attribute(tag, "content").filter(|value| !value.is_empty());
         }
-        rest = &rest[tag_end..];
+        rest = after;
     }
     None
 }
 
 fn attribute(tag: &str, name: &str) -> Option<String> {
     let marker = format!("{name}=\"");
-    let start = tag.find(&marker)? + marker.len();
-    let end = tag[start..].find('"')? + start;
-    Some(tag[start..end].to_string())
+    let (_, from_value) = tag.split_once(&marker)?;
+    let (value, _) = from_value.split_once('"')?;
+    Some(value.to_string())
 }
 
 /// The `moquiSessionToken` of the `/qapps` shell's `<script type="application/json" id="moqui-config">`.
 fn config_token(html: &str) -> Option<String> {
-    let at = html.find("id=\"moqui-config\"")?;
-    let start = html[at..].find('>')? + at + 1;
-    let end = html[start..].find("</script>")? + start;
-    let config: Value = serde_json::from_str(&html[start..end]).ok()?;
+    let (_, from_id) = html.split_once("id=\"moqui-config\"")?;
+    let (_, from_body) = from_id.split_once('>')?;
+    let (body, _) = from_body.split_once("</script>")?;
+    let config: Value = serde_json::from_str(body).ok()?;
     find_key(&config, "moquiSessionToken")
 }
 
@@ -813,6 +814,49 @@ mod tests {
         assert_eq!(jar.header(&local, now).as_deref(), Some("moqui.session=s"));
         jar.clear();
         assert_eq!(jar.header(&local, now), None);
+    }
+
+    #[test]
+    fn cookie_domains_and_paths_match_at_a_boundary() {
+        assert!(domain_match("example.com", "example.com"));
+        assert!(domain_match("shop.example.com", "example.com"));
+        assert!(!domain_match("badexample.com", "example.com"));
+        assert!(!domain_match("com", "example.com"));
+        assert!(path_match("/apps", "/apps"));
+        assert!(path_match("/apps/x", "/apps"));
+        assert!(path_match("/apps/x", "/apps/"));
+        assert!(!path_match("/applications", "/apps"));
+        assert!(!path_match("/a", "/apps"));
+        assert_eq!(default_path("/apps/Order/Find"), "/apps/Order");
+        assert_eq!(default_path("/Login"), "/");
+        assert_eq!(default_path("Login"), "/");
+        assert_eq!(default_path("apps/x"), "apps");
+    }
+
+    #[test]
+    fn a_token_tag_or_value_without_its_end() {
+        assert_eq!(
+            attribute("<meta content=\"T\" name=\"x\"", "content").as_deref(),
+            Some("T")
+        );
+        assert_eq!(attribute("<meta content=\"T", "content"), None);
+        assert_eq!(attribute("<meta name=\"x\"", "content"), None);
+        // the last tag may be cut off before its `>`
+        assert_eq!(
+            meta_token("<meta charset=\"utf-8\"><meta name=\"moquiSessionToken\" content=\"T\"").as_deref(),
+            Some("T")
+        );
+        assert_eq!(meta_token("<meta name=\"moquiSessionToken\" content=\"\">"), None);
+        assert_eq!(meta_token("<meta name=\"other\" content=\"T\">"), None);
+        assert_eq!(
+            config_token("<script id=\"moqui-config\">{\"moquiSessionToken\":\"C\"}"),
+            None
+        );
+        assert_eq!(config_token("<script id=\"moqui-config\""), None);
+        assert_eq!(
+            config_token("<script id=\"moqui-config\">{\"moquiSessionToken\":\"C\"}</script>").as_deref(),
+            Some("C")
+        );
     }
 
     #[test]

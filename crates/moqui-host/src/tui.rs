@@ -931,10 +931,10 @@ fn app_menu(menu: Vec<MenuItem>, path: &str) -> Vec<MenuItem> {
         .split('/')
         .filter(|n| !n.is_empty())
         .collect();
-    if names.len() < 2 {
+    let [first, second, ..] = names.as_slice() else {
         return menu;
-    }
-    let app = format!("/{}/{}", names[0], names[1]);
+    };
+    let app = format!("/{first}/{second}");
     let found: Vec<MenuItem> = menu
         .iter()
         .filter(|item| item.url.split('?').next() == Some(app.as_str()))
@@ -1077,8 +1077,8 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
 fn local_path(location: &str) -> String {
     match location.split_once("://") {
         Some((_, rest)) => rest
-            .find('/')
-            .map_or_else(|| "/".to_string(), |at| rest[at..].to_string()),
+            .split_once('/')
+            .map_or_else(|| "/".to_string(), |(_, path)| format!("/{path}")),
         None => location.to_string(),
     }
 }
@@ -1172,6 +1172,16 @@ fn split_segments(path: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_redirect_location_keeps_what_follows_its_host() {
+        assert_eq!(
+            local_path("https://erp.example.com/qapps/Order?id=1"),
+            "/qapps/Order?id=1"
+        );
+        assert_eq!(local_path("https://erp.example.com"), "/");
+        assert_eq!(local_path("/qapps/Order"), "/qapps/Order");
+    }
 
     #[test]
     fn a_relative_url_drops_the_last_segment_before_dot_dot() {

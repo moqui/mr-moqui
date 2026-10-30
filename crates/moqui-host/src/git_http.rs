@@ -143,10 +143,10 @@ pub(crate) async fn handle(
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
     let path = parts.uri.path().strip_prefix("/git/").unwrap_or("");
-    let (repository, tail) = match path.find(".git/") {
-        Some(at) => (&path[..at], &path[at + 5..]),
-        None => path.split_once('/').unwrap_or((path, "")),
-    };
+    let (repository, tail) = path
+        .split_once(".git/")
+        .or_else(|| path.split_once('/'))
+        .unwrap_or((path, ""));
     let query = parts.uri.query().unwrap_or("");
     if let Some(lfs_path) = tail.strip_prefix("info/lfs/") {
         let Some(repository) = server::repository_of(repository) else {

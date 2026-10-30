@@ -146,11 +146,10 @@ pub fn path_of(uri: &str) -> Option<PathBuf> {
         at += 1;
     }
     let path = String::from_utf8(out).ok()?;
-    // file:///C:/x on Windows
-    let path = if path.len() > 2 && path.as_bytes()[2] == b':' {
-        path[1..].to_string()
-    } else {
-        path
+    // file:///C:/x on Windows: the character before the drive letter dropped
+    let path = match path.split_at_checked(1) {
+        Some((_, drive)) if drive.as_bytes().get(1) == Some(&b':') => drive.to_string(),
+        _ => path,
     };
     Some(PathBuf::from(path))
 }
@@ -720,6 +719,8 @@ mod tests {
         assert_eq!(path_of(&uri_of(path)).unwrap(), path);
         assert_eq!(path_of("file:///C:/w/a.xml").unwrap(), PathBuf::from("C:/w/a.xml"));
         assert!(path_of("untitled:1").is_none());
+        // a first character of several bytes before a colon is no drive letter's slash, and is kept
+        assert_eq!(path_of("file://\u{e9}:/a.xml").unwrap(), PathBuf::from("\u{e9}:/a.xml"));
         // a % before a character of several bytes is taken as it is, not sliced
         assert_eq!(
             path_of("file:///w/%a\u{e9}.xml").unwrap(),

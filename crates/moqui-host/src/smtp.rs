@@ -1419,10 +1419,9 @@ impl<B: Backend> Session<'_, B> {
             if line_start && line == b".\r\n" {
                 break;
             }
-            let content = if line_start && line.first() == Some(&b'.') {
-                &line[1..]
-            } else {
-                &line[..]
+            let content = match line.strip_prefix(b".") {
+                Some(unstuffed) if line_start => unstuffed,
+                _ => &line[..],
             };
             if !too_big {
                 if out.len() + content.len() > max {
@@ -1508,11 +1507,11 @@ fn parse_orcpt(value: &str) -> Option<String> {
 
 /// `rest` after a keyword such as `FROM:`, in any case, with the spaces some clients put after the colon.
 fn strip_keyword<'a>(rest: &'a str, keyword: &str) -> Option<&'a str> {
-    let head = rest.get(..keyword.len())?;
+    let (head, tail) = rest.split_at_checked(keyword.len())?;
     if !head.eq_ignore_ascii_case(keyword) {
         return None;
     }
-    Some(rest[keyword.len()..].trim_start())
+    Some(tail.trim_start())
 }
 
 /// A `<path>` and the parameters after it. The source route (`@a,@b:`) is dropped; a quoted local part may hold `>`.

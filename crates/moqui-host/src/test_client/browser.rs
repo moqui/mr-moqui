@@ -646,8 +646,8 @@ impl At<'_> {
 
 /// The path of a URL, with its query: `/Login?x=1` of `http://host:8080/Login?x=1`.
 fn url_path(url: &str) -> &str {
-    match url.find("://") {
-        Some(at) => url[at + 3..].find('/').map_or("/", |slash| &url[at + 3 + slash..]),
+    match url.split_once("://") {
+        Some((_, rest)) => rest.find('/').and_then(|slash| rest.get(slash..)).unwrap_or("/"),
         None => url,
     }
 }
@@ -1165,6 +1165,14 @@ fn failure_files(at: &mut At<'_>, feature: &str, number: usize, problems: &[Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_path_of_a_url_keeps_its_query() {
+        assert_eq!(url_path("http://host:8080/Login?x=1"), "/Login?x=1");
+        assert_eq!(url_path("http://host:8080"), "/");
+        assert_eq!(url_path("/apps/x"), "/apps/x");
+        assert_eq!(url_path(""), "");
+    }
 
     #[test]
     fn a_js_pattern_carries_its_flags() {
