@@ -1311,6 +1311,15 @@ fn lfs_objects_are_uploaded_downloaded_and_locked_over_the_batch_api() {
         b"{}",
     );
     assert_eq!(status, 200);
+    // "locks/unlock" has the prefix and the suffix but no id between them
+    let (status, _, _) = http(
+        &base,
+        "POST",
+        &format!("{locks}/unlock"),
+        &[("Authorization", &writer)],
+        b"{}",
+    );
+    assert_eq!(status, 404);
     let (_, _, body) = http(&base, "GET", locks, &[("Authorization", &writer)], b"");
     assert!(json_of(&body)["locks"].as_array().unwrap().is_empty());
 

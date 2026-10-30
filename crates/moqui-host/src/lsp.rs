@@ -723,7 +723,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--server" => server_url = rest.next().cloned(),
-            other if other.starts_with("--server=") => server_url = Some(other["--server=".len()..].to_string()),
+            other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
             "--stdio" => {}
             _ => return Err(crate::usage::command_usage("lsp")),
         }

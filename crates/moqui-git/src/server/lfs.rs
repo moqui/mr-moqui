@@ -338,19 +338,23 @@ pub fn serve_lfs(request: &LfsHttpRequest, body: &mut dyn Read, out: &mut dyn Ht
     let path = request.path.trim_matches('/');
     let outcome = match (request.method.as_str(), path) {
         ("POST", "objects/batch") => lfs.batch(body).map(|reply| send(out, reply.0, &reply.1)),
-        ("GET", path) if path.starts_with("objects/") => {
-            return lfs.download(&path["objects/".len()..], request, out);
+        ("GET", path) if let Some(oid) = path.strip_prefix("objects/") => {
+            return lfs.download(oid, request, out);
         }
-        ("PUT", path) if path.starts_with("objects/") => lfs
-            .upload(&path["objects/".len()..], request, body)
-            .map(|reply| send(out, reply.0, &reply.1)),
+        ("PUT", path) if let Some(oid) = path.strip_prefix("objects/") => {
+            lfs.upload(oid, request, body).map(|reply| send(out, reply.0, &reply.1))
+        }
         ("POST", "verify") => lfs.verify(body).map(|reply| send(out, reply.0, &reply.1)),
         ("GET", "locks") => lfs.list_locks(&request.query).map(|reply| send(out, reply.0, &reply.1)),
         ("POST", "locks") => lfs.create_lock(body).map(|reply| send(out, reply.0, &reply.1)),
         ("POST", "locks/verify") => lfs.verify_locks(body).map(|reply| send(out, reply.0, &reply.1)),
-        ("POST", path) if path.starts_with("locks/") && path.ends_with("/unlock") => lfs
-            .unlock(&path["locks/".len()..path.len() - "/unlock".len()], body)
-            .map(|reply| send(out, reply.0, &reply.1)),
+        ("POST", path)
+            if let Some(id) = path
+                .strip_prefix("locks/")
+                .and_then(|rest| rest.strip_suffix("/unlock")) =>
+        {
+            lfs.unlock(id, body).map(|reply| send(out, reply.0, &reply.1))
+        }
         _ => Err(message(404, "no such LFS endpoint")),
     };
     if let Err((status, body)) = outcome {

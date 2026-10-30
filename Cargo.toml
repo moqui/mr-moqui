@@ -6,7 +6,7 @@
 # postgresql_embedded 0.21 / sqlx 0.9 require Rust 1.94. mysql_common 0.37
 # pulls uuid 1.28, which requires Rust 1.89. This file does not set
 # rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
-# `cargo check -p moqui` needs Rust 1.94. A full workspace check also builds
+# `cargo check -p moqui` needs Rust 1.95 (if-let guards in match arms). A full workspace check also builds
 # `moqui-tui`, and Revue 3.x requires Rust 1.95.
 
 [workspace]
