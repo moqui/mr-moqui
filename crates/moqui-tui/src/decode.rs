@@ -146,8 +146,8 @@ fn take_one(buf: &[u8]) -> Take {
         b'\t' => Take::One(key(Key::Tab), 1),
         0x7f | 0x08 => Take::One(key(Key::Backspace), 1),
         // Ctrl+Space, and Ctrl with a letter (the bytes of Tab, Enter and Backspace are those keys, above).
-        0x00 => Take::One(press(Key::Char(' '), false, true, false), 1),
-        byte @ 0x01..=0x1a => Take::One(press(Key::Char(char::from(b'a' + byte - 1)), false, true, false), 1),
+        0x00 => Take::One(ctrl(Key::Char(' ')), 1),
+        byte @ 0x01..=0x1a => Take::One(ctrl(Key::Char(char::from(b'a' + byte - 1))), 1),
         byte if byte.is_ascii_graphic() || byte == b' ' => Take::One(key(Key::Char(byte as char)), 1),
         byte if byte >= 0x80 => take_utf8(buf),
         _ => Take::Skip(1),
@@ -163,11 +163,9 @@ fn take_esc(buf: &[u8]) -> Take {
         b'O' => take_ss3(buf),
         b']' => take_osc(buf),
         b'\x1b' => Take::One(key(Key::Escape), 1),
-        b'\r' => Take::One(press(Key::Enter, true, false, false), 2),
-        0x7f => Take::One(press(Key::Backspace, true, false, false), 2),
-        byte if byte.is_ascii_graphic() || byte == b' ' => {
-            Take::One(press(Key::Char(byte as char), true, false, false), 2)
-        }
+        b'\r' => Take::One(alt(Key::Enter), 2),
+        0x7f => Take::One(alt(Key::Backspace), 2),
+        byte if byte.is_ascii_graphic() || byte == b' ' => Take::One(alt(Key::Char(byte as char)), 2),
         _ => Take::One(key(Key::Escape), 1),
     }
 }
@@ -177,7 +175,7 @@ fn take_esc(buf: &[u8]) -> Take {
 fn take_osc(buf: &[u8]) -> Take {
     match buf.get(2) {
         None => return Take::NeedMore,
-        Some(byte) if !byte.is_ascii_digit() => return Take::One(press(Key::Char(']'), true, false, false), 2),
+        Some(byte) if !byte.is_ascii_digit() => return Take::One(alt(Key::Char(']')), 2),
         Some(_) => {}
     }
     let end = buf.iter().enumerate().skip(2).find_map(|(at, byte)| match byte {
@@ -452,8 +450,12 @@ fn key(key: Key) -> Decoded {
     Decoded::Key(KeyPress::plain(key))
 }
 
-fn press(key: Key, alt: bool, ctrl: bool, shift: bool) -> Decoded {
-    Decoded::Key(KeyPress { key, alt, ctrl, shift })
+fn alt(key: Key) -> Decoded {
+    Decoded::Key(KeyPress::with_alt(key))
+}
+
+fn ctrl(key: Key) -> Decoded {
+    Decoded::Key(KeyPress::with_ctrl(key))
 }
 
 fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -481,7 +483,7 @@ mod tests {
     #[test]
     fn kitty_unicode_keys_and_alt() {
         assert_eq!(keys(b"\x1b[13u"), vec![key(Key::Enter)]);
-        assert_eq!(keys(b"\x1b[97;3u"), vec![press(Key::Char('a'), true, false, false)]);
+        assert_eq!(keys(b"\x1b[97;3u"), vec![alt(Key::Char('a'))]);
     }
 
     #[test]
@@ -491,8 +493,8 @@ mod tests {
 
     #[test]
     fn tmux_and_xterm_alt_is_an_escape_prefix() {
-        assert_eq!(keys(b"\x1ba"), vec![press(Key::Char('a'), true, false, false)]);
-        assert_eq!(keys(b"\x1b[1;3A"), vec![press(Key::Up, true, false, false)]);
+        assert_eq!(keys(b"\x1ba"), vec![alt(Key::Char('a'))]);
+        assert_eq!(keys(b"\x1b[1;3A"), vec![alt(Key::Up)]);
     }
 
     #[test]
@@ -527,10 +529,10 @@ mod tests {
 
     #[test]
     fn control_letters_alt_enter_and_home_end() {
-        assert_eq!(keys(b"\x0b"), vec![press(Key::Char('k'), false, true, false)]);
-        assert_eq!(keys(b"\x13"), vec![press(Key::Char('s'), false, true, false)]);
+        assert_eq!(keys(b"\x0b"), vec![ctrl(Key::Char('k'))]);
+        assert_eq!(keys(b"\x13"), vec![ctrl(Key::Char('s'))]);
         assert_eq!(keys(b"\t"), vec![key(Key::Tab)]);
-        assert_eq!(keys(b"\x1b\r"), vec![press(Key::Enter, true, false, false)]);
+        assert_eq!(keys(b"\x1b\r"), vec![alt(Key::Enter)]);
         assert_eq!(keys(b"\x1b[1~\x1b[4~"), vec![key(Key::Home), key(Key::End)]);
         assert_eq!(keys(b"\x1bOH"), vec![key(Key::Home)]);
     }
@@ -560,10 +562,7 @@ mod tests {
             vec![Decoded::Background { dark: false }]
         );
         assert_eq!(keys(b"\x1b]52;c;aGk=\x07z"), vec![key(Key::Char('z'))]);
-        assert_eq!(
-            keys(b"\x1b]a"),
-            vec![press(Key::Char(']'), true, false, false), key(Key::Char('a'))]
-        );
+        assert_eq!(keys(b"\x1b]a"), vec![alt(Key::Char(']')), key(Key::Char('a'))]);
     }
 
     fn mouse(kind: MouseKind, column: u16, row: u16) -> Decoded {

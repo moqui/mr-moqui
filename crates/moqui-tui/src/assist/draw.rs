@@ -160,14 +160,14 @@ fn draw_body(paint: &mut Painter, session: &Session, x: u16, room: usize, top: u
     let mut cards = card_lines(session, room);
     let most = usize::from(status_row.saturating_sub(thread_top)) / 2;
     if cards.len() > most {
-        let focus = cards.iter().position(|line| line.2).unwrap_or(0);
+        let focus = cards.iter().position(|line| line.focused).unwrap_or(0);
         let start = focus.min(cards.len() - most);
         cards = cards.into_iter().skip(start).take(most).collect();
     }
     let cards_top = status_row - u16::try_from(cards.len()).unwrap_or(0);
-    for (at, (line, look, _)) in cards.iter().enumerate() {
+    for (at, line) in cards.iter().enumerate() {
         let row = cards_top + u16::try_from(at).unwrap_or(0);
-        paint.fixed(x, row, line, *look, room);
+        paint.fixed(x, row, &line.text, line.look, room);
     }
     // the thread, its end at the bottom, scrolled up in the transcript
     let lines = thread_lines(&thread.rows(), room);
@@ -226,8 +226,16 @@ fn thread_lines(rows: &[Row], room: usize) -> Vec<(String, Look)> {
     lines
 }
 
-/// The cards waiting, as lines with their look and whether the line is of the focused card.
-fn card_lines(session: &Session, room: usize) -> Vec<(String, Look, bool)> {
+/// A line of a waiting card.
+struct CardLine {
+    text: String,
+    look: Look,
+    /// The line is of the focused card.
+    focused: bool,
+}
+
+/// The cards waiting, as lines.
+fn card_lines(session: &Session, room: usize) -> Vec<CardLine> {
     let assist = session.assist();
     let thread = &assist.thread;
     let on_cards = session.assist_focused() && assist.area == Area::Cards;
@@ -236,8 +244,8 @@ fn card_lines(session: &Session, room: usize) -> Vec<(String, Look, bool)> {
     for card in assist.cards() {
         let focused = on_cards && current == Some(card);
         let mut push = |text: &str, look: Look| {
-            for line in wrap(text, room) {
-                lines.push((line, look, focused));
+            for text in wrap(text, room) {
+                lines.push(CardLine { text, look, focused });
             }
         };
         push("", Look::default());
@@ -277,7 +285,11 @@ fn card_lines(session: &Session, room: usize) -> Vec<(String, Look, bool)> {
                 } else {
                     "[ Approve ]  [ Reject ]"
                 };
-                lines.push((truncate_width(buttons, room), Look::role(Role::Primary), focused));
+                lines.push(CardLine {
+                    text: truncate_width(buttons, room),
+                    look: Look::role(Role::Primary),
+                    focused,
+                });
             }
             Card::Question(at) => {
                 let card = &thread.questions[at];

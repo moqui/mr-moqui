@@ -14,7 +14,15 @@
 
 //! A list's rows, selection, paging and sort.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::Session;
+use crate::forms::FocusKind;
+use crate::keys::{Key, KeyPress};
+use crate::layout::PAGE_ROWS;
+use crate::link::LinkCall;
+use crate::model::{FormList, Node};
+use crate::state::Purpose;
 
 impl Session {
     /// Up and Down move through a list's rows; past the first or last row they move focus on, as Lynx does.

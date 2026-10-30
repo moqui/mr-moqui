@@ -28,12 +28,10 @@ use crate::edit::{self, Edited, Limits};
 use crate::forms::{self, Extra, FocusItem, FocusKind, Index, Scope};
 use crate::keys::{merge_keys, Action, Key, KeyMap, KeyPress, MergeSkip};
 use crate::layout::PAGE_ROWS;
-use crate::link::{
-    row_link, row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo, TransitionOutcome,
-};
+use crate::link::{row_link, row_link_target, LinkCall, LinkError, MenuItem, RawBody, Reply, ScreenLink, ShellInfo};
 use crate::model::{Choice, FormList, Node, ScreenModel, Widget};
 use crate::nav::{level_path, Location, Nav};
-use crate::state::{Confirm, ConfirmKind, Edits, Finished, Lanes, Purpose, Request, Then};
+use crate::state::{Confirm, Edits, Finished, Lanes, Purpose, Request, Then};
 
 mod assist;
 mod dynamic;
@@ -1828,13 +1826,33 @@ impl Session {
     }
 }
 
-/// The drawer's rows as `(title, url, depth)`: each app menu item and the items under it.
-pub fn drawer_rows(menu: &[MenuItem]) -> Vec<(String, String, usize)> {
+/// A row of the drawer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DrawerRow {
+    pub title: String,
+    /// Where it goes; empty for a heading.
+    pub url: String,
+    /// 0 for an app or a heading, 1 for an item under it.
+    pub depth: usize,
+}
+
+impl DrawerRow {
+    fn new(title: &str, url: &str, depth: usize) -> Self {
+        Self {
+            title: title.to_string(),
+            url: url.to_string(),
+            depth,
+        }
+    }
+}
+
+/// The drawer's rows: each app menu item and the items under it.
+pub fn drawer_rows(menu: &[MenuItem]) -> Vec<DrawerRow> {
     let mut rows = Vec::new();
     for item in menu {
-        rows.push((item.title.clone(), item.url.clone(), 0));
+        rows.push(DrawerRow::new(&item.title, &item.url, 0));
         for child in &item.children {
-            rows.push((child.title.clone(), child.url.clone(), 1));
+            rows.push(DrawerRow::new(&child.title, &child.url, 1));
         }
     }
     rows

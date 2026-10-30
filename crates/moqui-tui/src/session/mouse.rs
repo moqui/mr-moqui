@@ -16,8 +16,9 @@
 //! the target under the pointer; the session acts on it through the same paths as Enter, so every confirmation and
 //! the question before leaving a changed form still ask.
 
-use super::*;
-use crate::keys::Target;
+use super::{Overlay, Session};
+use crate::forms::FocusKind;
+use crate::keys::{Action, Key, KeyPress, Target};
 
 impl Session {
     /// A click on `target`; `count` is 2 for a double click. A click on a field focuses it (a check box toggles); on a

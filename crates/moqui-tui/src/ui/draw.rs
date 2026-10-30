@@ -28,7 +28,7 @@ use crate::layout::{
     LabelMode, LaidBox, LaidField, LaidList, LaidOut, LaidStatus, LaidTree, Piece, TreeMark, WidthClass,
 };
 use crate::model::{Cell, Node, Widget};
-use crate::session::Session;
+use crate::session::{DrawerRow, Session};
 use crate::theme::{Glyph, Role, Theme};
 
 use super::overlays;
@@ -342,7 +342,7 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         paint.fixed(width.saturating_sub(1), row, side, Look::role(Role::Border), 1);
     }
     let paths = session.paths();
-    for (at, (title, url, depth)) in rows.iter().enumerate() {
+    for (at, DrawerRow { title, url, depth }) in rows.iter().enumerate() {
         let Some(row) = top
             .checked_add(u16::try_from(at).unwrap_or(u16::MAX))
             .filter(|row| *row < bottom)

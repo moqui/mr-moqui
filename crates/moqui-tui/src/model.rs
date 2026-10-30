@@ -149,7 +149,11 @@ fn clean_value(value: &mut serde_json::Value) {
                 *text = clean_text(text);
             }
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(clean_value),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                clean_value(item);
+            }
+        }
         serde_json::Value::Object(map) => {
             if map.keys().any(|key| key.chars().any(is_unsafe)) {
                 let entries = std::mem::take(map);
@@ -158,7 +162,9 @@ fn clean_value(value: &mut serde_json::Value) {
                     .map(|(key, item)| (clean_text(&key), item))
                     .collect();
             }
-            map.values_mut().for_each(clean_value);
+            for item in map.values_mut() {
+                clean_value(item);
+            }
             let unknown_node = map
                 .get("t")
                 .and_then(serde_json::Value::as_str)
@@ -1360,7 +1366,11 @@ fn cell_nodes_mut(cell: &mut Cell, visit: &mut impl FnMut(&mut Node)) {
             visit(node);
             walk_mut(node.children_mut(), visit);
         }
-        Cell::Stack(parts) => parts.iter_mut().for_each(|part| cell_nodes_mut(part, visit)),
+        Cell::Stack(parts) => {
+            for part in parts {
+                cell_nodes_mut(part, visit);
+            }
+        }
         Cell::Text(_) => {}
     }
 }

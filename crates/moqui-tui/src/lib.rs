@@ -65,8 +65,8 @@ pub use model::{
 };
 pub use nav::{decode as decode_query, level_path, query_parameters, Location, Nav, LEVEL_FLOOR};
 pub use session::{
-    drawer_rows, ColumnEntry, Columns, DropDown, Editor, Login, Menu, MenuAct, MenuEntry, Message, Overlay, Palette,
-    PaletteRow, Picker, Prompt, PromptThen, Session, Timer, TreeNode, TreeState,
+    drawer_rows, ColumnEntry, Columns, DrawerRow, DropDown, Editor, Login, Menu, MenuAct, MenuEntry, Message, Overlay,
+    Palette, PaletteRow, Picker, Prompt, PromptThen, Session, Timer, TreeNode, TreeState,
 };
 pub use state::{AssistApproval, Confirm, ConfirmKind, Edits, Finished, Lanes, Purpose, Request, Then};
 pub use theme::{Depth, Glyph, Role, Theme};

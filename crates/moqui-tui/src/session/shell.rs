@@ -17,7 +17,20 @@
 //! documents, a list's exports, saved finds and columns. Menus share one overlay: a title and entries, each with what
 //! it does.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::time::{Duration, Instant};
+
+use super::{
+    drawer_rows, encode, DrawerRow, Message, Overlay, Session, Submitted, Timer, COUNTS_SECONDS, PUSHED_COUNTS_SECONDS,
+    SEARCH_MILLIS,
+};
+use crate::edit::{self, Limits};
+use crate::forms::{Extra, FocusItem, FocusKind};
+use crate::keys::{Action, Key, KeyPress};
+use crate::link::{LinkCall, LinkError, MenuItem, RawBody};
+use crate::model::Node;
+use crate::nav::Location;
+use crate::state::Purpose;
 
 /// The extra dialog of the tray, and of a quick create's form, a document and an export as text. No `#` in them: that
 /// is the separator of a field's parts.
@@ -138,16 +151,15 @@ pub enum PromptThen {
 impl Session {
     // ---- what the view reads ----
 
-    /// The drawer's rows as `(title, url, depth)`: the app's menu, the screen's saved finds, and Home. A row with no url
-    /// is a heading.
-    pub fn drawer_rows(&self) -> Vec<(String, String, usize)> {
+    /// The drawer's rows: the app's menu, the screen's saved finds, and Home. A row with no url is a heading.
+    pub fn drawer_rows(&self) -> Vec<DrawerRow> {
         let mut rows = drawer_rows(&self.shell.menu);
         if !self.finds.is_empty() {
-            rows.push(("Saved finds".to_string(), String::new(), 0));
-            rows.extend(self.finds.iter().map(|find| (find.title.clone(), find.url.clone(), 1)));
+            rows.push(DrawerRow::new("Saved finds", "", 0));
+            rows.extend(self.finds.iter().map(|find| DrawerRow::new(&find.title, &find.url, 1)));
         }
         if !rows.is_empty() {
-            rows.push(("Home".to_string(), "/apps".to_string(), 0));
+            rows.push(DrawerRow::new("Home", "/apps", 0));
         }
         rows
     }
@@ -218,7 +230,8 @@ impl Session {
                     MenuAct::Url(palette.text.trim().to_string()),
                 ));
             }
-            for (title, url, _) in self.drawer_rows().into_iter().filter(|(_, url, _)| !url.is_empty()) {
+            let links = self.drawer_rows().into_iter().filter(|link| !link.url.is_empty());
+            for DrawerRow { title, url, .. } in links {
                 if hit(&title) {
                     rows.push(row("Menu", &title, &url, MenuAct::Url(url.clone())));
                 }
