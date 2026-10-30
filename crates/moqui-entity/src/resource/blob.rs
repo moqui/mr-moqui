@@ -45,6 +45,17 @@ const FRESHEN_AFTER_MILLIS: i64 = 60 * 60 * 1000;
 /// An upload with no chunk written for this long is abandoned.
 const ABANDONED_MILLIS: i64 = 24 * 60 * 60 * 1000;
 
+/// What [`BlobStore::collect`] deleted, or would delete in a dry run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlobGc {
+    /// Blobs no row refers to.
+    pub blobs: u64,
+    /// The bytes of those blobs.
+    pub bytes: u64,
+    /// Abandoned uploads cleaned up.
+    pub uploads: u64,
+}
+
 /// A stored blob.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobInfo {
@@ -356,11 +367,11 @@ impl BlobStore {
     }
 
     /// `gc#ContentBlobs`: delete the blobs no row refers to that were not written or referenced since `cutoff`
-    /// (milliseconds), and the chunks of uploads abandoned for a day. (blobs deleted, bytes, uploads cleaned)
-    pub fn collect(&self, cutoff: i64, dry_run: bool) -> Result<(u64, u64, u64), Error> {
+    /// (milliseconds), and the chunks of uploads abandoned for a day.
+    pub fn collect(&self, cutoff: i64, dry_run: bool) -> Result<BlobGc, Error> {
         let _guard = guard();
         let references = self.references();
-        let (mut deleted, mut bytes) = (0u64, 0u64);
+        let mut gc = BlobGc::default();
         let mut after: Option<String> = None;
         loop {
             let mut find = self
@@ -397,8 +408,8 @@ impl BlobStore {
             }
             for info in infos.into_iter().filter(|info| !used.contains(&info.id)) {
                 if dry_run {
-                    deleted += 1;
-                    bytes += info.size;
+                    gc.blobs += 1;
+                    gc.bytes += info.size;
                     continue;
                 }
                 // the row first, only while it is still old (a reference made meanwhile freshened it); then its
@@ -415,8 +426,8 @@ impl BlobStore {
                 match gone {
                     Ok(1) => {
                         self.delete_chunks(&info.storage_key)?;
-                        deleted += 1;
-                        bytes += info.size;
+                        gc.blobs += 1;
+                        gc.bytes += info.size;
                     }
                     Ok(_) => {}
                     // a row that refers to it now (a foreign key) keeps it
@@ -424,7 +435,6 @@ impl BlobStore {
                 }
             }
         }
-        let mut cleaned = 0;
         let abandoned = self
             .entity
             .find(CONTENT_BLOB_UPLOAD)?
@@ -450,9 +460,9 @@ impl BlobStore {
                 }
                 self.delete_upload(&key)?;
             }
-            cleaned += 1;
+            gc.uploads += 1;
         }
-        Ok((deleted, bytes, cleaned))
+        Ok(gc)
     }
 }
 
@@ -749,9 +759,14 @@ mod tests {
             row.update(&store.entity).unwrap();
         }
         let cutoff = now_millis() - ABANDONED_MILLIS;
-        assert_eq!(store.collect(cutoff, true).unwrap(), (1, 10_000, 1), "a dry run counts");
+        let gc = BlobGc {
+            blobs: 1,
+            bytes: 10_000,
+            uploads: 1,
+        };
+        assert_eq!(store.collect(cutoff, true).unwrap(), gc, "a dry run counts");
         assert_eq!(rows(&store, CONTENT_BLOB), 2);
-        assert_eq!(store.collect(cutoff, false).unwrap(), (1, 10_000, 1));
+        assert_eq!(store.collect(cutoff, false).unwrap(), gc);
         assert!(store.stat(&old.id).unwrap().is_none());
         assert!(store.stat(&kept.id).unwrap().is_some());
         assert_eq!(rows(&store, CONTENT_BLOB_CHUNK), 1, "the recent blob's chunk only");

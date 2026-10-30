@@ -24,6 +24,7 @@ use moqui_db::sql::{
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 use super::loader::canonical_name;
 use super::{error_chain, with_load_slot, with_load_slot_read, FeedServiceNames};
@@ -202,7 +203,7 @@ pub fn register_feed_insert(facade: &EntityFacade, tx: &TransactionManager) -> R
     // statement runs in its own savepoint, so only a savepoint that cannot be rolled back stops the commit.
     tx.on_feed_insert(move |conn| match insert_pending(&insert_facade, conn, frame) {
         Ok(ids) => {
-            insert_ids.lock().unwrap_or_else(|err| err.into_inner()).extend(ids);
+            lock(&insert_ids).extend(ids);
             Ok(())
         }
         Err(err) if is_unusable(&err) => Err(err),
@@ -216,7 +217,7 @@ pub fn register_feed_insert(facade: &EntityFacade, tx: &TransactionManager) -> R
     })?;
     let commit_facade = facade.clone();
     tx.on_commit(move || {
-        let ids = std::mem::take(&mut *inserted.lock().unwrap_or_else(|err| err.into_inner()));
+        let ids = std::mem::take(&mut *lock(&inserted));
         if let Err(err) = (crate::hooks::get().schedule_feed_receive)(&commit_facade, ids) {
             tracing::warn!(error = %err, "data feed receive was not scheduled; pending rows stay");
         }

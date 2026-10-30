@@ -19,7 +19,9 @@
 //! keyed by SQL text. [`DbConnection::query_once`] must not take a cache slot.
 //! An open stream pins the connection until [`DbConnection::close_stream`].
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
+
+use moqui_lib::sync::{read, write};
 use std::time::Duration;
 
 use moqui_lib::error::Error;
@@ -166,7 +168,7 @@ fn conf_driver_slot() -> &'static RwLock<Option<Arc<ConfDriverFactory>>> {
 
 /// Use `factory` for every [`conf_driver`] in this process.
 pub fn install_conf_driver_factory(factory: Arc<ConfDriverFactory>) {
-    *conf_driver_slot().write().unwrap_or_else(PoisonError::into_inner) = Some(factory);
+    *write(conf_driver_slot()) = Some(factory);
 }
 
 /// A driver for the database `conf` names.
@@ -175,9 +177,7 @@ pub fn install_conf_driver_factory(factory: Arc<ConfDriverFactory>) {
 ///
 /// When the host installed no factory, or the factory cannot make a driver for the conf name.
 pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
-    let factory = conf_driver_slot()
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
+    let factory = read(conf_driver_slot())
         .clone()
         .ok_or_else(|| Error::new("no database client for conf connections is installed in this host"))?;
     factory(conf)

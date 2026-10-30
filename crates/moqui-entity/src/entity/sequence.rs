@@ -23,12 +23,13 @@
 //! refill of one name does not stop ids for the others.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use moqui_db::sql::{is_mysql, is_sqlite, quote_column, quote_physical_ident};
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
+use moqui_lib::sync::lock;
 
 use super::exec::{query_conn, with_reserve_tx};
 use super::facade::EntityFacade;
@@ -98,7 +99,7 @@ pub(crate) struct SequenceBanks {
 impl SequenceBanks {
     /// The bank of `seq_name`. The map lock is held only for this lookup.
     fn bank(&self, seq_name: &str) -> Arc<Mutex<SequenceBank>> {
-        let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names = lock(&self.names);
         if let Some(bank) = names.get(seq_name) {
             return Arc::clone(bank);
         }
@@ -116,7 +117,7 @@ impl SequenceBanks {
         mut refill: impl FnMut(i64) -> Result<SequenceBank, Error>,
     ) -> Result<i64, Error> {
         let bank = self.bank(seq_name);
-        let mut bank = bank.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut bank = lock(&bank);
         loop {
             let roll = roll_for(stagger)?;
             if let Some(id) = take_id(&mut bank, stagger, roll) {
@@ -130,7 +131,7 @@ impl SequenceBanks {
     /// the bank refills from the database as usual. Used by tests to pin generated ids.
     fn temp_set(&self, seq_name: &str, next: i64, bank_size: i64) {
         let bank = self.bank(seq_name);
-        *bank.lock().unwrap_or_else(PoisonError::into_inner) = SequenceBank {
+        *lock(&bank) = SequenceBank {
             current: next,
             end: next.saturating_add(bank_size),
         };
@@ -139,7 +140,7 @@ impl SequenceBanks {
     /// Java's `tempResetSequencedIdPrimary`: drop the bank, so the next id comes from a database refill.
     fn temp_reset(&self, seq_name: &str) {
         let bank = self.bank(seq_name);
-        *bank.lock().unwrap_or_else(PoisonError::into_inner) = SequenceBank { current: 0, end: -1 };
+        *lock(&bank) = SequenceBank { current: 0, end: -1 };
     }
 }
 

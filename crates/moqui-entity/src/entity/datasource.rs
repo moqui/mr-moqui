@@ -47,19 +47,12 @@ fn factories() -> &'static Factories {
 
 /// Serve the datasources whose `object-factory` is `name` with `factory`.
 pub fn register_datasource_factory(name: &str, factory: std::sync::Arc<dyn DatasourceFactory>) {
-    factories()
-        .write()
-        .unwrap_or_else(|err| err.into_inner())
-        .insert(name.to_string(), factory);
+    moqui_lib::sync::write(factories()).insert(name.to_string(), factory);
 }
 
 /// The factory registered under `name`.
 pub fn datasource_factory(name: &str) -> Option<std::sync::Arc<dyn DatasourceFactory>> {
-    factories()
-        .read()
-        .unwrap_or_else(|err| err.into_inner())
-        .get(name)
-        .cloned()
+    moqui_lib::sync::read(factories()).get(name).cloned()
 }
 
 /// The `<datasource>` elements of the merged conf, `${}` left in their attributes.

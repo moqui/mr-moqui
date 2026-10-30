@@ -19,11 +19,12 @@
 //! connection can be opened or returned, it fails without using [`PoolConfig::acquire_timeout`].
 //! A parked client counts against `max`.
 
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 
@@ -350,7 +351,7 @@ impl Pool {
     }
 
     pub fn stats(&self) -> PoolStats {
-        let state = self.lock();
+        let state = lock(&self.inner.state);
         PoolStats {
             checked_out: state.checked_out(),
             parked: state.parked,
@@ -381,7 +382,7 @@ impl Pool {
         let started = Instant::now();
         loop {
             let (step, expired) = {
-                let mut state = self.lock();
+                let mut state = lock(&self.inner.state);
                 let mut expired = self.take_expired(&mut state);
                 if budget.is_none() {
                     budget = Some(idle_len(&state, class));
@@ -448,7 +449,7 @@ impl Pool {
         }
         let wait_started = Instant::now();
         {
-            let mut state = self.lock();
+            let mut state = lock(&self.inner.state);
             state.waiting += 1;
             publish(&state, Duration::ZERO);
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -487,7 +488,7 @@ impl Pool {
         if conn.parked || conn.class != Class::Ordinary {
             return;
         }
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         state.ordinary_out = state.ordinary_out.saturating_sub(1);
         state.parked += 1;
         conn.parked = true;
@@ -498,7 +499,7 @@ impl Pool {
         if !conn.parked {
             return;
         }
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         state.parked = state.parked.saturating_sub(1);
         state.ordinary_out += 1;
         conn.parked = false;
@@ -508,7 +509,7 @@ impl Pool {
     /// A test that failed lost its connection.
     fn finish_test(&self, class: Class, handed_out: bool) {
         {
-            let mut state = self.lock();
+            let mut state = lock(&self.inner.state);
             adjust_testing(&mut state, class, false);
             if handed_out {
                 hand_out(&mut state, class);
@@ -523,13 +524,13 @@ impl Pool {
     }
 
     fn mark_creating(&self, class: Class, starting: bool) {
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         adjust_creating(&mut state, class, starting);
         publish(&state, Duration::ZERO);
     }
 
     fn finish_create(&self, class: Class) {
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         adjust_creating(&mut state, class, false);
         hand_out(&mut state, class);
         publish(&state, Duration::ZERO);
@@ -539,7 +540,7 @@ impl Pool {
         if tracked.in_tx {
             if let Err(err) = tracked.rollback() {
                 tracing::debug!(error = %err, "rollback before returning a connection failed");
-                let mut state = self.lock();
+                let mut state = lock(&self.inner.state);
                 release_hold(&mut state, class, parked);
                 publish(&state, Duration::ZERO);
                 self.inner.available.notify_all();
@@ -547,7 +548,7 @@ impl Pool {
             }
         }
         tracked.idle_since = Instant::now();
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         release_hold(&mut state, class, parked);
         match class {
             Class::Ordinary => state.ordinary_idle.push(tracked),
@@ -583,7 +584,7 @@ impl Pool {
     }
 
     fn discard_hold(&self, class: Class, parked: bool, lost: bool) {
-        let mut state = self.lock();
+        let mut state = lock(&self.inner.state);
         release_hold(&mut state, class, parked);
         if lost {
             state.lost_at = Some(Instant::now());
@@ -591,10 +592,6 @@ impl Pool {
         publish(&state, Duration::ZERO);
         drop(state);
         self.inner.available.notify_all();
-    }
-
-    fn lock(&self) -> MutexGuard<'_, State> {
-        self.inner.state.lock().unwrap_or_else(|err| err.into_inner())
     }
 }
 

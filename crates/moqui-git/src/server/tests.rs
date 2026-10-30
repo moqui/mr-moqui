@@ -1040,9 +1040,9 @@ fn large_objects_are_content_blobs_streamed_in_and_out() {
         assert!(report.deleted >= 3, "the old commit, its tree and big.bin: {report:?}");
         let blobs = moqui_core::resource::blob::BlobStore::new(fixture.entity.clone());
         let tomorrow = jiff::Timestamp::now().as_millisecond() + 24 * 60 * 60 * 1000;
-        let (deleted, bytes, _) = blobs.collect(tomorrow, false).unwrap();
+        let gc = blobs.collect(tomorrow, false).unwrap();
         assert_eq!(
-            (deleted, bytes),
+            (gc.blobs, gc.bytes),
             (1, binary.len() as u64),
             "the binary's blob; the text's is referenced"
         );

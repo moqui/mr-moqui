@@ -436,7 +436,11 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchHunk>, Error> {
             return Err(Error::new(format!("unexpected line in patch: {}", trim_line_end(raw))));
         }
         let header = trim_line_end(raw).to_string();
-        let (old_start, old_count, new_count) = parse_header(&header)?;
+        let HunkHeader {
+            old_start,
+            old_count,
+            new_count,
+        } = parse_header(&header)?;
         let mut hunk = PatchHunk {
             header,
             old_start,
@@ -518,15 +522,25 @@ fn strip_newline(line: Option<&mut String>) {
     }
 }
 
-/// `@@ -a[,b] +c[,d] @@ ...` as (a, b, d).
-fn parse_header(header: &str) -> Result<(usize, usize, usize), Error> {
+/// The parts of a hunk header `@@ -a[,b] +c[,d] @@ ...` a patch applies by: a, b and d.
+struct HunkHeader {
+    old_start: usize,
+    old_count: usize,
+    new_count: usize,
+}
+
+fn parse_header(header: &str) -> Result<HunkHeader, Error> {
     let bad = || Error::new(format!("bad hunk header: {header}"));
     let body = header.strip_prefix("@@ ").ok_or_else(bad)?;
     let (body, _) = body.split_once(" @@").ok_or_else(bad)?;
     let (old, new) = body.split_once(' ').ok_or_else(bad)?;
     let (old_start, old_count) = parse_range(old.strip_prefix('-').ok_or_else(bad)?).ok_or_else(bad)?;
     let (_, new_count) = parse_range(new.strip_prefix('+').ok_or_else(bad)?).ok_or_else(bad)?;
-    Ok((old_start, old_count, new_count))
+    Ok(HunkHeader {
+        old_start,
+        old_count,
+        new_count,
+    })
 }
 
 fn parse_range(range: &str) -> Option<(usize, usize)> {

@@ -40,12 +40,12 @@ impl SharedModel {
 
     /// The current model.
     pub(crate) fn model(&self) -> Arc<EntityModel> {
-        Arc::clone(&self.model.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+        Arc::clone(&moqui_lib::sync::read(&self.model))
     }
 
     /// Put `model` in place of the current one, which calls holding it keep until they finish.
     pub(crate) fn swap(&self, model: EntityModel) -> Arc<EntityModel> {
-        let mut current = self.model.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current = moqui_lib::sync::write(&self.model);
         std::mem::replace(&mut *current, Arc::new(model))
     }
 

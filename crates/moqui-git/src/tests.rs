@@ -856,10 +856,10 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
     let report = outcome[0].1.as_ref().unwrap();
     assert_eq!(report.lfs_deleted, 1, "{report:?}");
     let blobs = moqui_core::resource::blob::BlobStore::new(fixture.entity.clone());
-    let (deleted, bytes, _) = blobs
+    let gc = blobs
         .collect(jiff::Timestamp::now().as_millisecond() + 1000, false)
         .unwrap();
-    assert_eq!((deleted, bytes), (1, image.len() as u64));
+    assert_eq!((gc.blobs, gc.bytes), (1, image.len() as u64));
 }
 
 type GcHook = std::sync::Arc<dyn Fn() + Send + Sync>;
