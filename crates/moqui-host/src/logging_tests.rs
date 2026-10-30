@@ -16,13 +16,17 @@ use super::*;
 
 #[test]
 fn a_tap_takes_the_lines_at_its_level_and_above() {
-    let warnings = tap_at(8, Level::WARN);
-    let all = tap(8);
-    feed_taps(Level::INFO, "an info line");
-    feed_taps(Level::WARN, "a warning");
-    feed_taps(Level::ERROR, "an error");
-    assert_eq!(warnings.try_iter().collect::<Vec<_>>(), ["a warning", "an error"]);
-    assert_eq!(all.try_iter().count(), 3);
+    // The taps are the process's: the other tests' lines reach them too, so only these lines count.
+    let warnings = tap_at(64, Level::WARN);
+    let all = tap(64);
+    feed_taps(Level::INFO, "tap test: an info line");
+    feed_taps(Level::WARN, "tap test: a warning");
+    feed_taps(Level::ERROR, "tap test: an error");
+    let mine = |lines: std::sync::mpsc::TryIter<'_, String>| {
+        lines.filter(|line| line.starts_with("tap test: ")).collect::<Vec<_>>()
+    };
+    assert_eq!(mine(warnings.try_iter()), ["tap test: a warning", "tap test: an error"]);
+    assert_eq!(mine(all.try_iter()).len(), 3);
 }
 
 #[test]
