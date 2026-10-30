@@ -13,12 +13,12 @@
  */
 
 //! WebDAV locks (class 2), which Finder and Windows need before they write: exclusive write locks on one file or
-//! folder of a drive, held by [`crate::resource::locks`] under the resource's location, so a lock taken by one user's
+//! folder of a drive, held by [`moqui_core::resource::locks`] under the resource's location, so a lock taken by one user's
 //! client holds another user's client (whose href names the drive's folder in their own home) and every other writer
 //! of the drive (the Files screens, SFTP, the drive services) as well. The answers here are the WebDAV ones: 423, the
 //! `lockdiscovery` property, LOCK, refresh and UNLOCK by token.
 
-use crate::resource::locks::{self as table, Lock};
+use moqui_core::resource::locks::{self as table, Lock};
 
 use super::{href_element, xml, DavRequest, DavResponse};
 

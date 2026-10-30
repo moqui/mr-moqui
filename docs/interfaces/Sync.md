@@ -5,9 +5,9 @@ in with an **app password** of its own: the DAV server at `/dav` (WebDAV over dr
 drives on the built-in SSH server. The framework keeps no calendar or contact of its own: an application serves them
 through adapter services, and Mantle has them. As of Oct 21, 2026.
 
-The code is `crates/moqui-core/src/dav/` (the protocol: `mod.rs`, `files.rs`, `pim.rs`, `locks.rs`, `xml.rs`),
+The code is `crates/moqui-dav/src/dav/` (the protocol: `mod.rs`, `files.rs`, `pim.rs`, `locks.rs`, `xml.rs`),
 `crates/moqui-host/src/dav_http.rs` (the routes) and `crates/moqui-host/src/ssh/sftp_fs.rs` (SFTP). Tests:
-`crates/moqui-core/src/dav/tests.rs`, `crates/moqui-host/tests/it/ssh.rs` and `collab.rs` (the routes), and
+`crates/moqui-dav/src/dav/tests.rs`, `crates/moqui-host/tests/it/ssh.rs` and `collab.rs` (the routes), and
 mr-mantle `test/Dav.spec.js` (CalDAV and CardDAV on Mantle, through `org.moqui.impl.DavServices.serve#DavRequest`).
 IronStone's screen is Commons, Settings, Sync.
 
@@ -113,6 +113,6 @@ tags hash the rows each text is made of; the ctag the tags.
 
 A user with `SSH_SFTP` gets `ssh-server` `sftp-root` as before. Any other user who logs in to the SSH server (an app password,
 a key, or the password of an account with no second factor) gets the drives they may open, one folder each, named as in
-WebDAV (`moqui_core::dav::files::tree`): a write is an upload and a new version, a removal goes to the trash, a rename across
+WebDAV (`moqui_dav::dav::files::tree`): a write is an upload and a new version, a removal goes to the trash, a rename across
 folders or drives is a move. Each call logs the user in on a request worker. `dav-server` `sftp-drives="false"` gives such a
 user no SFTP.

@@ -25,14 +25,12 @@ mod chat_tests;
 mod contacts;
 mod content;
 pub mod coverage;
-mod dav;
 pub(crate) mod define;
 mod devtools;
 mod eca;
 mod eca_rules;
 mod external_agent;
 pub use eca_rules::reload as reload_eca_rules;
-mod elfinder;
 mod email_eca;
 #[cfg(test)]
 mod fence_tests;

@@ -21,12 +21,12 @@ use std::collections::BTreeMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
+use moqui_core::extension::RustServiceFn;
+use moqui_core::rust_service;
 
-pub(in crate::service) fn register(
-    map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
-) -> Result<(), String> {
+pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, serve_request)?;
     rust_service!(map, get_sync_addresses)?;
     Ok(())
@@ -91,7 +91,7 @@ fn get_sync_addresses(
     let Some(factory) = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory())) else {
         return Ok(BTreeMap::new());
     };
-    let username = crate::user::current_username().ok().flatten().unwrap_or_default();
+    let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let base = crate::dav::public_base_url(&factory);
     let user = crate::dav::encode(&username);
     let dav = format!("{base}{}/", crate::dav::BASE);

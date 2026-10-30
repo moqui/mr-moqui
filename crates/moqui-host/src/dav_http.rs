@@ -13,7 +13,7 @@
  */
 
 //! The DAV server's routes: `/dav` and below, and `/.well-known/caldav` and `/.well-known/carddav`
-//! (`moqui_core::dav`). The body is read whole, up to `dav-server` `max-file` bytes (256 MiB), within
+//! (`moqui_dav::dav`). The body is read whole, up to `dav-server` `max-file` bytes (256 MiB), within
 //! `webapp_body_timeout`, and the request is served on a request worker in a fresh context. Credentials are taken over
 //! HTTPS, from a trusted proxy's HTTPS, from loopback, or with `dav-server` `allow-http="true"`; a refused login counts
 //! for web protection as a refused screen login does.
@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
-use moqui_core::dav::{DavRequest, DavResponse};
+use moqui_dav::dav::{DavRequest, DavResponse};
 
 use crate::guard::Event;
 use crate::http::{forwarded_https, plain, read_body, ClientAddr, HttpState, TlsConnection};
@@ -85,7 +85,7 @@ pub(crate) async fn handle(
     let guard = Arc::clone(&state.guard);
     let (done, answer) = tokio::sync::oneshot::channel::<DavResponse>();
     let submitted = factory.request_pool().try_submit(Arc::clone(&factory), move || {
-        let response = moqui_core::dav::serve(&job_factory, &dav_request);
+        let response = moqui_dav::dav::serve(&job_factory, &dav_request);
         if moqui_core::web::take_auth_failure() {
             guard.record(client, Event::AuthFailure);
         }

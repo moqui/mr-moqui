@@ -14,8 +14,9 @@ publish.workspace = true
 [dependencies]
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
-# The reports, as the host links them.
+# The reports, and the VCard and ICalendar tools and elFinder (moqui-dav), as the host links them.
 moqui-report = { workspace = true }
+moqui-dav = { workspace = true }
 rusqlite = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

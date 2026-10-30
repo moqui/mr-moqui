@@ -51,8 +51,8 @@ use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use moqui_lib::object::{to_plain_string, Value};
 
-use crate::context::{Error, ExecutionContext};
-use crate::native::{NativeRegistry, Tool, ToolFactory};
+use moqui_core::context::{Error, ExecutionContext};
+use moqui_core::native::{NativeRegistry, Tool, ToolFactory};
 
 pub(crate) mod ics;
 pub(crate) mod line;
@@ -187,7 +187,7 @@ impl Tool for ICalendarTool {
         match method {
             "parse" => {
                 let text = args.first().map(to_plain_string).unwrap_or_default();
-                let year = Timestamp::from_millisecond(crate::user::now_effective_millis())
+                let year = Timestamp::from_millisecond(moqui_core::user::now_effective_millis())
                     .map(|now| now.to_zoned(TimeZone::UTC).year())
                     .unwrap_or(2026);
                 Ok(Value::Map(ics::parse(&text, year)))
@@ -202,7 +202,7 @@ impl Tool for ICalendarTool {
                         ))
                     }
                 };
-                let now = Timestamp::from_millisecond(crate::user::now_effective_millis())
+                let now = Timestamp::from_millisecond(moqui_core::user::now_effective_millis())
                     .unwrap_or_else(|_| Timestamp::now());
                 ics::write(&calendar, now).map(Value::String).map_err(Error::new)
             }
@@ -221,7 +221,7 @@ impl Tool for ICalendarTool {
                     Some(name) => zones::zone_by_name(&name)
                         .map(|(_, zone)| zone)
                         .ok_or_else(|| Error::new(format!("ICalendar.expand: {name} is not a time zone")))?,
-                    None => crate::l10n::time_zone(),
+                    None => moqui_core::l10n::time_zone(),
                 };
                 let exdates = text_list(args.get(3));
                 let rdates = text_list(args.get(4));

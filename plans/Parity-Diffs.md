@@ -264,7 +264,7 @@ IronStone impl-drawers-commons M3: what the safe HTML cleaning keeps for the qvt
 ## Layout panels and the calendar and contact tools (2026-10-19)
 
 IronStone impl-drawers-commons M4 and M7 (framework). `container-split` and the `VCard` and `ICalendar` tools are new
-(docs/ui/Qvt-Client.md, "Layout panels: split, wizard and stack"; module doc of `moqui-core/src/pim/mod.rs`).
+(docs/ui/Qvt-Client.md, "Layout panels: split, wizard and stack"; module doc of `moqui-dav/src/pim/mod.rs`).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|

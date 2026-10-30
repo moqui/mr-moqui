@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use crate::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use xml::{Element, CALDAV, CARDDAV, DAV};
 
 /// The path prefix the server is mounted at.
@@ -158,8 +158,8 @@ pub fn serve(factory: &ExecutionContextFactory, request: &DavRequest) -> DavResp
         Ok(false) => return unauthorized("log in with your username and an app password"),
         Err(response) => return response,
     }
-    let username = crate::user::current_username().ok().flatten().unwrap_or_default();
-    let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let trailing_slash = rest.ends_with('/');
     let segments: Vec<String> = rest
         .split('/')
@@ -223,7 +223,10 @@ fn unauthorized(text: &str) -> DavResponse {
 
 /// Log the request's user in: false when it carries no credentials, the refusal when they are not taken.
 fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<bool, DavResponse> {
-    let Some((username, password)) = request.header("authorization").and_then(crate::web::basic_credentials) else {
+    let Some((username, password)) = request
+        .header("authorization")
+        .and_then(moqui_core::web::basic_credentials)
+    else {
         return Ok(false);
     };
     if !(request.secure || factory.conf_flag("dav-server", "allow-http", false)) {
@@ -233,19 +236,19 @@ fn login(factory: &ExecutionContextFactory, request: &DavRequest) -> Result<bool
         ));
     }
     let account_password = factory.conf_flag("dav-server", "account-password", false);
-    let logged_in = crate::user::with_client_ip(&request.client_ip, || {
-        if crate::user::looks_like_app_password(&password) || !account_password {
-            if crate::user::login_app_password(&username, &password).is_ok() {
+    let logged_in = moqui_core::user::with_client_ip(&request.client_ip, || {
+        if moqui_core::user::looks_like_app_password(&password) || !account_password {
+            if moqui_core::user::login_app_password(&username, &password).is_ok() {
                 return true;
             }
             if !account_password {
                 return false;
             }
             // not an app password: only the account password below counts as a failure
-            crate::web::take_auth_failure();
+            moqui_core::web::take_auth_failure();
         }
-        crate::user::login_user(&username, &password).is_ok()
-            && crate::user::current_user_id()
+        moqui_core::user::login_user(&username, &password).is_ok()
+            && moqui_core::user::current_user_id()
                 .ok()
                 .flatten()
                 .is_some_and(|id| !id.is_empty())
@@ -651,7 +654,7 @@ pub fn public_base_url(factory: &ExecutionContextFactory) -> String {
     if !configured.is_empty() {
         return configured.trim_end_matches('/').to_string();
     }
-    if let Some(url) = crate::web::request_url() {
+    if let Some(url) = moqui_core::web::request_url() {
         if let Some((scheme, rest)) = url.split_once("://") {
             let authority = rest.split('/').next().unwrap_or_default();
             if !authority.is_empty() {
@@ -665,7 +668,11 @@ pub fn public_base_url(factory: &ExecutionContextFactory) -> String {
     let (scheme, port, default) = if property("webapp_https_enabled") == "true" {
         ("https", property("webapp_https_port"), "443")
     } else {
-        ("http", crate::web::http_url_port(&property("webapp_http_port")), "80")
+        (
+            "http",
+            moqui_core::web::http_url_port(&property("webapp_http_port")),
+            "80",
+        )
     };
     if port.is_empty() || port == default {
         format!("{scheme}://{host}")
@@ -688,7 +695,7 @@ pub(crate) fn href_element(href: &str) -> String {
 
 /// A path segment of a request, its `%XX` escapes decoded (a `+` stays a plus in a path).
 pub(crate) fn decode_segment(segment: &str) -> String {
-    crate::web::percent_decode(&segment.replace('+', "%2B"))
+    moqui_core::web::percent_decode(&segment.replace('+', "%2B"))
 }
 
 /// A path segment percent-encoded for an href.
@@ -774,7 +781,8 @@ pub(crate) fn call(name: &str, parameters: &[(&str, Value)]) -> Result<BTreeMap<
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    let result = crate::service::call::sync_checked(name, &parameters, &crate::service::call::CallOptions::default());
+    let result =
+        moqui_core::service::call::sync_checked(name, &parameters, &moqui_core::service::call::CallOptions::default());
     ExecutionContext::with_current(|ec| ec.message().clear_errors());
     result.map_err(|err| err.message().to_string())
 }
@@ -812,7 +820,7 @@ pub(crate) fn flag_of(map: &indexmap::IndexMap<String, Value>, key: &str) -> boo
 }
 
 pub(crate) fn millis_of(map: &indexmap::IndexMap<String, Value>, key: &str) -> Option<i64> {
-    map.get(key).and_then(crate::user::value_millis)
+    map.get(key).and_then(moqui_core::user::value_millis)
 }
 
 /// The maps of a list a service returned.
@@ -822,7 +830,7 @@ pub(crate) fn maps(value: Option<&Value>) -> Vec<indexmap::IndexMap<String, Valu
             .iter()
             .filter_map(|item| match item {
                 Value::Map(map) => Some(map.clone()),
-                Value::Object(object) => object.downcast::<crate::entity::EntityValue>().map(|row| {
+                Value::Object(object) => object.downcast::<moqui_core::entity::EntityValue>().map(|row| {
                     row.fields()
                         .iter()
                         .map(|(key, value)| (key.to_string(), value.clone()))

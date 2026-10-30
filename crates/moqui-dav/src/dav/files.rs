@@ -27,8 +27,8 @@ use super::{
     call, depth, destination_path, encode, etag_of, flag_of, http_date, locks, maps, millis_of, multistatus, overwrite,
     proppatch, status_of_error, text_of, xml, Context, DavResponse, PropRequest, Resource, BASE,
 };
-use crate::context::ExecutionContext;
-use crate::web::multipart::UploadedFile;
+use moqui_core::context::ExecutionContext;
+use moqui_core::web::multipart::UploadedFile;
 
 const FILES: &str = "org.moqui.impl.FileServices";
 
@@ -781,8 +781,8 @@ pub fn drive_folder(drive_id: &str) -> Option<String> {
 /// rename across folders is a move). The desktops' litter is not dropped here, as SFTP clients write none.
 pub mod tree {
     use super::{children, drives, info, split_parent, trash, Drive, Entry, FILES};
-    use crate::context::{Error, ExecutionContext, ResourceStat};
-    use crate::web::multipart::UploadedFile;
+    use moqui_core::context::{Error, ExecutionContext, ResourceStat};
+    use moqui_core::web::multipart::UploadedFile;
     use moqui_lib::object::{HostObject, Value};
 
     fn refused(text: String) -> Error {

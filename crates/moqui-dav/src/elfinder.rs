@@ -33,9 +33,11 @@ use indexmap::IndexMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
-use crate::web::multipart::UploadedFile;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
+use moqui_core::extension::RustServiceFn;
+use moqui_core::rust_service;
+use moqui_core::web::multipart::UploadedFile;
 
 #[cfg(test)]
 const RUN_COMMAND: &str = "org.moqui.impl.ElFinderServices.run#Command";
@@ -50,9 +52,7 @@ const HASH_DECODE: GeneralPurpose = GeneralPurpose::new(
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
-pub(in crate::service) fn register(
-    map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
-) -> Result<(), String> {
+pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, run_command)?;
     Ok(())
 }
@@ -101,7 +101,7 @@ enum Store {
 
 /// A resource facade call in the current execution context.
 fn with_resources<T>(
-    body: impl FnOnce(&crate::context::ResourceFacade) -> Result<T, crate::context::Error>,
+    body: impl FnOnce(&moqui_core::context::ResourceFacade) -> Result<T, moqui_core::context::Error>,
 ) -> Result<T, LibError> {
     ExecutionContext::with_current(|ec| body(ec.factory().resource()).map_err(|err| LibError::new(err.message())))
         .ok_or_else(|| LibError::new("elFinder has no execution context"))?
@@ -124,7 +124,7 @@ impl Connector<'_> {
     /// In production, only `dbresource://` (and `content://`) roots accept write commands. Component and file roots
     /// stay browsable.
     fn writes_restricted(&self) -> bool {
-        writes_restricted(crate::web::is_production(), &self.resource_root)
+        writes_restricted(moqui_core::web::is_production(), &self.resource_root)
     }
 
     fn hash(&self, path: &str) -> String {

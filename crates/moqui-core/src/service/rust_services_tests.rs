@@ -37,9 +37,6 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::devtools::rebuild_artifact_index",
         "moqui_core::service::devtools::restart_server",
         "moqui_core::service::content::migrate_db_resource_blobs",
-        "moqui_core::service::dav::get_sync_addresses",
-        "moqui_core::service::dav::serve_request",
-        "moqui_core::service::elfinder::run_command",
         "moqui_core::service::external_agent::request",
         "moqui_core::service::images::convert_image",
         "moqui_core::service::images::get_rich_text_image",
@@ -99,6 +96,7 @@ fn an_unlinked_framework_crate_service_reports_its_feature() {
         super::missing_feature("moqui_collab::service::save_document"),
         Some("collab")
     );
+    assert_eq!(super::missing_feature("moqui_dav::elfinder::run_command"), Some("dav"));
     // moqui-mail is smtp, with the receive half its imap
     assert_eq!(super::missing_feature("moqui_mail::send_message"), Some("smtp"));
     assert_eq!(super::missing_feature("moqui_mail::push_remote_changes"), Some("smtp"));

@@ -35,7 +35,7 @@ use super::{
     call, encode, flag_of, maps, multistatus, multistatus_of, prop_response, proppatch, status_of_error,
     status_response, text_of, xml, Context, DavResponse, PropRequest, Resource, BASE,
 };
-use crate::context::ExecutionContextFactory;
+use moqui_core::context::ExecutionContextFactory;
 use xml::{Element, CALDAV, CARDDAV, CS, DAV, ICAL};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

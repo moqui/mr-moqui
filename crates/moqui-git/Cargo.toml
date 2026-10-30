@@ -34,6 +34,8 @@ zip = { workspace = true }
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open; image and xlsx for the file services' previews.
 moqui-core = { workspace = true, features = ["http", "test-support", "image", "xlsx"] }
+# The elFinder connector, whose git volume a test runs (run#ElFinderCommand).
+moqui-dav = { workspace = true }
 # The file services' image thumbnails and spreadsheet previews, written by the tests.
 image = { workspace = true }
 rust_xlsxwriter = { workspace = true }

@@ -23,10 +23,10 @@ use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::{safe_entry_name, unhash, writes_restricted, Connector, RUN_COMMAND};
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::EntityFacade;
-use crate::service::ServicePools;
-use crate::web::multipart::UploadedFile;
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::EntityFacade;
+use moqui_core::service::ServicePools;
+use moqui_core::web::multipart::UploadedFile;
 
 struct Setup {
     facade: EntityFacade,
@@ -36,17 +36,18 @@ struct Setup {
 /// The connector on this test's thread is not production, whatever another test's boot left in
 /// the process's `instance_purpose`.
 fn setup() -> Setup {
-    crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
-    let facade = crate::testing::open();
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
+    let facade = moqui_core::testing::open();
     facade.assume_db_tables();
-    let context = ExecutionContextFactory::test_context_in("", ServicePools::idle(), crate::context::framework_dir());
+    let context =
+        ExecutionContextFactory::test_context_in("", ServicePools::idle(), moqui_core::context::framework_dir());
     context.factory().set_entity(facade.clone());
     Setup { facade, context }
 }
 
 fn install() {
-    let services = crate::context::framework_dir().join("service/org/moqui/impl/ElFinderServices.xml");
-    let failures = crate::service::lint(&[services]).unwrap();
+    let services = moqui_core::context::framework_dir().join("service/org/moqui/impl/ElFinderServices.xml");
+    let failures = moqui_core::service::lint(&[services]).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
 
@@ -64,12 +65,12 @@ fn command(root: &str, cmd: &str, target: &str, other: Vec<(&str, Value)>) -> BT
     parameters.insert("target".to_string(), Value::string(target));
     parameters.insert("resourceRoot".to_string(), Value::string(root));
     parameters.insert("otherParameters".to_string(), Value::Map(other));
-    crate::service::sync(RUN_COMMAND, &parameters).unwrap()
+    moqui_core::service::sync(RUN_COMMAND, &parameters).unwrap()
 }
 
 fn response(out: &BTreeMap<String, Value>) -> serde_json::Value {
     let value = out.get("responseMap").cloned().unwrap_or(Value::Null);
-    serde_json::from_str(&crate::entity::query_rest::encode_json(&value)).unwrap()
+    serde_json::from_str(&moqui_core::entity::query_rest::encode_json(&value)).unwrap()
 }
 
 fn names(list: &serde_json::Value) -> Vec<String> {
@@ -414,7 +415,7 @@ fn a_target_outside_the_volume_is_an_error_and_a_name_stays_inside_it() {
     parameters.insert("cmd".to_string(), Value::string("ls"));
     parameters.insert("target".to_string(), Value::string("db_cm9vdA"));
     parameters.insert("resourceRoot".to_string(), Value::string("content://main/files"));
-    assert!(crate::service::sync(RUN_COMMAND, &parameters).unwrap().is_empty());
+    assert!(moqui_core::service::sync(RUN_COMMAND, &parameters).unwrap().is_empty());
     let errors = setup.context.message().errors().join("\n");
     assert!(errors.contains("content://main/files"), "{errors}");
     assert_eq!(std::fs::read_to_string(dir.0.join("secret.txt")).unwrap(), "outside");
@@ -476,9 +477,9 @@ fn writes_are_refused_in_production_except_for_a_dbresource_root() {
             vec![("name", Value::string("made"))],
         ))
     };
-    crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
     let refused = mkdir();
-    crate::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(false)));
     assert_eq!(
         refused["error"], "Write not allowed for this resource root",
         "{refused}"

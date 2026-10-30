@@ -13,8 +13,10 @@
  */
 
 //! The elFinder connector (`org.moqui.impl.ElFinderServices.run#Command`) on a `git://` volume: each write a commit.
-//! The connector's other tests are moqui-core's `service/elfinder/tests.rs`.
+//! The connector's other tests are moqui-dav's `elfinder/tests.rs`.
 
+// run#ElFinderCommand is moqui-dav's; naming the crate keeps its extension entry in this test binary.
+use moqui_dav as _;
 use std::collections::BTreeMap;
 
 use indexmap::IndexMap;

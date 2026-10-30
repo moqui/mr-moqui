@@ -1,0 +1,31 @@
+# The DAV server (WebDAV, CalDAV, CardDAV), the VCard and ICalendar tools, org.moqui.impl.DavServices and the elFinder
+# connector, on top of moqui-core (plans/Crate-Split.md). Its own crate so an edit here does not rebuild the framework.
+# Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry; moqui-host and
+# moqui-browser link it in every build.
+
+[package]
+name = "moqui-dav"
+description = "The DAV server, the VCard and ICalendar tools and the elFinder connector."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+base64 = { workspace = true }
+encoding_rs = { workspace = true }
+getrandom = { workspace = true }
+indexmap = { workspace = true }
+jiff = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

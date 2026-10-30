@@ -256,7 +256,7 @@ The same phase numbers. Component Groovy that this table used to call missing is
 | `service/tools.rs` | `PrintServices.xml` (moqui-cups), `impl/EntityServices.xml` encrypted-field rewrite, data-document notification | 8a |
 | `moqui-mail/src/implementation.rs`, `moqui-mail/src/lib.rs` | `EmailServices.xml` (both), `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | 8b |
 | `service/sso.rs` | `moqui-sso` `AuthServices.xml`, `AuthenticationFlow.groovy`, `MoquiSecurityGrantedAccessAdapter.groovy` | 8c |
-| `service/elfinder.rs` | `ElFinderServices.xml`, `ElFinderConnector.groovy` | 8c |
+| `moqui-dav/src/elfinder.rs` | `ElFinderServices.xml`, `ElFinderConnector.groovy` | 8c |
 | `service/system_sync/mod.rs`, `service/system_sync/entity_sync.rs` | `EntitySyncServices.xml` | 8c |
 | `service/system_sync/message.rs` | `SystemMessageServices.xml`, `WebFacadeImpl.handleSystemMessage` | 8c |
 | `service/system_sync/sftp.rs` | `moqui-sftp` `SftpMessageServices.xml` | 8c |
@@ -599,7 +599,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `tools/H2ServerToolFactory.groovy`, `JackrabbitRunToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
 | `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](Monitoring.md)) | Redesign |
-| `util/ElFinderConnector.groovy` | `service/elfinder.rs` | Port |
+| `util/ElFinderConnector.groovy` | `moqui-dav/src/elfinder.rs` | Port |
 | `util/JdbcExtractor.java` | `moqui-host/src/db/jdbc_extract.rs` | Port |
 | `util/RestSchemaUtil.groovy` | `entity/schema.rs`, `screen/schema.rs` | Partial |
 | `util/SimpleSigner.java` | `moqui-lib/src/signer.rs` | Port |

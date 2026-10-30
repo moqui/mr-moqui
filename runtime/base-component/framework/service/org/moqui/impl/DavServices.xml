@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <!-- The DAV server (crates/moqui-core/src/dav, docs/interfaces/Sync.md) without a socket -->
-    <service verb="serve" noun="DavRequest" type="rust" location="moqui_core::service::dav::serve_request" allow-remote="false">
+    <service verb="serve" noun="DavRequest" type="rust" location="moqui_dav::service::serve_request" allow-remote="false">
         <description>One request to the DAV server at /dav, as a device would send it, for a spec or a script that checks a
             DAV adapter: the request runs in an execution context of its own, as on a request worker (authorization on), and
             logs in by its own Authorization header (Basic, with an app password) as over HTTPS; the caller's user and
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="body"/>
         </out-parameters>
     </service>
-    <service verb="get" noun="SyncAddresses" type="rust" location="moqui_core::service::dav::get_sync_addresses">
+    <service verb="get" noun="SyncAddresses" type="rust" location="moqui_dav::service::get_sync_addresses">
         <description>Where the current user's devices sync (a Sync settings screen): the DAV server's address (dav-server
             public-url, else the webapp host and port) and the user's homes on it, whether CalDAV and CardDAV are served (an
             application names their adapters), and the SFTP address of the drives when the SSH server takes them; with

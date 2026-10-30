@@ -80,7 +80,6 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::external_agent::register(&mut map),
         super::contacts::register(&mut map),
         super::system_sync::register(&mut map),
-        super::elfinder::register(&mut map),
         super::sso::register(&mut map),
         super::tools::register(&mut map),
         #[cfg(feature = "image")]
@@ -89,7 +88,6 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::spreadsheet::register(&mut map),
         super::shell::register(&mut map),
         super::user_keys::register(&mut map),
-        super::dav::register(&mut map),
         super::devtools::register(&mut map),
         super::chat::register(&mut map),
         super::chat_link::register(&mut map),

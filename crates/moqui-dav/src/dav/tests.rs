@@ -23,16 +23,16 @@ use base64::Engine;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::{serve, DavRequest, DavResponse};
-use crate::context::{ExecutionContext, ExecutionContextFactory};
-use crate::entity::EntityFacade;
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::entity::EntityFacade;
 
 fn setup() -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
         "",
-        crate::service::ServicePools::idle(),
-        crate::context::framework_dir(),
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
     );
-    let facade = crate::testing::open();
+    let facade = moqui_core::testing::open();
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
     (ctx, facade)
@@ -47,7 +47,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
     row.set("emailAddress", Value::string(format!("{user_id}@example.com")));
     row.set(
         "currentPassword",
-        Value::string(crate::user::hash_password("web-Password-1").unwrap()),
+        Value::string(moqui_core::user::hash_password("web-Password-1").unwrap()),
     );
     row.set("passwordHashType", Value::string("argon2id"));
     row.create(facade).unwrap();
@@ -55,7 +55,7 @@ fn user(facade: &EntityFacade, user_id: &str) {
 
 fn login(user_id: &str) {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    crate::user::internal_login_user(user_id).unwrap();
+    moqui_core::user::internal_login_user(user_id).unwrap();
 }
 
 fn service(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -63,7 +63,7 @@ fn service(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> 
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect();
-    let out = crate::service::sync(name, &parameters).unwrap();
+    let out = moqui_core::service::sync(name, &parameters).unwrap();
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors().join("\n");
         ec.message().clear_errors();
@@ -80,7 +80,7 @@ fn app_password(user_id: &str, name: &str) -> (String, String) {
         "org.moqui.impl.UserServices.create#UserAppPassword",
         &[("name", Value::string(name))],
     );
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
     (
         out.get("appPasswordId").map(to_plain_string).unwrap(),
         out.get("password").map(to_plain_string).unwrap(),
@@ -109,7 +109,7 @@ impl Client<'_> {
             request.headers.push(("authorization".into(), authorization.clone()));
         }
         let response = serve(self.factory, &request);
-        let _ = crate::user::logout();
+        let _ = moqui_core::user::logout();
         response
     }
 }
@@ -143,7 +143,7 @@ fn an_app_password_logs_a_device_in_and_the_web_password_does_not() {
     user(&facade, "bob");
     let (id, password) = app_password("alice", "Phone");
     assert_eq!(password.len(), 24, "{password}");
-    assert!(crate::user::looks_like_app_password(&password));
+    assert!(moqui_core::user::looks_like_app_password(&password));
     let factory = context.factory();
     let anonymous = Client {
         factory,
@@ -191,7 +191,7 @@ fn an_app_password_logs_a_device_in_and_the_web_password_does_not() {
         .headers
         .push(("authorization".into(), basic("alice", &password)));
     assert_eq!(serve(factory, &request).status, 403);
-    let _ = crate::user::logout();
+    let _ = moqui_core::user::logout();
 
     login("alice");
     let listed = service("org.moqui.impl.UserServices.get#UserAppPasswords", &[]);
@@ -211,7 +211,7 @@ fn an_app_password_logs_a_device_in_and_the_web_password_does_not() {
         "org.moqui.impl.UserServices.revoke#UserAppPassword",
         &[("appPasswordId", Value::string(&id))],
     );
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
     assert_eq!(
         alice.send("PROPFIND", "/dav/", &[("Depth", "0")], "").status,
         401,
@@ -324,7 +324,7 @@ fn webdav_serves_the_users_drives_through_the_file_services() {
         panic!("{versions:?}")
     };
     assert!(versions.len() >= 2, "the replaced text is a version: {versions:?}");
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
 
     // desktop litter is taken and not kept
     assert_eq!(
@@ -393,7 +393,7 @@ fn webdav_serves_the_users_drives_through_the_file_services() {
         format!("{trash:?}").contains("b.txt"),
         "a delete goes to the trash: {trash:?}"
     );
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
 
     // a lock keeps another user out and not its owner
     let locked = alice.send(
@@ -466,7 +466,7 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
             ),
         ],
     );
-    crate::user::logout().unwrap();
+    moqui_core::user::logout().unwrap();
 
     // each user reaches the drive under their own home: the lock is on the file, not on the href
     let (mine, theirs) = ("/dav/files/alice/Team", "/dav/files/bob/Team");
@@ -501,4 +501,62 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
     assert_eq!(bob.send("PUT", &format!("{theirs}/a.txt"), &[], "bob").status, 204);
     let got = alice.send("GET", &format!("{mine}/a.txt"), &[], "");
     assert_eq!(body(&got), "bob");
+}
+
+/// The DAV server's public URL follows the webapp's listener, an explicit `dav_public_url`, and the request's origin
+/// (moved from moqui-core's web tests).
+#[test]
+fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let names = [
+        "webapp_http_port",
+        "webapp_http_host",
+        "webapp_https_enabled",
+        "webapp_https_port",
+        "dav_public_url",
+    ];
+    struct Restore(Vec<(&'static str, String)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (name, value) in &self.0 {
+                moqui_lib::env::set_property(name, value);
+            }
+        }
+    }
+    let _restore = Restore(
+        names
+            .iter()
+            .map(|name| (*name, moqui_lib::env::get_prop_or_env(name)))
+            .collect(),
+    );
+    for name in names {
+        moqui_lib::env::set_property(name, "");
+    }
+    let context = moqui_core::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="${webapp_http_host}" http-port="${webapp_http_port}"
+            https-enabled="${webapp_https_enabled}" https-port="${webapp_https_port}"/></webapp-list></moqui-conf>"#,
+    );
+    let _entered = context.enter();
+    let factory = context.factory();
+    let check = |expected: &str| {
+        assert_eq!(super::public_base_url(factory), expected);
+    };
+    assert_eq!(factory.webapp_root_url("webroot"), "http://localhost:8080");
+    check("http://localhost:8080");
+    for (configured, expected) in [("9090", "http://localhost:9090"), ("80", "http://localhost")] {
+        moqui_lib::env::set_property("webapp_http_port", configured);
+        assert_eq!(factory.webapp_root_url("webroot"), expected);
+        check(expected);
+    }
+    moqui_lib::env::set_property("webapp_https_enabled", "true");
+    moqui_lib::env::set_property("webapp_https_port", "9443");
+    check("https://localhost:9443");
+    let _web = moqui_core::web::install(std::collections::BTreeMap::new());
+    let mut request = moqui_core::web::WebRequest::new("GET", "/apps/git");
+    request.https = true;
+    request.set_header("host", "public.example:10443");
+    moqui_core::web::set_request_info(&request);
+    check("https://public.example:10443");
+    moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
+    assert_eq!(super::public_base_url(factory), "https://dav.example/base");
 }

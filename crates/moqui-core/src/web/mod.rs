@@ -2120,7 +2120,7 @@ thread_local! {
 }
 
 /// Whether this instance runs with `instance_purpose` production.
-pub(crate) fn is_production() -> bool {
+pub fn is_production() -> bool {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(production) = TEST_PRODUCTION.with(std::cell::Cell::get) {
         return production;
