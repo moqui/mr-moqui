@@ -6,8 +6,8 @@ code goes, how a crate is organized, how tests are kept, and the idioms to use. 
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) where that helps this code, and says
 where MR Moqui departs from it on purpose (§8).
 
-The review that applies these practices to the existing code, with its targets and results, is
-[Rust-Practices-Review](../../plans/Rust-Practices-Review.md).
+The first pass of applying these practices to the existing code, with its targets, results and the sites left, is
+[Rust-Practices-Review](../../plans/archive/Rust-Practices-Review.md) (completed 2026-10-30).
 
 Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organization-within-a-crate) ·
 [3 tests](#3-tests) · [4 working on rust code](#4-working-on-rust-code) ·

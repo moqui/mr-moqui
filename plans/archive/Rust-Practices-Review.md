@@ -1,17 +1,22 @@
 # Rust Practices Review
 
-A review of the workspace Rust against [Practices-Rust](../docs/dev/Practices-Rust.md), the practices drawn from
+> Archived 2026-10-30: first pass completed. Every crate in scope was reviewed against Practices-Rust, and the items
+> left open at the end were done ([After the review](#after-the-review-5e-7)). The Left lists record what was judged
+> not worth changing; a later pass starts from them. The rules live in
+> [Practices-Rust](../../docs/dev/Practices-Rust.md).
+
+A review of the workspace Rust against [Practices-Rust](../../docs/dev/Practices-Rust.md), the practices drawn from
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) for mr-moqui. That document holds the
 rules and examples; this one applies them to the existing code: the targets, the order, and the results. It is written
 for the model doing the review and changes.
 
 Scope: `crates/*`, `runtime/dev-component/dev-aide` and `runtime/dev-component/example`. Component repositories (`runtime/component/*`) are separate git repos and out of scope.
 
-Earlier review: [Code-Quality-Review](archive/Code-Quality-Review.md) (2026-10-14) covered panics reachable from input, locks, and unsafe. Do not redo its findings. This review is about idiom and ownership.
+Earlier review: [Code-Quality-Review](Code-Quality-Review.md) (2026-10-14) covered panics reachable from input, locks, and unsafe. Do not redo its findings. This review is about idiom and ownership.
 
 ## How to work
 
-- Follow [Practices-Rust §4](../docs/dev/Practices-Rust.md#4-working-on-rust-code) (behaviour, checks, formatting).
+- Follow [Practices-Rust §4](../../docs/dev/Practices-Rust.md#4-working-on-rust-code) (behaviour, checks, formatting).
 - One theme per commit, one crate (or one moqui-core module) at a time. Commit messages follow the recent ones: what changed, and the section of Practices-Rust.
 - Skip test code (`*_tests.rs`, `tests.rs`, `tests/`, `#[cfg(test)]`, `testkit` assertions). Tests may `unwrap`.
 - Do not mass-rewrite. Change a site only when the new form is clearly better there. When in doubt, leave it and list it in the report.
@@ -34,7 +39,7 @@ The workspace already denies the default Clippy set, so these are already clean:
 
 Counts are of non-test code when the review began.
 
-### Unwraps and runtime type checks ([Practices-Rust §5](../docs/dev/Practices-Rust.md#5-unwraps-and-invariants))
+### Unwraps and runtime type checks ([Practices-Rust §5](../../docs/dev/Practices-Rust.md#5-unwraps-and-invariants))
 
 Most of the ~11,600 `.unwrap()` calls are in tests. Non-test code has under a hundred, plus a few hundred `.expect(`.
 Known sites:
@@ -43,7 +48,7 @@ Known sites:
 - `crates/moqui-core/src/telemetry/exponential.rs:284`: `last_key_value().unwrap()` after checking the first (§5d).
 - `clippy::string_slice` lists the string slices (§5e).
 
-### Ownership and borrowing ([Practices-Rust §6](../docs/dev/Practices-Rust.md#6-ownership-and-borrowing))
+### Ownership and borrowing ([Practices-Rust §6](../../docs/dev/Practices-Rust.md#6-ownership-and-borrowing))
 
 - About 300 signatures take `&Arc<T>`, mostly `&Arc<ExecutionContextFactory>` (§6a), such as `reload_entities` in
   `crates/moqui-devkit/src/reload.rs`.
@@ -52,7 +57,7 @@ Known sites:
   dismissed 533 of those.
 - ~17 `&Option<T>` parameters (`clippy::ref_option`, §6e).
 
-### Idiom ([Practices-Rust §7](../docs/dev/Practices-Rust.md#7-idiom))
+### Idiom ([Practices-Rust §7](../../docs/dev/Practices-Rust.md#7-idiom))
 
 - Glob imports at `crates/moqui-core/src/script/runtime.rs:78-83` (`use convert::*;`, `use decimal::*;` …).
 - ~24 `.for_each(...)` with side effects.
@@ -61,7 +66,7 @@ Known sites:
 - ~290 `Result<_, String>` signatures: leave unless already changing the function.
 - `#[must_use]` additions are low priority.
 
-The deliberate departures from Google are in [Practices-Rust §8](../docs/dev/Practices-Rust.md#8-where-mr-moqui-departs-from-google); do not "fix" them.
+The deliberate departures from Google are in [Practices-Rust §8](../../docs/dev/Practices-Rust.md#8-where-mr-moqui-departs-from-google); do not "fix" them.
 
 ## Order
 
@@ -120,7 +125,7 @@ Left:
 - Scanners that keep a position: `load_feed/xml.rs` and `json.rs`, the SQL splitting in `exec.rs`, `pull.rs` buffers; the drivers' `rewrite_placeholders`, `RowBatch` ranges and read buffers; moqui-db `shrink_name` and the `view.rs` tokenizer. Arena indexes in moqui-db `model/mod.rs`.
 - Expects that state their invariant (`facade.rs` downcast, `pool.rs` `PooledConn::conn`); the drivers' `build.rs`; `testing.rs`, the in-memory test database.
 - `&Arc` parameters that clone it (`negotiate_tls` for rustls, `other_groups`, `cache.rs` `on_write_shared`, `feed.rs` `note_touch`, `value.rs` `with_l10n`). `resource/source.rs` `Arc<Vec<u8>>`: the bytes arrive as a `Vec`, and `Arc<[u8]>` would copy them once. Owned parameters that are kept or consumed (`documents_json`, `select_sql`, `finish_write`, the hook and service types).
-- Condvar waits that recover in place (`pool.rs`, moqui-lib `cache.rs`). Functions with two bools whose callers pass named flags (`FkScope::enter`, `all_entities_info`) or that are private. Tuples of mixed types or standard shapes (`prepare_run`, `civil_from_unix_days`, `refill_targets`, `entity_find`).
+- Condvar waits that recover in place (`pool.rs`, moqui-lib `cache.rs`); done [after the review](#after-the-review-5e-7). Functions with two bools whose callers pass named flags (`FkScope::enter`, `all_entities_info`) or that are private. Tuples of mixed types or standard shapes (`prepare_run`, `civil_from_unix_days`, `refill_targets`, `entity_find`).
 
 ### moqui-core screen/, web/, user/ and context/ (§5, §6, §7)
 
@@ -133,7 +138,7 @@ Commits caeb7a38, e01bbc51, fa1320a0.
 Left:
 - Scanners that keep a position: `stamp.rs` (`inject`, `qvue_elements`, `qvue_tag`), `pdf.rs` (`inline_images`, `src_value`), `statics/report.rs` `names_identifier`, the multipart byte parser, the `upstream.rs` read buffer. Indexes bounded by `.min(len)` or a loop (`render.rs`, `menu.rs`, `url.rs` `render_defs`, `sri/*`, `artifact.rs`, `component.rs`); `shell.rs` `apps` and the `path_defs.len() - 1` sites, non-empty by construction.
 - `&Arc` that clones, stores, spawns or calls `new_context`: the `screen/mod.rs` serve and request functions, `render.rs` `make_render` and the job runners, `token_route.rs`, `sri/sections.rs`, `url.rs` `enter`, `authz.rs` `from_check`, the `session.rs` installers, `servlet.rs` `started` and `stopping`, `factory.rs`. The `cache.rs` `&key.to_string()` lookups, which the cache API needs. The ~635 `.clone()` calls were not swept.
-- `ExecutionContext::push_checked(.., requires_authz: bool, count_tarpit: bool, ..)` is a public two-bool function with 31 calls across core, moqui-llm, moqui-host and tests; an enum there is its own change. Private two-bool functions (`form.rs` `merge_form_nodes`, which mirrors Java's `mergeFormNodes`, `dispatch.rs` `send_logged_in`, `factory.rs` `log_property`, `cache.rs` `LoadingMark::new`). `info.rs`'s 3-tuple parameter. The `session.rs` `Condvar::wait` poison recovery.
+- `ExecutionContext::push_checked(.., requires_authz: bool, count_tarpit: bool, ..)` is a public two-bool function with 31 calls across core, moqui-llm, moqui-host and tests; an enum there is its own change (done [after the review](#after-the-review-5e-7)). Private two-bool functions (`form.rs` `merge_form_nodes`, which mirrors Java's `mergeFormNodes`, `dispatch.rs` `send_logged_in`, `factory.rs` `log_property`, `cache.rs` `LoadingMark::new`). `info.rs`'s 3-tuple parameter. The `session.rs` `Condvar::wait` poison recovery (done after the review).
 
 ### moqui-core service/, telemetry/, notify/, cluster/, devtools/, resource/ and the top-level files (§5, §6, §7)
 
@@ -146,7 +151,7 @@ Commits 89a49258, 262cad2a, 4d2e56f5.
 Left:
 - `expect` on constant regexes (§5f); the `test-support` helpers (`eca_rules` `from_xml`, `with_git`, pool `bounded`, rest `install`); scanners that keep a position (chat_link `extract_urls`, the scrape label cursor, the EDI segment index); the `devtools/calls.rs` tick index, checked just above.
 - `&Arc` that clones, downgrades, spawns or calls `new_context` (shell `request_sends`, calls `start` and `flush`, `register_runtime_gauges`, the cluster starters and `fan_out`, the pool's reserve and persist functions); hook types (`native.rs` `ToolFactory`, `ResourceConstructor`, `llm_hooks` `canvas_overlay`); cluster `post_with_retry`'s `&Arc<dyn Sender>`, which every caller and test would need to change; maps built at the call site for one call (sso `call`, system_sync).
-- Condvar waits; `service/coverage.rs`, which skips a count on a poisoned lock where the helper would recover it (a behaviour change); `ssh_key_fingerprint`'s 3-tuple, whose other two parts only its test reads; the OTLP `protobuf` and `log_capture::with` tuples, destructured at once by their one caller.
+- Condvar waits (done after the review); `service/coverage.rs`, which skips a count on a poisoned lock where the helper would recover it (a behaviour change); `ssh_key_fingerprint`'s 3-tuple, whose other two parts only its test reads; the OTLP `protobuf` and `log_capture::with` tuples, destructured at once by their one caller.
 
 ### moqui-host, moqui-browser and the example component (§5, §6, §7)
 
@@ -157,7 +162,7 @@ Commits cd25c399, 42c68f53, eb9ae797. The example component needed nothing.
 - §7: 54 inline poison recoveries in `tui`, `tui_remote`, `term` (with its local lock closure), `llm/screens`, `ssh/*`, `smtp`, `logging`, `monitor`, `devtools_remote` and moqui-browser's `api.rs` use `moqui_lib::sync::lock`. `lsp.rs` `tag_context` returns `TagContext { element, place: TagPlace }` (`Name`, `Attributes`, `Value(attribute)`) in place of `(String, Option<String>, bool)`, `Server::position` a `TextPosition`, and `cdp.rs` `key_codes` a `KeyCodes`.
 
 Left:
-- The CLI flag arms `other if other.starts_with("--server=") => other["--server=".len()..]` in `devtools_cmd.rs` and `lsp.rs`: an if-let guard needs a newer Rust, and the workarounds are not clearly better. `llm/screens.rs`'s `rfind("\n--- ")`, which keeps the marker. Byte scanners and buffers that keep a checked position (`guard.rs`, `cluster_edge`, `git_bridge`, `ssh/*`, `term`, `termws`, the SMTP PROXY header, `video.rs` `jpeg_size`, `raw.rs` dechunk, `lsp.rs` `word_at`, `devtools_remote.rs` `component_name`). `expect`s that state their reason (the `factory()` accessors, `http.rs` `inner`, the edge runtime, moqui-browser's `build.rs`).
+- The CLI flag arms `other if other.starts_with("--server=") => other["--server=".len()..]` in `devtools_cmd.rs` and `lsp.rs`: an if-let guard needs a newer Rust, and the workarounds are not clearly better (done after the review). `llm/screens.rs`'s `rfind("\n--- ")`, which keeps the marker. Byte scanners and buffers that keep a checked position (`guard.rs`, `cluster_edge`, `git_bridge`, `ssh/*`, `term`, `termws`, the SMTP PROXY header, `video.rs` `jpeg_size`, `raw.rs` dechunk, `lsp.rs` `word_at`, `devtools_remote.rs` `component_name`). `expect`s that state their reason (the `factory()` accessors, `http.rs` `inner`, the edge runtime, moqui-browser's `build.rs`).
 - About 55 `&Arc` sites that reach `new_context` or `try_submit`, clone into a task or thread, or downgrade (`tui`, `smtp`, `ssh/cluster`, `monitor`); the example's `ToolFactory` methods; `Slot::preauth` and `connect`, which clone. `needless_pass_by_value` on `map_err` mappers, values a thread owns, the sftp trait methods and `ipp` `http_url`. `test_client/mod.rs` `Arc<Vec<u8>>`, which wraps an owned `Vec` that `Arc<[u8]>` would copy.
 - `smtp.rs` `received_protocol(lmtp, esmtp, utf8, tls)`: private, with one call site that passes named fields.
 
@@ -172,7 +177,7 @@ Commits 072b1762, b9dfb1d1, 6cec3a09, deeb0daf. moqui-llm had no non-test `unwra
 Left:
 - 72 `&Arc<ExecutionContextFactory>` parameters that reach `new_context` or `screen::make_render`, clone or downgrade for a thread, ticker or `Weak`, are stored (`a2a::ops::Ctx::new`, `mcp::tools::Ctx::new`), or match a hook (`canvas_overlay`), and their callers. `&Arc<LocalRun>` in `run/mod` `forget_if` and `run/step`, for `Arc::ptr_eq`.
 - Byte scanners that keep a position (`prompt::elide_markers`, `tools::format`, `ui::partial_program`, `usage`'s redact flush) and ranges a scanner returns (`json_mode`, the provider's JSON range). `expect`s that state an invariant (`ui::vue_sfc`'s block names, `mcp::state`'s HMAC key).
-- The a2a JSON builders, which take their parts by value as `json!` does; `script.rs` `llm_complete` (rquickjs); `provider::fake`. Condvar waits. `a2a::log_in(request, bearer, api_key)`, `pub(crate)` with named conf fields at the A2A caller. Eight 3-or-more-tuple returns whose callers bind names at once (`jsonrpc::envelope`, `classify::error_fields`, `ui::write::openui_request`, `qvue_screen::parts`, `assist::write`, `run::step` `build_request`, two in `skills::learn`).
+- The a2a JSON builders, which take their parts by value as `json!` does; `script.rs` `llm_complete` (rquickjs); `provider::fake`. Condvar waits (done after the review). `a2a::log_in(request, bearer, api_key)`, `pub(crate)` with named conf fields at the A2A caller. Eight 3-or-more-tuple returns whose callers bind names at once (`jsonrpc::envelope`, `classify::error_fields`, `ui::write::openui_request`, `qvue_screen::parts`, `assist::write`, `run::step` `build_request`, two in `skills::learn`).
 
 ### moqui-devkit, dev-aide and moqui-tui (§5, §6, §7)
 
@@ -200,14 +205,31 @@ Commits 8fc22878, fc361767, dc7f7caa, 5ce59fcc, b569e3ab, 1d96940f, 56ad5d93.
 - §7: report `annotations.rs`, `definitions.rs` and `git_sync.rs` name their imports; report locks go through `moqui_lib::sync` (a poisoned pending push or remove slot in `git_sync.rs` is now recovered and run, where `.lock().ok()` skipped it); collab's `locked` helper is gone (22 calls). mail `TestStep { step, ok, message }` and `SrvRecord { priority, weight, port, target }` replace tuples, and the `dns_lookup` bools get `/* with_srv */` and `/* with_mx */`; git `index.rs` `walk` returns `WalkEnd { Stop, Max, Root }` in place of two bools never both true.
 
 Left:
-- `serde_json::to_string(..).unwrap()` on JSON values in `frame.rs`, which cannot fail; git `revwalk.rs`'s `expect("a queued commit has its node")`. Fixed-width slices of text checked to be ASCII digits or hex (dav `vcard.rs`, `zones.rs`, `ics.rs` `parse_date`, the lock token), dav `line.rs` `value_start`, `&after[slash..]` that keeps the slash. The git LFS routing arms (`&path["objects/".len()..]`), which need if-let guards. Byte scanners: mail `discover.rs` DNS packets, git `gc.rs`, `delta.rs` and the pack code.
+- `serde_json::to_string(..).unwrap()` on JSON values in `frame.rs`, which cannot fail; git `revwalk.rs`'s `expect("a queued commit has its node")`. Fixed-width slices of text checked to be ASCII digits or hex (dav `vcard.rs`, `zones.rs`, `ics.rs` `parse_date`, the lock token), dav `line.rs` `value_start`, `&after[slash..]` that keeps the slash. The git LFS routing arms (`&path["objects/".len()..]`), which need if-let guards (done after the review). Byte scanners: mail `discover.rs` DNS packets, git `gc.rs`, `delta.rs` and the pack code.
 - `&Arc<ExecutionContextFactory>` in report `git_sync.rs` (`new_context`), mail `idle.rs` and `remote.rs` `request_push` (clone, downgrade, spawn), git `construct` and `install` (the register hook). git `db.rs` `ObjectCache`'s `Arc<Vec<u8>>`, built from `Vec`s and handed back by `Arc::unwrap_or_clone`. `map_err` adapters, receive's `report`, `git_sync.rs` `record`, schedule's `out(Json)`.
 - collab `read_page` and git `into_content` 3-tuples of distinct types with one caller each; `dns_lookup`'s two bools, private and now commented.
 
-### Open after the review
+### After the review (§5e, §7)
 
-- `ExecutionContext::push_checked(.., requires_authz: bool, count_tarpit: bool, ..)` is a public two-bool function
-  (§7) with 31 calls across core, moqui-llm, moqui-host and tests; an enum there is a change of its own.
-- Match arms that slice after a `starts_with` guard (`devtools_cmd.rs` and `lsp.rs` `--server=`, the git LFS routes)
-  wait for if-let guards in match arms.
-- `moqui_lib::sync` has no helper for `Condvar::wait` and `wait_timeout`, so those keep `unwrap_or_else(PoisonError::into_inner)`.
+Commits 05c26b33, 664f9cb8, 9ab2ae53. These are the three items the crate passes left open as changes of their own.
+
+- §7, Condvar waits: `moqui_lib::sync` has `wait` and `wait_timeout`, which take the guard back from a poisoned lock
+  as `lock` does. The 15 waits use them: moqui-core service `shell`, `images`, `schedule`, `pool` (3),
+  `request_pool`, `cluster`, user `session` and `login`; moqui-llm `provider` slots, `provider::fake` gates and the
+  run hub; the moqui-lib cache evictor; the moqui-entity transaction pool. Three inline lock recoveries the passes
+  had missed (core `screen_test.rs`, moqui-llm `ui/openui.rs` and `ui/proxy.rs`) use `lock`. Practices-Rust §7 names
+  the wait helpers.
+- §5e, if-let guards (stable from Rust 1.95, the documented floor): the `--server=` and `--kind=` arms in moqui-host
+  `devtools_cmd.rs` and `lsp.rs`, and the moqui-git LFS routes `objects/<oid>` and `locks/<id>/unlock`, take the
+  rest in the guard with `strip_prefix` and `strip_suffix`. A POST to `info/lfs/locks/unlock` (the prefix and the
+  suffix with no id between them) sliced `[6..5]` and panicked; it is now a 404. The `Cargo.toml` note on the
+  `moqui` binary's toolchain says 1.95. New tests for that path and `moqui check --server=`.
+- §7, enum over bool: `ExecutionContext::push_checked` takes `Authz { Required, NotRequired }` and
+  `Tarpit { Count, Skip }` (`moqui_core::context`), with `Authz::required_if` for callers that hold a bool. The
+  screen render frames' `push` and rest's `PathFrame::push` take them too. 31 calls changed.
+
+Left:
+- The `user::Permit` fields stay bools: they are crate-private and named. moqui-entity's `push_entity` hook keeps
+  its `bool`, which `entity_hooks.rs` turns into an `Authz`. `Frames::push_screen(def, requires_authz)` keeps
+  its one named bool.
+- moqui-tui `FakeLink::answers()` keeps its inline poison recovery, since moqui-tui does not depend on moqui-lib.
