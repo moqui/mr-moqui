@@ -3031,6 +3031,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (statusId && !Object.values(STATUSES).includes(statusId)) { ec.message.addError(`Unknown status ${chosen}`); return }
             const now = ec.user.nowTimestamp
             let row = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).forUpdate(true).one()
+            // no row yet: a lock on a missing row locks nothing, so two first requests (a page's heartbeat and its status,
+            // or two tabs) would both create it. Lock the UserAccount row instead and look again: the second waits for
+            // the first to commit, then finds its row and updates it.
+            if (!row) {
+                ec.entity.find('moqui.security.UserAccount').condition('userId', userId).selectField('userId').forUpdate(true).disableAuthz().one()
+                row = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).forUpdate(true).one()
+            }
             const created = !row
             if (created) {
                 row = ec.entity.makeValue('moqui.security.UserStatus')
@@ -3077,6 +3084,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (!me) return
             const now = Number(ec.user.nowTimestamp)
             let row = ec.entity.find('moqui.security.UserStatus').condition('userId', me).forUpdate(true).one()
+            // no row yet: a lock on a missing row locks nothing, so two first requests (a page's heartbeat and its status,
+            // or two tabs) would both create it. Lock the UserAccount row instead and look again: the second waits for
+            // the first to commit, then finds its row and updates it.
+            if (!row) {
+                ec.entity.find('moqui.security.UserAccount').condition('userId', me).selectField('userId').forUpdate(true).disableAuthz().one()
+                row = ec.entity.find('moqui.security.UserStatus').condition('userId', me).forUpdate(true).one()
+            }
             const created = !row
             if (created) {
                 row = ec.entity.makeValue('moqui.security.UserStatus')
