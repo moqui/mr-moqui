@@ -63,6 +63,7 @@ mod mcp;
 mod monitor_edge;
 mod monitor_grpc;
 mod monitor_readers;
+mod monitor_rum;
 mod monitor_tui;
 mod notws;
 mod opensearch_start;

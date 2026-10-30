@@ -8536,6 +8536,8 @@
                 // always set bodyParameters, null when there are none, to clear the last ones
                 this.bodyParameters = bodyParameters;
                 url = this.getLinkPath(url);
+                // a navigation span of real-user monitoring (WebrootRum.js), whose requests are its children
+                if (moqui.rum && moqui.rum.navigate) moqui.rum.navigate(url);
                 if (this.currentLinkUrl === url && url !== this.linkBasePath) {
                     // the same URL again is a reload: a cached (server-static) target screen makes a new use with fresh data too
                     this.reloadTarget = true;
@@ -9358,7 +9360,10 @@
                     .then((result) => ({ status: "saved", json: result.json }), (error) => ({ status: "failed", error: String((error && error.message) || error) }));
             }
         };
-        app.config.errorHandler = (err, instance, info) => { console.error("Vue error (" + info + ")", err); };
+        app.config.errorHandler = (err, instance, info) => {
+            console.error("Vue error (" + info + ")", err);
+            if (moqui.rum && moqui.rum.error) moqui.rum.error(err, "vue " + info);
+        };
         return catalogReady.then(() => {
             moqui.webrootVue = app.mount("#apps-root");
             root.addEventListener("popstate", () => { moqui.webrootVue.setUrl(root.location.pathname + root.location.search, null, null, false); });

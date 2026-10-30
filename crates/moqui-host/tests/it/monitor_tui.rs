@@ -213,6 +213,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
             "/apps/monitor/ErrorDetail?fingerprint=tui-error&from=now-1h&thru=now",
         ),
         ("Monitor/Sources", "/apps/monitor/Sources"),
+        ("Monitor/Browser", "/apps/monitor/Browser?from=now-1h&thru=now"),
+        ("Monitor/Replays", "/apps/monitor/Replays"),
+        (
+            "Monitor/ReplayDetail",
+            "/apps/monitor/ReplayDetail?replayId=0123abcd-tui-replay-fixture",
+        ),
         (
             "Monitor/LogContext",
             "/apps/monitor/LogContext?datasetId=otel_logs&documentType=otel_logs&documentId=tui-log-1&from=now-1h&thru=now",

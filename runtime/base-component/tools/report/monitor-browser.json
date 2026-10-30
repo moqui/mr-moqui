@@ -1,0 +1,353 @@
+{
+  "id": "monitor-browser",
+  "type": "dashboard",
+  "title": "Browser experience",
+  "body": {
+    "folder": "Monitor",
+    "panels": {
+      "loads": {
+        "title": "Page loads and p75 largest contentful paint",
+        "visualization": "timeSeries",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "decimals": 0
+          }
+        },
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "source.id:browser AND name:documentLoad",
+            "aggregations": [
+              {
+                "id": "time",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "start",
+                  "fixed_interval": "auto",
+                  "min_doc_count": 0
+                }
+              },
+              {
+                "id": "loads",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              },
+              {
+                "id": "lcp",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "browser.web_vital.lcp",
+                  "percents": [
+                    75
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "pages": {
+        "title": "Slowest pages: p75 load and web vitals",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "source.id:browser AND name:documentLoad",
+            "aggregations": [
+              {
+                "id": "page",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "url.path",
+                  "size": 20
+                }
+              },
+              {
+                "id": "loads",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              },
+              {
+                "id": "load",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano",
+                  "percents": [
+                    75
+                  ]
+                }
+              },
+              {
+                "id": "lcp",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "browser.web_vital.lcp",
+                  "percents": [
+                    75
+                  ]
+                }
+              },
+              {
+                "id": "inp",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "browser.web_vital.inp",
+                  "percents": [
+                    75
+                  ]
+                }
+              },
+              {
+                "id": "cls",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "browser.web_vital.cls",
+                  "percents": [
+                    75
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "name": "load"
+              },
+              "config": {
+                "unit": "ns",
+                "decimals": 0
+              }
+            },
+            {
+              "match": {
+                "name": "lcp"
+              },
+              "config": {
+                "unit": "ms",
+                "decimals": 0
+              }
+            },
+            {
+              "match": {
+                "name": "inp"
+              },
+              "config": {
+                "unit": "ms",
+                "decimals": 0
+              }
+            },
+            {
+              "match": {
+                "name": "cls"
+              },
+              "config": {
+                "decimals": 3
+              }
+            }
+          ]
+        }
+      },
+      "navigations": {
+        "title": "In-app navigations: p75 time by page",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "source.id:browser AND name:navigation",
+            "aggregations": [
+              {
+                "id": "page",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "url.path",
+                  "size": 20
+                }
+              },
+              {
+                "id": "navigations",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              },
+              {
+                "id": "time",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano",
+                  "percents": [
+                    75
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "name": "time"
+              },
+              "config": {
+                "unit": "ns",
+                "decimals": 0
+              }
+            }
+          ]
+        }
+      },
+      "requests": {
+        "title": "Requests from the browser: p95 by path",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_spans",
+            "queryString": "source.id:browser AND kind:CLIENT",
+            "aggregations": [
+              {
+                "id": "path",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "url.path",
+                  "size": 20
+                }
+              },
+              {
+                "id": "requests",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "span_id"
+                }
+              },
+              {
+                "id": "p95",
+                "type": "percentiles",
+                "role": "metric",
+                "params": {
+                  "field": "duration_nano",
+                  "percents": [
+                    95
+                  ]
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "match": {
+                "name": "p95"
+              },
+              "config": {
+                "unit": "ns",
+                "decimals": 0
+              }
+            }
+          ]
+        }
+      },
+      "errors": {
+        "title": "JavaScript errors by page and type",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "otel_logs",
+            "queryString": "source.id:browser",
+            "aggregations": [
+              {
+                "id": "page",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "url.path",
+                  "size": 20
+                }
+              },
+              {
+                "id": "type",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "exception.type",
+                  "size": 20
+                }
+              },
+              {
+                "id": "errors",
+                "type": "value_count",
+                "role": "metric",
+                "params": {
+                  "field": "severity_number"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

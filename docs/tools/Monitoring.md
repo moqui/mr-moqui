@@ -32,8 +32,27 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 - **Logs.** Every INFO and higher log line, with the trace and span ids of the frame that wrote it.
 - **Errors.** Each error span or exception is fingerprinted (type, normalized message, top frames) into `otel_errors`,
   counted once per failing request.
+- **Browser (RUM).** With `<telemetry><browser enabled="true">`, a signed-in qvt page (`js/WebrootRum.js`, loaded by
+  `qapps.xml` only then) sends a `documentLoad` span with its web vitals (`browser.web_vital.ttfb`, `.fcp`, `.lcp`,
+  `.cls`, `.inp`) and a child span per resource slower than a second, a `navigation` span per in-app page change, a
+  CLIENT span per request to the site (which sends a `traceparent`, so the server's request span is its child and one
+  navigation is one trace), and its JavaScript errors (window, promise and Vue) as ERROR logs. Each tab session is in
+  or out by `sample-ratio` (errors by `error-sample-ratio`). The page posts OTLP/JSON to `/rum/traces` and `/rum/logs`
+  every 10 seconds and when it is hidden, with the session's CSRF token; anonymous pages send nothing. The server
+  replaces the page's resource with its own (`service.name` is `service-name`, by default the server's with
+  `-browser`; `user.id` and `moqui.visit.id` from the session; `source.id` `browser`), drops record attributes that
+  name a user, visit, source or service, and keeps only CLIENT and INTERNAL spans, at most 512 records a post, within
+  `body-limit` (256 KiB) and `requests-per-minute` (120) per user and visit. Only URL paths are sent, never queries.
+- **Session replay.** With `replay-enabled="true"` as well, a `replay-sample-ratio` (0.1) of tab sessions records an
+  rrweb replay (`libs/rrweb`, loaded only then): every input and all text masked in the browser, except text under
+  `replay-unmask-selector`; `[data-moqui-block]`, canvas, video, iframes and `replay-block-selector` recorded as empty
+  boxes; no console or network capture. Chunks go to `/rum/replay` until `replay-max-minutes` (30) or
+  `replay-max-bytes` (5 MiB), which the server holds each replay to; it keeps them gzipped in `browser_replays` for
+  `replay-retention-days` (7). Replays are never a report dataset: Monitor › Replays reads them through services that
+  need `MONITOR_REPLAY` (ADMIN has it), and each one opened is logged.
 
-The indexes are `otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors` and `monitor_annotations`.
+The indexes are `otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations` and
+`browser_replays`.
 
 ## Turning it on and sampling
 
@@ -177,6 +196,8 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Artifacts | Hits, total, min, max, average, p50/p95/p99, std dev, slow hits and last active minute per artifact, by type, sub type and name, plus the same stats over time |
 | Sources | Ingest keys (a new key's token shows once, in a message; the log masks it), the latest data from each source, exporter status and loss counters |
 | Checks | Synthetic checks and Prometheus scrape targets: add, edit, enable, run now, last result, and links to each check's runs and last trace, a target's metrics and the checks dashboard |
+| Browser | Page loads and p75 largest contentful paint over time; slowest pages with p75 load, LCP, INP and CLS; in-app navigations; the browser's requests (p95 by path); JavaScript errors by page and type |
+| Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
 export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
@@ -369,4 +390,4 @@ take the index refresh interval to appear.
 ## Not built
 
 The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
-Browser RUM, profiling, incidents and recovery are the Later stages of the plan.
+Profiling, business operations, regressions, incidents and recovery are the Later stages of the plan.

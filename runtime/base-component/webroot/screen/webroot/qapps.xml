@@ -37,6 +37,10 @@ along with this software (see the LICENSE.md file). If not, see
         if (sri.getThemeValues('STRT_STYLESHEET').some((sheet) => String(sheet).includes('/libs/material-symbols/')))
             footer_scripts.add('/libs/quasar/icon-set/material-symbols-outlined.umd.prod.js')
         footer_scripts.add('/js/MoquiLib.js')
+        // Real-user monitoring (telemetry/browser): only for a signed-in user, and right after MoquiLib, so it sees the
+        // page's errors and requests from the start
+        const rumSettings = ec.user.userId ? ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserSettings').disableAuthz().call().settings || null : null
+        if (rumSettings) footer_scripts.add('/js/WebrootRum.js')
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
@@ -124,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
         }
         const darkPref = ec.user.getPreference('QUASAR_DARK')
         qvtConfig = {
-            pageTraceId: ec.context.sharedMap.telemetryPageTraceId || '',
+            pageTraceId: ec.context.sharedMap.telemetryPageTraceId || '', rum: rumSettings,
             sessionToken: ec.web.sessionToken, appHost: ec.web.getHostName(true), appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
             userId: ec.user.userId, username: ec.user.username, userFullName: (ec.user.userAccount && ec.user.userAccount.userFullName) || '',
             locale: localeTag, timeZone: ec.user.timeZone, quasarLang: quasarLang.replace(/-([a-zA-Z])/g, (m, ch) => ch.toUpperCase()),

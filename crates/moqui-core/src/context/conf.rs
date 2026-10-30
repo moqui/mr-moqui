@@ -122,6 +122,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     if let (Some(base_telemetry), Some(over_telemetry)) = (base.first_named("telemetry"), over.first_named("telemetry"))
     {
         base_telemetry.merge_single_child(&over_telemetry, "receiver");
+        base_telemetry.merge_single_child(&over_telemetry, "browser");
     }
     merge_server_stats(base, over);
     merge_webapps(base, over);

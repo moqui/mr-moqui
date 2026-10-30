@@ -20,6 +20,7 @@ use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::document::Document;
 
 mod exponential;
+pub mod browser;
 pub mod ingest;
 pub mod maintenance;
 #[cfg(feature = "http")]

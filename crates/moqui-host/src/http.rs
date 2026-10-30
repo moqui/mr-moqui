@@ -1045,10 +1045,12 @@ pub(crate) fn internal_error(detail: &str) -> Response {
 async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, next: Next) -> Response {
     // Instrumenting collector traffic would produce more telemetry for the collector to send back, and probes and
     // deploy markers would fill the request history with polling.
+    // Browser RUM posts (/rum/traces, /rum/logs, /rum/replay) are the same: telemetry about telemetry.
     if matches!(
         request.uri().path(),
         "/v1/traces" | "/v1/logs" | "/v1/metrics" | "/v1/annotations" | "/health" | "/metrics"
-    ) {
+    ) || request.uri().path().starts_with("/rum/")
+    {
         return next.run(request).await;
     }
     use moqui_core::telemetry::{SpanKind, TraceContext};

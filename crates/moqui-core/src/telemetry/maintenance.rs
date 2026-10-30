@@ -32,6 +32,7 @@ pub fn retain(factory: &ExecutionContextFactory) -> Result<Document, Error> {
         ("otel_logs", "timestamp", "log-retention-days", 7, None),
         ("otel_errors", "last_seen", "error-retention-days", 90, None),
         ("monitor_annotations", "time", "annotation-retention-days", 730, None),
+        ("browser_replays", "start", "replay-retention-days", 7, None),
         (
             "otel_metrics",
             "bucket_start",

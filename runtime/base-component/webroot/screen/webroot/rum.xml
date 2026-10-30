@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Real-user monitoring from a signed-in qvt page (js/WebrootRum.js, telemetry/browser): /rum/traces and /rum/logs take
+    OTLP/JSON spans and logs, /rum/replay masked rrweb replay chunks. The session and its CSRF token are checked as for any
+    post; the services replace the page's identity with the session's and hold each post to the browser limits. Neither a
+    request span (the host skips /rum/) nor artifact spans are written for these, so reporting does not report itself. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
+    <transition name="traces" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const out = ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserTelemetry')
+                        .parameters({signal: 'traces', bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+                else ec.web.sendJsonResponse(out && out.rejected ? {partialSuccess: {rejectedSpans: String(out.rejected)}} : {})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="logs" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const out = ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserTelemetry')
+                        .parameters({signal: 'logs', bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+                else ec.web.sendJsonResponse(out && out.rejected ? {partialSuccess: {rejectedLogRecords: String(out.rejected)}} : {})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="replay" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserReplay')
+                        .parameters({bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(413, errors) }
+                else ec.web.sendJsonResponse({})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

@@ -4458,6 +4458,7 @@ dependencies = [
  "base64 0.22.1",
  "calamine",
  "croner",
+ "flate2",
  "getrandom 0.3.4",
  "indexmap",
  "jiff",

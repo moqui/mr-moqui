@@ -7,7 +7,10 @@ pub const LOGS: &str = "otel_logs";
 pub const METRICS: &str = "otel_metrics";
 pub const ERRORS: &str = "otel_errors";
 pub const ANNOTATIONS: &str = "monitor_annotations";
-pub const TELEMETRY_INDEXES: &[&str] = &[SPANS, LOGS, METRICS, ERRORS, ANNOTATIONS];
+/// Browser session replay chunks (rrweb events, gzipped). Read only through the replay services, which need
+/// `MONITOR_REPLAY`: never a report dataset.
+pub const REPLAYS: &str = "browser_replays";
+pub const TELEMETRY_INDEXES: &[&str] = &[SPANS, LOGS, METRICS, ERRORS, ANNOTATIONS, REPLAYS];
 
 pub fn is_telemetry_index(name: &str) -> bool {
     TELEMETRY_INDEXES.contains(&name)
@@ -21,6 +24,7 @@ pub fn time_field(name: &str) -> Option<&'static str> {
         METRICS => "bucket_start",
         ERRORS => "last_seen",
         ANNOTATIONS => "time",
+        REPLAYS => "start",
         _ => return None,
     })
 }
@@ -37,12 +41,13 @@ pub fn partition_by(name: &str) -> Option<(Option<&'static str>, &'static str)> 
         LOGS => (None, "timestamp"),
         METRICS => (Some("granularity"), "bucket_start"),
         ANNOTATIONS => (None, "time"),
+        REPLAYS => (None, "start"),
         _ => return None,
     })
 }
 
 pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
-    use FieldKind::{Boolean, Date, Double, Keyword, Long, Text};
+    use FieldKind::{Binary, Boolean, Date, Double, Keyword, Long, Text};
     let fields: &[(&str, FieldKind)] = match name {
         SPANS => &[
             ("trace_id", Keyword),
@@ -162,6 +167,18 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("series_id", Keyword),
             ("state", Keyword),
         ],
+        REPLAYS => &[
+            ("replay_id", Keyword),
+            ("seq", Long),
+            ("start", Date),
+            ("end", Date),
+            ("user.id", Keyword),
+            ("moqui.visit.id", Keyword),
+            ("url", Keyword),
+            ("trace_ids", Keyword),
+            ("bytes", Long),
+            ("events", Binary),
+        ],
         _ => return None,
     };
     let mut root = ObjectMapping::default();
@@ -175,7 +192,7 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
         ("source.id", Keyword),
         ("moqui.identity.uncertain", Boolean),
     ]) {
-        if name == ANNOTATIONS && matches!(field, "source.name" | "source.id") {
+        if matches!(name, ANNOTATIONS | REPLAYS) && matches!(field, "source.name" | "source.id") {
             continue;
         }
         root.fields

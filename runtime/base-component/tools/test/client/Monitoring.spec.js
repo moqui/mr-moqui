@@ -434,3 +434,17 @@ feature('a synthetic check added on Checks runs now and links its trace; AI and 
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
     },
 })
+feature("the Browser dashboard and the session replay screens render", {
+    expect() {
+        const page = monitoringPage()
+        page.goto("/qapps/monitor/Browser?from=now-1d&thru=now").status == 200
+        page.waitFor(() => !!document.querySelector(".m-report-dashboard"))
+        page.text().includes("Browser experience")
+        page.text().includes("Slowest pages")
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto("/apps/monitor/Replays").status == 200
+        page.text().includes("Masked recordings of sampled signed-in sessions")
+        page.goto("/apps/monitor/Sources").status == 200
+        page.text().includes("Move telemetry tables into day partitions")
+    },
+})

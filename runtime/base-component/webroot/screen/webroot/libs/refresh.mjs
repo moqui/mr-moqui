@@ -467,6 +467,34 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
+    // Browser session replay (js/WebrootRum.js records, Monitor › Replays plays back with its Replayer): loaded only for
+    // a sampled, opt-in replay and on the replay screen. Pinned Oct 30, 2026: 2.1.7 (Oct 2) is the latest stable release
+    // at least two weeks old; 2.2.0 is from Oct 24.
+    id: 'rrweb', name: 'rrweb', npm: 'rrweb', version: '2.1.7', license: 'MIT',
+    licenseNote: 'The UMD bundle includes rrweb-snapshot, rrdom, @rrweb/types, @rrweb/utils, mitt, base64-arraybuffer and @xstate/fsm, all MIT.',
+    copy: [
+      ['dist/rrweb.umd.min.cjs', 'rrweb/rrweb.umd.min.js'],
+      ['dist/style.min.css', 'rrweb/style.min.css'],
+    ],
+    // The package carries no license file; this is the LICENSE of github.com/rrweb-io/rrweb.
+    noticeText: () => `MIT License
+
+Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors) and SmartX Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`,
+  },
+  {
     id: 'qz-tray', name: 'QZ Tray connector (qz-tray.js)', npm: 'qz-tray', version: '2.3.0', license: 'LGPL-2.1-only',
     licenseNote: 'The file is served unmodified as its own script, and only when printing is enabled. Never concatenated or minified into another file.',
     copy: [['qz-tray.js', 'qz-tray/qz-tray.js']],

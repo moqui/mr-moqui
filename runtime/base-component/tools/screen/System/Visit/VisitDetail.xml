@@ -74,6 +74,8 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header title="Visit #${visitId}"/><box-toolbar>
             <section name="ClientIpLinkSection" condition="visit != null &amp;&amp; !visit.clientIpIspName"><widgets>
                 <link url="getVisitClientIpData" text="Get Client IP Data"/></widgets></section>
+            <section name="ReplayLinkSection" condition="ec.user.hasPermission('MONITOR_REPLAY')"><widgets>
+                <link url="//apps/monitor/Replays" text="Session replays" parameter-map="{visitId:visitId}"/></widgets></section>
         </box-toolbar><box-body>
             <container-row><row-col md="4">
                 <container-row><row-col xs="4" style="text-right"><label text="Visitor ID" type="strong"/></row-col>
